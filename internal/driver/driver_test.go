@@ -1,0 +1,400 @@
+package driver
+
+import (
+	"bufio"
+	"encoding/json"
+	"os"
+	"reflect"
+	"strings"
+	"testing"
+	"time"
+
+	"github.com/hongzio/gero/internal/event"
+	"github.com/hongzio/gero/internal/shimproto"
+)
+
+// tape builds a shim log by hand.
+type tape struct {
+	recs []shimproto.Record
+}
+
+func (t *tape) add(dir shimproto.Dir, line string, sys *shimproto.Sys) shimproto.Record {
+	rec := shimproto.Record{Seq: int64(len(t.recs) + 1), Time: time.Unix(0, 0).UTC(), Dir: dir, Line: line, Sys: sys}
+	t.recs = append(t.recs, rec)
+	return rec
+}
+func (t *tape) started() shimproto.Record {
+	return t.add(shimproto.DirSys, "", &shimproto.Sys{Kind: shimproto.SysStarted, PID: 42})
+}
+func (t *tape) exited(code int) shimproto.Record {
+	return t.add(shimproto.DirSys, "", &shimproto.Sys{Kind: shimproto.SysExited, ExitCode: code})
+}
+func (t *tape) in(l string) shimproto.Record  { return t.add(shimproto.DirIn, l, nil) }
+func (t *tape) out(l string) shimproto.Record { return t.add(shimproto.DirOut, l, nil) }
+
+func feed(d Driver, recs []shimproto.Record) []event.Event {
+	var all []event.Event
+	for _, r := range recs {
+		all = append(all, d.Observe(r)...)
+	}
+	return all
+}
+
+func kinds(evs []event.Event, keepEphemeral bool) []string {
+	var ks []string
+	for _, e := range evs {
+		if e.Ephemeral && !keepEphemeral {
+			continue
+		}
+		k := string(e.Kind)
+		if e.Kind == event.KindStatus {
+			k += ":" + string(e.Status)
+		}
+		ks = append(ks, k)
+	}
+	return ks
+}
+
+// loadCodexFixture turns a transcript recorded from a real `codex app-server`
+// (two processes, the first SIGKILLed mid-turn) into a shim log.
+func loadCodexFixture(t *testing.T) []shimproto.Record {
+	t.Helper()
+	f, err := os.Open("testdata/codex_resume.jsonl")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer f.Close()
+	tp := &tape{}
+	tp.started()
+	sc := bufio.NewScanner(f)
+	sc.Buffer(make([]byte, 1<<20), 1<<20)
+	for sc.Scan() {
+		var row struct{ Dir, Line string }
+		json.Unmarshal(sc.Bytes(), &row)
+		switch row.Dir {
+		case "in":
+			tp.in(row.Line)
+		case "out":
+			tp.out(row.Line)
+		case "sys":
+			tp.exited(128 + 9)
+			tp.started()
+		}
+	}
+	return tp.recs
+}
+
+func TestCodexFixtureKillAndResume(t *testing.T) {
+	recs := loadCodexFixture(t)
+	d := newCodex("a1", "", Options{})
+	evs := feed(d, recs)
+
+	var users, assistants []string
+	var sawInterrupted, sawDelta bool
+	for _, e := range evs {
+		switch e.Kind {
+		case event.KindUser:
+			users = append(users, e.Text)
+		case event.KindAssistant:
+			assistants = append(assistants, e.Text)
+		case event.KindTurnEnd:
+			if e.Text == "interrupted" {
+				sawInterrupted = true
+			}
+		case event.KindDelta:
+			sawDelta = sawDelta || e.Ephemeral
+		case event.KindStatus:
+			if e.Status == event.StatusInterrupted {
+				sawInterrupted = true
+			}
+		}
+	}
+	if len(users) != 2 || !strings.Contains(users[0], "PELICAN") {
+		t.Fatalf("user messages = %q", users)
+	}
+	if !sawInterrupted {
+		t.Fatalf("the SIGKILLed turn was not reported as interrupted: %v", kinds(evs, false))
+	}
+	if !sawDelta {
+		t.Fatal("no ephemeral deltas")
+	}
+	if len(assistants) == 0 || !strings.Contains(assistants[len(assistants)-1], "PELICAN") {
+		t.Fatalf("resumed thread lost context: %q", assistants)
+	}
+	st := d.State()
+	if st.Status != event.StatusIdle || !st.Alive || st.Busy {
+		t.Fatalf("final state = %+v", st)
+	}
+	if st.SessionID == "" {
+		t.Fatal("thread id not captured")
+	}
+}
+
+func TestCodexReplayIsDeterministic(t *testing.T) {
+	recs := loadCodexFixture(t)
+	a := feed(newCodex("a1", "", Options{}), recs)
+	b := feed(newCodex("a1", "", Options{}), recs)
+	if !reflect.DeepEqual(a, b) {
+		t.Fatal("two replays of one log produced different events")
+	}
+}
+
+// TestCodexLiveHandshake drives the driver the way the daemon does: Next()
+// produces lines, the shim echoes them as "in" records, the agent answers.
+func TestCodexLiveHandshake(t *testing.T) {
+	tp := &tape{}
+	d := newCodex("a1", "", Options{Effort: "low"})
+	d.Send("hello")
+	step := func(want string) map[string]any {
+		t.Helper()
+		lines := d.Next()
+		if len(lines) == 0 {
+			t.Fatalf("Next produced nothing, want %s", want)
+		}
+		var last map[string]any
+		for _, l := range lines {
+			d.Observe(tp.in(string(l)))
+			json.Unmarshal(l, &last)
+		}
+		if last["method"] != want {
+			t.Fatalf("last line method = %v, want %s", last["method"], want)
+		}
+		return last
+	}
+	d.Observe(tp.started())
+	if d.State().Status != event.StatusStarting {
+		t.Fatalf("status after start = %s", d.State().Status)
+	}
+	step("initialize")
+	d.Observe(tp.out(`{"id":1,"result":{}}`))
+	step("account/read")
+	d.Observe(tp.out(`{"id":2,"result":{"account":{"type":"chatgpt"},"requiresOpenaiAuth":true}}`))
+	step("thread/start")
+	d.Observe(tp.out(`{"id":3,"result":{"thread":{"id":"th-1"}}}`))
+	turn := step("turn/start")
+	params := turn["params"].(map[string]any)
+	if params["threadId"] != "th-1" || params["effort"] != "low" {
+		t.Fatalf("turn/start params = %v", params)
+	}
+	if got := d.Next(); len(got) != 0 {
+		t.Fatalf("Next repeated itself: %s", got)
+	}
+
+	// An approval request blocks the agent until it is answered.
+	d.Observe(tp.out(`{"id":4,"result":{"turn":{"id":"tu-1"}}}`))
+	evs := d.Observe(tp.out(`{"id":0,"method":"item/commandExecution/requestApproval","params":{"itemId":"x","command":"rm -rf build","reason":"clean"}}`))
+	if d.State().Status != event.StatusBlocked {
+		t.Fatalf("status = %s, want blocked", d.State().Status)
+	}
+	var ap *event.Approval
+	for _, e := range evs {
+		if e.Kind == event.KindApproval {
+			ap = e.Approval
+		}
+	}
+	if ap == nil || ap.Summary != "rm -rf build" {
+		t.Fatalf("approval event = %+v", ap)
+	}
+	if err := d.Approve(ap.ID, Accept); err != nil {
+		t.Fatal(err)
+	}
+	lines := d.Next()
+	if len(lines) != 1 || !strings.Contains(string(lines[0]), `"decision":"accept"`) || !strings.Contains(string(lines[0]), `"id":0`) {
+		t.Fatalf("approval reply = %s", lines)
+	}
+	d.Observe(tp.in(string(lines[0])))
+	if d.State().Status != event.StatusWorking {
+		t.Fatalf("status after approval = %s", d.State().Status)
+	}
+}
+
+func TestCodexNotLoggedIn(t *testing.T) {
+	tp := &tape{}
+	d := newCodex("a1", "", Options{})
+	d.Observe(tp.started())
+	for _, l := range d.Next() {
+		d.Observe(tp.in(string(l)))
+	}
+	d.Observe(tp.out(`{"id":1,"result":{}}`))
+	for _, l := range d.Next() {
+		d.Observe(tp.in(string(l)))
+	}
+	d.Observe(tp.out(`{"id":2,"result":{"account":null,"requiresOpenaiAuth":true}}`))
+	st := d.State()
+	if st.Status != event.StatusError || !strings.Contains(st.Error, "not logged in") {
+		t.Fatalf("state = %+v", st)
+	}
+	d.Send("hi")
+	if !d.State().Restart {
+		t.Fatal("a message after a failed login should ask for a fresh process")
+	}
+}
+
+func TestClaudeTurnWithApproval(t *testing.T) {
+	tp := &tape{}
+	d := newClaude("a1", "", Options{Approvals: ApprovalsAsk})
+	argv := strings.Join(d.Command(), " ")
+	if !strings.Contains(argv, "--session-id "+d.State().SessionID) || !strings.Contains(argv, "--permission-prompt-tool stdio") {
+		t.Fatalf("first command = %s", argv)
+	}
+
+	d.Observe(tp.started())
+	d.Send("list files")
+	for _, l := range d.Next() {
+		d.Observe(tp.in(string(l)))
+	}
+	if d.State().Status != event.StatusWorking {
+		t.Fatalf("status = %s", d.State().Status)
+	}
+	d.Observe(tp.out(`{"type":"system","subtype":"init","session_id":"` + d.State().SessionID + `"}`))
+	d.Observe(tp.out(`{"type":"stream_event","event":{"type":"message_start","message":{"id":"msg_1"}}}`))
+	delta := d.Observe(tp.out(`{"type":"stream_event","event":{"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"I'll"}}}`))
+	if len(delta) != 1 || !delta[0].Ephemeral || delta[0].Item != "msg_1" {
+		t.Fatalf("delta = %+v", delta)
+	}
+	d.Observe(tp.out(`{"type":"assistant","message":{"id":"msg_1","content":[{"type":"text","text":"I'll list them."},{"type":"tool_use","id":"tu_1","name":"Bash","input":{"command":"ls"}}]}}`))
+	evs := d.Observe(tp.out(`{"type":"control_request","request_id":"r1","request":{"subtype":"can_use_tool","tool_name":"Bash","input":{"command":"ls"},"tool_use_id":"tu_1"}}`))
+	if d.State().Status != event.StatusBlocked {
+		t.Fatalf("status = %s, want blocked", d.State().Status)
+	}
+	id := evs[0].Approval.ID
+	if err := d.Approve(id, Accept); err != nil {
+		t.Fatal(err)
+	}
+	reply := d.Next()
+	if len(reply) != 1 {
+		t.Fatalf("reply = %s", reply)
+	}
+	var cr struct {
+		Type     string `json:"type"`
+		Response struct {
+			Subtype   string `json:"subtype"`
+			RequestID string `json:"request_id"`
+			Response  struct {
+				Behavior     string          `json:"behavior"`
+				UpdatedInput json.RawMessage `json:"updatedInput"`
+			} `json:"response"`
+		} `json:"response"`
+	}
+	json.Unmarshal(reply[0], &cr)
+	if cr.Type != "control_response" || cr.Response.RequestID != "r1" || cr.Response.Response.Behavior != "allow" ||
+		string(cr.Response.Response.UpdatedInput) != `{"command":"ls"}` {
+		t.Fatalf("control_response = %s", reply[0])
+	}
+	d.Observe(tp.in(string(reply[0])))
+	tool := d.Observe(tp.out(`{"type":"user","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"tu_1","content":"a\nb"}]}}`))
+	if tool[0].Kind != event.KindToolEnd || tool[0].Tool.Output != "a\nb" {
+		t.Fatalf("tool end = %+v", tool)
+	}
+	d.Observe(tp.out(`{"type":"assistant","message":{"id":"msg_2","content":[{"type":"text","text":"Two files."}]}}`))
+	d.Observe(tp.out(`{"type":"result","subtype":"success","is_error":false,"result":"Two files."}`))
+	if st := d.State(); st.Status != event.StatusIdle || st.Busy {
+		t.Fatalf("state after result = %+v", st)
+	}
+
+	// The next generation resumes the session it initialised.
+	d.Observe(tp.exited(0))
+	if argv := strings.Join(d.Command(), " "); !strings.Contains(argv, "--resume "+d.State().SessionID) {
+		t.Fatalf("second command = %s", argv)
+	}
+}
+
+func TestClaudeAuthErrorIsAnError(t *testing.T) {
+	tp := &tape{}
+	d := newClaude("a1", "", Options{})
+	d.Observe(tp.started())
+	d.Send("hi")
+	for _, l := range d.Next() {
+		d.Observe(tp.in(string(l)))
+	}
+	d.Observe(tp.out(`{"type":"system","subtype":"init","session_id":"s"}`))
+	d.Observe(tp.out(`{"type":"assistant","message":{"id":"m","content":[{"type":"text","text":"Not logged in · Please run /login"}]}}`))
+	// Observed from a real CLI: an auth failure is subtype "success" with
+	// is_error set, so the subtype cannot be trusted on its own.
+	d.Observe(tp.out(`{"type":"result","subtype":"success","is_error":true,"result":"Not logged in · Please run /login"}`))
+	if st := d.State(); st.Status != event.StatusError || !strings.Contains(st.Error, "Not logged in") {
+		t.Fatalf("state = %+v", st)
+	}
+}
+
+func TestProcessDeathMidTurnIsInterrupted(t *testing.T) {
+	tp := &tape{}
+	d := newClaude("a1", "", Options{})
+	d.Observe(tp.started())
+	d.Send("long task")
+	for _, l := range d.Next() {
+		d.Observe(tp.in(string(l)))
+	}
+	d.Observe(tp.add(shimproto.DirSys, "", &shimproto.Sys{Kind: shimproto.SysLost}))
+	if st := d.State(); st.Status != event.StatusInterrupted || st.Alive || st.Busy {
+		t.Fatalf("state = %+v", st)
+	}
+	// Interrupted stays until the user says something.
+	d.Observe(tp.started())
+	if d.State().Status != event.StatusInterrupted {
+		t.Fatalf("restart cleared interrupted: %s", d.State().Status)
+	}
+	d.Send("carry on")
+	for _, l := range d.Next() {
+		d.Observe(tp.in(string(l)))
+	}
+	if d.State().Status != event.StatusWorking {
+		t.Fatalf("status = %s", d.State().Status)
+	}
+}
+
+// A turn/start that is written but not yet echoed must not report the agent
+// as working before the user's message appears in its history.
+func TestCodexStatusFollowsTheLog(t *testing.T) {
+	tp := &tape{}
+	d := newCodex("a1", "th-1", Options{})
+	d.Observe(tp.started())
+	feedNext := func() {
+		for _, l := range d.Next() {
+			d.Observe(tp.in(string(l)))
+		}
+	}
+	feedNext()
+	d.Observe(tp.out(`{"id":1,"result":{}}`))
+	feedNext()
+	d.Observe(tp.out(`{"id":2,"result":{"account":{"type":"apiKey"},"requiresOpenaiAuth":true}}`))
+	feedNext()
+	d.Observe(tp.out(`{"id":3,"result":{"thread":{"id":"th-1"}}}`))
+
+	d.Send("first")
+	d.Send("second")
+	lines := d.Next()
+	if len(lines) != 1 || !strings.Contains(string(lines[0]), `"first"`) {
+		t.Fatalf("Next = %s, want only the first turn", lines)
+	}
+	// An unrelated record arrives before the echo.
+	evs := d.Observe(tp.out(`{"method":"mcpServer/startupStatus/updated","params":{}}`))
+	if len(evs) != 0 || d.State().Status == event.StatusWorking {
+		t.Fatalf("status flipped before the turn reached the log: %v %s", evs, d.State().Status)
+	}
+	if again := d.Next(); len(again) != 0 {
+		t.Fatalf("second turn sent while the first is pending: %s", again)
+	}
+	evs = d.Observe(tp.in(string(lines[0])))
+	if got := kinds(evs, false); strings.Join(got, ",") != "user,status:working" {
+		t.Fatalf("events on echo = %v", got)
+	}
+}
+
+func TestHoldKeepsQueuedTurnsBack(t *testing.T) {
+	tp := &tape{}
+	d := newClaude("a1", "", Options{})
+	d.Observe(tp.started())
+	d.Hold(true)
+	d.Send("hello")
+	if lines := d.Next(); len(lines) != 0 {
+		t.Fatalf("held driver sent %s", lines)
+	}
+	if d.State().Queued != 1 {
+		t.Fatal("held message dropped")
+	}
+	d.Hold(false)
+	if lines := d.Next(); len(lines) != 1 || !strings.Contains(string(lines[0]), "hello") {
+		t.Fatalf("released driver sent %s", lines)
+	}
+}

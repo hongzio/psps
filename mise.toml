@@ -1,0 +1,24 @@
+[tools]
+go = "1.27.3"
+
+[env]
+# Pure-Go everywhere (modernc sqlite): the shim cross-compiles for linux with
+# no C toolchain, and the darwin binary has no libc surprises under launchd.
+CGO_ENABLED = "0"
+
+[tasks.shim]
+description = "Cross-compile gero-shim for the isolation image (linux/arm64)"
+run = "GOOS=linux GOARCH=arm64 go build -trimpath -o internal/isolation/assets/gero-shim ./cmd/gero-shim"
+
+[tasks.build]
+description = "Build bin/gero with the linux shim embedded"
+depends = ["shim"]
+run = "go build -trimpath -o bin/gero ./cmd/gero"
+
+[tasks.test]
+description = "Run unit tests"
+run = "go test ./..."
+
+[tasks.vet]
+description = "Run go vet"
+run = "go vet ./..."

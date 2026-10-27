@@ -1,0 +1,424 @@
+package tui
+
+import (
+	"context"
+	"encoding/json"
+	"fmt"
+	"os"
+	"path/filepath"
+	"sort"
+	"strings"
+	"sync"
+	"testing"
+	"time"
+
+	tea "github.com/charmbracelet/bubbletea"
+
+	"github.com/hongzio/gero/internal/api"
+	"github.com/hongzio/gero/internal/driver"
+	"github.com/hongzio/gero/internal/event"
+	"github.com/hongzio/gero/internal/proxy"
+	"github.com/hongzio/gero/internal/store"
+)
+
+type fakeBackend struct {
+	mu       sync.Mutex
+	agents   []api.Agent
+	isos     []api.Isolation
+	events   map[string][]event.Event
+	sent     []string
+	approved []string
+	created  []api.CreateAgent
+	options  []driver.Options
+
+	services  []api.Service
+	envs      []api.Env
+	exposures []api.Exposure
+	patches   []string
+	secrets   []string
+	redirects []string
+	finished  []string
+	exposed   []string
+}
+
+func (f *fakeBackend) Agents(context.Context) ([]api.Agent, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return append([]api.Agent(nil), f.agents...), nil
+}
+func (f *fakeBackend) Isolations(context.Context) ([]api.Isolation, error) { return f.isos, nil }
+func (f *fakeBackend) CreateAgent(_ context.Context, req api.CreateAgent) (api.Agent, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.created = append(f.created, req)
+	a := api.Agent{Agent: store.Agent{ID: "new1", Name: req.Prompt, Kind: req.Kind, Isolation: req.Isolation, CreatedAt: time.Now()}}
+	f.agents = append(f.agents, a)
+	return a, nil
+}
+func (f *fakeBackend) Send(_ context.Context, id, text string) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.sent = append(f.sent, id+":"+text)
+	return nil
+}
+func (f *fakeBackend) Approve(_ context.Context, id, ap string, d driver.Decision) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.approved = append(f.approved, id+":"+ap+":"+string(d))
+	return nil
+}
+func (f *fakeBackend) Interrupt(context.Context, string) error { return nil }
+func (f *fakeBackend) SetOptions(_ context.Context, _ string, o driver.Options) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.options = append(f.options, o)
+	return nil
+}
+func (f *fakeBackend) Archive(context.Context, string) error { return nil }
+func (f *fakeBackend) Follow(ctx context.Context, id string, after int64, fn func(event.Event) error) error {
+	f.mu.Lock()
+	evs := f.events[id]
+	f.mu.Unlock()
+	for _, e := range evs {
+		if e.ID > after {
+			fn(e)
+		}
+	}
+	<-ctx.Done()
+	return ctx.Err()
+}
+func (f *fakeBackend) CreateIsolation(context.Context, api.CreateIsolation) (api.Isolation, error) {
+	return api.Isolation{}, nil
+}
+func (f *fakeBackend) UpgradeIsolation(context.Context, string) (api.Isolation, error) {
+	return api.Isolation{}, nil
+}
+func (f *fakeBackend) DeleteIsolation(context.Context, string, bool) error { return nil }
+func (f *fakeBackend) SetEnv(context.Context, string, api.SetEnv) error    { return nil }
+func (f *fakeBackend) Verify(_ context.Context, name string) (api.Verify, error) {
+	return api.Verify{Isolation: name, Checks: []api.VerifyCheck{
+		{Check: "Mac unreachable at 192.168.1.5", OK: true, Severity: api.SevIsolation, Got: "blocked"},
+		{Check: "slack refuses a wrong workspace token", Severity: api.SevIsolation, Got: "200", Detail: "the proxy answered with something other than its refusal"},
+		{Check: "slack env work answers from the Mac", Severity: api.SevConfig, Got: "refused", Detail: "no [slack work] section"},
+	}}, nil
+}
+
+func (f *fakeBackend) Services(context.Context) ([]api.Service, error) { return f.services, nil }
+func (f *fakeBackend) Envs(context.Context, string) ([]api.Env, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return append([]api.Env(nil), f.envs...), nil
+}
+func (f *fakeBackend) AddEnv(_ context.Context, svc, name string, p proxy.Patch) (api.Env, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.patches = append(f.patches, "add "+svc+"/"+name+" "+patchString(p))
+	cfg, _ := json.Marshal(p.Set)
+	e := api.Env{Env: store.Env{Service: svc, Name: name, Config: cfg}, MissingSecrets: []string{"password"}}
+	f.envs = append(f.envs, e)
+	return e, nil
+}
+func (f *fakeBackend) EditEnv(_ context.Context, svc, name string, p proxy.Patch) (api.Env, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.patches = append(f.patches, "edit "+svc+"/"+name+" "+patchString(p))
+	return api.Env{Env: store.Env{Service: svc, Name: name}}, nil
+}
+func (f *fakeBackend) DeleteEnv(_ context.Context, svc, name string, force bool) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.patches = append(f.patches, fmt.Sprintf("delete %s/%s force=%v", svc, name, force))
+	return nil
+}
+func (f *fakeBackend) SetSecret(_ context.Context, svc, name string, v map[string]string) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.secrets = append(f.secrets, fmt.Sprintf("%s/%s %v", svc, name, v))
+	return nil
+}
+func (f *fakeBackend) CheckEnv(context.Context, string, string) (api.Check, error) {
+	return api.Check{Output: "server     db:5432, PostgreSQL 16\n"}, nil
+}
+func (f *fakeBackend) StartLogin(_ context.Context, svc, name, redirect string) (api.Login, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.redirects = append(f.redirects, redirect)
+	return api.Login{ID: "l1", URL: "https://login.example/authorize?state=s1", Redirect: redirect, Expires: time.Now().Add(time.Minute)}, nil
+}
+func (f *fakeBackend) FinishLogin(_ context.Context, svc, name, id, cb string) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.finished = append(f.finished, svc+"/"+name+" "+id+" "+cb)
+	return nil
+}
+func (f *fakeBackend) Exposures(context.Context, string) ([]api.Exposure, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return append([]api.Exposure(nil), f.exposures...), nil
+}
+func (f *fakeBackend) Expose(_ context.Context, iso, svc string, req api.Expose) (api.Exposure, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.exposed = append(f.exposed, fmt.Sprintf("%s %s envs=%v default=%q settings=%s", iso, svc, req.Envs, req.Default, patchString(req.Settings)))
+	return api.Exposure{Service: svc, Enabled: true, Exposure: store.Exposure{Isolation: iso, Service: svc, Envs: req.Envs, Default: req.Default}}, nil
+}
+func (f *fakeBackend) Unexpose(_ context.Context, iso, svc string) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.exposed = append(f.exposed, "off "+iso+" "+svc)
+	return nil
+}
+
+func patchString(p proxy.Patch) string {
+	keys := make([]string, 0, len(p.Set))
+	for k := range p.Set {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	var parts []string
+	for _, k := range keys {
+		parts = append(parts, fmt.Sprintf("%s=%v", k, p.Set[k]))
+	}
+	for _, k := range p.Clear {
+		parts = append(parts, "clear:"+k)
+	}
+	return strings.Join(parts, " ")
+}
+
+func agent(id, name string, status event.Status, created int) api.Agent {
+	return api.Agent{
+		Agent: store.Agent{ID: id, Name: name, Kind: driver.Codex, Isolation: "dev", CreatedAt: time.Unix(int64(created), 0)},
+		State: driver.State{Status: status},
+	}
+}
+
+// harness runs a Model without a terminal: commands are executed inline and
+// their messages fed back, the way the Bubble Tea runtime would.
+type harness struct {
+	t  *testing.T
+	m  *Model
+	be *fakeBackend
+}
+
+func newHarness(t *testing.T) *harness {
+	be := &fakeBackend{
+		agents: []api.Agent{agent("aaaa", "first", event.StatusIdle, 1), agent("bbbb", "second", event.StatusIdle, 2)},
+		isos:   []api.Isolation{{Isolation: store.Isolation{Name: "dev", Container: "gero-dev"}, State: "running"}},
+		events: map[string][]event.Event{
+			"aaaa": {{ID: 1, Agent: "aaaa", Kind: event.KindUser, Text: "hi first"}},
+			"bbbb": {{ID: 1, Agent: "bbbb", Kind: event.KindUser, Text: "hi second"}},
+		},
+	}
+	h := &harness{t: t, m: New(be, nil, defaultKeymap(), nil), be: be}
+	h.send(tea.WindowSizeMsg{Width: 120, Height: 30})
+	h.send(agentsMsg{agents: be.agents})
+	h.send(isolationsMsg{isos: be.isos})
+	return h
+}
+
+func (h *harness) send(msg tea.Msg) {
+	h.t.Helper()
+	_, cmd := h.m.Update(msg)
+	h.run(cmd, 0)
+}
+
+// run executes cmd, skipping ticks and blocking listeners, and feeds back
+// what it produces.
+func (h *harness) run(cmd tea.Cmd, depth int) {
+	if cmd == nil || depth > 5 {
+		return
+	}
+	done := make(chan tea.Msg, 1)
+	go func() { done <- cmd() }()
+	select {
+	case msg := <-done:
+		switch msg := msg.(type) {
+		case tea.BatchMsg:
+			for _, c := range msg {
+				h.run(c, depth+1)
+			}
+		case tickMsg, nil:
+		default:
+			_, next := h.m.Update(msg)
+			h.run(next, depth+1)
+		}
+	case <-time.After(100 * time.Millisecond):
+		// A listener waiting on the feed; drain what the feed has.
+	}
+}
+
+// drainFeed delivers pending stream events.
+func (h *harness) drainFeed() {
+	for {
+		select {
+		case msg := <-h.m.feed:
+			h.m.Update(msg)
+		case <-time.After(50 * time.Millisecond):
+			return
+		}
+	}
+}
+
+func (h *harness) key(s string) {
+	h.t.Helper()
+	var msg tea.KeyMsg
+	switch s {
+	case "enter":
+		msg = tea.KeyMsg{Type: tea.KeyEnter}
+	case "tab":
+		msg = tea.KeyMsg{Type: tea.KeyTab}
+	case "esc":
+		msg = tea.KeyMsg{Type: tea.KeyEsc}
+	case "ctrl+n":
+		msg = tea.KeyMsg{Type: tea.KeyCtrlN}
+	case "ctrl+s":
+		msg = tea.KeyMsg{Type: tea.KeyCtrlS}
+	case "ctrl+a":
+		msg = tea.KeyMsg{Type: tea.KeyCtrlA}
+	case "ctrl+o":
+		msg = tea.KeyMsg{Type: tea.KeyCtrlO}
+	case "ctrl+r":
+		msg = tea.KeyMsg{Type: tea.KeyCtrlR}
+	case "ctrl+g":
+		msg = tea.KeyMsg{Type: tea.KeyCtrlG}
+	case "space":
+		msg = tea.KeyMsg{Type: tea.KeySpace, Runes: []rune{' '}}
+	case "down":
+		msg = tea.KeyMsg{Type: tea.KeyDown}
+	case "right":
+		msg = tea.KeyMsg{Type: tea.KeyRight}
+	default:
+		msg = tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune(s)}
+	}
+	h.send(msg)
+}
+
+// typeText delivers s the way a paste arrives: one message, many runes.
+func (h *harness) typeText(s string) {
+	h.send(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune(s)})
+}
+
+func TestLandsOnNewestAgentAndMovesWithKeys(t *testing.T) {
+	h := newHarness(t)
+	h.drainFeed()
+	if h.m.openID != "bbbb" {
+		t.Fatalf("landed on %q, want the newest agent", h.m.openID)
+	}
+	if !strings.Contains(h.m.View(), "hi second") {
+		t.Fatal("conversation of the open agent not shown")
+	}
+	h.key("k")
+	h.drainFeed()
+	if h.m.sel != "aaaa" || h.m.openID != "aaaa" {
+		t.Fatalf("after k: sel=%q open=%q", h.m.sel, h.m.openID)
+	}
+	if !strings.Contains(h.m.View(), "hi first") {
+		t.Fatal("moving the cursor did not show the agent")
+	}
+}
+
+func TestSendGoesToTheOpenAgent(t *testing.T) {
+	h := newHarness(t)
+	h.key("k")
+	h.key("enter") // focus the input
+	h.typeText("hello")
+	h.key("enter")
+	if len(h.be.sent) != 1 || h.be.sent[0] != "aaaa:hello" {
+		t.Fatalf("sent = %v", h.be.sent)
+	}
+	if h.m.input.Value() != "" {
+		t.Fatal("input not cleared after send")
+	}
+}
+
+func TestNewAgentForm(t *testing.T) {
+	h := newHarness(t)
+	h.key("ctrl+n")
+	if h.m.view != viewNewAgent || h.m.newForm == nil {
+		t.Fatal("new agent form not open")
+	}
+	h.key("ctrl+s")
+	if h.m.newForm.err == "" {
+		t.Fatal("empty prompt accepted")
+	}
+	h.typeText("fix the tests") // the prompt has the cursor first
+	h.key("tab")                // wraps to Isolation
+	h.key("tab")                // Agent
+	h.key("right")              // claude -> codex
+	h.key("ctrl+s")
+	if len(h.be.created) != 1 {
+		t.Fatalf("created = %v", h.be.created)
+	}
+	req := h.be.created[0]
+	if req.Isolation != "dev" || req.Kind != driver.Codex || req.Prompt != "fix the tests" {
+		t.Fatalf("request = %+v", req)
+	}
+	if h.m.openID != "new1" || h.m.focus != focusInput {
+		t.Fatalf("after create: open=%q focus=%v", h.m.openID, h.m.focus)
+	}
+}
+
+func TestApprovalFlow(t *testing.T) {
+	h := newHarness(t)
+	h.be.mu.Lock()
+	h.be.events["bbbb"] = append(h.be.events["bbbb"],
+		event.Event{ID: 2, Agent: "bbbb", Kind: event.KindApproval,
+			Approval: &event.Approval{ID: "1.7", Kind: "command", Summary: "rm -rf build"}},
+		event.Event{ID: 3, Agent: "bbbb", Kind: event.KindStatus, Status: event.StatusBlocked})
+	h.be.mu.Unlock()
+	h.m.openID = ""
+	h.m.selectItem("bbbb")
+	h.drainFeed()
+	if !strings.Contains(h.m.View(), "rm -rf build") {
+		t.Fatal("pending approval not shown")
+	}
+	h.key("ctrl+a")
+	h.key("y")
+	h.be.mu.Lock()
+	defer h.be.mu.Unlock()
+	if len(h.be.approved) != 1 || h.be.approved[0] != "bbbb:1.7:accept" {
+		t.Fatalf("approved = %v", h.be.approved)
+	}
+}
+
+func TestApprovalsVoidWhenTheProcessDies(t *testing.T) {
+	c := newConvo()
+	c.apply(event.Event{ID: 1, Kind: event.KindApproval, Approval: &event.Approval{ID: "1.1", Summary: "x"}})
+	c.apply(event.Event{ID: 2, Kind: event.KindStatus, Status: event.StatusBlocked})
+	if len(c.pending()) != 1 {
+		t.Fatal("approval not pending")
+	}
+	c.apply(event.Event{ID: 3, Kind: event.KindStatus, Status: event.StatusInterrupted})
+	if len(c.pending()) != 0 {
+		t.Fatal("approval of a dead process still pending")
+	}
+}
+
+func TestDeltasGrowAndFinalReplaces(t *testing.T) {
+	c := newConvo()
+	c.apply(event.Event{Kind: event.KindDelta, Item: "m1", Text: "Hel", Ephemeral: true})
+	c.apply(event.Event{Kind: event.KindDelta, Item: "m1", Text: "lo", Ephemeral: true})
+	if out := c.render(60, "Codex", newTheme()); !strings.Contains(out, "Hello▍") {
+		t.Fatalf("live text not shown: %q", out)
+	}
+	c.apply(event.Event{ID: 1, Kind: event.KindAssistant, Item: "m1", Text: "Hello there"})
+	out := c.render(60, "Codex", newTheme())
+	if !strings.Contains(out, "Hello there") || strings.Contains(out, "▍") || strings.Count(out, "Codex") != 1 {
+		t.Fatalf("final did not replace the live entry: %q", out)
+	}
+}
+
+func TestKeymapOverrides(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "keys.toml")
+	os.WriteFile(path, []byte("[keys]\nnew_agent = \"ctrl+t\"\nsend = [\"ctrl+enter\", \"enter\"]\nbogus = \"x\"\n"), 0o600)
+	k, warnings := LoadKeymap(path)
+	if k.Label("new_agent") != "ctrl+t" || len(k.keys["send"]) != 2 {
+		t.Fatalf("overrides not applied: %v", k.keys)
+	}
+	if len(warnings) != 1 || !strings.Contains(warnings[0], "bogus") {
+		t.Fatalf("warnings = %v", warnings)
+	}
+	if !strings.Contains(DefaultKeysTOML(), `new_agent        = ["ctrl+n"]`) {
+		t.Fatal("default keys.toml does not list new_agent")
+	}
+}
