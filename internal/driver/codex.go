@@ -66,8 +66,13 @@ type codex struct {
 	// sending: a turn/start is written but not yet seen in the log. It holds
 	// back the next queued message without claiming the agent is working.
 	sending bool
-	stop    bool // interrupt requested
-	itemSum map[string]string
+	// defaults is Codex's own approval configuration, for the default mode:
+	// nil until config/read answers, and again after a restart or a change
+	// of options. reading: that config/read is in flight.
+	defaults *cxApproval
+	reading  bool
+	stop     bool // interrupt requested
+	itemSum  map[string]string
 }
 
 func newCodex(agentID, threadID string, opts Options) *codex {
@@ -91,9 +96,11 @@ func (c *codex) Send(text string) {
 
 func (c *codex) Interrupt() { c.stop = true }
 
-// SetOptions applies from the next turn: Codex takes model and effort per
-// turn/start, so the process never needs replacing.
-func (c *codex) SetOptions(o Options) { c.opts = o }
+// SetOptions applies from the next turn: Codex takes model, effort and the
+// approval mode per turn/start, so the process never needs replacing.
+// Codex's configuration is read again for the default mode, in case it
+// changed.
+func (c *codex) SetOptions(o Options) { c.opts, c.defaults = o, nil }
 
 func (c *codex) Approve(id string, d Decision) error {
 	for _, p := range c.pending {
@@ -115,16 +122,100 @@ func (c *codex) call(method string, params any) []byte {
 	return line(map[string]any{"jsonrpc": "2.0", "id": id, "method": method, "params": params})
 }
 
-// sandbox is always off: the isolation is the boundary, and Codex's own
-// sandbox needs bubblewrap, which the container does not provide. Approvals
-// are a separate question, answered by approvalPolicy.
-func (c *codex) sandbox() string { return "danger-full-access" }
+// The approval mode is a sandbox, a policy and a reviewer together, sent
+// with the thread and with every turn: Codex keeps a turn's settings for
+// the turns after it, and in the thread when it is resumed, so a mode has
+// to be spelled out to replace the one before. never and ask run without
+// Codex's own sandbox: the isolation is the boundary. auto is Codex's own
+// Auto: a workspace-write sandbox (the bubblewrap Codex bundles works in
+// the isolation's VM) whose escapes, the network and any write outside
+// the workspace, become approval requests, each judged by the auto-review
+// agent instead of a person. A refused one is reported and the turn goes
+// on; repeated refusals interrupt it. default is what Codex's own
+// configuration says, read with config/read.
+type cxApproval struct {
+	Policy        any // a policy name, or config.toml's granular table
+	Reviewer      string
+	Sandbox       string         // as thread/start takes it
+	SandboxPolicy map[string]any // as turn/start takes it
+}
 
-func (c *codex) approvalPolicy() string {
-	if c.opts.approvals() == ApprovalsAsk {
-		return "untrusted"
+func (c *codex) approval() cxApproval {
+	switch c.opts.approvals() {
+	case ApprovalsAsk:
+		return cxApproval{"untrusted", "user", "danger-full-access", map[string]any{"type": "dangerFullAccess"}}
+	case ApprovalsAuto:
+		return cxApproval{"on-request", "auto_review", "workspace-write", map[string]any{"type": "workspaceWrite"}}
+	case ApprovalsDefault:
+		if c.defaults != nil {
+			return *c.defaults
+		}
+		return codexBuiltin()
 	}
-	return "never"
+	return cxApproval{"never", "user", "danger-full-access", map[string]any{"type": "dangerFullAccess"}}
+}
+
+// needDefaults is whether the mode is default and Codex's configuration
+// has not been read since the process started or the mode last changed.
+func (c *codex) needDefaults() bool {
+	return c.opts.approvals() == ApprovalsDefault && c.defaults == nil
+}
+
+// codexBuiltin is what Codex uses where config.toml says nothing, as the
+// app-server of codex-cli 0.164 reports it for a thread opened without
+// settings: it asks when the model wants to, in a read-only sandbox
+// without the network.
+func codexBuiltin() cxApproval {
+	return cxApproval{"on-request", "user", "read-only", map[string]any{"type": "readOnly"}}
+}
+
+// codexDefaults is config/read's answer in approval terms: config.toml's
+// settings, Codex's own where it has none. A project's trust level is not
+// read; gero's workspaces are not trusted projects unless made so.
+func codexDefaults(result json.RawMessage) *cxApproval {
+	var r struct {
+		Config struct {
+			ApprovalPolicy    json.RawMessage `json:"approval_policy"`
+			ApprovalsReviewer string          `json:"approvals_reviewer"`
+			SandboxMode       string          `json:"sandbox_mode"`
+			WorkspaceWrite    *struct {
+				WritableRoots       []string `json:"writable_roots"`
+				NetworkAccess       bool     `json:"network_access"`
+				ExcludeTmpdirEnvVar bool     `json:"exclude_tmpdir_env_var"`
+				ExcludeSlashTmp     bool     `json:"exclude_slash_tmp"`
+			} `json:"sandbox_workspace_write"`
+		} `json:"config"`
+	}
+	json.Unmarshal(result, &r)
+	a := codexBuiltin()
+	if p := r.Config.ApprovalPolicy; len(p) > 0 && string(p) != "null" {
+		a.Policy = p
+	}
+	if r.Config.ApprovalsReviewer != "" {
+		a.Reviewer = r.Config.ApprovalsReviewer
+	}
+	switch r.Config.SandboxMode {
+	case "danger-full-access":
+		a.Sandbox, a.SandboxPolicy = "danger-full-access", map[string]any{"type": "dangerFullAccess"}
+	case "workspace-write":
+		a.Sandbox, a.SandboxPolicy = "workspace-write", map[string]any{"type": "workspaceWrite"}
+		if ww := r.Config.WorkspaceWrite; ww != nil {
+			a.SandboxPolicy["writableRoots"] = append([]string{}, ww.WritableRoots...)
+			a.SandboxPolicy["networkAccess"] = ww.NetworkAccess
+			a.SandboxPolicy["excludeTmpdirEnvVar"] = ww.ExcludeTmpdirEnvVar
+			a.SandboxPolicy["excludeSlashTmp"] = ww.ExcludeSlashTmp
+		}
+	}
+	return &a
+}
+
+// readConfig asks for Codex's configuration once at a time.
+func (c *codex) readConfig() [][]byte {
+	if c.reading {
+		return nil
+	}
+	c.reading = true
+	return [][]byte{c.call("config/read", map[string]any{})}
 }
 
 func (c *codex) Next() [][]byte {
@@ -142,7 +233,12 @@ func (c *codex) Next() [][]byte {
 		out = append(out, c.call("account/read", map[string]any{}))
 		c.phase = cxCheckingAuth
 	case cxNeedThread:
-		params := map[string]any{"approvalPolicy": c.approvalPolicy(), "sandbox": c.sandbox()}
+		if c.needDefaults() {
+			out = append(out, c.readConfig()...)
+			break
+		}
+		a := c.approval()
+		params := map[string]any{"approvalPolicy": a.Policy, "approvalsReviewer": a.Reviewer, "sandbox": a.Sandbox}
 		if c.opts.Model != "" {
 			params["model"] = c.opts.Model
 		}
@@ -178,11 +274,15 @@ func (c *codex) Next() [][]byte {
 		}
 	}
 
-	if c.phase == cxReady && !c.busy && !c.sending && !c.held && len(c.queue) > 0 {
+	if c.phase == cxReady && !c.busy && !c.sending && !c.held && len(c.queue) > 0 && c.needDefaults() {
+		out = append(out, c.readConfig()...)
+	} else if c.phase == cxReady && !c.busy && !c.sending && !c.held && len(c.queue) > 0 {
 		text := c.queue[0]
 		c.queue = c.queue[1:]
+		a := c.approval()
 		params := map[string]any{"threadId": c.threadID,
-			"input": []any{map[string]any{"type": "text", "text": text}}}
+			"input":          []any{map[string]any{"type": "text", "text": text}},
+			"approvalPolicy": a.Policy, "approvalsReviewer": a.Reviewer, "sandboxPolicy": a.SandboxPolicy}
 		if c.opts.Effort != "" {
 			params["effort"] = c.opts.Effort
 		}
@@ -224,6 +324,7 @@ func (c *codex) observeSys(rec shimproto.Record) []event.Event {
 		c.phase, c.nextID, c.calls = cxStarted, 1, map[int64]string{}
 		c.turnID, c.pending, c.itemSum = "", nil, map[string]string{}
 		c.busy, c.blocked = false, false
+		c.defaults, c.reading = nil, false
 		return []event.Event{c.text(rec, event.KindNotice, "", fmt.Sprintf("codex started (pid %d)", rec.Sys.PID))}
 	case shimproto.SysExited, shimproto.SysLost:
 		c.phase, c.pending, c.turnID, c.sending = cxDown, nil, "", false
@@ -250,6 +351,8 @@ func (c *codex) observeIn(rec shimproto.Record, m rpcMsg) []event.Event {
 			c.phase = cxInitializing
 		case "account/read":
 			c.phase = cxCheckingAuth
+		case "config/read":
+			c.reading = true
 		case "thread/start", "thread/resume":
 			c.phase = cxOpening
 		case "turn/start":
@@ -335,6 +438,11 @@ func (c *codex) response(rec shimproto.Record, method string, m rpcMsg) []event.
 				fmt.Sprintf("could not resume codex thread %s (%s); starting a new thread without the earlier context", old, m.Error.Message))}
 		case "turn/start":
 			c.busy = false
+		case "config/read":
+			c.reading = false
+			d := codexBuiltin()
+			c.defaults = &d
+			return []event.Event{c.text(rec, event.KindNotice, "", "codex config/read failed ("+m.Error.Message+"); approvals follow Codex's built-in defaults")}
 		case "initialize", "account/read", "thread/start":
 			c.starting = false
 			c.errText = fmt.Sprintf("codex %s failed: %s", method, m.Error.Message)
@@ -357,6 +465,9 @@ func (c *codex) response(rec shimproto.Record, method string, m rpcMsg) []event.
 			return nil
 		}
 		c.phase = cxNeedThread
+	case "config/read":
+		c.reading = false
+		c.defaults = codexDefaults(m.Result)
 	case "thread/start", "thread/resume":
 		var r struct {
 			Thread struct {
@@ -566,6 +677,9 @@ func (c *codex) notification(rec shimproto.Record, m rpcMsg) []event.Event {
 		e.Turn, e.Ephemeral = p.TurnID, true
 		return []event.Event{e}
 
+	case "item/autoApprovalReview/completed":
+		return c.review(rec, m.Params)
+
 	case "error":
 		var p struct {
 			Error struct {
@@ -596,4 +710,37 @@ func (c *codex) notification(rec shimproto.Record, m rpcMsg) []event.Event {
 		}
 	}
 	return nil
+}
+
+// review reports what the auto-review agent decided about an action the
+// sandbox would not let through: a refusal as an error, so it stands out.
+func (c *codex) review(rec shimproto.Record, params json.RawMessage) []event.Event {
+	var p struct {
+		TargetItemID string `json:"targetItemId"`
+		Review       struct {
+			Status    string `json:"status"`
+			RiskLevel string `json:"riskLevel"`
+			Rationale string `json:"rationale"`
+		} `json:"review"`
+		Action struct {
+			Type    string `json:"type"`
+			Command string `json:"command"`
+		} `json:"action"`
+	}
+	json.Unmarshal(params, &p)
+	what := p.Action.Command
+	if what == "" {
+		what = p.Action.Type
+	}
+	msg := fmt.Sprintf("auto-review %s %s", p.Review.Status, what)
+	if p.Review.RiskLevel != "" {
+		msg += " (risk " + p.Review.RiskLevel + ")"
+	}
+	if p.Review.Status == "denied" {
+		if p.Review.Rationale != "" {
+			msg += ": " + p.Review.Rationale
+		}
+		return []event.Event{c.text(rec, event.KindError, "", msg)}
+	}
+	return []event.Event{c.text(rec, event.KindNotice, "", msg)}
 }

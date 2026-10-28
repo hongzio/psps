@@ -327,10 +327,12 @@ func newAgentForm(isos []api.Isolation) *agentForm {
 		textField("Repository", "optional git URL to clone into the workspace", ""),
 		selectField("Effort", efforts(string(driver.Claude)), ""),
 		textField("Model", "optional; the CLI's default otherwise", ""),
-		selectField("Approvals", []string{string(driver.ApprovalsNever), string(driver.ApprovalsAsk)},
-			"never: runs unattended inside the isolation · ask: the agent asks first for what its own rules flag"),
+		selectField("Approvals", approvalModes(),
+			"never: runs unattended inside the isolation · auto: unattended, a reviewer model refuses risky actions · ask: the agent asks first for what its own rules flag · default: the CLI's own settings decide"),
 		{label: "Prompt", kind: fArea, area: prompt},
 	}}}
+	// A new agent starts on the CLI's own settings.
+	f.fields[nfApprovals].idx = indexOf(f.fields[nfApprovals].options, string(driver.ApprovalsDefault))
 	f.setIsolations(isos)
 	f.cur = nfPrompt
 	f.fields[nfPrompt].focus(true)
@@ -435,8 +437,11 @@ func (m *Model) openSettings() tea.Cmd {
 	model.text.SetValue(a.Options.Model)
 	eff := selectField("Effort", efforts(string(a.Kind)), "")
 	eff.idx = indexOf(eff.options, a.Options.Effort)
-	appr := selectField("Approvals", []string{string(driver.ApprovalsNever), string(driver.ApprovalsAsk)}, "")
+	appr := selectField("Approvals", approvalModes(), "")
 	appr.idx = indexOf(appr.options, string(a.Options.Approvals))
+	if a.Options.Approvals == "" {
+		appr.idx = indexOf(appr.options, string(driver.ApprovalsNever)) // what "" has always meant
+	}
 	m.settings = &settingsForm{form: form{fields: []*field{eff, model, appr}}, agent: a.ID}
 	m.setFocus(focusMain)
 	return nil
@@ -466,4 +471,12 @@ func (m *Model) handleSettingsKey(msg tea.KeyMsg) tea.Cmd {
 	}
 	cmd, _ := m.settings.handle(k, msg)
 	return cmd
+}
+
+func approvalModes() []string {
+	var out []string
+	for _, m := range driver.ApprovalModes {
+		out = append(out, string(m))
+	}
+	return out
 }

@@ -4,10 +4,12 @@ import (
 	"bufio"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log"
 	"net"
+	"net/http"
 	"net/netip"
 	"os"
 	"os/exec"
@@ -864,3 +866,28 @@ func TestAProbeThatNeverLeftIsNeitherAPassNorALeak(t *testing.T) {
 }
 
 func fenceVerdict(r fenceResult) (bool, string) { return r.ok, r.why }
+
+// A mode the drivers do not know would run as never, unattended; the daemon
+// refuses it on the way in instead.
+func TestAnUnknownApprovalModeIsRefused(t *testing.T) {
+	e := newTestEnv(t)
+	ctx := context.Background()
+	m, stop := e.daemon()
+	defer stop()
+	_, err := m.CreateAgent(ctx, api.CreateAgent{Isolation: "dev", Kind: driver.Codex, Prompt: "one", Options: driver.Options{Approvals: "aks"}})
+	var he httpError
+	if !errors.As(err, &he) || he.code != http.StatusBadRequest {
+		t.Fatalf("create: %v", err)
+	}
+	a, err := m.CreateAgent(ctx, api.CreateAgent{Isolation: "dev", Kind: driver.Codex, Prompt: "one", Options: driver.Options{Approvals: driver.ApprovalsAuto}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := m.SetOptions(a.ID, driver.Options{Approvals: "sometimes"}); !errors.As(err, &he) || he.code != http.StatusBadRequest {
+		t.Fatalf("set: %v", err)
+	}
+	got, _ := e.st.Agent(a.ID)
+	if got.Options.Approvals != driver.ApprovalsAuto {
+		t.Fatalf("stored approvals = %q", got.Options.Approvals)
+	}
+}

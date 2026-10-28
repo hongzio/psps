@@ -68,9 +68,18 @@ func (c *claude) Command() []string {
 	} else {
 		argv = append(argv, "--session-id", c.sessionID)
 	}
-	if c.opts.approvals() == ApprovalsAsk {
+	switch c.opts.approvals() {
+	case ApprovalsAsk:
 		argv = append(argv, "--permission-mode", "manual", "--permission-prompt-tool", "stdio")
-	} else {
+	case ApprovalsAuto:
+		// The classifier decides; an action it keeps blocking falls back to
+		// the prompt tool, which is the person in gero.
+		argv = append(argv, "--permission-mode", "auto", "--permission-prompt-tool", "stdio")
+	case ApprovalsDefault:
+		// No mode: settings.json's defaultMode decides (manual if it has
+		// none), and whatever that mode would ask comes to gero.
+		argv = append(argv, "--permission-prompt-tool", "stdio")
+	default:
 		argv = append(argv, "--permission-mode", "bypassPermissions")
 	}
 	if c.opts.Model != "" {

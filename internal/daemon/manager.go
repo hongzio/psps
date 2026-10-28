@@ -525,6 +525,9 @@ func (m *Manager) CreateAgent(ctx context.Context, req api.CreateAgent) (store.A
 	if req.Isolation == "" {
 		return store.Agent{}, errors.New("an isolation is required")
 	}
+	if err := req.Options.Check(); err != nil {
+		return store.Agent{}, badRequest(err)
+	}
 	iso, err := m.store.Isolation(req.Isolation)
 	if err != nil {
 		return store.Agent{}, fmt.Errorf("isolation %s: %w", req.Isolation, err)
@@ -633,6 +636,9 @@ func (m *Manager) Interrupt(id string) error {
 }
 
 func (m *Manager) SetOptions(id string, o driver.Options) error {
+	if err := o.Check(); err != nil {
+		return badRequest(err)
+	}
 	r, err := m.runtime(id)
 	if err != nil {
 		return err

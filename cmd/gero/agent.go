@@ -29,7 +29,7 @@ func agentCmd(p paths.Paths, args []string) error {
 	optFlags := func() func() driver.Options {
 		model := fs.String("model", "", "model")
 		effort := fs.String("effort", "", "reasoning effort")
-		approvals := fs.String("approvals", "", "never (default): run unattended; ask: surface tool use for approval")
+		approvals := fs.String("approvals", "", "never (default): run unattended; auto: unattended, a reviewer model refuses risky actions; ask: surface tool use for approval; default: the CLI's own settings in the isolation decide")
 		return func() driver.Options {
 			return driver.Options{Model: *model, Effort: *effort, Approvals: driver.Approvals(*approvals)}
 		}
@@ -135,7 +135,7 @@ func agentCmd(p paths.Paths, args []string) error {
 		opts := optFlags()
 		pos := parse(fs, args[1:])
 		if len(pos) != 1 {
-			return errors.New("usage: gero agent set ID [--model M] [--effort E] [--approvals never|ask]")
+			return errors.New("usage: gero agent set ID [--model M] [--effort E] [--approvals never|auto|ask|default]")
 		}
 		a, err := c.Agent(ctx, pos[0])
 		if err != nil {

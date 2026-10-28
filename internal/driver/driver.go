@@ -29,14 +29,53 @@ const (
 	// ApprovalsNever runs the agent unattended. The isolation, not the
 	// agent's own permission prompts, is the boundary.
 	ApprovalsNever Approvals = "never"
+	// ApprovalsAuto runs the agent unattended with a reviewer model in the
+	// person's place: Claude's auto mode classifier, Codex's auto-review
+	// agent behind its own sandbox. Risky actions (credentials sent out,
+	// destruction beyond the request, instructions planted in content) are
+	// refused; what the reviewer keeps refusing comes to the person.
+	ApprovalsAuto Approvals = "auto"
 	// ApprovalsAsk surfaces tool use as approval requests.
 	ApprovalsAsk Approvals = "ask"
+	// ApprovalsDefault leaves it to the CLI's own configuration in the
+	// isolation: Claude's ~/.claude/settings.json (permissions.defaultMode,
+	// manual when it has none), Codex's ~/.codex/config.toml (approval and
+	// sandbox settings, Codex's own defaults when it has none). Whatever that
+	// would ask a person comes to gero as an approval.
+	ApprovalsDefault Approvals = "default"
 )
+
+// ApprovalModes are the modes in the order forms offer them. An agent
+// created with none chosen (the API, `gero agent new` without --approvals)
+// runs as never; the new-agent forms start on default.
+var ApprovalModes = []Approvals{ApprovalsNever, ApprovalsAuto, ApprovalsAsk, ApprovalsDefault}
+
+// Valid reports whether a is a mode; "" is the default, never.
+func (a Approvals) Valid() bool {
+	if a == "" {
+		return true
+	}
+	for _, m := range ApprovalModes {
+		if a == m {
+			return true
+		}
+	}
+	return false
+}
 
 type Options struct {
 	Model     string    `json:"model,omitempty"`
 	Effort    string    `json:"effort,omitempty"`
 	Approvals Approvals `json:"approvals,omitempty"`
+}
+
+// Check refuses an approval mode that is not one: anything unknown would
+// otherwise run as never, unattended.
+func (o Options) Check() error {
+	if !o.Approvals.Valid() {
+		return fmt.Errorf("unknown approvals mode %q (never, auto, ask or default)", o.Approvals)
+	}
+	return nil
 }
 
 func (o Options) approvals() Approvals {

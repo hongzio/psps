@@ -56,13 +56,13 @@ const usage = `gero — run coding agents in isolated containers
   gero env choices SERVICE NAME FIELD   what a field can list, looked up with the env's credential (git: repos)
   gero env check SERVICE NAME   exercise it from the host, now
 
-  gero agent new --iso NAME --kind claude|codex [--repo URL] [--model M] [--effort E] [--approvals never|ask] PROMPT...
+  gero agent new --iso NAME --kind claude|codex [--repo URL] [--model M] [--effort E] [--approvals never|auto|ask|default] PROMPT...
   gero agent ls [--all]
   gero agent log ID [-f]
   gero agent send ID TEXT...
   gero agent approve ID APPROVAL accept|decline|cancel
   gero agent interrupt ID
-  gero agent set ID [--model M] [--effort E] [--approvals never|ask]
+  gero agent set ID [--model M] [--effort E] [--approvals never|auto|ask|default]
   gero agent archive ID
 
   gero tui [--keys]             the terminal UI; --keys prints a keys.toml with every default

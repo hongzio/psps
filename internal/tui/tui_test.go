@@ -467,6 +467,10 @@ func TestNewAgentForm(t *testing.T) {
 	if req.Isolation != "dev" || req.Kind != driver.Codex || req.Prompt != "fix the tests" {
 		t.Fatalf("request = %+v", req)
 	}
+	// Untouched, the form leaves approvals to the CLI's own settings.
+	if req.Options.Approvals != driver.ApprovalsDefault {
+		t.Fatalf("approvals = %q", req.Options.Approvals)
+	}
 	if h.m.openID != "new1" || h.m.focus != focusInput {
 		t.Fatalf("after create: open=%q focus=%v", h.m.openID, h.m.focus)
 	}
@@ -534,5 +538,18 @@ func TestKeymapOverrides(t *testing.T) {
 	}
 	if !strings.Contains(DefaultKeysTOML(), `new_agent        = ["ctrl+n"]`) {
 		t.Fatal("default keys.toml does not list new_agent")
+	}
+}
+
+// An agent stored without a mode has always run as never; its settings say
+// so rather than showing the new-agent default.
+func TestSettingsShowAnUnsetModeAsNever(t *testing.T) {
+	h := newHarness(t)
+	h.key("ctrl+o")
+	if h.m.settings == nil {
+		t.Fatal("settings not open")
+	}
+	if got := h.m.settings.fields[2].value(); got != string(driver.ApprovalsNever) {
+		t.Fatalf("approvals shown as %q", got)
 	}
 }

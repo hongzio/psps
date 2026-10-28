@@ -106,6 +106,34 @@ memory for the login's 15 minutes; the credential lands in the isolation as
 before. A login (or `gero iso logout`) restarts the isolation's idle agents
 of that kind, since Codex reads its login only when it starts.
 
+### Approvals
+
+Each agent runs in one of four modes (`--approvals`, or its settings in the
+TUI and on the web), changed at any time:
+
+- **never** (the default): unattended. The isolation, its network fence and
+  the credential proxies are the boundary.
+- **auto**: unattended, with a reviewer model in your place. Claude runs in
+  its auto mode: a classifier checks each action before it runs and refuses
+  what goes beyond the request, targets unknown infrastructure or follows
+  instructions planted in content it read; what it keeps refusing comes to
+  you as an approval. Codex runs its own Auto: a workspace-write sandbox
+  whose escapes (the network, the proxies included, and writes outside the
+  workspace) go to its auto-review agent; the conversation shows each
+  review, a refusal in red. Both cost a little latency per reviewed action,
+  and the reviews count toward the CLI's usage.
+- **ask**: every tool use waits for you (`ctrl+a` in the TUI, the
+  conversation on the web).
+- **default**: the CLI's own configuration in the isolation decides:
+  Claude's `~/.claude/settings.json` (`permissions.defaultMode`; manual,
+  asking for anything not allowed, when it says nothing), Codex's
+  `~/.codex/config.toml` (`approval_policy`, `sandbox_mode`,
+  `approvals_reviewer`; Codex's own defaults, a read-only sandbox that asks
+  for writes and the network, where it says nothing). Whatever that asks
+  comes to you as an approval. Edit those files with `gero iso shell`; a
+  running agent picks the change up when its mode is set again or it
+  restarts.
+
 ## How it holds together
 
 - **gero-shim** is each isolation container's main process. It owns the agent

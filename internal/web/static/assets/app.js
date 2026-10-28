@@ -777,7 +777,9 @@ function renderSettings(a) {
   const model = h('input', { value: o.model || '', placeholder: "the CLI's default" })
   const approvals = dropdown([
     { value: 'never', label: 'never — run unattended' },
+    { value: 'auto', label: 'auto — a reviewer model refuses risky actions' },
     { value: 'ask', label: 'ask — the agent asks first' },
+    { value: 'default', label: "default — the CLI's own settings decide" },
   ], { value: o.approvals || 'never', label: 'Approvals' })
   slot.replaceChildren(h('div', { class: 'popover' },
     h('h3', null, 'Agent settings'),
@@ -820,8 +822,10 @@ function newAgentView() {
   const model = h('input', { placeholder: "optional; the CLI's default otherwise" })
   const approvals = dropdown([
     { value: 'never', label: 'never — run unattended inside the isolation' },
+    { value: 'auto', label: 'auto — unattended; a reviewer model refuses risky actions' },
     { value: 'ask', label: 'ask — the agent asks first for what its own rules flag' },
-  ], { label: 'Approvals' })
+    { value: 'default', label: "default — the CLI's own settings in the isolation decide" },
+  ], { value: 'default', label: 'Approvals' })
   const prompt = h('textarea', { placeholder: 'What should the agent do?' })
   const fillEfforts = () => effort.setOptions(effortOptions(kind))
   fillEfforts()
