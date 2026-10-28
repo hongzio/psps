@@ -95,17 +95,18 @@ func (c CLI) EnsureImage(ctx context.Context, progress io.Writer) (string, error
 	return tag, c.Build(ctx, tag, dir, progress)
 }
 
-// Names of what one isolation owns.
+// Names of what one isolation owns, from its BaseName.
 func ContainerName(iso string) string { return "gero-" + iso }
 func NetworkName(iso string) string   { return "gero-" + iso + "-net" }
 func HomeVolume(iso string) string    { return "gero-" + iso + "-home" }
 func StateVolume(iso string) string   { return "gero-" + iso + "-state" }
 
-// Create starts a fresh container for an isolation. Its volumes are created
-// if missing and reused if present, which is also how a container is
-// recreated without losing agents' sessions and workspaces.
-func (c CLI) Create(ctx context.Context, iso, image string, cpus int, memory, network string) error {
-	for _, v := range []string{HomeVolume(iso), StateVolume(iso)} {
+// Create starts a fresh container for an isolation, named after base (its
+// BaseName). Its volumes are created if missing and reused if present, which
+// is also how a container is recreated without losing agents' sessions and
+// workspaces.
+func (c CLI) Create(ctx context.Context, base, image string, cpus int, memory, network string) error {
+	for _, v := range []string{HomeVolume(base), StateVolume(base)} {
 		if err := c.VolumeEnsure(ctx, v); err != nil {
 			return err
 		}
@@ -116,15 +117,15 @@ func (c CLI) Create(ctx context.Context, iso, image string, cpus int, memory, ne
 		}
 	}
 	return c.Run(ctx, RunSpec{
-		Name:    ContainerName(iso),
+		Name:    ContainerName(base),
 		Image:   image,
 		CPUs:    cpus,
 		Memory:  memory,
 		Network: network,
 		Volumes: [][2]string{
-			{HomeVolume(iso), AgentHome},
-			{StateVolume(iso), "/var/lib/gero"},
+			{HomeVolume(base), AgentHome},
+			{StateVolume(base), "/var/lib/gero"},
 		},
-		Labels: map[string]string{"dev.gero.isolation": iso},
+		Labels: map[string]string{"dev.gero.isolation": base},
 	})
 }

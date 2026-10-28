@@ -47,6 +47,8 @@ type runtime struct {
 
 	outbox    []store.Pending
 	decisions map[string]driver.Decision
+	// done closes when loop has returned.
+	done chan struct{}
 }
 
 func (m *Manager) newRuntime(a store.Agent) (*runtime, error) {
@@ -60,7 +62,7 @@ func (m *Manager) newRuntime(a store.Agent) (*runtime, error) {
 	}
 	ctx, cancel := context.WithCancel(m.ctx)
 	return &runtime{m: m, ctx: ctx, cancel: cancel, agent: a, drv: drv, outbox: outbox,
-		decisions: map[string]driver.Decision{}}, nil
+		decisions: map[string]driver.Decision{}, done: make(chan struct{})}, nil
 }
 
 func (r *runtime) loop() {

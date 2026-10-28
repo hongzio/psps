@@ -2,6 +2,7 @@ package daemon
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net"
 	"sort"
@@ -159,6 +160,11 @@ func (m *Manager) waitForFence(iso string) {
 			m.mu.Unlock()
 		}()
 		for {
+			// Renamed or deleted: its agents wait under another name, or
+			// are gone.
+			if _, err := m.store.Isolation(iso); errors.Is(err, store.ErrNotFound) {
+				return
+			}
 			ctx, cancel := context.WithTimeout(m.ctx, time.Minute)
 			m.ensureIsolation(ctx, iso)
 			cancel()

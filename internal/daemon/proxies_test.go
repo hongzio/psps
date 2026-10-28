@@ -388,3 +388,38 @@ func TestABrowserLoginIsHeldByTheDaemonAndSpentOnce(t *testing.T) {
 		t.Fatalf("%v", *finished)
 	}
 }
+
+// The proxies answer for the isolation by name; renamed, it is served as
+// its new self, with the tokens its agents already hold.
+func TestARenamedIsolationsProxiesServeItUnderItsNewName(t *testing.T) {
+	e := newTestEnv(t)
+	ctx := context.Background()
+	m, stop := e.daemon()
+	defer stop()
+	port := freePort(t)
+	m.SetProxies(proxy.NewRegistry(echoService{}), &creds.Store{Path: filepath.Join(t.TempDir(), "credentials")})
+	m.tunnelPort = func(int) int { return port }
+	if _, err := m.PutEnv(ctx, "echo", "prod", proxy.Patch{}, true); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := m.Expose(ctx, "dev", "echo", api.Expose{Envs: []string{"prod"}}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := m.ensureIsolation(ctx, "dev"); err != nil {
+		t.Fatal(err)
+	}
+	e.waitFor("the tunnel", func() bool { return m.tunnelStatus("dev") == "up" })
+	toks, _ := e.st.Tokens("dev", "echo")
+
+	if _, err := m.UpdateIsolation(ctx, "dev", api.UpdateIsolation{Name: "work"}); err != nil {
+		t.Fatal(err)
+	}
+	e.waitFor("the tunnel under the new name", func() bool { return m.tunnelStatus("work") == "up" })
+	e.waitFor("the new name's instance", func() bool { return ask(t, port, "ping") == "hello ping from work" })
+	if env := strings.Join(m.isolationEnv("work"), "\n"); !strings.Contains(env, "ECHO_TOKEN="+toks["prod"]) {
+		t.Fatalf("the agents' token changed: %s", env)
+	}
+	if m.tunnelStatus("dev") != "" {
+		t.Fatalf("a tunnel is still kept for the old name: %q", m.tunnelStatus("dev"))
+	}
+}

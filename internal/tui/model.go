@@ -34,6 +34,7 @@ type Backend interface {
 	Archive(ctx context.Context, id string) error
 	Follow(ctx context.Context, id string, after int64, fn func(event.Event) error) error
 	CreateIsolation(ctx context.Context, req api.CreateIsolation) (api.Isolation, error)
+	UpdateIsolation(ctx context.Context, name string, req api.UpdateIsolation) (api.Isolation, error)
 	UpgradeIsolation(ctx context.Context, name string) (api.Isolation, error)
 	DeleteIsolation(ctx context.Context, name string, purge bool) error
 	SetEnv(ctx context.Context, name string, set api.SetEnv) error
@@ -395,6 +396,13 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case isolationsMsg:
 		if msg.err == nil {
 			m.isolations = msg.isos
+			if p := m.isoPage; p != nil && p.follow != "" {
+				for i, iso := range m.isolations {
+					if iso.Name == p.follow {
+						p.sel, p.follow = i, ""
+					}
+				}
+			}
 			if m.newForm != nil {
 				m.newForm.setIsolations(m.isolations)
 			}

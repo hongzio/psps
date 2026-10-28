@@ -108,6 +108,10 @@ type fakeContainers struct {
 	tunnels map[string][]pipeRW
 	// bin goes first on PATH for StartAsAgent: the agent CLIs' fakes.
 	bin string
+	// created is every Create, as "base cpus memory"; refuse is a memory
+	// size Create fails for, the way container refuses one.
+	created []string
+	refuse  string
 }
 
 type fakeCtr struct {
@@ -162,8 +166,24 @@ func (f *fakeContainers) boot(name string) error {
 }
 
 func (f *fakeContainers) Start(_ context.Context, name string) error { return f.boot(name) }
-func (f *fakeContainers) Create(_ context.Context, iso, _ string, _ int, _, _ string) error {
-	return f.boot("gero-" + iso)
+func (f *fakeContainers) Create(_ context.Context, base, _ string, cpus int, memory, _ string) error {
+	f.mu.Lock()
+	f.created = append(f.created, fmt.Sprintf("%s %d %s", base, cpus, memory))
+	refused := f.refuse != "" && memory == f.refuse
+	f.mu.Unlock()
+	if refused {
+		return fmt.Errorf("container: cannot give a VM %s", memory)
+	}
+	return f.boot("gero-" + base)
+}
+
+func (f *fakeContainers) lastCreated() string {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if len(f.created) == 0 {
+		return ""
+	}
+	return f.created[len(f.created)-1]
 }
 
 func (f *fakeContainers) NetworkInspect(context.Context, string) (isolation.NetworkInfo, error) {
@@ -889,5 +909,197 @@ func TestAnUnknownApprovalModeIsRefused(t *testing.T) {
 	got, _ := e.st.Agent(a.ID)
 	if got.Options.Approvals != driver.ApprovalsAuto {
 		t.Fatalf("stored approvals = %q", got.Options.Approvals)
+	}
+}
+
+// agentPID is the agent's process as the shim reports it, 0 if none runs.
+func agentPID(t *testing.T, m *Manager, id string) int {
+	t.Helper()
+	r, err := m.runtime(id)
+	if err != nil {
+		return 0
+	}
+	r.mu.Lock()
+	client := r.client
+	r.mu.Unlock()
+	if client == nil {
+		return 0
+	}
+	infos, err := client.List(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, in := range infos {
+		if in.ID == id && in.Running {
+			return in.PID
+		}
+	}
+	return 0
+}
+
+// A rename is gero's alone: the VM, and the agent processes in it, never
+// notice.
+func TestRenamingAnIsolationKeepsItsAgentsRunning(t *testing.T) {
+	e := newTestEnv(t)
+	ctx := context.Background()
+	m, stop := e.daemon()
+	defer stop()
+	v1 := "v1"
+	if err := m.SetEnv("dev", api.SetEnv{"GERO_TEST_VAR": &v1}); err != nil {
+		t.Fatal(err)
+	}
+	a, err := m.CreateAgent(ctx, api.CreateAgent{Isolation: "dev", Kind: driver.Codex, Prompt: "one"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	e.waitFor("first answer", func() bool { return e.hasAssistant(a.ID, "echo: one") && status(m, a.ID) == event.StatusIdle })
+	pid := agentPID(t, m, a.ID)
+	if pid == 0 {
+		t.Fatal("no agent process")
+	}
+	before := len(e.events(a.ID))
+
+	iso, err := m.UpdateIsolation(ctx, "dev", api.UpdateIsolation{Name: "work"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if iso.Name != "work" || iso.Container != "gero-dev" || iso.Network != "gero-dev-net" || iso.BaseName() != "dev" {
+		t.Fatalf("renamed: %+v", iso.Isolation)
+	}
+	if _, err := e.st.Isolation("dev"); !errors.Is(err, store.ErrNotFound) {
+		t.Fatalf("old name: %v", err)
+	}
+	e.waitFor("the agent back under the new name", func() bool {
+		v, _ := m.Agent(a.ID)
+		return v.Isolation == "work" && v.State.Alive && v.State.Status == event.StatusIdle
+	})
+	if got := agentPID(t, m, a.ID); got != pid {
+		t.Fatalf("agent process %d became %d: the rename restarted it", pid, got)
+	}
+	if after := len(e.events(a.ID)); after != before {
+		t.Fatalf("reattaching stored %d events twice", after-before)
+	}
+	if err := m.Send(a.ID, "env"); err != nil {
+		t.Fatal(err)
+	}
+	e.waitFor("a turn under the new name", func() bool { return e.hasAssistant(a.ID, "echo: env=v1") })
+	for _, ev := range e.events(a.ID) {
+		if ev.Kind == event.KindNotice && strings.HasPrefix(ev.Text, "thread/resume") {
+			t.Fatalf("the agent was restarted: %v", kindsOf(e.events(a.ID)))
+		}
+	}
+
+	// The old name is free again, but its container is not: a new "dev"
+	// gets things named its own way.
+	nd, err := m.CreateIsolation(ctx, api.CreateIsolation{Name: "dev"}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if nd.Container == "gero-dev" || !strings.HasPrefix(nd.Base, "dev-") || nd.Container != "gero-"+nd.Base || nd.Network != "gero-"+nd.Base+"-net" {
+		t.Fatalf("new dev: %+v", nd)
+	}
+	if st, _ := e.fc.State(ctx, "gero-dev"); st != "running" {
+		t.Fatalf("work's container is %s", st)
+	}
+}
+
+func TestARenameIsCheckedBeforeAnythingMoves(t *testing.T) {
+	e := newTestEnv(t)
+	ctx := context.Background()
+	m, stop := e.daemon()
+	defer stop()
+	if err := e.st.PutIsolation(store.Isolation{Name: "other", Container: "gero-other", Image: "fake:1", CreatedAt: time.Now()}); err != nil {
+		t.Fatal(err)
+	}
+	var he httpError
+	if _, err := m.UpdateIsolation(ctx, "dev", api.UpdateIsolation{Name: "other"}); !errors.Is(err, store.ErrExists) {
+		t.Fatalf("renamed onto another isolation: %v", err)
+	}
+	if _, err := m.UpdateIsolation(ctx, "dev", api.UpdateIsolation{Name: "Not OK"}); !errors.As(err, &he) || he.code != http.StatusBadRequest {
+		t.Fatalf("bad name: %v", err)
+	}
+	// A bad size refuses the rename that came with it, too.
+	bad := "8"
+	if _, err := m.UpdateIsolation(ctx, "dev", api.UpdateIsolation{Name: "work", Memory: &bad}); !errors.As(err, &he) || he.code != http.StatusBadRequest {
+		t.Fatalf("bare-number memory: %v", err)
+	}
+	if _, err := e.st.Isolation("dev"); err != nil {
+		t.Fatalf("dev after refused updates: %v", err)
+	}
+}
+
+// container cannot resize a VM: the container is replaced on its volumes,
+// and put back as it was when the new size will not start.
+func TestResizingAnIsolationReplacesItsContainer(t *testing.T) {
+	e := newTestEnv(t)
+	ctx := context.Background()
+	m, stop := e.daemon()
+	defer stop()
+	cpus, mem := 2, "8G"
+	iso, err := m.UpdateIsolation(ctx, "dev", api.UpdateIsolation{CPUs: &cpus, Memory: &mem})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if iso.CPUs != 2 || iso.Memory != "8G" || e.fc.lastCreated() != "dev 2 8G" || iso.State != "running" {
+		t.Fatalf("resized: %+v, created %q", iso.Isolation, e.fc.lastCreated())
+	}
+
+	e.fc.mu.Lock()
+	e.fc.refuse = "3G"
+	e.fc.mu.Unlock()
+	big := "3G"
+	if _, err := m.UpdateIsolation(ctx, "dev", api.UpdateIsolation{Memory: &big}); err == nil || !strings.Contains(err.Error(), "back at its old size") {
+		t.Fatalf("a size container refused: %v", err)
+	}
+	stored, _ := e.st.Isolation("dev")
+	if stored.Memory != "8G" || e.fc.lastCreated() != "dev 2 8G" {
+		t.Fatalf("after a refused size: memory %q, created %q", stored.Memory, e.fc.lastCreated())
+	}
+	if st, _ := e.fc.State(ctx, "gero-dev"); st != "running" {
+		t.Fatalf("container is %s", st)
+	}
+
+	e.fc.mu.Lock()
+	n := len(e.fc.created)
+	e.fc.mu.Unlock()
+	for _, bad := range []api.UpdateIsolation{{Memory: ptr("8")}, {Memory: ptr("100M")}, {Memory: ptr("1P")}, {CPUs: ptr(-1)}, {CPUs: ptr(1 << 10)}} {
+		if _, err := m.UpdateIsolation(ctx, "dev", bad); err == nil {
+			t.Fatalf("%+v was taken", bad)
+		}
+	}
+	e.fc.mu.Lock()
+	defer e.fc.mu.Unlock()
+	if len(e.fc.created) != n {
+		t.Fatalf("a refused size replaced the container: %v", e.fc.created[n:])
+	}
+}
+
+func ptr[T any](v T) *T { return &v }
+
+func TestARenameDoesNotInterruptATurn(t *testing.T) {
+	e := newTestEnv(t)
+	ctx := context.Background()
+	m, stop := e.daemon()
+	defer stop()
+	a, err := m.CreateAgent(ctx, api.CreateAgent{Isolation: "dev", Kind: driver.Codex, Prompt: "hang"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	e.waitFor("the turn", func() bool { return status(m, a.ID) == event.StatusWorking })
+	if _, err := m.UpdateIsolation(ctx, "dev", api.UpdateIsolation{Name: "work"}); err != nil {
+		t.Fatal(err)
+	}
+	e.waitFor("the agent back under the new name", func() bool {
+		v, _ := m.Agent(a.ID)
+		return v.Isolation == "work" && v.State.Alive
+	})
+	time.Sleep(200 * time.Millisecond)
+	if s := status(m, a.ID); s != event.StatusWorking {
+		t.Fatalf("status %s after the rename", s)
+	}
+	for _, ev := range e.events(a.ID) {
+		if ev.Kind == event.KindTurnEnd {
+			t.Fatalf("the turn ended: %v", kindsOf(e.events(a.ID)))
+		}
 	}
 }

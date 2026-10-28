@@ -63,6 +63,7 @@ var defaultBindings = []binding{
 	{"iso_new", []string{"n"}, "isolations", "new isolation"},
 	{"iso_env", []string{"e"}, "isolations", "set an environment variable"},
 	{"iso_login", []string{"l"}, "isolations", "accounts: what Claude and Codex log in with there"},
+	{"iso_settings", []string{"s"}, "isolations", "settings: rename, CPUs and memory"},
 	{"iso_upgrade", []string{"u"}, "isolations", "upgrade to the current image"},
 	{"iso_delete", []string{"d"}, "isolations", "delete"},
 	{"iso_services", []string{"p"}, "isolations", "what the isolation's credential proxies serve"},

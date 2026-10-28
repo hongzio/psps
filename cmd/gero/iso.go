@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"strconv"
 	"strings"
 	"text/tabwriter"
 
@@ -19,7 +20,7 @@ import (
 
 func isoCmd(p paths.Paths, args []string) error {
 	if len(args) == 0 {
-		return errors.New("usage: gero iso create|ls|upgrade|rm|env|login|logout|account|shell|verify|services|expose|unexpose")
+		return errors.New("usage: gero iso create|ls|rename|set|upgrade|rm|env|login|logout|account|shell|verify|services|expose|unexpose")
 	}
 	c, err := connect(p)
 	if err != nil {
@@ -56,7 +57,7 @@ func isoCmd(p paths.Paths, args []string) error {
 			return err
 		}
 		tw := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
-		fmt.Fprintln(tw, "NAME\tSTATE\tFENCE\tPROXIES\tIMAGE\tENV")
+		fmt.Fprintln(tw, "NAME\tSTATE\tFENCE\tPROXIES\tSIZE\tIMAGE\tENV")
 		short := func(s string) string {
 			if r := []rune(s); len(r) > 60 {
 				return string(r[:59]) + "…"
@@ -64,9 +65,44 @@ func isoCmd(p paths.Paths, args []string) error {
 			return orDash(s)
 		}
 		for _, iso := range isos {
-			fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\t%s\n", iso.Name, iso.State, short(iso.FenceState), short(iso.Proxies), iso.Image, strings.Join(iso.EnvKeys, ","))
+			fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\t%s\t%s\n", iso.Name, iso.State, short(iso.FenceState), short(iso.Proxies), size(iso.CPUs, iso.Memory), iso.Image, strings.Join(iso.EnvKeys, ","))
 		}
 		return tw.Flush()
+
+	case "rename":
+		pos := parse(fs, args[1:])
+		if len(pos) != 2 {
+			return errors.New("usage: gero iso rename NAME NEW-NAME")
+		}
+		iso, err := c.UpdateIsolation(ctx, pos[0], api.UpdateIsolation{Name: pos[1]})
+		if err != nil {
+			return err
+		}
+		fmt.Printf("isolation %s is now %s; its agents kept running (container %s keeps its name)\n", pos[0], iso.Name, iso.Container)
+		return nil
+
+	case "set":
+		cpus := fs.Int("cpus", 0, "CPUs for the VM (0: container's default)")
+		memory := fs.String("memory", "", "memory for the VM, like 8G (empty: container's default)")
+		pos := parse(fs, args[1:])
+		var req api.UpdateIsolation
+		fs.Visit(func(f *flag.Flag) {
+			switch f.Name {
+			case "cpus":
+				req.CPUs = cpus
+			case "memory":
+				req.Memory = memory
+			}
+		})
+		if len(pos) != 1 || (req.CPUs == nil && req.Memory == nil) {
+			return errors.New("usage: gero iso set NAME [--cpus N] [--memory 8G]   (replaces the container: running agents restart; sessions and workspaces are kept)")
+		}
+		iso, err := c.UpdateIsolation(ctx, pos[0], req)
+		if err != nil {
+			return err
+		}
+		fmt.Printf("isolation %s now has %s; sessions and workspaces were kept, running agents start again on their next message\n", iso.Name, size(iso.CPUs, iso.Memory))
+		return nil
 
 	case "upgrade":
 		pos := parse(fs, args[1:])
@@ -303,6 +339,18 @@ func isoCmd(p paths.Paths, args []string) error {
 		return cmd.Run()
 	}
 	return fmt.Errorf("unknown iso command %q", args[0])
+}
+
+// size is a VM's CPUs and memory; 0 and "" are container's defaults.
+func size(cpus int, memory string) string {
+	c, m := "default CPUs", "default memory"
+	if cpus > 0 {
+		c = strconv.Itoa(cpus) + " CPUs"
+	}
+	if memory != "" {
+		m = memory + " memory"
+	}
+	return c + ", " + m
 }
 
 // interactive builds argv in the isolation as the agent user, for this

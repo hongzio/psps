@@ -12,6 +12,7 @@ import (
 	"io"
 	"os"
 	"os/exec"
+	"regexp"
 	"strconv"
 	"strings"
 	"sync"
@@ -148,6 +149,33 @@ func (c CLI) Build(ctx context.Context, tag, dir string, progress io.Writer) err
 		return fmt.Errorf("container build: %w\n%s", err, s)
 	}
 	return nil
+}
+
+// memorySize is container's --memory with its unit: K to P, 1024-based,
+// written 4G, 4GB or 4GiB. container also takes a bare number, as bytes;
+// gero does not, since "4096" is never meant as 4 KiB.
+var memorySize = regexp.MustCompile(`(?i)^([0-9]+(?:\.[0-9]+)?) ?([KMGTP])(?:i?B)?$`)
+
+// MinMemory is the least container starts a VM with.
+const MinMemory = 200 << 20
+
+// MemoryBytes is the size a --memory names, refusing one container would,
+// before anything is torn down for it. "" (container's default) is 0.
+func MemoryBytes(s string) (uint64, error) {
+	if s == "" {
+		return 0, nil
+	}
+	m := memorySize.FindStringSubmatch(s)
+	if m == nil {
+		return 0, fmt.Errorf("memory %q: give a size with its unit, like 4G or 512M", s)
+	}
+	n, _ := strconv.ParseFloat(m[1], 64)
+	shift := strings.Index("KMGTP", strings.ToUpper(m[2]))*10 + 10
+	b := uint64(n * float64(uint64(1)<<shift))
+	if b < MinMemory {
+		return 0, fmt.Errorf("memory %s: container starts a VM with no less than 200M", s)
+	}
+	return b, nil
 }
 
 type RunSpec struct {

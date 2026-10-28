@@ -24,7 +24,12 @@ import (
 var ErrNotFound = errors.New("not found")
 
 type Isolation struct {
-	Name      string `json:"name"`
+	Name string `json:"name"`
+	// Base is what its container, network and volumes are named after,
+	// when that is not Name: the name it had when they were made, which a
+	// rename leaves them with, or one a new isolation took because its own
+	// was still in use that way.
+	Base      string `json:"base,omitempty"`
 	Container string `json:"container"`
 	Image     string `json:"image"`
 	CPUs      int    `json:"cpus,omitempty"`
@@ -143,6 +148,7 @@ func (s *Store) Vacuum() error {
 var added = []struct{ table, column, def string }{
 	{"isolations", "network", "TEXT NOT NULL DEFAULT ''"},
 	{"isolations", "fence", "TEXT NOT NULL DEFAULT 'on'"},
+	{"isolations", "base", "TEXT NOT NULL DEFAULT ''"},
 }
 
 func migrate(db *sql.DB) error {
@@ -181,19 +187,67 @@ func (s *Store) PutIsolation(iso Isolation) error {
 	if iso.Fence == "" {
 		iso.Fence = "on"
 	}
-	_, err := s.db.Exec(`INSERT INTO isolations (name, container, image, cpus, memory, env, created_at, network, fence)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+	_, err := s.db.Exec(`INSERT INTO isolations (name, container, image, cpus, memory, env, created_at, network, fence, base)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 		ON CONFLICT(name) DO UPDATE SET container=excluded.container, image=excluded.image,
 			cpus=excluded.cpus, memory=excluded.memory, env=excluded.env,
-			network=excluded.network, fence=excluded.fence`,
-		iso.Name, iso.Container, iso.Image, iso.CPUs, iso.Memory, string(env), ts(iso.CreatedAt), iso.Network, iso.Fence)
+			network=excluded.network, fence=excluded.fence, base=excluded.base`,
+		iso.Name, iso.Container, iso.Image, iso.CPUs, iso.Memory, string(env), ts(iso.CreatedAt), iso.Network, iso.Fence, iso.Base)
 	return err
+}
+
+// BaseName is what the isolation's container, network and volumes are
+// named after.
+func (iso Isolation) BaseName() string {
+	if iso.Base != "" {
+		return iso.Base
+	}
+	return iso.Name
+}
+
+// ErrExists refuses a name another isolation has.
+var ErrExists = errors.New("already exists")
+
+// RenameIsolation moves an isolation, and everything that names it, to a
+// new name in one transaction. Its container, network and volumes keep
+// theirs: Base remembers it.
+func (s *Store) RenameIsolation(from, to string) error {
+	tx, err := s.db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	// The rows that point at the isolation follow it within this
+	// transaction; checked at commit, the references hold again.
+	if _, err := tx.Exec(`PRAGMA defer_foreign_keys = ON`); err != nil {
+		return err
+	}
+	var n int
+	if err := tx.QueryRow(`SELECT COUNT(*) FROM isolations WHERE name = ?`, to).Scan(&n); err != nil {
+		return err
+	}
+	if n > 0 {
+		return fmt.Errorf("isolation %s %w", to, ErrExists)
+	}
+	res, err := tx.Exec(`UPDATE isolations SET name = ?, base = CASE WHEN base = '' THEN name ELSE base END WHERE name = ?`, to, from)
+	if err != nil {
+		return err
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		return fmt.Errorf("isolation %s: %w", from, ErrNotFound)
+	}
+	for _, table := range []string{"agents", "exposures", "tokens", "account_links"} {
+		if _, err := tx.Exec(`UPDATE `+table+` SET isolation = ? WHERE isolation = ?`, to, from); err != nil {
+			return err
+		}
+	}
+	return tx.Commit()
 }
 
 func scanIsolation(row interface{ Scan(...any) error }) (Isolation, error) {
 	var iso Isolation
 	var env, created string
-	err := row.Scan(&iso.Name, &iso.Container, &iso.Image, &iso.CPUs, &iso.Memory, &env, &created, &iso.Network, &iso.Fence)
+	err := row.Scan(&iso.Name, &iso.Container, &iso.Image, &iso.CPUs, &iso.Memory, &env, &created, &iso.Network, &iso.Fence, &iso.Base)
 	if errors.Is(err, sql.ErrNoRows) {
 		return iso, ErrNotFound
 	}
@@ -202,7 +256,7 @@ func scanIsolation(row interface{ Scan(...any) error }) (Isolation, error) {
 	return iso, err
 }
 
-const isolationCols = `name, container, image, cpus, memory, env, created_at, network, fence`
+const isolationCols = `name, container, image, cpus, memory, env, created_at, network, fence, base`
 
 func (s *Store) Isolation(name string) (Isolation, error) {
 	return scanIsolation(s.db.QueryRow(`SELECT `+isolationCols+` FROM isolations WHERE name = ?`, name))

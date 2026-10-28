@@ -3,6 +3,7 @@ package tui
 import (
 	"context"
 	"fmt"
+	"strconv"
 	"strings"
 	"time"
 
@@ -21,6 +22,7 @@ const (
 	isoList isoMode = iota
 	isoNew
 	isoEnv
+	isoSettings
 	isoVerify
 )
 
@@ -35,6 +37,9 @@ type isoPage struct {
 	clis   *clisPage
 	// report is the last verify, shown until a key is pressed.
 	report *api.Verify
+	// follow is the name the selection moves to when the list next
+	// arrives: a renamed isolation can sort elsewhere.
+	follow string
 }
 
 type verifyMsg struct {
@@ -99,6 +104,17 @@ func (m *Model) handleIsoKey(msg tea.KeyMsg) tea.Cmd {
 		val.text.EchoMode = textinput.EchoPassword
 		p.mode, p.form = isoEnv, &form{fields: []*field{key, val}}
 		key.focus(true)
+	case ok && k.Is(msg, "iso_settings"):
+		name := textField("Name", "lowercase letters, digits, dashes", "renaming keeps the agents running")
+		name.text.SetValue(iso.Name)
+		cpus := textField("CPUs", "empty: container's default", "")
+		if iso.CPUs > 0 {
+			cpus.text.SetValue(strconv.Itoa(iso.CPUs))
+		}
+		mem := textField("Memory", "e.g. 8G; empty: container's default", "")
+		mem.text.SetValue(iso.Memory)
+		p.mode, p.form = isoSettings, &form{fields: []*field{name, cpus, mem}}
+		name.focus(true)
 	case ok && k.Is(msg, "iso_login"):
 		return m.openCLIs(iso.Name)
 	case ok && k.Is(msg, "iso_services"):
@@ -166,6 +182,8 @@ func (m *Model) handleIsoFormKey(msg tea.KeyMsg) tea.Cmd {
 			_, err := be.CreateIsolation(ctx, api.CreateIsolation{Name: name, Memory: mem})
 			return err
 		})
+	case isoSettings:
+		return m.saveIsoSettings(iso)
 	case isoEnv:
 		key, val := p.form.fields[0].value(), p.form.fields[1].text.Value()
 		if key == "" {
@@ -183,6 +201,76 @@ func (m *Model) handleIsoFormKey(msg tea.KeyMsg) tea.Cmd {
 		})
 	}
 	return nil
+}
+
+// saveIsoSettings sends what the settings form changed. A rename alone goes
+// straight through; a new size replaces the container, so it asks first.
+func (m *Model) saveIsoSettings(iso api.Isolation) tea.Cmd {
+	p, be := m.isoPage, m.be
+	f := p.form.fields
+	var req api.UpdateIsolation
+	if n := f[0].value(); n != iso.Name {
+		if n == "" {
+			m.setFlash("a name is required", true)
+			return nil
+		}
+		req.Name = n
+	}
+	cpus := 0
+	if c := f[1].value(); c != "" {
+		n, err := strconv.Atoi(c)
+		if err != nil {
+			m.setFlash("CPUs is a whole number, or empty for container's default", true)
+			return nil
+		}
+		cpus = n
+	}
+	if cpus != iso.CPUs {
+		req.CPUs = &cpus
+	}
+	if mem := f[2].value(); mem != iso.Memory {
+		req.Memory = &mem
+	}
+	if req.Name == "" && req.CPUs == nil && req.Memory == nil {
+		p.mode, p.form = isoList, nil
+		return nil
+	}
+	name, to := iso.Name, iso.Name
+	if req.Name != "" {
+		to = req.Name
+	}
+	run := func() tea.Cmd {
+		p.mode, p.form, p.follow = isoList, nil, to
+		done := "renamed " + name + " to " + to + "; its agents kept running"
+		if req.CPUs != nil || req.Memory != nil {
+			p.busy = "resizing " + to + "…"
+			done = to + " resized; sessions and workspaces were kept"
+		}
+		return m.do(done, true, func(ctx context.Context) error {
+			_, err := be.UpdateIsolation(ctx, name, req)
+			return err
+		})
+	}
+	if req.CPUs == nil && req.Memory == nil {
+		return run()
+	}
+	m.confirm = &confirmation{
+		prompt: fmt.Sprintf("resize %s to %s? the container is replaced: running agents restart; sessions are kept (y/n)", name, isoSize(cpus, f[2].value())),
+		onYes:  run,
+	}
+	return nil
+}
+
+// isoSize is a VM's CPUs and memory; 0 and "" are container's defaults.
+func isoSize(cpus int, memory string) string {
+	c, mem := "default CPUs", "default memory"
+	if cpus > 0 {
+		c = strconv.Itoa(cpus) + " CPUs"
+	}
+	if memory != "" {
+		mem = memory
+	}
+	return c + ", " + mem
 }
 
 func (m *Model) renderIsolations(width int) string {
@@ -212,7 +300,7 @@ func (m *Model) renderIsolations(width int) string {
 		default:
 			fence = th.err.Render("fence ✗")
 		}
-		line := fmt.Sprintf("%-14s %s %s  %-24s env: %s", iso.Name, state, fence, iso.Image, env)
+		line := fmt.Sprintf("%-14s %s %s  %-24s %-22s env: %s", iso.Name, state, fence, iso.Image, isoSize(iso.CPUs, iso.Memory), env)
 		if i == p.sel {
 			b.WriteString(th.user.Render("› ") + th.title.Render(line) + "\n")
 		} else {
@@ -232,13 +320,19 @@ func (m *Model) renderIsolations(width int) string {
 		b.WriteString(th.title.Render("Environment for "+iso.Name) + "\n" + p.form.render(th, width))
 		b.WriteString(th.dim.Render("  agents read it when their process starts; idle ones restart to pick it up") + "\n")
 		b.WriteString(th.dim.Render(fmt.Sprintf("  %s save · %s cancel", k.Label("submit"), k.Label("back"))) + "\n")
+	case isoSettings:
+		iso, _ := p.current(m.isolations)
+		b.WriteString(th.title.Render("Settings for "+iso.Name) + "\n" + p.form.render(th, width))
+		b.WriteString(th.dim.Render("  a new name changes nothing in the VM; a new size replaces the container (running agents restart)") + "\n")
+		b.WriteString(th.dim.Render(fmt.Sprintf("  %s save · %s cancel", k.Label("submit"), k.Label("back"))) + "\n")
 	case isoVerify:
 		b.WriteString(m.renderVerify(*p.report, width))
 		b.WriteString(th.dim.Render("  any key closes · `gero iso verify "+p.report.Isolation+" --json` for the full record") + "\n")
 	default:
 		hints := []string{
-			k.Label("iso_new") + " new", k.Label("iso_env") + " env", k.Label("iso_login") + " accounts", k.Label("iso_services") + " services",
-			k.Label("iso_verify") + " verify", k.Label("iso_upgrade") + " upgrade", k.Label("iso_delete") + " delete", k.Label("back") + " back",
+			k.Label("iso_new") + " new", k.Label("iso_settings") + " settings", k.Label("iso_env") + " env", k.Label("iso_login") + " accounts",
+			k.Label("iso_services") + " services", k.Label("iso_verify") + " verify", k.Label("iso_upgrade") + " upgrade", k.Label("iso_delete") + " delete",
+			k.Label("back") + " back",
 		}
 		b.WriteString(th.dim.Render("  "+strings.Join(hints, " · ")) + "\n")
 	}

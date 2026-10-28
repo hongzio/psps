@@ -20,6 +20,8 @@ sudo bin/gero pf install                  # once: the network fence helper (see 
 bin/gero iso create dev                   # first run builds the base image
 bin/gero iso login dev codex              # or claude; or from the web / TUI (see below)
 bin/gero iso upgrade dev                  # after a gero upgrade: new image, same volumes
+bin/gero iso set dev --memory 8G --cpus 6  # resize: a new container, same volumes
+bin/gero iso rename dev work              # agents keep running
 bin/gero iso verify dev                   # measure the fence, the proxies, the mounts
 bin/gero agent new --iso dev --kind codex "fix the flaky test"
 bin/gero agent ls
@@ -36,7 +38,7 @@ bin/gero tui
 Agents on the left (status at a glance; archived ones folded at the bottom),
 the selected agent's conversation in the middle, the input at the bottom with
 the agent's settings behind `ctrl+o`. `ctrl+n` starts an agent, `ctrl+g`
-manages isolations (environment, upgrades, `v` to verify one, `l` its accounts
+manages isolations (environment, `s` to rename or resize one, upgrades, `v` to verify one, `l` its accounts
 (what Claude and Codex log in with), and with `p` the credential proxies each one serves), `ctrl+r` the
 proxies' environments (secrets and
 browser logins included), `ctrl+a` answers a pending approval, `f1` lists
@@ -147,6 +149,16 @@ TUI and on the web), changed at any time:
   daemon catches up from the log. A reboot or container stop ends the agent
   process; the turn in flight shows as `interrupted`, and the next message
   starts a process that resumes the same session.
+- An isolation's container, network and volumes are named after the name it
+  was created with (`gero-dev`, `gero-dev-net`, `gero-dev-home`,
+  `gero-dev-state`). `gero iso rename` changes only gero's name for it: they
+  keep theirs, so nothing in the VM moves and its agents keep running (their
+  runtimes reattach under the new name, as after a daemon restart). A new
+  isolation given a name whose resources are still in use that way gets a
+  suffix (`gero-dev-3f2a`). `container` cannot resize a VM, so `gero iso set`
+  replaces the container on the same volumes, as an upgrade does: running
+  agents end, sessions and workspaces stay, and a size the new container
+  will not start with is put back.
 
 ## Network fence
 

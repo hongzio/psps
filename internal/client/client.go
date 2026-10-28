@@ -87,6 +87,12 @@ func (c *Client) CreateIsolation(ctx context.Context, req api.CreateIsolation) (
 	return v, c.do(ctx, "POST", "/v1/isolations", req, &v)
 }
 
+// UpdateIsolation renames an isolation or resizes its VM.
+func (c *Client) UpdateIsolation(ctx context.Context, name string, req api.UpdateIsolation) (api.Isolation, error) {
+	var v api.Isolation
+	return v, c.do(ctx, "PATCH", "/v1/isolations/"+url.PathEscape(name), req, &v)
+}
+
 func (c *Client) UpgradeIsolation(ctx context.Context, name string) (api.Isolation, error) {
 	var v api.Isolation
 	return v, c.do(ctx, "POST", "/v1/isolations/"+url.PathEscape(name)+"/upgrade", nil, &v)

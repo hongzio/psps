@@ -222,3 +222,75 @@ func TestTheStoreIsTheOwnersAlone(t *testing.T) {
 		t.Fatalf("store is %v", fi.Mode().Perm())
 	}
 }
+
+func TestRenamingAnIsolationMovesEverythingThatNamesIt(t *testing.T) {
+	s := open(t)
+	now := time.Now()
+	for _, n := range []string{"dev", "other"} {
+		if err := s.PutIsolation(Isolation{Name: n, Container: "gero-" + n, Image: "img", Network: "gero-" + n + "-net",
+			CreatedAt: now, Env: map[string]string{"K": "v"}}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := s.CreateAgent(Agent{ID: "a1", Name: "x", Kind: driver.Codex, Isolation: "dev", Workdir: "/w", CreatedAt: now}); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.PutExposure(Exposure{Isolation: "dev", Service: "git", Envs: []string{}}); err != nil {
+		t.Fatal(err)
+	}
+	toks, err := s.EnsureTokens("dev", "git", []string{""})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := s.PutAccount(Account{Name: "work", Kind: "claude-token"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.UseAccount("dev", driver.Claude, "work"); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := s.RenameIsolation("dev", "other"); !errors.Is(err, ErrExists) {
+		t.Fatalf("renamed onto another isolation: %v", err)
+	}
+	if err := s.RenameIsolation("nope", "x"); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("renamed a missing isolation: %v", err)
+	}
+	if err := s.RenameIsolation("dev", "work"); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := s.Isolation("dev"); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("the old name is still there: %v", err)
+	}
+	iso, err := s.Isolation("work")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if iso.Base != "dev" || iso.BaseName() != "dev" || iso.Container != "gero-dev" || iso.Network != "gero-dev-net" || iso.Env["K"] != "v" {
+		t.Fatalf("renamed isolation: %+v", iso)
+	}
+	if a, _ := s.Agent("a1"); a.Isolation != "work" {
+		t.Fatalf("agent is in %q", a.Isolation)
+	}
+	if _, err := s.Exposure("work", "git"); err != nil {
+		t.Fatalf("exposure: %v", err)
+	}
+	if got, _ := s.Tokens("work", "git"); got[""] != toks[""] || got[""] == "" {
+		t.Fatalf("tokens %v, had %v: the agents' environment would no longer match", got, toks)
+	}
+	if used, _ := s.AccountsUsed("work"); used[driver.Claude] != "work" {
+		t.Fatalf("accounts %v", used)
+	}
+	var broken int
+	if err := s.db.QueryRow(`SELECT COUNT(*) FROM pragma_foreign_key_check`).Scan(&broken); err != nil || broken != 0 {
+		t.Fatalf("foreign keys: %d broken (%v)", broken, err)
+	}
+
+	// Renamed again, it is still named after where it started.
+	if err := s.RenameIsolation("work", "dev2"); err != nil {
+		t.Fatal(err)
+	}
+	if iso, _ := s.Isolation("dev2"); iso.BaseName() != "dev" {
+		t.Fatalf("base after a second rename: %q", iso.BaseName())
+	}
+}

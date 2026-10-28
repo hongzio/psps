@@ -8,7 +8,9 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"net/http"
 	"regexp"
+	goruntime "runtime"
 	"sort"
 	"strings"
 	"sync"
@@ -23,6 +25,7 @@ import (
 	"github.com/hongzio/gero/internal/shim"
 	"github.com/hongzio/gero/internal/shimproto"
 	"github.com/hongzio/gero/internal/store"
+	"golang.org/x/sys/unix"
 )
 
 var validIsolationName = regexp.MustCompile(`^[a-z0-9][a-z0-9-]{0,30}$`)
@@ -163,7 +166,7 @@ func (m *Manager) ensureRuntime(a store.Agent) (*runtime, error) {
 	}
 	m.runtimes[a.ID] = r
 	m.loops.Add(1)
-	go func() { defer m.loops.Done(); r.loop() }()
+	go func() { defer m.loops.Done(); defer close(r.done); r.loop() }()
 	return r, nil
 }
 
@@ -299,7 +302,7 @@ func (m *Manager) ensureIsolation(ctx context.Context, name string) (*shim.Clien
 			rec.Image = image
 			m.store.PutIsolation(rec)
 		}
-		if err := m.cli.Create(ctx, name, rec.Image, rec.CPUs, rec.Memory, rec.Network); err != nil {
+		if err := m.cli.Create(ctx, rec.BaseName(), rec.Image, rec.CPUs, rec.Memory, rec.Network); err != nil {
 			return nil, err
 		}
 	default:
@@ -364,7 +367,14 @@ func (m *Manager) CreateIsolation(ctx context.Context, req api.CreateIsolation, 
 	if _, err := m.store.Isolation(req.Name); err == nil {
 		return store.Isolation{}, fmt.Errorf("isolation %s already exists", req.Name)
 	}
-	container := isolation.ContainerName(req.Name)
+	if err := checkSize(req.CPUs, req.Memory); err != nil {
+		return store.Isolation{}, err
+	}
+	base, err := m.freeBase(req.Name)
+	if err != nil {
+		return store.Isolation{}, err
+	}
+	container := isolation.ContainerName(base)
 	if state, err := m.cli.State(ctx, container); err != nil {
 		return store.Isolation{}, err
 	} else if state != "missing" {
@@ -383,8 +393,11 @@ func (m *Manager) CreateIsolation(ctx context.Context, req api.CreateIsolation, 
 		return store.Isolation{}, err
 	}
 	iso := store.Isolation{Name: req.Name, Container: container, Image: image, CPUs: req.CPUs, Memory: req.Memory,
-		Network: isolation.NetworkName(req.Name), Fence: fence, Env: map[string]string{}, CreatedAt: time.Now().UTC()}
-	if err := m.cli.Create(ctx, req.Name, image, req.CPUs, req.Memory, iso.Network); err != nil {
+		Network: isolation.NetworkName(base), Fence: fence, Env: map[string]string{}, CreatedAt: time.Now().UTC()}
+	if base != req.Name {
+		iso.Base = base
+	}
+	if err := m.cli.Create(ctx, base, image, req.CPUs, req.Memory, iso.Network); err != nil {
 		return store.Isolation{}, err
 	}
 	if err := m.store.PutIsolation(iso); err != nil {
@@ -417,12 +430,12 @@ func (m *Manager) UpgradeIsolation(ctx context.Context, name string, progress io
 		// An isolation from before the fence leaves the shared default
 		// network for one of its own.
 		if iso.Network == "" {
-			iso.Network = isolation.NetworkName(name)
+			iso.Network = isolation.NetworkName(iso.BaseName())
 		}
 		err = m.store.PutIsolation(iso)
 	}
 	if err == nil {
-		err = m.cli.Create(ctx, name, image, iso.CPUs, iso.Memory, iso.Network)
+		err = m.cli.Create(ctx, iso.BaseName(), image, iso.CPUs, iso.Memory, iso.Network)
 	}
 	st.healthy = time.Time{}
 	st.mu.Unlock()
@@ -432,6 +445,238 @@ func (m *Manager) UpgradeIsolation(ctx context.Context, name string, progress io
 	}
 	_, err = m.ensureIsolation(ctx, name)
 	return iso, err
+}
+
+// checkSize refuses a size the VM cannot have, before anything is torn
+// down for it. 0 CPUs and "" memory are container's defaults. container
+// itself starts a VM with more memory than the Mac has (1P, measured): the
+// VM then counts on memory that is not there.
+func checkSize(cpus int, memory string) error {
+	if n := goruntime.NumCPU(); cpus < 0 || cpus > n {
+		return badRequest(fmt.Errorf("cpus %d: from 1 to %d (this Mac's), or 0 for container's default", cpus, n))
+	}
+	b, err := isolation.MemoryBytes(memory)
+	if err != nil {
+		return badRequest(err)
+	}
+	if host, err := unix.SysctlUint64("hw.memsize"); err == nil && b > host {
+		return badRequest(fmt.Errorf("memory %s: more than this Mac's %dG", memory, host>>30))
+	}
+	return nil
+}
+
+// freeBase is what a new isolation's container, network and volumes are
+// named after: its name, unless a renamed isolation's still are.
+func (m *Manager) freeBase(name string) (string, error) {
+	isos, err := m.store.Isolations()
+	if err != nil {
+		return "", err
+	}
+	taken := map[string]bool{}
+	for _, iso := range isos {
+		taken[iso.BaseName()] = true
+	}
+	base := name
+	for taken[base] {
+		base = name + "-" + newAgentID()[:4]
+	}
+	return base, nil
+}
+
+// UpdateIsolation renames an isolation and resizes its VM, as req asks (see
+// api.UpdateIsolation). Everything is checked before anything changes.
+func (m *Manager) UpdateIsolation(ctx context.Context, name string, req api.UpdateIsolation) (api.Isolation, error) {
+	iso, err := m.store.Isolation(name)
+	if err != nil {
+		return api.Isolation{}, fmt.Errorf("isolation %s: %w", name, err)
+	}
+	cpus, memory := iso.CPUs, iso.Memory
+	if req.CPUs != nil {
+		cpus = *req.CPUs
+	}
+	if req.Memory != nil {
+		memory = strings.TrimSpace(*req.Memory)
+	}
+	if err := checkSize(cpus, memory); err != nil {
+		return api.Isolation{}, err
+	}
+	to := strings.TrimSpace(req.Name)
+	if to != "" && to != name {
+		if !validIsolationName.MatchString(to) {
+			return api.Isolation{}, badRequest(fmt.Errorf("isolation name %q: use lowercase letters, digits and dashes", to))
+		}
+		if _, err := m.store.Isolation(to); err == nil {
+			return api.Isolation{}, fmt.Errorf("isolation %s %w", to, store.ErrExists)
+		}
+		if err := m.renameIsolation(name, to); err != nil {
+			return api.Isolation{}, err
+		}
+		name = to
+	}
+	if cpus != iso.CPUs || memory != iso.Memory {
+		if err := m.resizeIsolation(ctx, name, cpus, memory); err != nil {
+			return api.Isolation{}, err
+		}
+	}
+	return m.Isolation(ctx, name)
+}
+
+// renameIsolation changes what gero calls an isolation. Nothing in the VM
+// moves: its container, network and volumes keep their names (Base), and
+// its agents keep running. Their runtimes, which carry the old name, are
+// replaced by ones under the new name that attach to the same processes the
+// way a restarted daemon's do. The proxies' tunnel is reopened under the new
+// name too: its instances answer for the old one.
+func (m *Manager) renameIsolation(from, to string) error {
+	if tool := m.cliLoginRunning(from); tool != "" {
+		return httpError{http.StatusConflict, fmt.Errorf("%s is logging in inside %s; finish or cancel the login first", tool, from)}
+	}
+	// Runtimes stop before the isolation's lock is taken, since one may be
+	// waiting for it, and each is gone before its successor reads the
+	// store: two would commit the same records.
+	detached := m.detachRuntimes(from)
+	m.mu.Lock()
+	_, tunneled := m.tunnels[from]
+	m.mu.Unlock()
+	m.stopTunnel(from)
+
+	st := m.isoLock(from)
+	st.mu.Lock()
+	err := m.store.RenameIsolation(from, to)
+	if err == nil {
+		m.mu.Lock()
+		m.isos[to] = st
+		delete(m.isos, from)
+		// The fence is the VM's network's and holds as it did. A loop
+		// still measuring under the old name ends by itself.
+		if fs, ok := m.fences[from]; ok {
+			m.fences[to] = &fenceState{ok: fs.ok, why: fs.why, tried: fs.tried, stale: fs.stale, off: fs.off, loaded: fs.loaded}
+			delete(m.fences, from)
+		}
+		for _, byIso := range []map[string]string{m.synced, m.versions, m.lastEnv} {
+			if v, ok := byIso[from]; ok {
+				byIso[to] = v
+				delete(byIso, from)
+			}
+		}
+		for k := range m.cliLogins {
+			if strings.HasPrefix(k, from+"/") {
+				delete(m.cliLogins, k)
+			}
+		}
+		m.mu.Unlock()
+		m.log.Printf("isolation %s: renamed %s", from, to)
+	}
+	st.mu.Unlock()
+
+	name := to
+	if err != nil {
+		name = from
+	}
+	if tunneled {
+		m.ensureTunnel(name)
+	}
+	// An agent created meanwhile came up under the old name.
+	detached = append(detached, m.detachRuntimes(from)...)
+	for _, id := range detached {
+		a, aerr := m.store.Agent(id)
+		if aerr == nil {
+			_, aerr = m.ensureRuntime(a)
+		}
+		if aerr != nil {
+			m.log.Printf("agent %s: %v", id, aerr)
+		}
+	}
+	return err
+}
+
+// detachRuntimes stops the runtimes of iso's agents and waits for each to
+// end, leaving the agents' processes running. It returns their IDs.
+func (m *Manager) detachRuntimes(iso string) []string {
+	m.mu.Lock()
+	var rs []*runtime
+	for id, r := range m.runtimes {
+		if r.agent.Isolation == iso {
+			rs = append(rs, r)
+			delete(m.runtimes, id)
+		}
+	}
+	m.mu.Unlock()
+	var ids []string
+	for _, r := range rs {
+		r.cancel()
+		select {
+		case <-r.done:
+		case <-m.ctx.Done():
+		}
+		ids = append(ids, r.agent.ID)
+	}
+	return ids
+}
+
+// cliLoginRunning is the agent CLI logging in inside iso, if one is.
+func (m *Manager) cliLoginRunning(iso string) driver.Kind {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	for k, l := range m.cliLogins {
+		if !strings.HasPrefix(k, iso+"/") {
+			continue
+		}
+		l.mu.Lock()
+		running, tool := l.ended.IsZero(), l.view.Tool
+		l.mu.Unlock()
+		if running {
+			return tool
+		}
+	}
+	return ""
+}
+
+// resizeIsolation gives an isolation's VM new CPUs and memory. container
+// cannot resize a VM, so the container is replaced on the same image, the
+// way an upgrade replaces it: the volumes, and every session and workspace,
+// are kept; running agents end and start again on their next message. A
+// container that will not start at the new size is put back at the old.
+func (m *Manager) resizeIsolation(ctx context.Context, name string, cpus int, memory string) error {
+	iso, err := m.store.Isolation(name)
+	if err != nil {
+		return err
+	}
+	st := m.isoLock(name)
+	st.mu.Lock()
+	if !m.cli.ImageExists(ctx, iso.Image) {
+		image, err := m.cli.EnsureImage(ctx, nil)
+		if err != nil {
+			st.mu.Unlock()
+			return err
+		}
+		iso.Image = image
+	}
+	was := iso
+	iso.CPUs, iso.Memory = cpus, memory
+	err = m.cli.Remove(ctx, iso.Container)
+	if err == nil {
+		if err = m.cli.Create(ctx, iso.BaseName(), iso.Image, cpus, memory, iso.Network); err == nil {
+			err = m.store.PutIsolation(iso)
+		} else {
+			m.cli.Remove(ctx, iso.Container)
+			if berr := m.cli.Create(ctx, was.BaseName(), was.Image, was.CPUs, was.Memory, was.Network); berr != nil {
+				err = fmt.Errorf("%w; putting it back at its old size failed too: %v", err, berr)
+			} else {
+				m.store.PutIsolation(was)
+				err = fmt.Errorf("%w; it is back at its old size", err)
+			}
+		}
+	}
+	st.healthy = time.Time{}
+	st.mu.Unlock()
+	m.markFenceStale(name)
+	if err != nil {
+		return err
+	}
+	m.log.Printf("isolation %s: resized (cpus %d, memory %q; 0 and \"\" are container's defaults)", name, cpus, memory)
+	_, err = m.ensureIsolation(ctx, name)
+	return err
 }
 
 func (m *Manager) DeleteIsolation(ctx context.Context, name string, purge bool) error {
@@ -461,7 +706,7 @@ func (m *Manager) DeleteIsolation(ctx context.Context, name string, purge bool) 
 		m.fence.Apply(ctx, nets)
 	}
 	if purge {
-		for _, v := range []string{isolation.HomeVolume(name), isolation.StateVolume(name)} {
+		for _, v := range []string{isolation.HomeVolume(iso.BaseName()), isolation.StateVolume(iso.BaseName())} {
 			if err := m.cli.VolumeRemove(ctx, v); err != nil {
 				return err
 			}

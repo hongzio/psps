@@ -40,6 +40,14 @@ func (m *Manager) Handler() http.Handler {
 		v, err := m.CreateIsolation(r.Context(), req, nil)
 		reply(w, v, err)
 	})
+	mux.HandleFunc("PATCH /v1/isolations/{name}", func(w http.ResponseWriter, r *http.Request) {
+		var req api.UpdateIsolation
+		if !decode(w, r, &req) {
+			return
+		}
+		v, err := m.UpdateIsolation(r.Context(), r.PathValue("name"), req)
+		reply(w, v, err)
+	})
 	mux.HandleFunc("POST /v1/isolations/{name}/upgrade", func(w http.ResponseWriter, r *http.Request) {
 		v, err := m.UpgradeIsolation(r.Context(), r.PathValue("name"), nil)
 		reply(w, v, err)
@@ -280,6 +288,8 @@ func reply(w http.ResponseWriter, v any, err error) {
 			code = he.code
 		case errors.Is(err, store.ErrNotFound):
 			code = http.StatusNotFound
+		case errors.Is(err, store.ErrExists):
+			code = http.StatusConflict
 		}
 		w.WriteHeader(code)
 		json.NewEncoder(w).Encode(api.Error{Error: err.Error()})

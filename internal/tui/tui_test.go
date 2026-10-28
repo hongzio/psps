@@ -48,6 +48,8 @@ type fakeBackend struct {
 	accounts []api.Account
 	// choiceAsks are the lookups asked for, as "field token=… set=…".
 	choiceAsks []string
+	// updates are the isolation settings sent, as "name name=… cpus=… memory=…".
+	updates []string
 }
 
 func (f *fakeBackend) Agents(context.Context) ([]api.Agent, error) {
@@ -97,6 +99,29 @@ func (f *fakeBackend) Follow(ctx context.Context, id string, after int64, fn fun
 	return ctx.Err()
 }
 func (f *fakeBackend) CreateIsolation(context.Context, api.CreateIsolation) (api.Isolation, error) {
+	return api.Isolation{}, nil
+}
+func (f *fakeBackend) UpdateIsolation(_ context.Context, name string, req api.UpdateIsolation) (api.Isolation, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	u := name
+	if req.Name != "" {
+		u += " name=" + req.Name
+	}
+	if req.CPUs != nil {
+		u += fmt.Sprintf(" cpus=%d", *req.CPUs)
+	}
+	if req.Memory != nil {
+		u += " memory=" + *req.Memory
+	}
+	f.updates = append(f.updates, u)
+	isos := append([]api.Isolation(nil), f.isos...)
+	for i := range isos {
+		if isos[i].Name == name && req.Name != "" {
+			isos[i].Name = req.Name
+		}
+	}
+	f.isos = isos
 	return api.Isolation{}, nil
 }
 func (f *fakeBackend) UpgradeIsolation(context.Context, string) (api.Isolation, error) {
@@ -410,6 +435,39 @@ func (h *harness) key(s string) {
 // typeText delivers s the way a paste arrives: one message, many runes.
 func (h *harness) typeText(s string) {
 	h.send(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune(s)})
+}
+
+func TestIsolationSettingsRenameAtOnceAndAskBeforeAResize(t *testing.T) {
+	h := newHarness(t)
+	h.key("ctrl+g")
+	h.key("s")
+	if !strings.Contains(h.m.View(), "Settings for dev") {
+		t.Fatalf("settings form:\n%s", h.m.View())
+	}
+	h.typeText("-2")
+	h.key("ctrl+s")
+	if len(h.be.updates) != 1 || h.be.updates[0] != "dev name=dev-2" {
+		t.Fatalf("updates %v", h.be.updates)
+	}
+	if iso, _ := h.m.isoPage.current(h.m.isolations); iso.Name != "dev-2" {
+		t.Fatalf("selection on %q after the rename", iso.Name)
+	}
+
+	// A new size replaces the container: nothing is sent until the
+	// operator says yes.
+	h.key("s")
+	h.key("enter") // to CPUs
+	h.typeText("2")
+	h.key("enter") // to memory
+	h.typeText("8G")
+	h.key("ctrl+s")
+	if len(h.be.updates) != 1 || h.m.confirm == nil || !strings.Contains(h.m.confirm.prompt, "resize dev-2 to 2 CPUs, 8G") {
+		t.Fatalf("updates %v, confirm %+v", h.be.updates, h.m.confirm)
+	}
+	h.key("y")
+	if len(h.be.updates) != 2 || h.be.updates[1] != "dev-2 cpus=2 memory=8G" {
+		t.Fatalf("updates %v", h.be.updates)
+	}
 }
 
 func TestLandsOnNewestAgentAndMovesWithKeys(t *testing.T) {

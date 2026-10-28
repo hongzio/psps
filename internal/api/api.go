@@ -44,6 +44,17 @@ type CreateIsolation struct {
 	Fence string `json:"fence,omitempty"`
 }
 
+// UpdateIsolation renames an isolation or resizes its VM; what it leaves out
+// stays as it is. A new name changes nothing in the VM: its container,
+// network and volumes keep theirs, and agents keep running. A new size
+// replaces the container (container cannot resize one): running agents end
+// and start again on their next message; sessions and workspaces are kept.
+type UpdateIsolation struct {
+	Name   string  `json:"name,omitempty"`
+	CPUs   *int    `json:"cpus,omitempty"`
+	Memory *string `json:"memory,omitempty"`
+}
+
 // SetEnv sets (non-nil) or removes (nil) isolation environment entries.
 type SetEnv map[string]*string
 
