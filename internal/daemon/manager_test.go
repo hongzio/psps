@@ -716,6 +716,33 @@ func TestEnvChangeReplacesIdleProcess(t *testing.T) {
 	e.waitFor("new process sees the new environment", func() bool { return e.hasAssistant(a.ID, "echo: env=v1") })
 }
 
+// A message sent while the idle process is being replaced goes to the next
+// one, not into the process on its way out, where it would be cut off.
+func TestAMessageSentAsTheProcessIsReplacedGoesToTheNextOne(t *testing.T) {
+	e := newTestEnv(t)
+	ctx := context.Background()
+	m, stop := e.daemon()
+	defer stop()
+	a, err := m.CreateAgent(ctx, api.CreateAgent{Isolation: "dev", Kind: driver.Codex, Prompt: "one"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	e.waitFor("first answer", func() bool { return e.hasAssistant(a.ID, "echo: one") && status(m, a.ID) == event.StatusIdle })
+	v := "v1"
+	if err := m.SetEnv("dev", api.SetEnv{"GERO_TEST_VAR": &v}); err != nil {
+		t.Fatal(err)
+	}
+	if err := m.Send(a.ID, "env"); err != nil {
+		t.Fatal(err)
+	}
+	e.waitFor("the new process's answer", func() bool { return e.hasAssistant(a.ID, "echo: env=v1") })
+	for _, ev := range e.events(a.ID) {
+		if ev.Kind == event.KindTurnEnd && ev.Text == "interrupted" {
+			t.Fatal("the message went to the process being replaced")
+		}
+	}
+}
+
 // Fail closed: without a measured fence no agent is created or started, and
 // work that was waiting starts as soon as the fence holds.
 func TestAgentsWaitForTheFence(t *testing.T) {

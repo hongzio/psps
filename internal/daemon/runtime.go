@@ -210,7 +210,12 @@ func (r *runtime) kickLocked() {
 	// Fail closed on turns, not just on processes: an agent that was
 	// already running gets no new work behind a fence nobody measured.
 	fenced, why := r.m.fenceOK(r.agent.IsolationID)
-	r.drv.Hold(!fenced)
+	// A process about to be replaced starts no turn either: it would die
+	// in it. What is queued waits for the next process, which starts with
+	// what the replacement is for.
+	st := r.drv.State()
+	replacing := st.Alive && (r.stopping || st.Restart || r.restartWhenIdle)
+	r.drv.Hold(!fenced || replacing)
 	if !fenced {
 		if msg := "waiting for the network fence: " + why; msg != r.problem {
 			r.problem = msg
@@ -220,7 +225,7 @@ func (r *runtime) kickLocked() {
 	} else if strings.HasPrefix(r.problem, "waiting for the network fence") {
 		r.problem = ""
 	}
-	st := r.drv.State()
+	st = r.drv.State()
 	if st.Alive {
 		for _, l := range r.drv.Next() {
 			if err := r.att.Write(l); err != nil {
