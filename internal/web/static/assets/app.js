@@ -78,8 +78,9 @@ const S = {
 const coarse = matchMedia('(pointer: coarse)').matches
 const agentById = (id) => S.agents.find((a) => a.id === id)
 const label = (a) => (a.kind === 'codex' ? 'Codex' : 'Claude')
-const efforts = (kind) =>
-  kind === 'codex' ? ['', 'low', 'medium', 'high', 'xhigh'] : ['', 'low', 'medium', 'high', 'xhigh', 'max']
+const effortOptions = (kind) =>
+  (kind === 'codex' ? ['', 'low', 'medium', 'high', 'xhigh'] : ['', 'low', 'medium', 'high', 'xhigh', 'max'])
+    .map((e) => ({ value: e, label: e || 'default' }))
 
 function toast(msg, err) {
   S.toast = { msg, err }
@@ -122,6 +123,162 @@ function ask({ title, body, ok, danger }) {
     ;(danger ? cancel : go).focus()
   })
 }
+
+// dropdown is the page's own <select>: a button showing the choice that
+// opens a list of the options. It keeps a select's surface, so forms read
+// it the same way: value (get and set), disabled, a bubbling change event
+// when the operator picks something else, and setOptions to refill it,
+// keeping the choice if it is still there. Options are strings or
+// {value, label}. The list is drawn on the body, so no scrolling page or
+// popover clips it, follows the button while open, and shuts when the
+// button leaves the page. Keys follow a select-only combobox: arrows,
+// Home/End, typing a label's first letters, Enter or Space to pick, Esc.
+function dropdown(options, { value, label, disabled } = {}) {
+  const id = 'dropdown-' + ++dropdown.n
+  const shown = h('span', { class: 'dropdown-value' })
+  const btn = h('button', {
+    type: 'button', class: 'dropdown', role: 'combobox', 'aria-haspopup': 'listbox', 'aria-expanded': 'false',
+    'aria-controls': id, 'aria-label': label, disabled,
+  }, shown)
+  let opts = []
+  let cur = ''
+  let list = null
+  let active = -1
+  let frame = 0
+  let typed = ''
+  let typedAt = 0
+
+  const at = (v) => opts.findIndex((o) => o.value === v)
+  const set = (v) => {
+    cur = at(v) >= 0 ? v : (opts[0]?.value ?? '')
+    const o = opts[at(cur)]
+    shown.textContent = o ? o.label : ''
+  }
+  const fill = () => list.replaceChildren(...opts.map((o, i) =>
+    h('div', { role: 'option', id: `${id}-${i}`, class: 'dropdown-option', 'aria-selected': String(o.value === cur) }, o.label)))
+  const highlight = (i) => {
+    if (!opts.length) return
+    active = Math.max(0, Math.min(opts.length - 1, i))
+    for (const [j, el] of [...list.children].entries()) el.classList.toggle('active', j === active)
+    const el = list.children[active]
+    btn.setAttribute('aria-activedescendant', el.id)
+    if (el.offsetTop < list.scrollTop) list.scrollTop = el.offsetTop
+    else if (el.offsetTop + el.offsetHeight > list.scrollTop + list.clientHeight) list.scrollTop = el.offsetTop + el.offsetHeight - list.clientHeight
+  }
+  // place puts the list under the button, or over it when there is more
+  // room there, inside the viewport.
+  const place = () => {
+    if (!btn.isConnected || btn.disabled || !btn.getClientRects().length) return close()
+    const r = btn.getBoundingClientRect()
+    const vw = document.documentElement.clientWidth
+    const gap = 4
+    const edge = 8
+    const below = innerHeight - r.bottom - gap - edge
+    const above = r.top - gap - edge
+    const up = Math.min(list.scrollHeight, 320) > below && above > below
+    list.style.minWidth = r.width + 'px'
+    list.style.maxHeight = Math.max(80, Math.min(320, up ? above : below)) + 'px'
+    list.style.left = Math.max(edge, Math.min(r.left, vw - list.offsetWidth - edge)) + 'px'
+    list.style.top = up ? '' : r.bottom + gap + 'px'
+    list.style.bottom = up ? innerHeight - r.top + gap + 'px' : ''
+  }
+  const track = () => { place(); if (list) frame = requestAnimationFrame(track) }
+  const outside = (e) => { if (!btn.contains(e.target) && !list?.contains(e.target)) close() }
+  const open = () => {
+    if (list || btn.disabled || !opts.length) return
+    list = h('div', { class: 'dropdown-list', role: 'listbox', id, 'aria-label': label })
+    fill()
+    // The focus stays on the button, which keeps the keys and the
+    // highlighted option; a click on an option picks it.
+    list.addEventListener('mousedown', (e) => e.preventDefault())
+    list.addEventListener('click', (e) => {
+      const o = e.target.closest('[role=option]')
+      if (o) choose([...list.children].indexOf(o))
+    })
+    list.addEventListener('pointermove', (e) => {
+      const o = e.target.closest('[role=option]')
+      if (o) highlight([...list.children].indexOf(o))
+    })
+    document.body.append(list)
+    btn.setAttribute('aria-expanded', 'true')
+    btn.focus({ preventScroll: true })
+    document.addEventListener('pointerdown', outside, true)
+    track()
+    highlight(Math.max(0, at(cur)))
+  }
+  const close = () => {
+    if (!list) return
+    cancelAnimationFrame(frame)
+    list.remove()
+    list = null
+    active = -1
+    typed = ''
+    btn.setAttribute('aria-expanded', 'false')
+    btn.removeAttribute('aria-activedescendant')
+    document.removeEventListener('pointerdown', outside, true)
+  }
+  const choose = (i) => {
+    const o = opts[i]
+    close()
+    if (o && o.value !== cur) {
+      set(o.value)
+      btn.dispatchEvent(new Event('change', { bubbles: true }))
+    }
+  }
+  // seek moves to the next option whose label starts with what was typed
+  // in the last moment, since the list opened or the arrows last moved; one
+  // letter again goes on to the next such option.
+  const seek = (ch) => {
+    const now = Date.now()
+    typed = now - typedAt < 700 ? typed + ch.toLowerCase() : ch.toLowerCase()
+    typedAt = now
+    const n = opts.length
+    const from = typed.length === 1 ? active + 1 : active
+    for (let j = 0; j < n; j++) {
+      const i = (((from + j) % n) + n) % n
+      if (opts[i].label.toLowerCase().startsWith(typed)) return highlight(i)
+    }
+  }
+
+  btn.addEventListener('click', () => (list ? close() : open()))
+  btn.addEventListener('blur', close)
+  btn.addEventListener('keydown', (e) => {
+    const k = e.key
+    if (e.ctrlKey || e.metaKey) return
+    if (!list) {
+      if (k === 'ArrowDown' || k === 'ArrowUp' || k === 'Enter' || k === ' ') { e.preventDefault(); open() }
+      else if (k.length === 1 && !e.altKey) { e.preventDefault(); open(); seek(k) }
+      return
+    }
+    if (k.length > 1) typed = ''
+    switch (k) {
+      case 'ArrowDown': highlight(active + 1); break
+      case 'ArrowUp': if (e.altKey) choose(active); else highlight(active - 1); break
+      case 'Home': case 'PageUp': highlight(0); break
+      case 'End': case 'PageDown': highlight(opts.length - 1); break
+      case 'Enter': choose(active); break
+      case ' ': if (typed && Date.now() - typedAt < 700) seek(k); else choose(active); break
+      case 'Escape': close(); break
+      case 'Tab': close(); return
+      default: if (k.length === 1) seek(k); else return
+    }
+    // Neither the page's own Esc nor the button's click on Space/Enter.
+    e.preventDefault()
+    e.stopPropagation()
+  })
+  btn.addEventListener('keyup', (e) => { if (e.key === ' ') e.preventDefault() })
+
+  Object.defineProperty(btn, 'value', { get: () => cur, set })
+  btn.setOptions = (next) => {
+    opts = next.map((o) => (typeof o === 'string' ? { value: o, label: o } : o))
+    set(cur)
+    if (list) { fill(); highlight(Math.max(0, at(cur))) }
+  }
+  btn.setOptions(options)
+  if (value !== undefined) set(value)
+  return btn
+}
+dropdown.n = 0
 
 // ---- Conversation: events folded into what a person reads (mirrors the TUI)
 
@@ -312,7 +469,7 @@ async function refreshIsolations() {
 function editing(id) {
   if (S.openForm) return true
   const a = document.activeElement
-  return !!(a && a.closest && a.closest('#' + id) && /^(INPUT|SELECT|TEXTAREA)$/.test(a.tagName))
+  return !!(a && a.closest && a.closest('#' + id) && (/^(INPUT|SELECT|TEXTAREA)$/.test(a.tagName) || a.classList.contains('dropdown')))
 }
 
 async function refreshServices() {
@@ -616,11 +773,12 @@ function renderSettings(a) {
   document.querySelector('.composer .icon-btn')?.classList.toggle('on', S.settingsOpen)
   if (!S.settingsOpen) { slot.replaceChildren(); return }
   const o = a.options || {}
-  const effort = h('select', null, efforts(a.kind).map((e) => h('option', { value: e, selected: (o.effort || '') === e }, e || 'default')))
+  const effort = dropdown(effortOptions(a.kind), { value: o.effort || '', label: 'Effort' })
   const model = h('input', { value: o.model || '', placeholder: "the CLI's default" })
-  const approvals = h('select', null,
-    h('option', { value: 'never', selected: (o.approvals || 'never') === 'never' }, 'never — run unattended'),
-    h('option', { value: 'ask', selected: o.approvals === 'ask' }, 'ask — the agent asks first'))
+  const approvals = dropdown([
+    { value: 'never', label: 'never — run unattended' },
+    { value: 'ask', label: 'ask — the agent asks first' },
+  ], { value: o.approvals || 'never', label: 'Approvals' })
   slot.replaceChildren(h('div', { class: 'popover' },
     h('h3', null, 'Agent settings'),
     h('div', { class: 'field' }, h('label', null, 'Effort'), effort),
@@ -646,26 +804,26 @@ function renderSettings(a) {
 function newAgentView() {
   let kind = 'claude'
   const err = h('p', { class: 'form-error' })
-  const iso = h('select')
+  const iso = dropdown([], { label: 'Isolation' })
   const noIso = h('p', { class: 'form-error' }, 'There is no isolation yet. ',
     h('a', { href: '#/isolations', onclick: (e) => { e.preventDefault(); show('isolations') } }, 'Create one'), ' first.')
   // The list may arrive after the form is drawn; refill it in place so a
   // half-typed prompt survives.
   const fillIsos = () => {
-    const cur = iso.value
-    iso.replaceChildren(...S.isolations.map((i) => h('option', { value: i.name, selected: i.name === cur }, i.name)))
+    iso.setOptions(S.isolations.map((i) => i.name))
     noIso.hidden = S.isolations.length > 0
   }
   fillIsos()
   S.refillIsolations = fillIsos
   const repo = h('input', { placeholder: 'https://github.com/owner/repo (optional)', autocomplete: 'off' })
-  const effort = h('select')
+  const effort = dropdown([], { label: 'Effort' })
   const model = h('input', { placeholder: "optional; the CLI's default otherwise" })
-  const approvals = h('select', null,
-    h('option', { value: 'never' }, 'never — run unattended inside the isolation'),
-    h('option', { value: 'ask' }, 'ask — the agent asks first for what its own rules flag'))
+  const approvals = dropdown([
+    { value: 'never', label: 'never — run unattended inside the isolation' },
+    { value: 'ask', label: 'ask — the agent asks first for what its own rules flag' },
+  ], { label: 'Approvals' })
   const prompt = h('textarea', { placeholder: 'What should the agent do?' })
-  const fillEfforts = () => effort.replaceChildren(...efforts(kind).map((e) => h('option', { value: e }, e || 'default')))
+  const fillEfforts = () => effort.setOptions(effortOptions(kind))
   fillEfforts()
   const seg = h('div', { class: 'segmented' })
   const drawSeg = () => seg.replaceChildren(...['claude', 'codex'].map((k) =>
@@ -818,7 +976,7 @@ function fieldControls(fields, cur, adding, lookup) {
     } else if (f.kind === 'bool') {
       const opts = adding || typeof v !== 'boolean' ? [DEFAULT, 'on', 'off'] : ['on', 'off']
       const sel = typeof v === 'boolean' ? (v ? 'on' : 'off') : DEFAULT
-      ctl = h('select', null, opts.map((o) => h('option', { value: o, selected: o === sel }, o)))
+      ctl = dropdown(opts, { value: sel, label: f.key })
       read = (p) => { if (ctl.value === 'on') p.set[f.key] = true; else if (ctl.value === 'off') p.set[f.key] = false }
     } else if (f.kind === 'list' && f.choices?.length) {
       const have = new Set(Array.isArray(v) ? v : [])
@@ -838,7 +996,7 @@ function fieldControls(fields, cur, adding, lookup) {
         else if (have.length) p.clear.push(f.key)
       }
     } else if (f.kind === 'string' && f.choices?.length) {
-      ctl = h('select', null, [DEFAULT, ...f.choices].map((o) => h('option', { value: o, selected: o === (v || DEFAULT) }, o)))
+      ctl = dropdown([DEFAULT, ...f.choices], { value: v || DEFAULT, label: f.key })
       read = (p) => { if (ctl.value !== DEFAULT) p.set[f.key] = ctl.value }
     } else if (f.kind === 'int') {
       ctl = h('input', { type: 'number', value: typeof v === 'number' ? String(v) : '', placeholder: f.metavar || '' })
@@ -1185,7 +1343,7 @@ function exposeForm(i, s, x) {
   const names = S.envs.filter((e) => e.service === s.name).map((e) => e.name)
   const have = new Set(x.envs || [])
   const boxes = names.map((n) => ({ n, el: h('input', { type: 'checkbox', checked: have.has(n) }) }))
-  const def = h('select', null, [DEFAULT, ...names].map((n) => h('option', { value: n, selected: n === (x.default_env || DEFAULT) }, n)))
+  const def = dropdown([DEFAULT, ...names], { value: x.default_env || DEFAULT, label: 'Default' })
   const ctl = fieldControls(s.settings, x.settings || {}, !x.enabled)
   const err = h('p', { class: 'form-error' })
   const apply = h('button', { class: 'btn primary' }, x.enabled ? 'Apply' : 'Turn on')
@@ -1414,9 +1572,10 @@ function cliRow(i, c) {
 function accountPicker(i, c, busy) {
   if (!S.accountKinds.some((k) => k.tool === c.tool)) return null
   const mine = (S.accounts || []).filter((a) => a.tool === c.tool)
-  const sel = h('select', { disabled: busy, 'aria-label': `What ${cliName(c.tool)} uses in ${i.name}` },
-    h('option', { value: INSIDE, selected: !c.account }, 'A login inside the isolation'),
-    mine.map((a) => h('option', { value: a.name, selected: c.account === a.name }, `Account ${a.name} (${a.kind})`)))
+  const sel = dropdown([
+    { value: INSIDE, label: 'A login inside the isolation' },
+    ...mine.map((a) => ({ value: a.name, label: `Account ${a.name} (${a.kind})` })),
+  ], { value: c.account || INSIDE, disabled: busy, label: `What ${cliName(c.tool)} uses in ${i.name}` })
   sel.addEventListener('change', async () => {
     const account = sel.value
     S.cliBusy = `${i.name}/${c.tool}`
@@ -1462,7 +1621,7 @@ function accountsCard() {
 
 function newAccountForm() {
   const name = h('input', { autocomplete: 'off', placeholder: 'e.g. claude' })
-  const kind = h('select', null, S.accountKinds.map((k) => h('option', { value: k.name }, k.name)))
+  const kind = dropdown(S.accountKinds.map((k) => k.name), { label: 'Kind' })
   const hint = h('span', { class: 'hint' })
   const showHint = () => { hint.textContent = S.accountKinds.find((k) => k.name === kind.value)?.summary || '' }
   kind.addEventListener('change', showHint)

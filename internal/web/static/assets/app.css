@@ -51,7 +51,7 @@ body {
   font: 15px/1.5 system-ui, -apple-system, "Segoe UI", sans-serif;
   -webkit-font-smoothing: antialiased;
 }
-button, input, select, textarea { font: inherit; color: inherit; }
+button, input, textarea { font: inherit; color: inherit; }
 button { cursor: pointer; }
 code, pre { font-family: var(--mono); font-size: 13px; }
 :focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
@@ -285,7 +285,7 @@ code, pre { font-family: var(--mono); font-size: 13px; }
 .field { display: grid; gap: 4px; margin-bottom: 14px; }
 .field label { font-size: 13px; font-weight: 600; }
 .field .hint { color: var(--muted); font-size: 12.5px; }
-.field input, .field select, .field textarea {
+.field input, .field textarea, .field .dropdown {
   width: 100%;
   padding: 9px 11px;
   border-radius: 8px;
@@ -412,7 +412,7 @@ code, pre { font-family: var(--mono); font-size: 13px; }
 .cli .actions { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 8px; }
 .device-code { font-family: var(--mono); font-size: 26px; font-weight: 600; letter-spacing: .08em; margin: 0 0 10px; user-select: all; }
 .cli .picker { margin: 8px 0 0; max-width: 360px; }
-.cli .picker select { padding: 7px 10px; border-radius: 8px; border: 1px solid var(--border); background: var(--bg); color: var(--text); }
+.cli .picker .dropdown { padding: 7px 10px; }
 
 /* Lookup fields: choices a service found with the env's credential */
 .lookup { display: grid; gap: 6px; }
@@ -447,3 +447,62 @@ code, pre { font-family: var(--mono); font-size: 13px; }
 @media (max-width: 760px) {
   .dialog-actions .btn { flex: 1; padding: 10px 14px; }
 }
+
+/* Dropdowns: the page's own <select>, a button and a list drawn on the body */
+.dropdown {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  padding: 9px 11px;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  background: var(--bg);
+  text-align: left;
+}
+.dropdown:hover:not(:disabled) { border-color: var(--faint); }
+.dropdown[aria-expanded="true"] { border-color: var(--accent); }
+.dropdown:disabled { opacity: .6; cursor: default; }
+.dropdown-value { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.dropdown::after {
+  content: "";
+  flex: none;
+  width: 7px;
+  height: 7px;
+  margin: -4px 2px 0;
+  border-right: 1.5px solid var(--muted);
+  border-bottom: 1.5px solid var(--muted);
+  transform: rotate(45deg);
+  transition: transform .12s ease;
+}
+.dropdown[aria-expanded="true"]::after { margin-top: 4px; transform: rotate(225deg); }
+.dropdown-list {
+  position: fixed;
+  z-index: 40;
+  max-width: calc(100vw - 16px);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding: 4px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--panel);
+  box-shadow: var(--shadow);
+  animation: dropdown-in .1s ease-out;
+}
+.dropdown-option {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 7px 10px;
+  border-radius: 6px;
+  cursor: pointer;
+  user-select: none;
+  overflow-wrap: anywhere;
+}
+.dropdown-option.active { background: var(--accent-soft); }
+.dropdown-option[aria-selected="true"] { color: var(--accent); font-weight: 600; }
+.dropdown-option::after { content: ""; flex: none; width: 1em; margin-left: auto; text-align: right; }
+.dropdown-option[aria-selected="true"]::after { content: "✓"; }
+@keyframes dropdown-in { from { opacity: 0; transform: translateY(-3px); } }
+@media (prefers-reduced-motion: reduce) { .dropdown-list { animation: none; } .dropdown::after { transition: none; } }
+@media (pointer: coarse) { .dropdown-option { padding: 11px 12px; } }
