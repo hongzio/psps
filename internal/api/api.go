@@ -68,13 +68,26 @@ type Agent struct {
 	Problem string `json:"problem,omitempty"`
 }
 
+// UpdateAgent renames an agent, live or archived, or changes its own ID;
+// what it leaves out stays as it is. Only what people call it changes: a
+// running turn carries on.
+type UpdateAgent struct {
+	Name *string `json:"name,omitempty"`
+	// Handle is the agent's own ID, unique among all agents; "" takes it
+	// away, leaving the key gero gave it.
+	Handle *string `json:"handle,omitempty"`
+}
+
 type CreateAgent struct {
-	Isolation string         `json:"isolation"`
-	Kind      driver.Kind    `json:"kind"`
-	Prompt    string         `json:"prompt"`
-	Name      string         `json:"name,omitempty"`
-	Repo      string         `json:"repo,omitempty"`
-	Options   driver.Options `json:"options"`
+	Isolation string      `json:"isolation"`
+	Kind      driver.Kind `json:"kind"`
+	Prompt    string      `json:"prompt"`
+	Name      string      `json:"name,omitempty"`
+	// Handle is an ID of the operator's for it, unique among all agents;
+	// without one it gets an adjective-noun nobody else has.
+	Handle  string         `json:"handle,omitempty"`
+	Repo    string         `json:"repo,omitempty"`
+	Options driver.Options `json:"options"`
 }
 
 type Message struct {

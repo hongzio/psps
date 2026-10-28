@@ -372,3 +372,52 @@ func TestIsolationsFromBeforeIDsKeepWhatPointsAtThem(t *testing.T) {
 		t.Fatalf("after reopening: %+v", iso)
 	}
 }
+
+// An agent's own ID is unique among all agents, as anyone's own ID or as
+// anyone's key, archived agents included; giving it back frees it.
+func TestAnAgentsOwnIDIsNobodyElses(t *testing.T) {
+	s := open(t)
+	now := time.Now()
+	if err := s.PutIsolation(Isolation{ID: "i1", Name: "dev", Container: "gero-i1", Image: "img", CreatedAt: now}); err != nil {
+		t.Fatal(err)
+	}
+	agent := func(id, handle string) Agent {
+		return Agent{ID: id, Handle: handle, Name: id, Kind: driver.Codex, IsolationID: "i1", Workdir: "/w/" + id, CreatedAt: now}
+	}
+	if err := s.CreateAgent(agent("a1", "login")); err != nil {
+		t.Fatal(err)
+	}
+	s.SetArchived("a1", &now)
+	if err := s.CreateAgent(agent("a2", "")); err != nil {
+		t.Fatal(err)
+	}
+	for _, a := range []Agent{agent("a3", "login"), agent("a3", "a1"), agent("login", "")} {
+		if err := s.CreateAgent(a); !errors.Is(err, ErrExists) {
+			t.Errorf("created %s (own ID %q): %v", a.ID, a.Handle, err)
+		}
+	}
+	h := func(v string) *string { return &v }
+	for _, taken := range []string{"login", "a1"} {
+		if err := s.RenameAgent("a2", nil, h(taken)); !errors.Is(err, ErrExists) {
+			t.Errorf("a2 took %q: %v", taken, err)
+		}
+	}
+	if err := s.RenameAgent("a1", h("renamed"), h("login")); err != nil {
+		t.Fatalf("an agent keeping its own ID: %v", err)
+	}
+	if a, _ := s.Agent("a1"); a.Name != "renamed" || a.Handle != "login" {
+		t.Fatalf("a1 is %+v", a)
+	}
+	if err := s.RenameAgent("a1", nil, h("")); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.RenameAgent("a2", nil, h("login")); err != nil {
+		t.Fatalf("a freed ID: %v", err)
+	}
+	if a, err := s.AgentByHandle("login"); err != nil || a.ID != "a2" || a.Name != "a2" {
+		t.Fatalf("login is %+v, %v", a, err)
+	}
+	if err := s.RenameAgent("nope", nil, h("x")); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("renamed nobody: %v", err)
+	}
+}

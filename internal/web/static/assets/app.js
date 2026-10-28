@@ -77,6 +77,11 @@ const S = {
 
 const coarse = matchMedia('(pointer: coarse)').matches
 const agentById = (id) => S.agents.find((a) => a.id === id)
+// agentTitle is what an agent is called on the page: one made without a
+// prompt has no name until its first message.
+const agentTitle = (a) => a.name || 'New agent'
+// shownID is the ID an agent goes by: its own, or the key gero gave it.
+const shownID = (a) => a.handle || a.id
 const label = (a) => (a.kind === 'codex' ? 'Codex' : 'Claude')
 const effortOptions = (kind) =>
   (kind === 'codex' ? ['', 'low', 'medium', 'high', 'xhigh'] : ['', 'low', 'medium', 'high', 'xhigh', 'max'])
@@ -104,25 +109,51 @@ async function guarded(fn) {
 // operator takes the action; Esc, Cancel or a click outside leave it be.
 // A destructive one starts on Cancel, so a stray Enter does nothing. extra
 // is shown under the body: a choice the caller reads once it resolves.
-function ask({ title, body, ok, danger, extra }) {
+// fields hold text inputs for the answer instead: the first starts
+// focused, and Enter in any takes the action. onOk, if given, does the
+// action: what it throws is shown in the dialog, which stays open.
+function ask({ title, body, ok, danger, extra, fields, onOk }) {
   return new Promise((resolve) => {
     const cancel = h('button', { class: 'btn', value: 'cancel' }, 'Cancel')
     const go = h('button', { class: 'btn primary' + (danger ? ' danger' : ''), value: 'ok' }, ok)
+    const err = h('p', { class: 'form-error dialog-error', role: 'alert', hidden: true })
     const d = h('dialog', { class: 'dialog', 'aria-labelledby': 'dialog-title', 'aria-describedby': body ? 'dialog-body' : null },
       h('form', { method: 'dialog' },
         h('h3', { id: 'dialog-title' }, title),
         body ? h('p', { id: 'dialog-body' }, body) : null,
         extra || null,
+        ...(fields || []),
+        err,
         h('div', { class: 'dialog-actions' }, cancel, go)))
+    const take = async () => {
+      if (!onOk) { d.close('ok'); return }
+      go.disabled = true
+      try {
+        await onOk()
+        d.close('ok')
+      } catch (e) {
+        err.textContent = e.message
+        err.hidden = false
+        go.disabled = false
+      }
+    }
+    if (onOk) go.addEventListener('click', (e) => { e.preventDefault(); take() })
     // Outside is the backdrop, which is the dialog itself as a target; a
     // drag that starts inside and ends outside is not a click outside.
     let downOn = null
     d.addEventListener('pointerdown', (e) => { downOn = e.target })
     d.addEventListener('click', (e) => { if (e.target === d && downOn === d) d.close('cancel') })
     d.addEventListener('close', () => { d.remove(); resolve(d.returnValue === 'ok') })
+    const inputs = (fields || []).flatMap((f) => f.matches('input') ? [f] : [...f.querySelectorAll('input')])
+    for (const i of inputs) {
+      i.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter' && !e.isComposing) { e.preventDefault(); if (!go.disabled) take() }
+      })
+    }
     document.body.append(d)
     d.showModal()
-    ;(danger ? cancel : go).focus()
+    if (inputs.length) inputs[0].select()
+    else (danger ? cancel : go).focus()
   })
 }
 
@@ -417,6 +448,11 @@ function follow(id) {
     }
     if (S.sel === id) scheduleConvo()
   }
+  // After its history: an agent with none has none yet.
+  es.addEventListener('ready', () => {
+    c.ready = true
+    if (S.sel === id) scheduleConvo()
+  })
   es.onerror = () => {
     if (es.readyState === EventSource.CLOSED && S.sel === id) setTimeout(() => S.sel === id && follow(id), 2000)
   }
@@ -611,7 +647,7 @@ function renderSidebar() {
     return h('button', {
       class: 'agent' + (a.id === S.sel && S.view === 'agent' ? ' selected' : '') + (a.archived_at ? ' archived' : ''),
       onclick: () => select(a.id),
-    }, h('span', { class: 'dot ' + st }), h('span', { class: 'name' }, a.name), h('span', { class: 'meta' }, meta))
+    }, h('span', { class: 'dot ' + st }), h('span', { class: 'name' }, agentTitle(a)), h('span', { class: 'meta' }, meta))
   }
   el.replaceChildren(
     h('div', { class: 'brand' }, 'gero', h('span', { class: 'count' }, `${live.length} agent${live.length === 1 ? '' : 's'}`)),
@@ -658,15 +694,16 @@ function renderTopbar() {
   const working = st === 'working'
   // replaceChildren turns null into the text "null"; keep only nodes.
   slot.replaceChildren(...[
-    topbar(a.name, `${a.kind} · ${a.isolation} · ${a.id}`,
+    topbar(agentTitle(a), `${a.kind} · ${a.isolation} · ${shownID(a)}`,
       h('span', { class: 'chip ' + st }, st),
       h('div', { class: 'actions' },
         working ? h('button', { class: 'btn', onclick: () => guarded(() => api('POST', `/v1/agents/${a.id}/interrupt`)) }, '■', h('span', { class: 'label' }, ' Stop')) : null,
+        h('button', { class: 'btn ghost', title: 'Name and ID', onclick: () => editAgent(a) }, '✎', h('span', { class: 'label' }, ' Name & ID')),
         a.archived_at ? h('button', {
           class: 'btn ghost danger', title: 'Delete', onclick: async () => {
             const purge = h('input', { type: 'checkbox' })
             if (!await ask({
-              title: `Delete "${a.name}"?`,
+              title: `Delete "${agentTitle(a)}"?`,
               body: `Its history and its log in ${a.isolation} are removed. This cannot be undone.`,
               extra: h('label', { class: 'check' }, purge, `Also remove its workspace and session transcript from ${a.isolation}`),
               ok: 'Delete', danger: true,
@@ -682,7 +719,7 @@ function renderTopbar() {
         }, '🗑', h('span', { class: 'label' }, ' Delete')) : null,
         a.archived_at ? null : h('button', {
           class: 'btn ghost', title: 'Archive', onclick: async () => {
-            if (!await ask({ title: `Archive "${a.name}"?`, body: 'Its history is kept.', ok: 'Archive' })) return
+            if (!await ask({ title: `Archive "${agentTitle(a)}"?`, body: 'Its history is kept.', ok: 'Archive' })) return
             await guarded(() => api('POST', `/v1/agents/${a.id}/archive`))
             S.sel = null
             await guarded(refreshAgents)
@@ -693,6 +730,34 @@ function renderTopbar() {
   ].filter(Boolean))
 }
 
+// editAgent changes what an agent is called: its name, and its own ID,
+// which the daemon checks against every agent's.
+async function editAgent(a) {
+  const name = h('input', { class: 'dialog-input', value: a.name, autocomplete: 'off', placeholder: 'from its first message' })
+  const id = h('input', { class: 'dialog-input', value: a.handle || '', autocomplete: 'off', autocapitalize: 'off', spellcheck: 'false', placeholder: a.id })
+  let saved = null
+  const ok = await ask({
+    title: 'Name and ID',
+    body: `Only what it is called changes; a running turn carries on. Its ID is unique among all agents; left empty, it goes by ${a.id}, the one gero gave it.`,
+    fields: [h('label', { class: 'dialog-field' }, 'Name', name), h('label', { class: 'dialog-field' }, 'ID', id)],
+    ok: 'Save',
+    onOk: async () => {
+      const body = {}
+      const n = name.value.trim()
+      const i = id.value.trim()
+      if (n !== a.name) {
+        if (!n) throw new Error('A name is required.')
+        body.name = n
+      }
+      if (i !== (a.handle || '')) body.handle = i
+      if (Object.keys(body).length) saved = await api('PATCH', `/v1/agents/${enc(a.id)}`, body)
+    },
+  })
+  if (!ok || !saved) return
+  toast(`"${agentTitle(saved)}" goes by ${shownID(saved)}`)
+  await guarded(refreshAgents)
+}
+
 function renderConvo(forceBottom) {
   const box = document.getElementById('convo')
   const inner = document.getElementById('convo-inner')
@@ -701,7 +766,8 @@ function renderConvo(forceBottom) {
   const atBottom = forceBottom || box.scrollHeight - box.scrollTop - box.clientHeight < 80
   const c = convo(a.id)
   const items = c.entries.map((en) => entryView(en, a)).filter(Boolean)
-  inner.replaceChildren(...(items.length ? items : [h('div', { class: 'empty' }, 'Loading…')]))
+  const none = c.ready ? 'Nothing yet: the first message you send starts it.' : 'Loading…'
+  inner.replaceChildren(...(items.length ? items : [h('div', { class: 'empty' }, none)]))
   if (atBottom) box.scrollTop = box.scrollHeight
 }
 
@@ -754,7 +820,7 @@ function renderApprovals() {
 function composer(a) {
   const ta = h('textarea', {
     rows: 1,
-    placeholder: a.archived_at ? 'This agent is archived.' : 'Message the agent…',
+    placeholder: a.archived_at ? 'This agent is archived.' : a.name ? 'Message the agent…' : 'What should the agent do?',
     title: coarse ? null : 'Enter sends · Shift+Enter adds a line',
     disabled: !!a.archived_at,
     value: S.drafts.get(a.id) || '',
@@ -767,6 +833,8 @@ function composer(a) {
     S.drafts.set(a.id, '')
     grow()
     await send(text)
+    // Its first message names it; show that now, not at the next poll.
+    if (!agentById(a.id)?.name) await guarded(refreshAgents)
   }
   ta.addEventListener('input', grow)
   ta.addEventListener('keydown', (e) => {
@@ -829,15 +897,15 @@ function newAgentView() {
   const iso = dropdown([], { label: 'Isolation' })
   const noIso = h('p', { class: 'form-error' }, 'There is no isolation yet. ',
     h('a', { href: '#/isolations', onclick: (e) => { e.preventDefault(); show('isolations') } }, 'Create one'), ' first.')
-  // The list may arrive after the form is drawn; refill it in place so a
-  // half-typed prompt survives.
+  // The list may arrive after the form is drawn; refill it in place so
+  // what is already chosen survives.
   const fillIsos = () => {
     iso.setOptions(S.isolations.map((i) => i.name))
     noIso.hidden = S.isolations.length > 0
   }
   fillIsos()
   S.refillIsolations = fillIsos
-  const repo = h('input', { placeholder: 'https://github.com/owner/repo (optional)', autocomplete: 'off' })
+  const handle = h('input', { placeholder: 'optional; like brave-otter otherwise', autocomplete: 'off', autocapitalize: 'off', spellcheck: 'false' })
   const effort = dropdown([], { label: 'Effort' })
   const model = h('input', { placeholder: "optional; the CLI's default otherwise" })
   const approvals = dropdown([
@@ -846,44 +914,43 @@ function newAgentView() {
     { value: 'ask', label: 'ask — the agent asks first for what its own rules flag' },
     { value: 'default', label: "default — the CLI's own settings in the isolation decide" },
   ], { value: 'default', label: 'Approvals' })
-  const prompt = h('textarea', { placeholder: 'What should the agent do?' })
   const fillEfforts = () => effort.setOptions(effortOptions(kind))
   fillEfforts()
   const seg = h('div', { class: 'segmented' })
   const drawSeg = () => seg.replaceChildren(...['claude', 'codex'].map((k) =>
     h('button', { type: 'button', class: k === kind ? 'on' : '', onclick: () => { kind = k; drawSeg(); fillEfforts() } }, k === 'codex' ? 'Codex' : 'Claude')))
   drawSeg()
-  const create = h('button', { class: 'btn primary' }, 'Start agent')
+  const create = h('button', { class: 'btn primary' }, 'Create agent')
   create.addEventListener('click', async () => {
     err.textContent = ''
     if (!iso.value) { err.textContent = 'Create an isolation first.'; return }
-    if (!prompt.value.trim()) { err.textContent = 'An initial prompt is required.'; prompt.focus(); return }
     create.disabled = true
-    create.textContent = 'Starting…'
+    create.textContent = 'Creating…'
     try {
       const a = await api('POST', '/v1/agents', {
-        isolation: iso.value, kind, prompt: prompt.value.trim(), repo: repo.value.trim() || undefined,
+        isolation: iso.value, kind, handle: handle.value.trim() || undefined,
         options: { effort: effort.value || undefined, model: model.value.trim() || undefined, approvals: approvals.value },
       })
       await refreshAgents()
       select(a.id)
+      // It waits for its first message.
+      document.querySelector('.composer textarea')?.focus()
     } catch (e) {
       if (e instanceof Unauthorized) { S.authed = false; render(); return }
       err.textContent = e.message
       create.disabled = false
-      create.textContent = 'Start agent'
+      create.textContent = 'Create agent'
     }
   })
-  queueMicrotask(() => prompt.focus())
   return h('div', { class: 'page' }, h('div', { class: 'page-inner' },
     h('h2', null, 'New agent'),
-    h('p', { class: 'lead' }, 'It runs inside an isolation, on its own clone of the code.'),
+    h('p', { class: 'lead' }, 'It runs inside an isolation, in a workspace of its own, and starts on the first message you send it.'),
     noIso,
     h('div', { class: 'row' },
       h('div', { class: 'field' }, h('label', null, 'Isolation'), iso),
       h('div', { class: 'field' }, h('label', null, 'Agent'), seg)),
-    h('div', { class: 'field' }, h('label', null, 'Prompt'), prompt),
-    h('div', { class: 'field' }, h('label', null, 'Repository'), repo, h('span', { class: 'hint' }, 'Cloned into the agent’s workspace inside the isolation.')),
+    h('div', { class: 'field' }, h('label', null, 'ID'), handle,
+      h('span', { class: 'hint' }, 'Lowercase letters, digits and dashes; unique among all agents, archived ones too. Left empty, it gets an adjective-noun no agent has.')),
     h('div', { class: 'row' },
       h('div', { class: 'field' }, h('label', null, 'Effort'), effort),
       h('div', { class: 'field' }, h('label', null, 'Model'), model)),

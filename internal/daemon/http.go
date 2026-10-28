@@ -224,6 +224,14 @@ func (m *Manager) Handler() http.Handler {
 		v, err := m.Agent(r.PathValue("id"))
 		reply(w, v, err)
 	})
+	mux.HandleFunc("PATCH /v1/agents/{id}", func(w http.ResponseWriter, r *http.Request) {
+		var req api.UpdateAgent
+		if !decode(w, r, &req) {
+			return
+		}
+		v, err := m.UpdateAgent(r.PathValue("id"), req)
+		reply(w, v, err)
+	})
 	mux.HandleFunc("GET /v1/agents/{id}/events", m.handleEvents)
 	mux.HandleFunc("GET /v1/events", m.handleEvents)
 	mux.HandleFunc("POST /v1/agents/{id}/messages", func(w http.ResponseWriter, r *http.Request) {
@@ -364,6 +372,11 @@ func (m *Manager) handleEvents(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 			last = e.ID
+		}
+		// The history is all there: an agent with none has none, rather
+		// than one still on its way.
+		if _, err := fmt.Fprint(w, "event: ready\ndata: {}\n\n"); err != nil {
+			return
 		}
 	}
 	flusher.Flush()

@@ -6,7 +6,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/charmbracelet/bubbles/textarea"
 	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
 
@@ -19,7 +18,6 @@ type fieldKind int
 const (
 	fSelect fieldKind = iota
 	fText
-	fArea
 	fCheck // several of options, idx is the one under the cursor
 )
 
@@ -30,7 +28,6 @@ type field struct {
 	idx     int
 	checked map[string]bool
 	text    textinput.Model
-	area    textarea.Model
 	hint    string
 	// A lookup checklist's options are what the service found with the
 	// env's credential; notes say more about each. Until it has looked,
@@ -49,12 +46,10 @@ func (f *field) value() string {
 			return ""
 		}
 		return f.options[f.idx]
-	case fText:
-		return strings.TrimSpace(f.text.Value())
 	case fCheck:
 		return strings.Join(f.values(), ",")
 	}
-	return strings.TrimSpace(f.area.Value())
+	return strings.TrimSpace(f.text.Value())
 }
 
 // values is a checklist's ticked options, in option order.
@@ -77,19 +72,13 @@ func checkField(label string, options, checked []string, hint string) *field {
 }
 
 func (f *field) focus(on bool) {
-	switch f.kind {
-	case fText:
-		if on {
-			f.text.Focus()
-		} else {
-			f.text.Blur()
-		}
-	case fArea:
-		if on {
-			f.area.Focus()
-		} else {
-			f.area.Blur()
-		}
+	if f.kind != fText {
+		return
+	}
+	if on {
+		f.text.Focus()
+	} else {
+		f.text.Blur()
 	}
 }
 
@@ -172,11 +161,8 @@ func (f *form) handle(k Keymap, msg tea.KeyMsg) (tea.Cmd, bool) {
 		return nil, true
 	}
 	var cmd tea.Cmd
-	switch cur.kind {
-	case fText:
+	if cur.kind == fText {
 		cur.text, cmd = cur.text.Update(msg)
-	case fArea:
-		cur.area, cmd = cur.area.Update(msg)
 	}
 	return cmd, false
 }
@@ -238,11 +224,6 @@ func (f *form) render(th theme, width int) string {
 				items = append(items, item)
 			}
 			val = " " + strings.Join(items, " ")
-		case fArea:
-			fd.area.SetWidth(max(width-6, 10))
-			b.WriteString(marker + label + "\n")
-			b.WriteString(indent(fd.area.View(), "    ") + "\n")
-			continue
 		}
 		line := marker + label + " " + val
 		if fd.hint != "" && i == f.cur {
@@ -289,14 +270,6 @@ func (f *field) renderTall(th theme, focused bool, width int) string {
 	return b.String()
 }
 
-func indent(s, pad string) string {
-	lines := strings.Split(s, "\n")
-	for i := range lines {
-		lines[i] = pad + lines[i]
-	}
-	return strings.Join(lines, "\n")
-}
-
 // --- New agent
 
 type agentForm struct {
@@ -308,34 +281,27 @@ type agentForm struct {
 const (
 	nfIso = iota
 	nfKind
-	nfRepo
+	nfID
 	nfEffort
 	nfModel
 	nfApprovals
-	nfPrompt
 )
 
+// newAgentForm makes an agent that waits for its first message, typed in
+// the input it opens on.
 func newAgentForm(isos []api.Isolation) *agentForm {
-	prompt := textarea.New()
-	prompt.Placeholder = "What should the agent do?"
-	prompt.ShowLineNumbers = false
-	prompt.SetHeight(6)
-	prompt.CharLimit = 0
 	f := &agentForm{form: form{fields: []*field{
 		selectField("Isolation", nil, "required"),
 		selectField("Agent", []string{string(driver.Claude), string(driver.Codex)}, ""),
-		textField("Repository", "optional git URL to clone into the workspace", ""),
+		textField("ID", "optional: lowercase letters, digits, dashes", "unique among all agents, archived ones too; an adjective-noun like brave-otter otherwise"),
 		selectField("Effort", efforts(string(driver.Claude)), ""),
 		textField("Model", "optional; the CLI's default otherwise", ""),
 		selectField("Approvals", approvalModes(),
 			"never: runs unattended inside the isolation · auto: unattended, a reviewer model refuses risky actions · ask: the agent asks first for what its own rules flag · default: the CLI's own settings decide"),
-		{label: "Prompt", kind: fArea, area: prompt},
 	}}}
 	// A new agent starts on the CLI's own settings.
 	f.fields[nfApprovals].idx = indexOf(f.fields[nfApprovals].options, string(driver.ApprovalsDefault))
 	f.setIsolations(isos)
-	f.cur = nfPrompt
-	f.fields[nfPrompt].focus(true)
 	return f
 }
 
@@ -379,8 +345,11 @@ func (m *Model) handleNewAgentKey(msg tea.KeyMsg) tea.Cmd {
 	case k.Is(msg, "back"):
 		m.closeMainPage()
 		return nil
-	case k.Is(msg, "submit"):
+	case k.Is(msg, "submit"), msg.String() == "enter" && f.cur == len(f.fields)-1:
 		return m.submitNewAgent()
+	case msg.String() == "enter":
+		f.move(1)
+		return nil
 	}
 	kind := f.fields[nfKind].value()
 	cmd, _ := f.handle(k, msg)
@@ -395,21 +364,16 @@ func (m *Model) handleNewAgentKey(msg tea.KeyMsg) tea.Cmd {
 
 func (m *Model) submitNewAgent() tea.Cmd {
 	f := m.newForm
-	iso, prompt := f.fields[nfIso].value(), f.fields[nfPrompt].value()
-	switch {
-	case iso == "":
+	iso := f.fields[nfIso].value()
+	if iso == "" {
 		f.err = errNoIsolation.Error()
-		return nil
-	case prompt == "":
-		f.err = "an initial prompt is required"
 		return nil
 	}
 	opts := driver.Options{Model: f.fields[nfModel].value(), Approvals: driver.Approvals(f.fields[nfApprovals].value())}
 	if e := f.fields[nfEffort].value(); e != "default" {
 		opts.Effort = e
 	}
-	req := api.CreateAgent{Isolation: iso, Kind: driver.Kind(f.fields[nfKind].value()), Prompt: prompt,
-		Repo: f.fields[nfRepo].value(), Options: opts}
+	req := api.CreateAgent{Isolation: iso, Kind: driver.Kind(f.fields[nfKind].value()), Handle: f.fields[nfID].value(), Options: opts}
 	f.busy, f.err = true, ""
 	be := m.be
 	return func() tea.Msg {

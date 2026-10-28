@@ -48,9 +48,14 @@ type Isolation struct {
 }
 
 type Agent struct {
-	ID   string      `json:"id"`
-	Name string      `json:"name"`
-	Kind driver.Kind `json:"kind"`
+	// ID is the key gero gave it: its workspace, its log and every row
+	// about it are named after it.
+	ID string `json:"id"`
+	// Handle is the ID the operator gave it, if any: unique among all
+	// agents, archived ones included, as theirs or as their key.
+	Handle string      `json:"handle,omitempty"`
+	Name   string      `json:"name"`
+	Kind   driver.Kind `json:"kind"`
 	// IsolationID is the ID of the isolation it runs in.
 	IsolationID string         `json:"isolation_id"`
 	Workdir     string         `json:"workdir"`
@@ -80,6 +85,7 @@ CREATE TABLE IF NOT EXISTS isolations (
 );
 CREATE TABLE IF NOT EXISTS agents (
 	id          TEXT PRIMARY KEY,
+	handle      TEXT,
 	name        TEXT NOT NULL,
 	kind        TEXT NOT NULL,
 	isolation   TEXT NOT NULL REFERENCES isolations(id),
@@ -149,6 +155,7 @@ func (s *Store) Vacuum() error {
 var added = []struct{ table, column, def string }{
 	{"isolations", "network", "TEXT NOT NULL DEFAULT ''"},
 	{"isolations", "fence", "TEXT NOT NULL DEFAULT 'on'"},
+	{"agents", "handle", "TEXT"},
 }
 
 func hasColumn(db interface {
@@ -180,6 +187,10 @@ func migrate(db *sql.DB) error {
 				return err
 			}
 		}
+	}
+	// NULL is no handle; any number of agents have none.
+	if _, err := db.Exec(`CREATE UNIQUE INDEX IF NOT EXISTS agents_handle ON agents(handle)`); err != nil {
+		return err
 	}
 	return migrateIsolationIDs(db)
 }
@@ -272,7 +283,8 @@ func parseTS(s string) time.Time {
 	return t
 }
 
-// ErrExists refuses a name another isolation has.
+// ErrExists refuses a name another isolation has, or an ID another agent
+// has.
 var ErrExists = errors.New("already exists")
 
 func (s *Store) PutIsolation(iso Isolation) error {
@@ -368,21 +380,63 @@ func (s *Store) RenameIsolation(id, to string) error {
 	return tx.Commit()
 }
 
+// CreateAgent stores a new agent; neither its key nor its handle may be
+// any agent's key or handle.
 func (s *Store) CreateAgent(a Agent) error {
 	opts, _ := json.Marshal(a.Options)
-	_, err := s.db.Exec(`INSERT INTO agents (id, name, kind, isolation, workdir, repo, options, session_id, created_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		a.ID, a.Name, string(a.Kind), a.IsolationID, a.Workdir, a.Repo, string(opts), a.SessionID, ts(a.CreatedAt))
-	return err
+	tx, err := s.db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	for _, ref := range []string{a.ID, a.Handle} {
+		if err := refFree(tx, ref, ""); err != nil {
+			return err
+		}
+	}
+	if _, err := tx.Exec(`INSERT INTO agents (id, handle, name, kind, isolation, workdir, repo, options, session_id, created_at)
+		VALUES (?, NULLIF(?, ''), ?, ?, ?, ?, ?, ?, ?, ?)`,
+		a.ID, a.Handle, a.Name, string(a.Kind), a.IsolationID, a.Workdir, a.Repo, string(opts), a.SessionID, ts(a.CreatedAt)); err != nil {
+		return err
+	}
+	return tx.Commit()
 }
 
-const agentCols = `id, name, kind, isolation, workdir, repo, options, session_id, last_src, created_at, archived_at`
+// refFree refuses ref if an agent other than except has it as its key or
+// its handle. "" is no ref.
+func refFree(q interface {
+	QueryRow(string, ...any) *sql.Row
+}, ref, except string) error {
+	if ref == "" {
+		return nil
+	}
+	var other string
+	err := q.QueryRow(`SELECT id FROM agents WHERE (id = ? OR handle = ?) AND id != ?`, ref, ref, except).Scan(&other)
+	switch {
+	case errors.Is(err, sql.ErrNoRows):
+		return nil
+	case err != nil:
+		return err
+	}
+	return fmt.Errorf("agent ID %s %w (agent %s)", ref, ErrExists, other)
+}
+
+// RefFree refuses ref, with ErrExists, if an agent has it as its key or its
+// handle.
+func (s *Store) RefFree(ref string) error { return refFree(s.db, ref, "") }
+
+// AgentByHandle is the agent the operator gave the ID handle.
+func (s *Store) AgentByHandle(handle string) (Agent, error) {
+	return scanAgent(s.db.QueryRow(`SELECT `+agentCols+` FROM agents WHERE handle = ?`, handle))
+}
+
+const agentCols = `id, COALESCE(handle, ''), name, kind, isolation, workdir, repo, options, session_id, last_src, created_at, archived_at`
 
 func scanAgent(row interface{ Scan(...any) error }) (Agent, error) {
 	var a Agent
 	var kind, opts, created string
 	var archived sql.NullString
-	err := row.Scan(&a.ID, &a.Name, &kind, &a.IsolationID, &a.Workdir, &a.Repo, &opts, &a.SessionID,
+	err := row.Scan(&a.ID, &a.Handle, &a.Name, &kind, &a.IsolationID, &a.Workdir, &a.Repo, &opts, &a.SessionID,
 		&a.LastSrc, &created, &archived)
 	if errors.Is(err, sql.ErrNoRows) {
 		return a, ErrNotFound
@@ -437,6 +491,48 @@ func (s *Store) SetOptions(id string, o driver.Options) error {
 	b, _ := json.Marshal(o)
 	_, err := s.db.Exec(`UPDATE agents SET options = ? WHERE id = ?`, string(b), id)
 	return err
+}
+
+// RenameAgent changes what is set of an agent's name and handle at once:
+// both, or neither if its handle is taken. A handle of "" takes it away.
+func (s *Store) RenameAgent(id string, name, handle *string) error {
+	tx, err := s.db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	if handle != nil {
+		if err := refFree(tx, *handle, id); err != nil {
+			return err
+		}
+	}
+	res, err := tx.Exec(`UPDATE agents SET name = COALESCE(?, name), handle = CASE WHEN ? THEN NULLIF(?, '') ELSE handle END WHERE id = ?`,
+		name, handle != nil, deref(handle), id)
+	if err != nil {
+		return err
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		return fmt.Errorf("agent %s: %w", id, ErrNotFound)
+	}
+	return tx.Commit()
+}
+
+func deref(s *string) string {
+	if s == nil {
+		return ""
+	}
+	return *s
+}
+
+func (s *Store) SetAgentName(id, name string) error {
+	res, err := s.db.Exec(`UPDATE agents SET name = ? WHERE id = ?`, name, id)
+	if err != nil {
+		return err
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		return fmt.Errorf("agent %s: %w", id, ErrNotFound)
+	}
+	return nil
 }
 
 func (s *Store) SetSessionID(id, sessionID string) error {

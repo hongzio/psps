@@ -14,6 +14,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 	"syscall"
@@ -21,6 +22,7 @@ import (
 	"time"
 
 	"github.com/hongzio/gero/internal/api"
+	"github.com/hongzio/gero/internal/client"
 	"github.com/hongzio/gero/internal/driver"
 	"github.com/hongzio/gero/internal/event"
 	"github.com/hongzio/gero/internal/isolation"
@@ -1257,5 +1259,321 @@ func TestAnAmbiguousPrefixDeletesNothing(t *testing.T) {
 	}
 	if all, _ := e.st.Agents(); len(all) != 2 {
 		t.Fatalf("%d agents left", len(all))
+	}
+}
+
+// serveAPI serves m's API on a socket of its own, as the daemon does, and
+// returns a client of it and the socket.
+func serveAPI(t *testing.T, m *Manager) (*client.Client, string) {
+	t.Helper()
+	// A unix socket's path has to be short; a test's temp dir is not.
+	dir, err := os.MkdirTemp("", "gero")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { os.RemoveAll(dir) })
+	sock := filepath.Join(dir, "s")
+	ln, err := net.Listen("unix", sock)
+	if err != nil {
+		t.Fatal(err)
+	}
+	srv := &http.Server{Handler: m.Handler()}
+	go srv.Serve(ln)
+	t.Cleanup(func() { srv.Close() })
+	return client.New(sock), sock
+}
+
+// A followed agent's history ends with a ready event, which a browser can
+// tell "none yet" by; the Go client never passes it on as an event.
+func TestFollowingSaysWhenTheHistoryIsAllThere(t *testing.T) {
+	e := newTestEnv(t)
+	ctx := context.Background()
+	m, stop := e.daemon()
+	defer stop()
+	c, sock := serveAPI(t, m)
+	a, err := m.CreateAgent(ctx, api.CreateAgent{Isolation: "dev", Kind: driver.Codex})
+	if err != nil {
+		t.Fatal(err)
+	}
+	hc := &http.Client{Transport: &http.Transport{DialContext: func(ctx context.Context, _, _ string) (net.Conn, error) {
+		var d net.Dialer
+		return d.DialContext(ctx, "unix", sock)
+	}}}
+	req, _ := http.NewRequestWithContext(ctx, "GET", "http://gero/v1/agents/"+a.ID+"/events?follow=1", nil)
+	resp, err := hc.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	line, err := bufio.NewReader(resp.Body).ReadString('\n')
+	resp.Body.Close()
+	if err != nil || line != "event: ready\n" {
+		t.Fatalf("an agent with no history: %q, %v", line, err)
+	}
+
+	if err := m.Send(a.ID, "hello"); err != nil {
+		t.Fatal(err)
+	}
+	e.waitFor("an answer", func() bool { return e.hasAssistant(a.ID, "echo: hello") })
+	// Past the history, ready included.
+	fctx, cancel := context.WithTimeout(ctx, 500*time.Millisecond)
+	defer cancel()
+	var kinds []event.Kind
+	c.Follow(fctx, a.ID, 0, func(ev event.Event) error {
+		kinds = append(kinds, ev.Kind)
+		return nil
+	})
+	for _, k := range kinds {
+		if k == "" {
+			t.Fatalf("the client passed on the ready event: %v", kinds)
+		}
+	}
+	if !slices.Contains(kinds, event.KindAssistant) {
+		t.Fatalf("followed %v", kinds)
+	}
+}
+
+// A new name is all that changes: a running turn carries on, an archived
+// agent takes one as well, and a name is one line of text.
+func TestRenamingAnAgent(t *testing.T) {
+	e := newTestEnv(t)
+	ctx := context.Background()
+	m, stop := e.daemon()
+	defer stop()
+	c, _ := serveAPI(t, m)
+
+	if _, err := m.CreateAgent(ctx, api.CreateAgent{Isolation: "dev", Kind: driver.Codex, Prompt: "hang", Name: "two\nlines"}); err == nil {
+		t.Fatal("created an agent named two lines")
+	}
+	a, err := m.CreateAgent(ctx, api.CreateAgent{Isolation: "dev", Kind: driver.Codex, Prompt: "hang"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	e.waitFor("the turn", func() bool { return status(m, a.ID) == event.StatusWorking })
+	v, err := c.UpdateAgent(ctx, a.ID[:4], api.UpdateAgent{Name: ptr("  the flaky test  ")})
+	if err != nil || v.ID != a.ID || v.Name != "the flaky test" {
+		t.Fatalf("rename: %+v, %v", v, err)
+	}
+	if got, _ := m.Agent(a.ID); got.Name != "the flaky test" {
+		t.Fatalf("the live agent is still %q", got.Name)
+	}
+	if got, _ := e.st.Agent(a.ID); got.Name != "the flaky test" {
+		t.Fatalf("stored as %q", got.Name)
+	}
+	time.Sleep(200 * time.Millisecond)
+	if s := status(m, a.ID); s != event.StatusWorking {
+		t.Fatalf("status %s after the rename", s)
+	}
+	for _, ev := range e.events(a.ID) {
+		if ev.Kind == event.KindTurnEnd {
+			t.Fatalf("the turn ended: %v", kindsOf(e.events(a.ID)))
+		}
+	}
+
+	for _, bad := range []string{"", "  ", "two\nlines", "tab\there"} {
+		var he httpError
+		if _, err := m.UpdateAgent(a.ID, api.UpdateAgent{Name: ptr(bad)}); !errors.As(err, &he) || he.code != http.StatusBadRequest {
+			t.Errorf("name %q: %v", bad, err)
+		}
+	}
+	if _, err := c.UpdateAgent(ctx, "nope", api.UpdateAgent{Name: ptr("x")}); err == nil || !strings.Contains(err.Error(), "not found") {
+		t.Fatalf("an unknown agent: %v", err)
+	}
+	if got, _ := m.Agent(a.ID); got.Name != "the flaky test" {
+		t.Fatalf("a refused name changed it to %q", got.Name)
+	}
+
+	if err := m.Archive(ctx, a.ID); err != nil {
+		t.Fatal(err)
+	}
+	if v, err := c.UpdateAgent(ctx, a.ID, api.UpdateAgent{Name: ptr("fixed")}); err != nil || v.Name != "fixed" || v.ArchivedAt == nil {
+		t.Fatalf("archived rename: %+v, %v", v, err)
+	}
+}
+
+// Without a prompt an agent waits, with no process, for its first message,
+// which names it unless it was named first.
+func TestAnAgentWithoutAPromptStartsOnItsFirstMessage(t *testing.T) {
+	e := newTestEnv(t)
+	ctx := context.Background()
+	m, stop := e.daemon()
+	defer stop()
+	a, err := m.CreateAgent(ctx, api.CreateAgent{Isolation: "dev", Kind: driver.Codex})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if a.Name != "" || !exists(a.Workdir) {
+		t.Fatalf("created %+v, workspace %v", a, exists(a.Workdir))
+	}
+	time.Sleep(300 * time.Millisecond)
+	if v, _ := m.Agent(a.ID); v.State.Alive || len(e.events(a.ID)) != 0 {
+		t.Fatalf("started with nothing to do: %+v, %v", v.State, kindsOf(e.events(a.ID)))
+	}
+
+	if err := m.Send(a.ID, "  fix the\tflaky test"); err != nil {
+		t.Fatal(err)
+	}
+	e.waitFor("an answer", func() bool { return e.hasAssistant(a.ID, "echo:   fix the\tflaky test") })
+	if v, _ := m.Agent(a.ID); v.Name != "fix the flaky test" {
+		t.Fatalf("named %q", v.Name)
+	}
+	if st, _ := e.st.Agent(a.ID); st.Name != "fix the flaky test" {
+		t.Fatalf("stored as %q", st.Name)
+	}
+	if err := m.Send(a.ID, "and the next one"); err != nil {
+		t.Fatal(err)
+	}
+	if v, _ := m.Agent(a.ID); v.Name != "fix the flaky test" {
+		t.Fatalf("a second message renamed it %q", v.Name)
+	}
+
+	b, err := m.CreateAgent(ctx, api.CreateAgent{Isolation: "dev", Kind: driver.Codex})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := m.UpdateAgent(b.ID, api.UpdateAgent{Name: ptr("mine")}); err != nil {
+		t.Fatal(err)
+	}
+	if err := m.Send(b.ID, "hello"); err != nil {
+		t.Fatal(err)
+	}
+	if v, _ := m.Agent(b.ID); v.Name != "mine" {
+		t.Fatalf("its first message renamed it %q", v.Name)
+	}
+}
+
+// An agent's own ID names it wherever its key does, and no other agent,
+// archived ones included, may have it: a new one is refused before any
+// workspace is made.
+func TestAnAgentsOwnID(t *testing.T) {
+	e := newTestEnv(t)
+	ctx := context.Background()
+	m, stop := e.daemon()
+	defer stop()
+	a, err := m.CreateAgent(ctx, api.CreateAgent{Isolation: "dev", Kind: driver.Codex, Handle: " fix-login "})
+	if err != nil || a.Handle != "fix-login" {
+		t.Fatalf("created %+v, %v", a, err)
+	}
+	if err := m.Send("fix-login", "hello"); err != nil {
+		t.Fatal(err)
+	}
+	e.waitFor("an answer", func() bool { return e.hasAssistant(a.ID, "echo: hello") })
+	if v, err := m.Agent("fix-login"); err != nil || v.ID != a.ID {
+		t.Fatalf("by its own ID: %+v, %v", v, err)
+	}
+
+	workspaces := func() int { d, _ := os.ReadDir(m.workRoot); return len(d) }
+	n := workspaces()
+	var he httpError
+	for _, h := range []string{"fix-login", a.ID} {
+		if _, err := m.CreateAgent(ctx, api.CreateAgent{Isolation: "dev", Kind: driver.Codex, Handle: h}); !errors.Is(err, store.ErrExists) {
+			t.Errorf("a second agent took %q: %v", h, err)
+		}
+	}
+	for _, h := range []string{"Fix", "fix login", "-fix", strings.Repeat("x", 33)} {
+		if _, err := m.CreateAgent(ctx, api.CreateAgent{Isolation: "dev", Kind: driver.Codex, Handle: h}); !errors.As(err, &he) || he.code != http.StatusBadRequest {
+			t.Errorf("own ID %q: %v", h, err)
+		}
+	}
+	if workspaces() != n {
+		t.Fatal("a refused agent left a workspace")
+	}
+
+	b, err := m.CreateAgent(ctx, api.CreateAgent{Isolation: "dev", Kind: driver.Codex})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := m.Archive(ctx, "fix-login"); err != nil {
+		t.Fatal(err)
+	}
+	for _, h := range []string{"fix-login", a.ID} {
+		if _, err := m.UpdateAgent(b.ID, api.UpdateAgent{Handle: ptr(h)}); !errors.Is(err, store.ErrExists) {
+			t.Errorf("b took %q from an archived agent: %v", h, err)
+		}
+	}
+	if v, err := m.UpdateAgent("fix-login", api.UpdateAgent{Handle: ptr("")}); err != nil || v.Handle != "" {
+		t.Fatalf("giving it back: %+v, %v", v, err)
+	}
+	if v, err := m.UpdateAgent(b.ID, api.UpdateAgent{Handle: ptr("fix-login")}); err != nil || v.Handle != "fix-login" {
+		t.Fatalf("a freed ID: %+v, %v", v, err)
+	}
+	if v, _ := m.Agent("fix-login"); v.ID != b.ID {
+		t.Fatalf("fix-login is %s", v.ID)
+	}
+}
+
+// An agent given no ID of its own goes by an adjective-noun no agent has,
+// as its ID or its key; once all are taken, by one with a number.
+func TestAnAgentWithNoIDOfItsOwnGetsAnAdjectiveNoun(t *testing.T) {
+	for _, l := range [][]string{adjectives, nouns} {
+		if len(l) != 500 || len(slices.Compact(slices.Sorted(slices.Values(l)))) != 500 {
+			t.Fatalf("%d words, some twice", len(l))
+		}
+	}
+	// Lowercase words, the longest pair with a number still an agent ID,
+	// and none on both lists (no lemon-lemon).
+	longest := map[bool]int{}
+	for i, l := range [][]string{adjectives, nouns} {
+		for _, w := range l {
+			if strings.Trim(w, "abcdefghijklmnopqrstuvwxyz") != "" || (i == 1 && slices.Contains(adjectives, w)) {
+				t.Fatalf("%q", w)
+			}
+			longest[i == 0] = max(longest[i == 0], len(w))
+		}
+	}
+	if n := strings.Repeat("a", longest[true]) + "-" + strings.Repeat("a", longest[false]) + "-99"; !validAgentHandle.MatchString(n) {
+		t.Fatalf("%s is no agent ID", n)
+	}
+	e := newTestEnv(t)
+	ctx := context.Background()
+	m, stop := e.daemon()
+	defer stop()
+	savedA, savedN := adjectives, nouns
+	defer func() { adjectives, nouns = savedA, savedN }()
+	adjectives, nouns = []string{"red"}, []string{"fox", "owl"}
+	// One is already someone's own ID.
+	if _, err := m.CreateAgent(ctx, api.CreateAgent{Isolation: "dev", Kind: driver.Codex, Handle: "red-fox"}); err != nil {
+		t.Fatal(err)
+	}
+	b, err := m.CreateAgent(ctx, api.CreateAgent{Isolation: "dev", Kind: driver.Codex})
+	if err != nil || b.Handle != "red-owl" {
+		t.Fatalf("created %+v, %v", b, err)
+	}
+	if v, err := m.Agent("red-owl"); err != nil || v.ID != b.ID {
+		t.Fatalf("by its ID: %+v, %v", v, err)
+	}
+	c, err := m.CreateAgent(ctx, api.CreateAgent{Isolation: "dev", Kind: driver.Codex})
+	if err != nil || (c.Handle != "red-fox-2" && c.Handle != "red-owl-2") {
+		t.Fatalf("with every one taken: %+v, %v", c, err)
+	}
+	// Its key is still random: an ID that came back would otherwise find
+	// a deleted agent's workspace.
+	if c.ID == c.Handle || !strings.HasSuffix(c.Workdir, "/"+c.ID) {
+		t.Fatalf("key %q, workspace %s", c.ID, c.Workdir)
+	}
+}
+
+// A name picked for an agent that another agent takes before it is stored
+// is picked again; an ID the operator chose is refused instead.
+func TestAPickedNameTakenMeanwhileIsPickedAgain(t *testing.T) {
+	e := newTestEnv(t)
+	m, stop := e.daemon()
+	defer stop()
+	savedA, savedN := adjectives, nouns
+	defer func() { adjectives, nouns = savedA, savedN }()
+	adjectives, nouns = []string{"red"}, []string{"fox", "owl"}
+	now := time.Now()
+	if err := e.st.CreateAgent(store.Agent{ID: "k1", Handle: "red-fox", Name: "x", Kind: driver.Codex, IsolationID: testIsoID, Workdir: "/w/k1", CreatedAt: now}); err != nil {
+		t.Fatal(err)
+	}
+	a := store.Agent{ID: "k2", Handle: "red-fox", Name: "y", Kind: driver.Codex, IsolationID: testIsoID, Workdir: "/w/k2", CreatedAt: now}
+	if _, err := m.storeNamed(a, false); !errors.Is(err, store.ErrExists) {
+		t.Fatalf("an operator's taken ID: %v", err)
+	}
+	got, err := m.storeNamed(a, true)
+	if err != nil || got.Handle != "red-owl" {
+		t.Fatalf("stored %+v, %v", got, err)
+	}
+	if st, _ := e.st.Agent("k2"); st.Handle != "red-owl" {
+		t.Fatalf("k2 stored with %q", st.Handle)
 	}
 }

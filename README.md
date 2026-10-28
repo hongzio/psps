@@ -24,9 +24,13 @@ bin/gero iso set dev --memory 8G --cpus 6  # resize: a new container, same volum
 bin/gero iso rename dev work              # agents keep running
 bin/gero iso verify dev                   # measure the fence, the proxies, the mounts
 bin/gero agent new --iso dev --kind codex "fix the flaky test"
+bin/gero agent new --iso dev --kind claude  # no prompt: it waits for its first message
+bin/gero agent new --iso dev --kind codex --id login "fix the login bug"
 bin/gero agent ls
 bin/gero agent log <id> -f
 bin/gero agent send <id> "also update the changelog"
+bin/gero agent rename <id> login bug      # only the name changes; a turn carries on
+bin/gero agent id <id> login              # an ID of your own (--clear gives it back)
 bin/gero agent archive <id>               # stops it; its history is kept
 bin/gero agent rm <id> [--purge]          # an archived one: gone from gero; --purge also
                                           # removes its workspace and session transcript
@@ -39,9 +43,9 @@ bin/gero tui
 ```
 
 Agents on the left (status at a glance; archived ones folded at the bottom,
-`d` deletes one),
+`r` renames one, `i` gives it an ID of your own, `d` deletes one),
 the selected agent's conversation in the middle, the input at the bottom with
-the agent's settings behind `ctrl+o`. `ctrl+n` starts an agent, `ctrl+g`
+the agent's settings behind `ctrl+o`. `ctrl+n` makes an agent (its first message, typed in the input, starts it and names it), `ctrl+g`
 manages isolations (environment, `s` to rename or resize one, upgrades, `v` to verify one, `l` its accounts
 (what Claude and Codex log in with), and with `p` the credential proxies each one serves), `ctrl+r` the
 proxies' environments (secrets and
@@ -163,6 +167,15 @@ TUI and on the web), changed at any time:
   `gero iso set` replaces the container on the same volumes, as an upgrade
   does: running agents end, sessions and workspaces stay, and a size the new
   container will not start with is put back.
+- An agent likewise has a key gero gives it (`77b17c2c`), which its
+  workspace, log and history are named after, and an ID it goes by: yours
+  (`--id`, `gero agent id`, the TUI's `i`, the web's Name & ID), or else an
+  adjective-noun gero picks (`brave-otter`, one of 250,000). The ID names it wherever the key
+  does and is shown in its place; no other agent may have it, as theirs or
+  as their key, archived ones included, which is checked each time one is
+  given. Taking it away (`--clear`, or empty) frees it, and the agent goes
+  by its key. The key stays random: a deleted agent's workspace stays
+  unless purged, and an ID that came back would find it.
 
 ## Network fence
 

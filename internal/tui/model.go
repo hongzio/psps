@@ -12,6 +12,7 @@ import (
 
 	"github.com/charmbracelet/bubbles/key"
 	"github.com/charmbracelet/bubbles/textarea"
+	"github.com/charmbracelet/bubbles/textinput"
 	"github.com/charmbracelet/bubbles/viewport"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
@@ -32,6 +33,7 @@ type Backend interface {
 	Interrupt(ctx context.Context, id string) error
 	SetOptions(ctx context.Context, id string, o driver.Options) error
 	Archive(ctx context.Context, id string) error
+	UpdateAgent(ctx context.Context, id string, req api.UpdateAgent) (api.Agent, error)
 	DeleteAgent(ctx context.Context, id string, purge bool) error
 	Follow(ctx context.Context, id string, after int64, fn func(event.Event) error) error
 	CreateIsolation(ctx context.Context, req api.CreateIsolation) (api.Isolation, error)
@@ -110,6 +112,7 @@ type Model struct {
 	approving     bool
 	help          bool
 	confirm       *confirmation
+	prompt        *prompt
 	flash         string
 	flashErr      bool
 	flashUntil    time.Time
@@ -141,6 +144,14 @@ type confirmation struct {
 	// alt, when set, is a second answer besides y, and onAlt what it does.
 	alt   string
 	onAlt func() tea.Cmd
+}
+
+// prompt is a one-line answer typed in the status bar; onEnter runs on the
+// UI goroutine with it, trimmed, and returns the work to do.
+type prompt struct {
+	label   string
+	in      textinput.Model
+	onEnter func(string) tea.Cmd
 }
 
 func New(be Backend, keys Keymap, warnings []string) *Model {
@@ -331,6 +342,23 @@ func (m *Model) openAgent(id string) {
 		}
 	}()
 	m.refreshConvo(true)
+}
+
+// shownID is the ID an agent goes by: its own, or the key gero gave it.
+func shownID(a api.Agent) string {
+	if a.Handle != "" {
+		return a.Handle
+	}
+	return a.ID
+}
+
+// title is what an agent is called on screen: one made without a prompt
+// has no name until its first message.
+func title(a api.Agent) string {
+	if a.Name == "" {
+		return "New agent"
+	}
+	return a.Name
 }
 
 func (m *Model) agentLabel(a api.Agent) string {
@@ -578,7 +606,7 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.agents = append(m.agents, msg.agent)
 		m.selectItem(msg.agent.ID)
 		m.setFocus(focusInput)
-		m.setFlash("agent "+msg.agent.ID+" started", false)
+		m.setFlash("agent "+shownID(msg.agent)+" created; your first message starts it", false)
 		return m, m.fetchAgents()
 
 	case tea.KeyMsg:
@@ -626,6 +654,9 @@ func (m *Model) handleKey(msg tea.KeyMsg) tea.Cmd {
 		}
 		m.setFlash("cancelled", false)
 		return nil
+	}
+	if m.prompt != nil {
+		return m.handlePromptKey(msg)
 	}
 	if m.help {
 		m.help = false
@@ -747,36 +778,105 @@ func (m *Model) handleSidebarKey(msg tea.KeyMsg) tea.Cmd {
 			m.setFlash("archive it first ("+k.Label("archive")+"); only archived agents are deleted", true)
 			return nil
 		}
-		be, id := m.be, a.ID
+		be, id, shown := m.be, a.ID, shownID(a)
 		del := func(purge bool) func() tea.Cmd {
 			return func() tea.Cmd {
-				done := "deleted " + id + "; its workspace stays in " + a.Isolation
+				done := "deleted " + shown + "; its workspace stays in " + a.Isolation
 				if purge {
-					done = "deleted " + id + " with its workspace and session transcript"
+					done = "deleted " + shown + " with its workspace and session transcript"
 				}
 				return m.do(done, true, func(ctx context.Context) error { return be.DeleteAgent(ctx, id, purge) })
 			}
 		}
 		m.confirm = &confirmation{
-			prompt: fmt.Sprintf("delete %q? y: its history and log; p: its workspace and session transcript in %s too; other keys cancel", a.Name, a.Isolation),
+			prompt: fmt.Sprintf("delete %q? y: its history and log; p: its workspace and session transcript in %s too; other keys cancel", title(a), a.Isolation),
 			onYes:  del(false), alt: "p", onAlt: del(true),
 		}
+		return nil
+	case k.Is(msg, "rename_agent"):
+		a, ok := m.agent(m.sel)
+		if !ok {
+			return nil
+		}
+		be, id := m.be, a.ID
+		m.openPrompt("rename "+shownID(a)+":", a.Name, func(name string) tea.Cmd {
+			switch name {
+			case "":
+				m.setFlash("an agent name is required", true)
+				return nil
+			case a.Name:
+				m.setFlash("name unchanged", false)
+				return nil
+			}
+			return m.do(fmt.Sprintf("renamed %s to %q", shownID(a), name), true, func(ctx context.Context) error {
+				_, err := be.UpdateAgent(ctx, id, api.UpdateAgent{Name: &name})
+				return err
+			})
+		})
+		return nil
+	case k.Is(msg, "agent_id"):
+		a, ok := m.agent(m.sel)
+		if !ok {
+			return nil
+		}
+		be, id := m.be, a.ID
+		m.openPrompt(fmt.Sprintf("ID for %q (empty: %s, the one gero gave it):", title(a), a.ID), a.Handle, func(handle string) tea.Cmd {
+			if handle == a.Handle {
+				m.setFlash("ID unchanged", false)
+				return nil
+			}
+			done := fmt.Sprintf("%q is now %s", title(a), handle)
+			if handle == "" {
+				done = fmt.Sprintf("%q is %s again", title(a), a.ID)
+			}
+			return m.do(done, true, func(ctx context.Context) error {
+				_, err := be.UpdateAgent(ctx, id, api.UpdateAgent{Handle: &handle})
+				return err
+			})
+		})
 		return nil
 	case k.Is(msg, "archive"):
 		a, ok := m.agent(m.sel)
 		if !ok || a.ArchivedAt != nil {
 			return nil
 		}
-		be, id := m.be, a.ID
+		be, id, shown := m.be, a.ID, shownID(a)
 		m.confirm = &confirmation{
-			prompt: fmt.Sprintf("archive %q? its history is kept (y/n)", a.Name),
+			prompt: fmt.Sprintf("archive %q? its history is kept (y/n)", title(a)),
 			onYes: func() tea.Cmd {
-				return m.do("archived "+id, true, func(ctx context.Context) error { return be.Archive(ctx, id) })
+				return m.do("archived "+shown, true, func(ctx context.Context) error { return be.Archive(ctx, id) })
 			},
 		}
 		return nil
 	}
 	return nil
+}
+
+// openPrompt asks for one line in the status bar, starting from value.
+func (m *Model) openPrompt(label, value string, onEnter func(string) tea.Cmd) {
+	in := textinput.New()
+	in.Prompt = ""
+	in.CharLimit = 0
+	in.Width = max(20, m.width-len(label)-30)
+	in.SetValue(value)
+	in.Focus()
+	m.prompt = &prompt{label: label, in: in, onEnter: onEnter}
+}
+
+func (m *Model) handlePromptKey(msg tea.KeyMsg) tea.Cmd {
+	p := m.prompt
+	switch {
+	case m.keys.Is(msg, "back"):
+		m.prompt = nil
+		m.setFlash("cancelled", false)
+		return nil
+	case msg.String() == "enter", m.keys.Is(msg, "submit"):
+		m.prompt = nil
+		return p.onEnter(strings.TrimSpace(p.in.Value()))
+	}
+	var cmd tea.Cmd
+	p.in, cmd = p.in.Update(msg)
+	return cmd
 }
 
 func (m *Model) handleScrollKey(msg tea.KeyMsg) {

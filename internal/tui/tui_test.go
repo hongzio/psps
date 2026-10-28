@@ -52,6 +52,8 @@ type fakeBackend struct {
 	updates []string
 	// deleted are the agents deleted, as "id purge=…".
 	deleted []string
+	// renamed are the agents renamed, as "id name" or "id id=handle".
+	renamed []string
 }
 
 func (f *fakeBackend) Agents(context.Context) ([]api.Agent, error) {
@@ -64,7 +66,7 @@ func (f *fakeBackend) CreateAgent(_ context.Context, req api.CreateAgent) (api.A
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.created = append(f.created, req)
-	a := api.Agent{Agent: store.Agent{ID: "new1", Name: req.Prompt, Kind: req.Kind, CreatedAt: time.Now()}, Isolation: req.Isolation}
+	a := api.Agent{Agent: store.Agent{ID: "new1", Handle: req.Handle, Name: req.Name, Kind: req.Kind, CreatedAt: time.Now()}, Isolation: req.Isolation}
 	f.agents = append(f.agents, a)
 	return a, nil
 }
@@ -88,6 +90,25 @@ func (f *fakeBackend) SetOptions(_ context.Context, _ string, o driver.Options) 
 	return nil
 }
 func (f *fakeBackend) Archive(context.Context, string) error { return nil }
+func (f *fakeBackend) UpdateAgent(_ context.Context, id string, req api.UpdateAgent) (api.Agent, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	for i, a := range f.agents {
+		if a.ID != id {
+			continue
+		}
+		if req.Name != nil {
+			f.renamed = append(f.renamed, id+" "+*req.Name)
+			f.agents[i].Name = *req.Name
+		}
+		if req.Handle != nil {
+			f.renamed = append(f.renamed, id+" id="+*req.Handle)
+			f.agents[i].Handle = *req.Handle
+		}
+		return f.agents[i], nil
+	}
+	return api.Agent{}, store.ErrNotFound
+}
 func (f *fakeBackend) DeleteAgent(_ context.Context, id string, purge bool) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -482,6 +503,69 @@ func TestOnlyAnArchivedAgentIsDeletedAndItsWorkspaceOnlyWhenAsked(t *testing.T) 
 	}
 }
 
+func TestAnAgentIsRenamedInTheStatusBar(t *testing.T) {
+	h := newHarness(t)
+	h.drainFeed()
+	h.key("r")
+	if h.m.prompt == nil || h.m.prompt.in.Value() != "second" || !strings.Contains(h.m.View(), "rename bbbb:") {
+		t.Fatalf("prompt %+v\n%s", h.m.prompt, h.m.View())
+	}
+	// While it is open, keys are text: x does not archive.
+	h.typeText(" x")
+	h.key("esc")
+	if h.m.prompt != nil || h.m.confirm != nil || len(h.be.renamed) != 0 {
+		t.Fatalf("after esc: prompt %v, confirm %v, renamed %v", h.m.prompt, h.m.confirm, h.be.renamed)
+	}
+
+	h.key("r")
+	h.typeText(" try ")
+	h.key("enter")
+	if len(h.be.renamed) != 1 || h.be.renamed[0] != "bbbb second try" {
+		t.Fatalf("renamed %v", h.be.renamed)
+	}
+	if a, _ := h.m.agent("bbbb"); a.Name != "second try" {
+		t.Fatalf("list shows %q", a.Name)
+	}
+
+	// Nothing typed or nothing changed sends nothing.
+	h.key("r")
+	h.key("enter")
+	if len(h.be.renamed) != 1 {
+		t.Fatalf("renamed %v", h.be.renamed)
+	}
+}
+
+func TestAnAgentGetsAnIDOfItsOwnAndGivesItBack(t *testing.T) {
+	h := newHarness(t)
+	h.drainFeed()
+	h.key("i")
+	if h.m.prompt == nil || h.m.prompt.in.Value() != "" || !strings.Contains(h.m.View(), `ID for "second" (empty: bbbb`) {
+		t.Fatalf("prompt %+v\n%s", h.m.prompt, h.m.View())
+	}
+	h.typeText("login")
+	h.key("enter")
+	if len(h.be.renamed) != 1 || h.be.renamed[0] != "bbbb id=login" {
+		t.Fatalf("renamed %v", h.be.renamed)
+	}
+	if !strings.Contains(h.m.View(), "codex · dev · login") {
+		t.Fatalf("header:\n%s", h.m.View())
+	}
+
+	// Emptied, it goes by its key again.
+	h.key("i")
+	if h.m.prompt.in.Value() != "login" {
+		t.Fatalf("prompt starts from %q", h.m.prompt.in.Value())
+	}
+	h.m.prompt.in.SetValue("")
+	h.key("enter")
+	if len(h.be.renamed) != 2 || h.be.renamed[1] != "bbbb id=" {
+		t.Fatalf("renamed %v", h.be.renamed)
+	}
+	if !strings.Contains(h.m.View(), "codex · dev · bbbb") {
+		t.Fatalf("header:\n%s", h.m.View())
+	}
+}
+
 func TestIsolationSettingsRenameAtOnceAndAskBeforeAResize(t *testing.T) {
 	h := newHarness(t)
 	h.key("ctrl+g")
@@ -554,20 +638,27 @@ func TestNewAgentForm(t *testing.T) {
 	if h.m.view != viewNewAgent || h.m.newForm == nil {
 		t.Fatal("new agent form not open")
 	}
-	h.key("ctrl+s")
-	if h.m.newForm.err == "" {
-		t.Fatal("empty prompt accepted")
+	// It asks for no prompt or repository: the agent waits for its first
+	// message, and clones what that asks for.
+	if v := h.m.View(); strings.Contains(v, "Prompt") || strings.Contains(v, "Repository") {
+		t.Fatalf("form:\n%s", v)
 	}
-	h.typeText("fix the tests") // the prompt has the cursor first
-	h.key("tab")                // wraps to Isolation
-	h.key("tab")                // Agent
-	h.key("right")              // claude -> codex
-	h.key("ctrl+s")
+	h.key("enter") // Isolation -> Agent
+	h.key("right") // claude -> codex
+	h.key("enter") // ID
+	h.typeText("fix-tests")
+	h.key("enter") // Effort
+	h.key("enter") // Model
+	h.key("enter") // Approvals
+	if len(h.be.created) != 0 {
+		t.Fatalf("created before the last field: %v", h.be.created)
+	}
+	h.key("enter") // the last field creates it
 	if len(h.be.created) != 1 {
 		t.Fatalf("created = %v", h.be.created)
 	}
 	req := h.be.created[0]
-	if req.Isolation != "dev" || req.Kind != driver.Codex || req.Prompt != "fix the tests" {
+	if req.Isolation != "dev" || req.Kind != driver.Codex || req.Handle != "fix-tests" || req.Prompt != "" || req.Repo != "" {
 		t.Fatalf("request = %+v", req)
 	}
 	// Untouched, the form leaves approvals to the CLI's own settings.
@@ -576,6 +667,13 @@ func TestNewAgentForm(t *testing.T) {
 	}
 	if h.m.openID != "new1" || h.m.focus != focusInput {
 		t.Fatalf("after create: open=%q focus=%v", h.m.openID, h.m.focus)
+	}
+	if !strings.Contains(h.m.View(), "codex · dev · fix-tests") {
+		t.Fatalf("header without its own ID:\n%s", h.m.View())
+	}
+	// "+ New agent" is always there; the agent's row and header too.
+	if strings.Count(h.m.View(), "New agent") < 3 {
+		t.Fatalf("an agent with no name yet:\n%s", h.m.View())
 	}
 }
 

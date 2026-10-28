@@ -438,6 +438,17 @@ code, pre { font-family: var(--mono); font-size: 13px; }
 .dialog h3 { margin: 0 0 6px; font-size: 16px; line-height: 1.35; overflow-wrap: anywhere; }
 .dialog p { margin: 0; color: var(--muted); font-size: 14px; overflow-wrap: anywhere; }
 .dialog-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 20px; }
+.dialog-field { display: grid; gap: 4px; margin-top: 14px; font-size: 13px; font-weight: 600; }
+.dialog-input {
+  width: 100%;
+  padding: 9px 11px;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  background: var(--bg);
+  font-size: 15px;
+  font-weight: 400;
+}
+.dialog .dialog-error { margin: 12px 0 0; color: var(--err); }
 .btn.primary.danger { background: var(--err); color: var(--on-err); }
 .dialog[open] { animation: dialog-in .14s ease-out; }
 .dialog[open]::backdrop { animation: backdrop-in .14s ease-out; }

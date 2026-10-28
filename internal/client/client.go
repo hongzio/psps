@@ -210,6 +210,11 @@ func (c *Client) Archive(ctx context.Context, id string) error {
 	return c.do(ctx, "POST", "/v1/agents/"+url.PathEscape(id)+"/archive", nil, nil)
 }
 
+func (c *Client) UpdateAgent(ctx context.Context, id string, req api.UpdateAgent) (api.Agent, error) {
+	var v api.Agent
+	return v, c.do(ctx, "PATCH", "/v1/agents/"+url.PathEscape(id), req, &v)
+}
+
 // DeleteAgent forgets an archived agent; purge also removes its workspace
 // and its CLI's session transcript from the isolation.
 func (c *Client) DeleteAgent(ctx context.Context, id string, purge bool) error {
@@ -248,6 +253,9 @@ func (c *Client) Follow(ctx context.Context, id string, after int64, fn func(eve
 		return errors.New(e.Error)
 	}
 	r := bufio.NewReaderSize(resp.Body, 64<<10)
+	// typ is the event type of the event being read: events are the
+	// unnamed ones; a named one (ready) is for browsers.
+	typ := ""
 	for {
 		line, err := r.ReadString('\n')
 		if err != nil {
@@ -256,8 +264,17 @@ func (c *Client) Follow(ctx context.Context, id string, after int64, fn func(eve
 			}
 			return err
 		}
-		data, ok := strings.CutPrefix(strings.TrimRight(line, "\n"), "data: ")
-		if !ok {
+		line = strings.TrimRight(line, "\n")
+		if line == "" {
+			typ = ""
+			continue
+		}
+		if t, ok := strings.CutPrefix(line, "event: "); ok {
+			typ = t
+			continue
+		}
+		data, ok := strings.CutPrefix(line, "data: ")
+		if !ok || (typ != "" && typ != "message") {
 			continue
 		}
 		var e event.Event

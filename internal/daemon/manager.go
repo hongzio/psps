@@ -15,6 +15,7 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unicode"
 
 	"github.com/hongzio/gero/internal/api"
 	"github.com/hongzio/gero/internal/creds"
@@ -28,7 +29,10 @@ import (
 	"golang.org/x/sys/unix"
 )
 
-var validIsolationName = regexp.MustCompile(`^[a-z0-9][a-z0-9-]{0,30}$`)
+var (
+	validIsolationName = regexp.MustCompile(`^[a-z0-9][a-z0-9-]{0,30}$`)
+	validAgentHandle   = regexp.MustCompile(`^[a-z0-9][a-z0-9-]{0,31}$`)
+)
 
 // Containers is what the manager needs from the container runtime.
 // isolation.CLI is the real one; tests substitute in-process shims.
@@ -175,7 +179,12 @@ func (m *Manager) ensureRuntime(a store.Agent) (*runtime, error) {
 // ended.
 func (m *Manager) Wait() { m.loops.Wait() }
 
+// runtime is the live agent idOrPrefix names: by its own ID, its key, or
+// the only key starting with it.
 func (m *Manager) runtime(idOrPrefix string) (*runtime, error) {
+	if a, err := m.store.AgentByHandle(idOrPrefix); err == nil {
+		idOrPrefix = a.ID
+	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if r, ok := m.runtimes[idOrPrefix]; ok {
@@ -667,17 +676,69 @@ func newID() string {
 	return hex.EncodeToString(b[:])
 }
 
-func nameFrom(prompt string) string {
-	first, _, _ := strings.Cut(strings.TrimSpace(prompt), "\n")
+// nameFrom is a name from the first line of a message.
+func nameFrom(text string) string {
+	first, _, _ := strings.Cut(strings.TrimSpace(text), "\n")
+	first = strings.TrimSpace(strings.Map(func(r rune) rune {
+		if unicode.IsControl(r) {
+			return ' '
+		}
+		return r
+	}, first))
 	if r := []rune(first); len(r) > 48 {
 		first = string(r[:48]) + "…"
 	}
 	return first
 }
 
+// agentName is name as an agent's, trimmed: one line, so every list shows
+// it whole.
+func agentName(name string) (string, error) {
+	name = strings.TrimSpace(name)
+	if name == "" {
+		return "", badRequest(errors.New("an agent name is required"))
+	}
+	if strings.IndexFunc(name, unicode.IsControl) >= 0 {
+		return "", badRequest(errors.New("an agent name is one line of text"))
+	}
+	return name, nil
+}
+
+// agentHandle is handle as an agent's own ID, trimmed; "" is none.
+func agentHandle(handle string) (string, error) {
+	handle = strings.TrimSpace(handle)
+	if handle != "" && !validAgentHandle.MatchString(handle) {
+		return "", badRequest(fmt.Errorf("agent ID %q: use up to 32 lowercase letters, digits and dashes", handle))
+	}
+	return handle, nil
+}
+
+// newAgentID is a key no agent has, as its key or as its own ID.
+func (m *Manager) newAgentID() (string, error) {
+	for {
+		id := newID()
+		err := m.store.RefFree(id)
+		if !errors.Is(err, store.ErrExists) {
+			return id, err
+		}
+	}
+}
+
+// CreateAgent makes an agent and sends it the prompt, if any. Without one
+// it waits, with no process, for its first message, which names it unless
+// it has a name by then. Given no ID of its own, it goes by an
+// adjective-noun no other agent has.
 func (m *Manager) CreateAgent(ctx context.Context, req api.CreateAgent) (store.Agent, error) {
-	if strings.TrimSpace(req.Prompt) == "" {
-		return store.Agent{}, errors.New("an initial prompt is required")
+	name := nameFrom(req.Prompt)
+	if strings.TrimSpace(req.Name) != "" {
+		var err error
+		if name, err = agentName(req.Name); err != nil {
+			return store.Agent{}, err
+		}
+	}
+	handle, err := agentHandle(req.Handle)
+	if err != nil {
+		return store.Agent{}, err
 	}
 	if req.Isolation == "" {
 		return store.Agent{}, errors.New("an isolation is required")
@@ -689,7 +750,20 @@ func (m *Manager) CreateAgent(ctx context.Context, req api.CreateAgent) (store.A
 	if err != nil {
 		return store.Agent{}, err
 	}
-	id := newID()
+	// Taken is said before a clone, not after; storing it checks again.
+	if err := m.store.RefFree(handle); err != nil {
+		return store.Agent{}, err
+	}
+	picked := handle == ""
+	if picked {
+		if handle, err = m.newAgentHandle(); err != nil {
+			return store.Agent{}, err
+		}
+	}
+	id, err := m.newAgentID()
+	if err != nil {
+		return store.Agent{}, err
+	}
 	drv, err := driver.New(req.Kind, id, "", req.Options)
 	if err != nil {
 		return store.Agent{}, err
@@ -708,18 +782,17 @@ func (m *Manager) CreateAgent(ctx context.Context, req api.CreateAgent) (store.A
 	} else if _, err := m.cli.RunAsAgent(ctx, iso.Container, "mkdir", "-p", workdir); err != nil {
 		return store.Agent{}, err
 	}
-	name := req.Name
-	if name == "" {
-		name = nameFrom(req.Prompt)
-	}
-	a := store.Agent{ID: id, Name: name, Kind: req.Kind, IsolationID: iso.ID, Workdir: workdir, Repo: req.Repo,
+	a := store.Agent{ID: id, Handle: handle, Name: name, Kind: req.Kind, IsolationID: iso.ID, Workdir: workdir, Repo: req.Repo,
 		Options: req.Options, SessionID: drv.State().SessionID, CreatedAt: time.Now().UTC()}
-	if err := m.store.CreateAgent(a); err != nil {
+	if a, err = m.storeNamed(a, picked); err != nil {
 		return store.Agent{}, err
 	}
 	r, err := m.ensureRuntime(a)
 	if err != nil {
 		return a, err
+	}
+	if strings.TrimSpace(req.Prompt) == "" {
+		return a, nil
 	}
 	return a, r.send(req.Prompt)
 }
@@ -753,16 +826,11 @@ func (m *Manager) Agent(idOrPrefix string) (api.Agent, error) {
 		live, st, problem := r.view()
 		return api.Agent{Agent: live, Isolation: m.isoName(live.IsolationID), State: st, Problem: problem}, nil
 	}
-	all, err := m.store.Agents()
+	a, err := m.storedAgent(idOrPrefix)
 	if err != nil {
 		return api.Agent{}, err
 	}
-	for _, a := range all {
-		if a.ID == idOrPrefix || strings.HasPrefix(a.ID, idOrPrefix) {
-			return m.view(a), nil
-		}
-	}
-	return api.Agent{}, fmt.Errorf("agent %s: %w", idOrPrefix, store.ErrNotFound)
+	return m.view(a), nil
 }
 
 func (m *Manager) Send(id, text string) error {
@@ -805,6 +873,49 @@ func (m *Manager) SetOptions(id string, o driver.Options) error {
 	}
 	r.setOptions(o)
 	return nil
+}
+
+// UpdateAgent renames an agent, live or archived, or changes its own ID,
+// which no other agent may have. A live one's runtime shows them from now
+// on; nothing else about it changes.
+func (m *Manager) UpdateAgent(idOrPrefix string, req api.UpdateAgent) (api.Agent, error) {
+	var name, handle *string
+	if req.Name != nil {
+		n, err := agentName(*req.Name)
+		if err != nil {
+			return api.Agent{}, err
+		}
+		name = &n
+	}
+	if req.Handle != nil {
+		h, err := agentHandle(*req.Handle)
+		if err != nil {
+			return api.Agent{}, err
+		}
+		handle = &h
+	}
+	a, err := m.storedAgent(idOrPrefix)
+	if err != nil {
+		return api.Agent{}, err
+	}
+	m.mu.Lock()
+	r := m.runtimes[a.ID]
+	m.mu.Unlock()
+	if r != nil {
+		err = r.relabel(name, handle)
+	} else {
+		err = m.store.RenameAgent(a.ID, name, handle)
+	}
+	if err != nil {
+		return api.Agent{}, err
+	}
+	if name != nil {
+		a.Name = *name
+	}
+	if handle != nil {
+		a.Handle = *handle
+	}
+	return m.view(a), nil
 }
 
 // Archive stops the agent and keeps its history. Its session and workspace
@@ -877,8 +988,8 @@ func (m *Manager) DeleteAgent(ctx context.Context, idOrPrefix string, purge bool
 	return nil
 }
 
-// storedAgent is the agent, live or archived, whose ID is idOrPrefix or the
-// only one starting with it.
+// storedAgent is the agent, live or archived, whose own ID or key is
+// idOrPrefix, or whose key is the only one starting with it.
 func (m *Manager) storedAgent(idOrPrefix string) (store.Agent, error) {
 	all, err := m.store.Agents()
 	if err != nil {
@@ -886,7 +997,8 @@ func (m *Manager) storedAgent(idOrPrefix string) (store.Agent, error) {
 	}
 	var found []store.Agent
 	for _, a := range all {
-		if a.ID == idOrPrefix {
+		// No agent's own ID is another's key: an exact match is the one.
+		if a.ID == idOrPrefix || (a.Handle != "" && a.Handle == idOrPrefix) {
 			return a, nil
 		}
 		if idOrPrefix != "" && strings.HasPrefix(a.ID, idOrPrefix) {

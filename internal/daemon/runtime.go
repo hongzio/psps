@@ -283,6 +283,17 @@ func (r *runtime) send(text string) error {
 		return err
 	}
 	r.outbox = append(r.outbox, store.Pending{ID: id, Text: text, After: after})
+	if r.agent.Name == "" {
+		// Made without a prompt and not named since: its first message
+		// names it.
+		if name := nameFrom(text); name != "" {
+			if err := r.m.store.SetAgentName(r.agent.ID, name); err != nil {
+				r.m.log.Printf("agent %s: name: %v", r.agent.ID, err)
+			} else {
+				r.agent.Name = name
+			}
+		}
+	}
 	if r.caughtUp {
 		r.drv.Send(text)
 		r.kickLocked()
@@ -328,6 +339,24 @@ func (r *runtime) setOptions(o driver.Options) {
 	r.agent.Options = o
 	r.drv.SetOptions(o)
 	r.kickLocked()
+}
+
+// relabel stores the agent's new name or own ID and shows them, under the
+// lock a first message takes to name an unnamed agent, so neither undoes
+// the other.
+func (r *runtime) relabel(name, handle *string) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if err := r.m.store.RenameAgent(r.agent.ID, name, handle); err != nil {
+		return err
+	}
+	if name != nil {
+		r.agent.Name = *name
+	}
+	if handle != nil {
+		r.agent.Handle = *handle
+	}
+	return nil
 }
 
 func (r *runtime) view() (store.Agent, driver.State, string) {

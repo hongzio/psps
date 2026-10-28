@@ -62,7 +62,7 @@ func (m *Model) renderSidebar(w int) string {
 		if a.Problem != "" {
 			meta = "  " + th.err.Render("! ") + truncate(a.Problem, w-6)
 		}
-		row(a.ID, th.statusIcon(a.State.Status, m.frame)+" "+a.Name, th.dim.Render(meta))
+		row(a.ID, th.statusIcon(a.State.Status, m.frame)+" "+title(a), th.dim.Render(meta))
 	}
 	b.WriteString("\n")
 	arrow := "▸"
@@ -73,7 +73,7 @@ func (m *Model) renderSidebar(w int) string {
 	if m.showArchived {
 		for _, a := range m.agents {
 			if a.ArchivedAt != nil {
-				row(a.ID, th.dim.Render("  "+a.Name))
+				row(a.ID, th.dim.Render("  "+title(a)))
 			}
 		}
 	}
@@ -101,7 +101,7 @@ func (m *Model) renderMain(w, h int) string {
 			m.keys.Label("submit"), m.keys.Label("focus_next"), m.keys.Label("back"))) + "\n")
 		switch {
 		case f.busy:
-			b.WriteString("\n" + th.working.Render(spinner[m.frame%len(spinner)]+" starting the agent…") + "\n")
+			b.WriteString("\n" + th.working.Render(spinner[m.frame%len(spinner)]+" creating the agent…") + "\n")
 		case f.err != "":
 			b.WriteString("\n" + th.err.Render("  "+f.err) + "\n")
 		}
@@ -152,7 +152,7 @@ func (m *Model) renderAgent(w int) string {
 	if a.ArchivedAt != nil {
 		status = th.dim.Render("archived")
 	}
-	left := th.title.Render(truncate(a.Name, w/2)) + "  " + th.dim.Render(fmt.Sprintf("%s · %s · %s", a.Kind, a.Isolation, a.ID))
+	left := th.title.Render(truncate(title(a), w/2)) + "  " + th.dim.Render(fmt.Sprintf("%s · %s · %s", a.Kind, a.Isolation, shownID(a)))
 	gap := max(w-lipgloss.Width(left)-lipgloss.Width(status)-1, 1)
 	header := left + strings.Repeat(" ", gap) + status
 	ruleStyle := th.rule
@@ -206,6 +206,8 @@ func (m *Model) renderStatus() string {
 	switch {
 	case m.confirm != nil:
 		left = th.warn.Render(" " + m.confirm.prompt)
+	case m.prompt != nil:
+		left = th.warn.Render(" "+m.prompt.label+" ") + m.prompt.in.View()
 	case m.flash != "" && time.Now().Before(m.flashUntil):
 		if m.flashErr {
 			left = th.flashErr.Render(" " + m.flash)
@@ -216,8 +218,9 @@ func (m *Model) renderStatus() string {
 		var hints []string
 		switch m.focus {
 		case focusSidebar:
-			hints = []string{"↑↓ move", k.Label("open") + " open", k.Label("new_agent") + " new", k.Label("archive") + " archive",
-				k.Label("delete_agent") + " delete", k.Label("toggle_archived") + " archived", k.Label("focus_next") + " next pane"}
+			hints = []string{"↑↓ move", k.Label("open") + " open", k.Label("new_agent") + " new", k.Label("rename_agent") + " rename",
+				k.Label("agent_id") + " ID", k.Label("archive") + " archive", k.Label("delete_agent") + " delete", k.Label("toggle_archived") + " archived",
+				k.Label("focus_next") + " next pane"}
 		case focusConvo:
 			hints = []string{"↑↓ scroll", k.Label("page_up") + "/" + k.Label("page_down") + " page", k.Label("focus_next") + " next pane"}
 		case focusInput:
@@ -230,6 +233,9 @@ func (m *Model) renderStatus() string {
 		left = th.dim.Render(" " + strings.Join(hints, " · "))
 	}
 	right := th.dim.Render(fmt.Sprintf("%d agents ", len(m.agents)))
+	if m.prompt != nil {
+		right = th.dim.Render(fmt.Sprintf("enter save · %s cancel ", k.Label("back")))
+	}
 	if m.connErr != "" {
 		right = th.err.Render("daemon unreachable ")
 	}

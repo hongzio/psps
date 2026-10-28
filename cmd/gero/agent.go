@@ -16,7 +16,7 @@ import (
 
 func agentCmd(p paths.Paths, args []string) error {
 	if len(args) == 0 {
-		return errors.New("usage: gero agent new|ls|log|send|approve|interrupt|set|archive|rm")
+		return errors.New("usage: gero agent new|ls|log|send|approve|interrupt|set|rename|id|archive|rm")
 	}
 	c, err := connect(p)
 	if err != nil {
@@ -40,18 +40,24 @@ func agentCmd(p paths.Paths, args []string) error {
 		iso := fs.String("iso", "", "isolation to run in (required)")
 		kind := fs.String("kind", "claude", "claude or codex")
 		repo := fs.String("repo", "", "git URL to clone into the workspace")
-		name := fs.String("name", "", "display name (default: from the prompt)")
+		name := fs.String("name", "", "display name (default: the first line of its first message)")
+		handle := fs.String("id", "", "an ID of your own for it, unique among all agents (default: an adjective-noun no agent has, like brave-otter)")
 		opts := optFlags()
 		prompt := strings.Join(parse(fs, args[1:]), " ")
-		if *iso == "" || prompt == "" {
-			return errors.New("usage: gero agent new --iso NAME --kind claude|codex [--repo URL] PROMPT...")
+		if *iso == "" {
+			return errors.New("usage: gero agent new --iso NAME --kind claude|codex [--id ID] [--repo URL] [PROMPT...]")
 		}
 		a, err := c.CreateAgent(ctx, api.CreateAgent{Isolation: *iso, Kind: driver.Kind(*kind), Prompt: prompt,
-			Name: *name, Repo: *repo, Options: opts()})
+			Name: *name, Handle: *handle, Repo: *repo, Options: opts()})
 		if err != nil {
 			return err
 		}
-		fmt.Printf("agent %s started in %s (%s)\nfollow it:  gero agent log %s -f\n", a.ID, a.Isolation, a.Workdir, a.ID)
+		id := shownID(a)
+		if prompt == "" {
+			fmt.Printf("agent %s created in %s (%s); its first message starts it:\n  gero agent send %s TEXT...\n", id, a.Isolation, a.Workdir, id)
+			return nil
+		}
+		fmt.Printf("agent %s started in %s (%s)\nfollow it:  gero agent log %s -f\n", id, a.Isolation, a.Workdir, id)
 		return nil
 
 	case "ls":
@@ -74,7 +80,7 @@ func agentCmd(p paths.Paths, args []string) error {
 			case a.Problem != "":
 				status += " (!)"
 			}
-			fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\n", a.ID, status, a.Kind, a.Isolation, a.Name)
+			fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\n", shownID(a), status, a.Kind, a.Isolation, orDash(a.Name))
 		}
 		return tw.Flush()
 
@@ -153,6 +159,40 @@ func agentCmd(p paths.Paths, args []string) error {
 		}
 		return c.SetOptions(ctx, a.ID, cur)
 
+	case "rename":
+		pos := parse(fs, args[1:])
+		if len(pos) < 2 {
+			return errors.New("usage: gero agent rename ID NAME...")
+		}
+		name := strings.Join(pos[1:], " ")
+		a, err := c.UpdateAgent(ctx, pos[0], api.UpdateAgent{Name: &name})
+		if err != nil {
+			return err
+		}
+		fmt.Printf("agent %s is now %q\n", shownID(a), a.Name)
+		return nil
+
+	case "id":
+		clear := fs.Bool("clear", false, "take its own ID away: it goes by the one gero gave it")
+		pos := parse(fs, args[1:])
+		if len(pos) != 2 && !(len(pos) == 1 && *clear) {
+			return errors.New("usage: gero agent id AGENT NEW-ID | gero agent id AGENT --clear")
+		}
+		handle := ""
+		if !*clear {
+			handle = pos[1]
+		}
+		a, err := c.UpdateAgent(ctx, pos[0], api.UpdateAgent{Handle: &handle})
+		if err != nil {
+			return err
+		}
+		if handle == "" {
+			fmt.Printf("agent %s goes by %s again\n", pos[0], a.ID)
+		} else {
+			fmt.Printf("agent %s is now %s\n", a.ID, a.Handle)
+		}
+		return nil
+
 	case "archive":
 		pos := parse(fs, args[1:])
 		if len(pos) != 1 {
@@ -175,14 +215,17 @@ func agentCmd(p paths.Paths, args []string) error {
 			return err
 		}
 		if *purge {
-			fmt.Printf("deleted agent %s, with its workspace and session transcript in %s\n", a.ID, a.Isolation)
+			fmt.Printf("deleted agent %s, with its workspace and session transcript in %s\n", shownID(a), a.Isolation)
 		} else {
-			fmt.Printf("deleted agent %s; its workspace %s stays in %s (--purge removes it)\n", a.ID, a.Workdir, a.Isolation)
+			fmt.Printf("deleted agent %s; its workspace %s stays in %s (--purge removes it)\n", shownID(a), a.Workdir, a.Isolation)
 		}
 		return nil
 	}
 	return fmt.Errorf("unknown agent command %q", args[0])
 }
+
+// shownID is the ID an agent goes by: its own, or the key gero gave it.
+func shownID(a api.Agent) string { return orStr(a.Handle, a.ID) }
 
 type printer struct {
 	stream  bool
