@@ -27,7 +27,7 @@ import (
 
 func envCmd(p paths.Paths, args []string) error {
 	if len(args) == 0 {
-		return errors.New("usage: gero env ls|add|edit|rm|secret|check ...  (gero env help SERVICE for its flags)")
+		return errors.New("usage: gero env ls|add|edit|rm|secret|choices|check ...  (gero env help SERVICE for its flags)")
 	}
 	reg := services.Registry()
 	if args[0] == "help" {
@@ -59,6 +59,8 @@ func envCmd(p paths.Paths, args []string) error {
 				switch {
 				case e.SecretError != "":
 					secret = "unreadable"
+				case e.CredentialElsewhere:
+					secret = "via command"
 				case len(e.MissingSecrets) > 0:
 					secret = "missing " + strings.Join(e.MissingSecrets, ",")
 				}
@@ -150,6 +152,24 @@ func envCmd(p paths.Paths, args []string) error {
 			return err
 		}
 		fmt.Printf("stored [%s %s] in %s; proxies read it on their next request\n", service, name, p.Credentials())
+		return nil
+
+	case "choices":
+		if len(args) != 4 {
+			return errors.New("usage: gero env choices SERVICE NAME FIELD  (e.g. gero env choices git work repos)")
+		}
+		cs, err := c.Choices(ctx, args[1], args[3], api.ChoicesRequest{Env: args[2]})
+		if err != nil {
+			return err
+		}
+		tw := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
+		for _, ch := range cs {
+			fmt.Fprintf(tw, "%s\t%s\n", ch.Value, ch.Note)
+		}
+		if err := tw.Flush(); err != nil {
+			return err
+		}
+		fmt.Fprintf(os.Stderr, "%d; list them with --%s, e.g. gero env edit %s %s --%s VALUE\n", len(cs), flagOf(args[1], args[3]), args[1], args[2], flagOf(args[1], args[3]))
 		return nil
 
 	case "check":
@@ -391,4 +411,16 @@ func orStr(s, def string) string {
 		return def
 	}
 	return s
+}
+
+// flagOf is the CLI flag of a service's field.
+func flagOf(service, field string) string {
+	if svc, err := services.Registry().Get(service); err == nil {
+		for _, f := range svc.Fields() {
+			if f.Key == field {
+				return f.Flag
+			}
+		}
+	}
+	return field
 }

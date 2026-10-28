@@ -98,8 +98,11 @@ type Env struct {
 	// the env's secret is complete or the service keeps none.
 	MissingSecrets []string `json:"missing_secrets,omitempty"`
 	SecretError    string   `json:"secret_error,omitempty"`
-	ExposedTo      []string `json:"exposed_to,omitempty"`
-	Warnings       []string `json:"warnings,omitempty"`
+	// CredentialElsewhere: the env takes its credential from somewhere
+	// other than a stored secret (git's token command), so none is missing.
+	CredentialElsewhere bool     `json:"credential_elsewhere,omitempty"`
+	ExposedTo           []string `json:"exposed_to,omitempty"`
+	Warnings            []string `json:"warnings,omitempty"`
 }
 
 // Exposure is one service's state for one isolation.
@@ -117,6 +120,15 @@ type Expose struct {
 	Envs     []string    `json:"envs"`
 	Default  string      `json:"default_env,omitempty"`
 	Settings proxy.Patch `json:"settings"`
+}
+
+// ChoicesRequest asks a service for a Lookup field's choices. Env names a
+// stored env whose definition and secret are the starting point; Set and
+// Secret are what a form has typed so far, which win.
+type ChoicesRequest struct {
+	Env    string            `json:"env,omitempty"`
+	Set    map[string]any    `json:"set,omitempty"`
+	Secret map[string]string `json:"secret,omitempty"`
 }
 
 type Check struct {

@@ -279,7 +279,7 @@ func (a apiHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		refuse(apiDeny(429, "rate budget for environment %q is spent; retry in %.0fs", envName, wait.Seconds()+0.5))
 		return
 	}
-	token, err := in.token(envName, env).Get()
+	token, err := in.credential(envName, env)
 	if err != nil {
 		refuse(apiDeny(503, "%s", err))
 		return

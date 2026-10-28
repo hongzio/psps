@@ -53,6 +53,7 @@ const usage = `gero — run coding agents in isolated containers
   gero env add|edit SERVICE NAME [flags]   (gero env help SERVICE lists them)
   gero env rm SERVICE NAME [--force]
   gero env secret SERVICE NAME [--clear]   prompts; or one line per field on stdin
+  gero env choices SERVICE NAME FIELD   what a field can list, looked up with the env's credential (git: repos)
   gero env check SERVICE NAME   exercise it from the host, now
 
   gero agent new --iso NAME --kind claude|codex [--repo URL] [--model M] [--effort E] [--approvals never|ask] PROMPT...

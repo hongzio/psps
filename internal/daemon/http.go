@@ -167,6 +167,14 @@ func (m *Manager) Handler() http.Handler {
 		}
 		reply(w, nil, m.FinishLogin(r.Context(), r.PathValue("service"), r.PathValue("name"), r.PathValue("id"), req.Callback))
 	})
+	mux.HandleFunc("POST /v1/services/{service}/choices/{field}", func(w http.ResponseWriter, r *http.Request) {
+		var req api.ChoicesRequest
+		if !decode(w, r, &req) {
+			return
+		}
+		v, err := m.Choices(r.Context(), r.PathValue("service"), r.PathValue("field"), req)
+		reply(w, v, err)
+	})
 	mux.HandleFunc("POST /v1/envs/{service}/{name}/check", func(w http.ResponseWriter, r *http.Request) {
 		v, err := m.CheckEnv(r.Context(), r.PathValue("service"), r.PathValue("name"))
 		reply(w, v, err)

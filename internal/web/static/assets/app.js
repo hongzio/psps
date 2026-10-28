@@ -778,7 +778,7 @@ function closeForm() { S.openForm = null; S.login = null; S.checkOut = null; S.v
 // fieldControls draws a service's fields, the same list the CLI builds its
 // flags from, and reads them back as the CLI's edit: what was given is set,
 // a list emptied is cleared, the rest is left alone.
-function fieldControls(fields, cur, adding) {
+function fieldControls(fields, cur, adding, lookup) {
   cur = cur || {}
   const rows = []
   const readers = []
@@ -786,7 +786,11 @@ function fieldControls(fields, cur, adding) {
     const v = cur[f.key]
     let ctl
     let read
-    if (f.kind === 'bool') {
+    if (f.lookup && lookup) {
+      const lc = lookup(f, Array.isArray(v) ? v : [])
+      ctl = lc.el
+      read = lc.read
+    } else if (f.kind === 'bool') {
       const opts = adding || typeof v !== 'boolean' ? [DEFAULT, 'on', 'off'] : ['on', 'off']
       const sel = typeof v === 'boolean' ? (v ? 'on' : 'off') : DEFAULT
       ctl = h('select', null, opts.map((o) => h('option', { value: o, selected: o === sel }, o)))
@@ -827,9 +831,72 @@ function fieldControls(fields, cur, adding) {
       read = (p) => { const t = ctl.value.trim(); if (t) p.set[f.key] = t }
     }
     rows.push(h('div', { class: 'field' }, h('label', null, f.key), ctl, f.help ? h('span', { class: 'hint' }, f.help) : null))
-    readers.push(read)
+    readers.push({ key: f.key, read })
   }
-  return { rows, patch: () => { const p = { set: {}, clear: [] }; readers.forEach((r) => r(p)); return p } }
+  // patch reads the form; skip leaves one field out (a lookup asking with
+  // what the rest of the form says).
+  return { rows, patch: (skip) => { const p = { set: {}, clear: [] }; readers.forEach((r) => { if (r.key !== skip) r.read(p) }); return p } }
+}
+
+// lookupControl is a Lookup field: the choices the service finds with the
+// env's credential (the repositories a token opens), to tick. Until there
+// is a credential to look with, the box is disabled and says why.
+// lookupRequest() is the request for the credential the form has right now.
+function lookupControl(s, f, have, lookupRequest) {
+  const box = h('div', { class: 'lookup' })
+  const chosen = new Set(have)
+  let choices = null
+  let asked = null
+  const manual = h('input', { placeholder: `${f.metavar || 'value'}, … not listed above`, autocomplete: 'off' })
+  const disabled = (why) => box.replaceChildren(
+    h('input', { disabled: true, placeholder: 'Enter a token first', value: [...chosen].join(', ') }),
+    h('span', { class: 'hint' }, why))
+  const draw = () => {
+    const extra = [...chosen].filter((v) => !choices.some((c) => c.value === v)).map((v) => ({ value: v, note: 'not among what it opens' }))
+    const rows = [...extra, ...choices].map((c) => {
+      const cb = h('input', { type: 'checkbox', checked: chosen.has(c.value) })
+      cb.addEventListener('change', () => { if (cb.checked) chosen.add(c.value); else chosen.delete(c.value) })
+      return { c, el: h('label', { class: 'check' }, cb, h('span', null, c.value), c.note ? h('span', { class: 'hint' }, c.note) : null) }
+    })
+    const filter = h('input', { type: 'search', placeholder: `Filter ${choices.length} ${f.key}`, autocomplete: 'off' })
+    filter.addEventListener('input', () => {
+      const q = filter.value.trim().toLowerCase()
+      for (const r of rows) r.el.hidden = !!q && !r.c.value.toLowerCase().includes(q)
+    })
+    box.replaceChildren(
+      choices.length > 8 ? filter : null,
+      rows.length ? h('div', { class: 'choices' }, rows.map((r) => r.el)) : h('span', { class: 'hint' }, 'It opens nothing to list.'),
+      manual)
+  }
+  const load = async () => {
+    const req = lookupRequest()
+    const key = JSON.stringify(req)
+    if (key === asked) return
+    asked = key
+    box.replaceChildren(h('span', { class: 'hint' }, `Looking up the ${f.key} it opens…`))
+    try {
+      const got = await api('POST', `/v1/services/${enc(s.name)}/choices/${enc(f.key)}`, req)
+      if (key !== asked) return
+      choices = got
+      draw()
+    } catch (x) {
+      if (x instanceof Unauthorized) { S.authed = false; render(); return }
+      if (key !== asked) return
+      choices = null
+      disabled(x.message)
+    }
+  }
+  disabled('')
+  return {
+    el: box,
+    load,
+    read: (p) => {
+      const typed = choices ? manual.value.split(',').map((x) => x.trim()).filter(Boolean) : []
+      const got = [...new Set([...chosen, ...typed])].sort()
+      if (got.length) p.set[f.key] = got
+      else if (have.length) p.clear.push(f.key)
+    },
+  }
 }
 
 function compactConfig(cfg) {
@@ -857,6 +924,7 @@ function serviceCard(s) {
 function secretChip(s, e) {
   if (!s.secrets?.length) return null
   if (e.secret_error) return h('span', { class: 'chip error' }, 'secret unreadable')
+  if (e.credential_elsewhere) return h('span', { class: 'chip' }, 'token command')
   if (e.missing_secrets?.length) return h('span', { class: 'chip blocked' }, s.login ? 'not logged in' : 'no secret')
   return h('span', { class: 'chip' }, s.login ? 'logged in' : 'secret set')
 }
@@ -897,15 +965,42 @@ function envRow(s, e) {
 
 function envForm(s, e) {
   const name = e ? null : h('input', { placeholder: 'letters, digits, - and _', autocomplete: 'off' })
-  const ctl = fieldControls(s.fields, e ? e.config : {}, !e)
+  // A service whose choices are looked up with its credential (git's
+  // repositories) takes the secret here, first: the lookup needs it.
+  const lookups = []
+  const secrets = s.fields.some((f) => f.lookup) && s.secrets?.length
+    ? s.secrets.map((f) => ({
+      f,
+      el: h('input', {
+        type: 'password', autocomplete: 'new-password',
+        placeholder: e && !e.missing_secrets?.length && !e.credential_elsewhere ? 'stored; type a new one to replace it' : '',
+      }),
+    }))
+    : []
+  let ctl = null
+  const lookupRequest = (skip) => ({
+    env: e ? e.name : undefined,
+    set: ctl ? ctl.patch(skip).set : {},
+    secret: Object.fromEntries(secrets.map(({ f, el }) => [f, el.value.trim()]).filter(([, v]) => v)),
+  })
+  ctl = fieldControls(s.fields, e ? e.config : {}, !e, (f, have) => {
+    const lc = lookupControl(s, f, have, () => lookupRequest(f.key))
+    lookups.push(lc)
+    return lc
+  })
+  let pending = null
+  const relook = () => { clearTimeout(pending); pending = setTimeout(() => lookups.forEach((l) => l.load()), 500) }
+  for (const { el } of secrets) el.addEventListener('input', relook)
   const err = h('p', { class: 'form-error' })
   const save = h('button', { class: 'btn primary' }, 'Save')
   save.addEventListener('click', async () => {
     err.textContent = ''
     const n = e ? e.name : name.value.trim()
     if (!n) { err.textContent = 'A name is required.'; return }
+    const secret = Object.fromEntries(secrets.map(({ f, el }) => [f, el.value.trim()]))
     try {
       const v = await api(e ? 'PATCH' : 'POST', envPath(s.name, n), ctl.patch())
+      if (Object.values(secret).some(Boolean)) await api('PUT', envPath(s.name, n) + '/secret', secret)
       S.openForm = null
       toast([`${s.name}/${n} saved`, ...(v.warnings || [])].join(' — '))
       await refreshServices()
@@ -915,10 +1010,17 @@ function envForm(s, e) {
       err.textContent = x.message
     }
   })
-  return h('div', { class: 'subform' },
+  const form = h('div', { class: 'subform' },
     name ? h('div', { class: 'field' }, h('label', null, 'name'), name, h('span', { class: 'hint' }, 'what isolations expose')) : null,
+    secrets.map(({ f, el }) => h('div', { class: 'field' }, h('label', null, f), el,
+      h('span', { class: 'hint' }, 'Stored in the Mac’s credentials file (0600), never shown again. The proxy uses it; the isolation never sees it.'))),
     ctl.rows, err,
     h('div', { class: 'actions' }, save, h('button', { class: 'btn', onclick: closeForm }, 'Cancel')))
+  // The rest of the form can change what the lookup uses (git's token
+  // command).
+  form.addEventListener('change', (ev) => { if (!ev.target.closest('.lookup')) relook() })
+  if (lookups.length) queueMicrotask(() => lookups.forEach((l) => l.load()))
+  return form
 }
 
 function secretForm(s, e) {

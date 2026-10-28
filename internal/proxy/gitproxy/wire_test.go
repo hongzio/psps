@@ -15,6 +15,7 @@ import (
 	"sync"
 	"testing"
 
+	"github.com/hongzio/gero/internal/creds"
 	"github.com/hongzio/gero/internal/proxy"
 	"github.com/hongzio/gero/internal/store"
 )
@@ -348,5 +349,31 @@ func TestTheAPISideCanBeTurnedOff(t *testing.T) {
 	code, body, _ := h.do("GET", h.api+"/repos/acme-to/api/pulls", nil, nil)
 	if code != 503 || !strings.Contains(body, "off for this isolation") || len(h.tap.all()) != 0 {
 		t.Fatal(code, body)
+	}
+}
+
+// A token stored for the env is the credential: the command is never run,
+// and the stored token is read per request, so replacing it takes effect on
+// the next one.
+func TestAStoredTokenIsTheCredentialAndTheCommandNeverRuns(t *testing.T) {
+	h := newHarness(t, map[string]Env{"main": {Repos: []string{"priv/repo"}}})
+	c := &creds.Store{Path: filepath.Join(t.TempDir(), "credentials")}
+	h.in.h.Creds = c
+	if err := c.Write("git", "main", map[string]string{"token": "stored-one"}); err != nil {
+		t.Fatal(err)
+	}
+	if code, _ := h.fetch("priv/repo", nil); code != 200 {
+		t.Fatalf("clone: %d", code)
+	}
+	c.Write("git", "main", map[string]string{"token": "stored-two"})
+	if code, _, _ := h.do("GET", h.api+"/repos/priv/repo/pulls", nil, nil); code != 200 {
+		t.Fatalf("api: %d", code)
+	}
+	reqs := h.tap.all()
+	if len(reqs) != 2 || reqs[0].Header.Get("Authorization") != basic("stored-one") || reqs[1].Header.Get("Authorization") != "Bearer stored-two" {
+		t.Fatalf("upstream saw %q then %q", reqs[0].Header.Get("Authorization"), reqs[1].Header.Get("Authorization"))
+	}
+	if n := h.credentialRuns(); n != 0 {
+		t.Fatalf("the token command ran %d time(s)", n)
 	}
 }

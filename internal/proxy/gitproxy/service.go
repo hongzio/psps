@@ -3,7 +3,6 @@ package gitproxy
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"io"
 	"net"
@@ -29,8 +28,9 @@ const (
 	GitConfig = "/etc/gero/gitconfig"
 )
 
-// Env is one git environment: repositories bundled with the command that
-// yields their credential.
+// Env is one git environment: repositories bundled with their credential,
+// a token stored in the credentials file under [git <env>] or, failing
+// that, what a command such as `gh auth token` prints.
 type Env struct {
 	Repos        []string  `json:"repos"`
 	ReadOnly     bool      `json:"read_only"`
@@ -62,12 +62,12 @@ func (Service) Summary() string {
 
 func (Service) Fields() []proxy.Field {
 	return []proxy.Field{
-		{Key: "repos", Kind: proxy.List, Flag: "allow-repo", Clear: "clear-repos", Metavar: "OWNER/REPO",
+		{Key: "repos", Kind: proxy.List, Flag: "allow-repo", Clear: "clear-repos", Metavar: "OWNER/REPO", Lookup: true,
 			Help: "a repository this env's credential opens (repeat; replaces the list)"},
 		{Key: "read_only", Kind: proxy.Bool, Flag: "read-only", Neg: "read-write",
 			Help: "refuse push and API writes for these repositories"},
 		{Key: "token_command", Kind: proxy.String, Flag: "token-command", Metavar: "BIN",
-			Help: "the gh-compatible binary whose `auth token` yields the credential (default gh)"},
+			Help: "instead of a stored token: a gh-compatible binary whose `auth token` yields the credential, such as gh"},
 		{Key: "api_writes", Kind: proxy.List, Flag: "api-write", Clear: "clear-api-writes", Metavar: "FAMILY",
 			Choices: familyNames(), Help: "a GitHub API write family to allow (repeat; default comments, pulls, reviews)"},
 	}
@@ -103,20 +103,14 @@ func (Service) Normalize(name string, env map[string]any) ([]string, error) {
 	}
 	env["api_writes"] = proxy.SortedSet(proxy.Strings(env, "api_writes"))
 	// Pin the credential command to an absolute path now: the daemon may
-	// run under launchd's minimal PATH.
-	switch tc := env["token_command"].(type) {
-	case string:
-		found, err := exec.LookPath(tc)
+	// run under launchd's minimal PATH. Without one, the credential is the
+	// token stored for the env.
+	if tc, ok := env["token_command"].(string); ok {
+		cmd, err := pinCommand(tc)
 		if err != nil {
-			return nil, fmt.Errorf("%q is not on PATH; pass --token-command with a full path", tc)
+			return nil, err
 		}
-		env["token_command"] = []string{found, "auth", "token"}
-	case nil:
-		found, err := exec.LookPath("gh")
-		if err != nil {
-			return nil, errors.New("gh is not on PATH; install it or pass --token-command with a full path")
-		}
-		env["token_command"] = []string{found, "auth", "token"}
+		env["token_command"] = cmd
 	}
 	var warn []string
 	if len(env["repos"].([]string)) == 0 {
@@ -128,6 +122,20 @@ func (Service) Normalize(name string, env map[string]any) ([]string, error) {
 		}
 	}
 	return warn, nil
+}
+
+func pinCommand(bin string) ([]string, error) {
+	found, err := exec.LookPath(bin)
+	if err != nil {
+		return nil, fmt.Errorf("%q is not on PATH; pass --token-command with a full path", bin)
+	}
+	return []string{found, "auth", "token"}, nil
+}
+
+// CredentialElsewhere: an env with a token command needs no stored token.
+func (Service) CredentialElsewhere(cfg json.RawMessage) bool {
+	var e Env
+	return json.Unmarshal(cfg, &e) == nil && len(e.TokenCommand) > 0
 }
 
 func (Service) NormalizeSettings(s map[string]any) error {
@@ -278,13 +286,32 @@ func (in *instance) config() (liveConfig, error) {
 	return liveConfig{envs: envs, settings: s}, nil
 }
 
+// credential is the env's token: the one stored for it, read per request
+// like every proxy's secret, or else what its token command prints.
+func (in *instance) credential(env string, e Env) (string, error) {
+	if token, ok := storedToken(in.h.Creds, env); ok {
+		return token, nil
+	}
+	if len(e.TokenCommand) == 0 {
+		return "", proxy.Deny("git env %s has no credential; store a token with `gero env secret git %s`", env, env)
+	}
+	return in.token(env, e.TokenCommand).Get()
+}
+
+func storedToken(c *creds.Store, env string) (string, bool) {
+	if c == nil {
+		return "", false
+	}
+	v, err := c.Read("git", env)
+	if err != nil || v["token"] == "" {
+		return "", false
+	}
+	return v["token"], true
+}
+
 // token is the env's TokenSource, one per env and command, so two GitHub
 // accounts never share a cache slot.
-func (in *instance) token(env string, e Env) *TokenSource {
-	cmd := e.TokenCommand
-	if len(cmd) == 0 {
-		cmd = []string{"gh", "auth", "token"}
-	}
+func (in *instance) token(env string, cmd []string) *TokenSource {
 	key := env + "\x00" + strings.Join(cmd, "\x00")
 	in.mu.Lock()
 	defer in.mu.Unlock()
@@ -311,21 +338,25 @@ func (Service) Refusals(v proxy.View) []proxy.Refusal {
 	return []proxy.Refusal{r}
 }
 
-// Check runs the env's credential command and asks GitHub who it is.
-func (s Service) Check(ctx context.Context, name string, cfg json.RawMessage, _ *creds.Store) (string, error) {
+// Check takes the env's credential and asks GitHub who it is.
+func (s Service) Check(ctx context.Context, name string, cfg json.RawMessage, c *creds.Store) (string, error) {
 	var e Env
 	if err := json.Unmarshal(cfg, &e); err != nil {
 		return "", err
 	}
-	cmd := e.TokenCommand
-	if len(cmd) == 0 {
-		cmd = []string{"gh", "auth", "token"}
+	source := "stored token"
+	token, ok := storedToken(c, name)
+	if !ok {
+		if len(e.TokenCommand) == 0 {
+			return "", proxy.Deny("git env %s has no credential; store a token with `gero env secret git %s`", name, name)
+		}
+		var err error
+		if token, err = NewTokenSource(e.TokenCommand, 0).Get(); err != nil {
+			return "", err
+		}
+		source = "token command"
 	}
-	token, err := NewTokenSource(cmd, 0).Get()
-	if err != nil {
-		return "", err
-	}
-	out := fmt.Sprintf("token command yields a credential (%d repo(s) listed%s)\n", len(e.Repos), map[bool]string{true: ", read-only"}[e.ReadOnly])
+	out := fmt.Sprintf("credential %s (%d repo(s) listed%s)\n", source, len(e.Repos), map[bool]string{true: ", read-only"}[e.ReadOnly])
 	login, scopes, err := probeUser(ctx, or(s.APIUpstream, "https://api.github.com"), token)
 	if err != nil {
 		return out, err

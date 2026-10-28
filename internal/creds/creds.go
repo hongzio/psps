@@ -32,6 +32,8 @@ var Fields = map[string][]string{
 	"clickhouse": {"user", "password"},
 	"grafana":    {"token"},
 	"notion":     {"client_id", "refresh_token"},
+	// git's is optional: an env with a token command needs none.
+	"git": {"token"},
 	// Agent CLI accounts (a Claude token, an API key), by account name.
 	"account": {"token"},
 }

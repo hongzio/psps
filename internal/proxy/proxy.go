@@ -114,6 +114,10 @@ type Field struct {
 	Metavar string   `json:"metavar,omitempty"`
 	Help    string   `json:"help"`
 	Choices []string `json:"choices,omitempty"`
+	// Lookup is a List whose choices the service finds itself (a
+	// ChoiceLister) once the env's credential is known: the repositories a
+	// token opens. Forms ask for the credential first.
+	Lookup bool `json:"lookup,omitempty"`
 }
 
 // Patch changes an env definition or an exposure's settings the way the CLI
@@ -439,6 +443,27 @@ type Login struct {
 	Redirect string
 	Expires  time.Time
 	State    any
+}
+
+// Choice is one value a Lookup field can take, as the service found it.
+type Choice struct {
+	Value string `json:"value"`
+	// Note is what to show beside it ("private", "archived").
+	Note string `json:"note,omitempty"`
+}
+
+// ChoiceLister finds a Lookup field's choices from the env as a form has it
+// so far and its secret, typed in that form or stored. With no credential
+// to look with, it refuses with a Denied that says to give one first.
+type ChoiceLister interface {
+	Choices(ctx context.Context, field string, env map[string]any, secret map[string]string) ([]Choice, error)
+}
+
+// SecretOptional is a service whose env can take its credential from
+// somewhere other than its secret (git's token command); an env that does
+// is not missing its secret.
+type SecretOptional interface {
+	CredentialElsewhere(env json.RawMessage) bool
 }
 
 // LoginService is a service whose credential is a browser login rather

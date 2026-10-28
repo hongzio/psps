@@ -32,6 +32,14 @@ type field struct {
 	text    textinput.Model
 	area    textarea.Model
 	hint    string
+	// A lookup checklist's options are what the service found with the
+	// env's credential; notes say more about each. Until it has looked,
+	// or when it could not, it is disabled and hint says why. looked is
+	// the request its options answer.
+	lookup   bool
+	disabled bool
+	notes    map[string]string
+	looked   string
 }
 
 func (f *field) value() string {
@@ -134,6 +142,14 @@ func (f *form) handle(k Keymap, msg tea.KeyMsg) (tea.Cmd, bool) {
 	case k.Is(msg, "focus_prev"):
 		f.move(-1)
 		return nil, true
+	case cur.disabled:
+		return nil, true
+	case cur.kind == fCheck && msg.String() == "up":
+		cur.idx = max(cur.idx-1, 0)
+		return nil, true
+	case cur.kind == fCheck && msg.String() == "down":
+		cur.idx = min(cur.idx+1, max(len(cur.options)-1, 0))
+		return nil, true
 	case cur.kind == fSelect && k.Is(msg, "prev_option"):
 		cur.idx = (cur.idx - 1 + len(cur.options)) % max(len(cur.options), 1)
 		return nil, true
@@ -192,6 +208,17 @@ func (f *form) render(th theme, width int) string {
 			fd.text.Width = max(width-20, 10)
 			val = fd.text.View()
 		case fCheck:
+			if fd.disabled {
+				val = th.dim.Render("  " + orDash(strings.Join(fd.values(), ", ")))
+				line := marker + label + " " + val + "  " + th.warn.Render(fd.hint)
+				b.WriteString(line + "\n")
+				continue
+			}
+			if fd.lookup {
+				b.WriteString(marker + label + " " + th.dim.Render(fmt.Sprintf("%d of %d ticked · ↑/↓ move · space ticks", len(fd.values()), len(fd.options))) + "\n")
+				b.WriteString(fd.renderTall(th, i == f.cur, width))
+				continue
+			}
 			if len(fd.options) == 0 {
 				val = th.dim.Render("  (none to choose from)")
 				break
@@ -222,6 +249,42 @@ func (f *form) render(th theme, width int) string {
 			line += "  " + th.dim.Render(fd.hint)
 		}
 		b.WriteString(line + "\n")
+	}
+	return b.String()
+}
+
+// renderTall draws a long checklist one option a line, a window of them
+// around the cursor.
+func (f *field) renderTall(th theme, focused bool, width int) string {
+	const rows = 8
+	if len(f.options) == 0 {
+		return th.dim.Render("      (nothing to choose from)") + "\n"
+	}
+	start := min(max(f.idx-rows/2, 0), max(len(f.options)-rows, 0))
+	end := min(start+rows, len(f.options))
+	var b strings.Builder
+	if start > 0 {
+		b.WriteString(th.dim.Render(fmt.Sprintf("      ↑ %d more", start)) + "\n")
+	}
+	for j := start; j < end; j++ {
+		o := f.options[j]
+		box := "[ ] "
+		if f.checked[o] {
+			box = "[x] "
+		}
+		line := box + o
+		if n := f.notes[o]; n != "" {
+			line += "  " + th.dim.Render(n)
+		}
+		line = truncate(line, max(width-8, 10))
+		if focused && j == f.idx {
+			b.WriteString("    " + th.user.Render("› ") + line + "\n")
+		} else {
+			b.WriteString("      " + line + "\n")
+		}
+	}
+	if end < len(f.options) {
+		b.WriteString(th.dim.Render(fmt.Sprintf("      ↓ %d more", len(f.options)-end)) + "\n")
 	}
 	return b.String()
 }

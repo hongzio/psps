@@ -46,6 +46,8 @@ type fakeBackend struct {
 	cliLogin api.CLILogin
 	cliCalls []string
 	accounts []api.Account
+	// choiceAsks are the lookups asked for, as "field token=… set=…".
+	choiceAsks []string
 }
 
 func (f *fakeBackend) Agents(context.Context) ([]api.Agent, error) {
@@ -224,6 +226,18 @@ func (f *fakeBackend) CancelCLILogin(_ context.Context, iso, tool string) error 
 	defer f.mu.Unlock()
 	f.cliCalls = append(f.cliCalls, "cancel "+iso+" "+tool)
 	return nil
+}
+
+// Choices answers like git's: nothing without a token or a token command,
+// otherwise two repositories.
+func (f *fakeBackend) Choices(_ context.Context, svc, field string, req api.ChoicesRequest) ([]proxy.Choice, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.choiceAsks = append(f.choiceAsks, fmt.Sprintf("%s env=%s token=%s set=%v", field, req.Env, req.Secret["token"], req.Set))
+	if req.Secret["token"] == "" && req.Set["token_command"] == nil && req.Env == "" {
+		return nil, fmt.Errorf("enter a token first: the repositories listed are the ones it opens")
+	}
+	return []proxy.Choice{{Value: "hongzio/gero", Note: "private"}, {Value: "hongzio/isolate"}}, nil
 }
 func (f *fakeBackend) Accounts(context.Context) ([]api.Account, error) {
 	f.mu.Lock()

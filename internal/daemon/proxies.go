@@ -462,6 +462,13 @@ func (m *Manager) envView(e store.Env) api.Env {
 			v.SecretError = err.Error()
 		}
 	}
+	// A stored secret wins; only without one does the credential come from
+	// elsewhere.
+	if svc, err := m.registry().Get(e.Service); err == nil && len(v.MissingSecrets) > 0 {
+		if so, ok := svc.(proxy.SecretOptional); ok && so.CredentialElsewhere(e.Config) {
+			v.CredentialElsewhere, v.MissingSecrets = true, nil
+		}
+	}
 	v.ExposedTo, _ = m.store.Exposing(e.Service, e.Name)
 	return v
 }
@@ -577,6 +584,56 @@ func (m *Manager) SetSecret(service, name string, values map[string]string) erro
 		return err
 	}
 	return nil
+}
+
+// Choices lists a Lookup field's choices, looked up with the credential
+// the request carries or the env's stored one.
+func (m *Manager) Choices(ctx context.Context, service, field string, req api.ChoicesRequest) ([]proxy.Choice, error) {
+	svc, err := m.registry().Get(service)
+	if err != nil {
+		return nil, badRequest(err)
+	}
+	lister, ok := svc.(proxy.ChoiceLister)
+	lookup := false
+	for _, f := range svc.Fields() {
+		lookup = lookup || (f.Key == field && f.Lookup)
+	}
+	if !ok || !lookup {
+		return nil, badRequest(fmt.Errorf("%s has no choices to look up for %s", service, field))
+	}
+	env := map[string]any{}
+	secret := map[string]string{}
+	if req.Env != "" {
+		e, err := m.store.Env(service, req.Env)
+		if err != nil && !errors.Is(err, store.ErrNotFound) {
+			return nil, err
+		}
+		if err == nil {
+			json.Unmarshal(e.Config, &env)
+			if m.creds != nil {
+				if v, err := m.creds.Read(service, req.Env); err == nil {
+					secret = v
+				}
+			}
+		}
+	}
+	for k, v := range req.Set {
+		env[k] = v
+	}
+	for k, v := range req.Secret {
+		if v = strings.TrimSpace(v); v != "" {
+			secret[k] = v
+		}
+	}
+	choices, err := lister.Choices(ctx, field, env, secret)
+	var d *proxy.Denied
+	if errors.As(err, &d) {
+		return nil, badRequest(err)
+	}
+	if choices == nil {
+		choices = []proxy.Choice{}
+	}
+	return choices, err
 }
 
 func (m *Manager) CheckEnv(ctx context.Context, service, name string) (api.Check, error) {

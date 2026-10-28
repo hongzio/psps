@@ -411,3 +411,12 @@ code, pre { font-family: var(--mono); font-size: 13px; }
 .device-code { font-family: var(--mono); font-size: 26px; font-weight: 600; letter-spacing: .08em; margin: 0 0 10px; user-select: all; }
 .cli .picker { margin: 8px 0 0; max-width: 360px; }
 .cli .picker select { padding: 7px 10px; border-radius: 8px; border: 1px solid var(--border); background: var(--bg); color: var(--text); }
+
+/* Lookup fields: choices a service found with the env's credential */
+.lookup { display: grid; gap: 6px; }
+.lookup .choices { max-height: 260px; overflow-y: auto; border: 1px solid var(--border); border-radius: 8px; padding: 6px 10px; background: var(--bg); display: grid; gap: 4px; }
+.lookup .choices .check { gap: 8px; flex-wrap: wrap; justify-content: flex-start; }
+.lookup .choices .check input { width: auto; padding: 0; margin: 0; flex: none; }
+.lookup .choices [hidden] { display: none; }
+.lookup .choices .check span:first-of-type { font-family: var(--mono); font-size: 13px; overflow-wrap: anywhere; }
+.lookup input[disabled] { opacity: .6; }

@@ -407,7 +407,7 @@ func (g gitHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	// spend the credential even by accident.
 	var token string
 	if decision == Authenticated {
-		if token, err = in.token(envName, cfg.envs[envName]).Get(); err != nil {
+		if token, err = in.credential(envName, cfg.envs[envName]); err != nil {
 			deny(503, err)
 			return
 		}

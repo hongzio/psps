@@ -164,3 +164,51 @@ func TestVerifyFromTheIsolationsPageShowsEachCheck(t *testing.T) {
 		t.Fatal("the report did not close")
 	}
 }
+
+func TestAGitEnvAsksForItsTokenThenOffersTheRepositoriesItOpens(t *testing.T) {
+	h := newHarness(t)
+	lookupFields := append([]proxy.Field(nil), gitFields...)
+	lookupFields[0].Lookup = true
+	h.be.services = []api.Service{{Name: "git", Summary: "git and the GitHub API", Secrets: []string{"token"}, Fields: lookupFields}}
+	h.key("ctrl+r")
+	h.key("n")
+	// Nothing to look with yet: the repos field is shut and says why.
+	h.viewHas("token", "enter a token first")
+	h.typeText("work")
+	h.key("tab")
+	h.typeText("ghp_secret")
+	if strings.Contains(h.m.View(), "ghp_secret") {
+		t.Fatal("the token is shown while typed")
+	}
+	h.key("tab") // onto repos: the lookup runs with the typed token
+	h.viewHas("0 of 2 ticked", "hongzio/gero", "private", "hongzio/isolate")
+	h.key(" ") // space ticks hongzio/gero
+	h.key("ctrl+s")
+	if len(h.be.patches) != 1 || h.be.patches[0] != "add git/work repos=[hongzio/gero]" {
+		t.Fatalf("patches %v", h.be.patches)
+	}
+	if len(h.be.secrets) != 1 || h.be.secrets[0] != "git/work map[token:ghp_secret]" {
+		t.Fatalf("secrets %v", h.be.secrets)
+	}
+	if asks := h.be.choiceAsks; len(asks) != 2 || !strings.Contains(asks[1], "token=ghp_secret") {
+		t.Fatalf("asks %v", asks)
+	}
+}
+
+func TestAGitEnvWithACredentialLooksUpAsItOpens(t *testing.T) {
+	h := newHarness(t)
+	lookupFields := append([]proxy.Field(nil), gitFields...)
+	lookupFields[0].Lookup = true
+	h.be.services = []api.Service{{Name: "git", Secrets: []string{"token"}, Fields: lookupFields}}
+	h.be.envs = []api.Env{{Env: store.Env{Service: "git", Name: "work",
+		Config: json.RawMessage(`{"repos":["hongzio/old"],"token_command":["/opt/gh","auth","token"]}`)}, CredentialElsewhere: true}}
+	h.key("ctrl+r")
+	h.key("down")
+	h.key("e")
+	// The repository already listed stays ticked, though the credential
+	// does not list it.
+	h.viewHas("1 of 3 ticked", "hongzio/old", "not among what it opens", "hongzio/isolate")
+	if asks := h.be.choiceAsks; len(asks) != 1 || !strings.Contains(asks[0], "env=work") {
+		t.Fatalf("asks %v", asks)
+	}
+}

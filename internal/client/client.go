@@ -303,6 +303,11 @@ func (c *Client) FinishLogin(ctx context.Context, service, name, id, callback st
 	return c.do(ctx, "POST", envPath(service, name)+"/login/"+url.PathEscape(id), api.LoginFinish{Callback: callback}, nil)
 }
 
+func (c *Client) Choices(ctx context.Context, service, field string, req api.ChoicesRequest) ([]proxy.Choice, error) {
+	var v []proxy.Choice
+	return v, c.do(ctx, "POST", "/v1/services/"+url.PathEscape(service)+"/choices/"+url.PathEscape(field), req, &v)
+}
+
 func (c *Client) CheckEnv(ctx context.Context, service, name string) (api.Check, error) {
 	var v api.Check
 	return v, c.do(ctx, "POST", envPath(service, name)+"/check", nil, &v)

@@ -60,6 +60,7 @@ type Backend interface {
 	DeleteEnv(ctx context.Context, service, name string, force bool) error
 	SetSecret(ctx context.Context, service, name string, values map[string]string) error
 	CheckEnv(ctx context.Context, service, name string) (api.Check, error)
+	Choices(ctx context.Context, service, field string, req api.ChoicesRequest) ([]proxy.Choice, error)
 	StartLogin(ctx context.Context, service, name, redirect string) (api.Login, error)
 	FinishLogin(ctx context.Context, service, name, id, callback string) error
 	Exposures(ctx context.Context, iso string) ([]api.Exposure, error)
@@ -526,6 +527,9 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, m.onCLILogin(msg)
 	case cliPollMsg:
 		return m, m.pollCLILogin(msg)
+	case choicesMsg:
+		m.onChoices(msg)
+		return m, nil
 
 	case exposuresMsg:
 		if m.isoPage != nil && m.isoPage.expose != nil && m.isoPage.expose.iso == msg.iso {

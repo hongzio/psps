@@ -2,6 +2,7 @@ package tui
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"os"
 	"strings"
@@ -13,6 +14,7 @@ import (
 
 	"github.com/hongzio/gero/internal/api"
 	"github.com/hongzio/gero/internal/client"
+	"github.com/hongzio/gero/internal/proxy"
 )
 
 // The services page: the credential proxies' environments, defined once on
@@ -45,10 +47,13 @@ type svcPage struct {
 	form     *form
 	formSvc  api.Service
 	formEnv  string // the env being edited; "" while adding
-	output   []string
-	outErr   bool
-	login    *loginState
-	busy     string
+	// formHead is how many fields come before the service's own (the name
+	// while adding, then formSecrets secret fields).
+	formHead, formSecrets int
+	output                []string
+	outErr                bool
+	login                 *loginState
+	busy                  string
 }
 
 type loginState struct {
@@ -73,6 +78,13 @@ type (
 	loginStartedMsg struct {
 		st  *loginState
 		err error
+	}
+	choicesMsg struct {
+		form    *form
+		field   *field
+		looked  string
+		choices []proxy.Choice
+		err     error
 	}
 	loginCaughtMsg struct {
 		st    *loginState
@@ -144,9 +156,9 @@ func (m *Model) handleSvcKey(msg tea.KeyMsg) tea.Cmd {
 	case k.Is(msg, "down"):
 		p.sel = min(len(p.rows())-1, p.sel+1)
 	case ok && k.Is(msg, "svc_new"):
-		m.openEnvForm(row.svc, nil)
+		return m.openEnvForm(row.svc, nil)
 	case ok && row.env != nil && (k.Is(msg, "svc_edit") || k.Is(msg, "open")):
-		m.openEnvForm(row.svc, row.env)
+		return m.openEnvForm(row.svc, row.env)
 	case ok && row.env != nil && k.Is(msg, "svc_secret"):
 		return m.openSecret(row.svc, row.env.Name)
 	case ok && row.env != nil && k.Is(msg, "svc_check"):
@@ -183,23 +195,133 @@ func (m *Model) closeSvcMode() {
 	p.mode, p.form, p.login, p.output = svcList, nil, nil, nil
 }
 
-func (m *Model) openEnvForm(svc api.Service, env *api.Env) {
+// hasLookup is whether the service looks some field's choices up with the
+// env's credential, which its env form then asks for first.
+func hasLookup(svc api.Service) bool {
+	for _, f := range svc.Fields {
+		if f.Lookup {
+			return len(svc.Secrets) > 0
+		}
+	}
+	return false
+}
+
+func (m *Model) openEnvForm(svc api.Service, env *api.Env) tea.Cmd {
 	p := m.svcPage
 	cur := map[string]any{}
 	var fields []*field
+	p.formHead = 0
 	if env == nil {
 		name := textField("name", "letters, digits, - and _", "the env's name: what isolations expose")
 		fields = append(fields, name)
+		p.formHead++
 	} else {
 		cur = decodeMap(env.Config)
 	}
+	p.formSecrets = 0
+	if hasLookup(svc) {
+		for _, s := range svc.Secrets {
+			hint := "stored on the Mac only, never shown again"
+			if env != nil && len(env.MissingSecrets) == 0 && !env.CredentialElsewhere {
+				hint = "stored; type a new one to replace it"
+			}
+			fields = append(fields, secretField(s, hint))
+			p.formSecrets++
+		}
+		p.formHead += p.formSecrets
+	}
 	fields = append(fields, genFields(svc.Fields, cur, env == nil)...)
+	for i, f := range svc.Fields {
+		if f.Lookup && p.formSecrets > 0 {
+			have := proxy.Strings(cur, f.Key)
+			fd := checkField(f.Key, have, have, "")
+			fd.lookup, fd.disabled, fd.hint = true, true, "enter a token first"
+			fields[p.formHead+i] = fd
+		}
+	}
 	p.mode, p.form, p.formSvc = svcEnvForm, &form{fields: fields}, svc
 	p.formEnv = ""
 	if env != nil {
 		p.formEnv = env.Name
 	}
 	p.form.fields[0].focus(true)
+	return m.lookUp()
+}
+
+// lookUp asks the service for each lookup field's choices with what the
+// form has now, when that differs from what the field last asked with.
+func (m *Model) lookUp() tea.Cmd {
+	p := m.svcPage
+	if p == nil || p.form == nil || p.mode != svcEnvForm || p.formSecrets == 0 {
+		return nil
+	}
+	svc, be, form := p.formSvc, m.be, p.form
+	secret := map[string]string{}
+	for i, s := range svc.Secrets {
+		if v := form.fields[p.formHead-p.formSecrets+i].text.Value(); strings.TrimSpace(v) != "" {
+			secret[s] = strings.TrimSpace(v)
+		}
+	}
+	var cmds []tea.Cmd
+	for i, f := range svc.Fields {
+		fd := form.fields[p.formHead+i]
+		if !fd.lookup {
+			continue
+		}
+		set := map[string]any{}
+		for j, g := range svc.Fields {
+			if g.Kind == proxy.String {
+				if v := form.fields[p.formHead+j].value(); v != "" && v != optDefault && j != i {
+					set[g.Key] = v
+				}
+			}
+		}
+		req := api.ChoicesRequest{Env: p.formEnv, Set: set, Secret: secret}
+		b, _ := json.Marshal(req)
+		if string(b) == fd.looked {
+			continue
+		}
+		fd.looked, fd.disabled, fd.hint = string(b), true, "looking up…"
+		key, looked := f.Key, string(b)
+		cmds = append(cmds, func() tea.Msg {
+			ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
+			defer cancel()
+			cs, err := be.Choices(ctx, svc.Name, key, req)
+			return choicesMsg{form: form, field: fd, looked: looked, choices: cs, err: err}
+		})
+	}
+	return tea.Batch(cmds...)
+}
+
+// onChoices fills a lookup field with what the service found, keeping
+// every value already ticked.
+func (m *Model) onChoices(msg choicesMsg) {
+	p := m.svcPage
+	if p == nil || p.form != msg.form || msg.field.looked != msg.looked {
+		return
+	}
+	fd := msg.field
+	if msg.err != nil {
+		fd.disabled, fd.hint = true, msg.err.Error()
+		return
+	}
+	ticked := fd.values()
+	fd.options, fd.notes = nil, map[string]string{}
+	listed := map[string]bool{}
+	for _, c := range msg.choices {
+		listed[c.Value] = true
+	}
+	for _, v := range ticked {
+		if !listed[v] {
+			fd.options = append(fd.options, v)
+			fd.notes[v] = "not among what it opens"
+		}
+	}
+	for _, c := range msg.choices {
+		fd.options = append(fd.options, c.Value)
+		fd.notes[c.Value] = c.Note
+	}
+	fd.disabled, fd.hint, fd.idx = false, "", 0
 }
 
 func (m *Model) openSecret(svc api.Service, env string) tea.Cmd {
@@ -289,26 +411,39 @@ func (m *Model) handleSvcFormKey(msg tea.KeyMsg) tea.Cmd {
 		return cmd
 	}
 	if !(k.Is(msg, "submit") || (msg.String() == "enter" && p.form.cur == len(p.form.fields)-1)) {
+		was := p.form.cur
 		if msg.String() == "enter" {
 			p.form.move(1)
-			return nil
+		} else if cmd, _ := p.form.handle(k, msg); cmd != nil {
+			return cmd
 		}
-		cmd, _ := p.form.handle(k, msg)
-		return cmd
+		// Leaving a field may have changed what a lookup should ask with.
+		if p.form.cur != was {
+			return m.lookUp()
+		}
+		return nil
 	}
 	be, svc := m.be, p.formSvc
 	switch p.mode {
 	case svcEnvForm:
 		fields, name := p.form.fields, p.formEnv
 		var cur map[string]any
+		secret := map[string]string{}
+		for i, s := range svc.Secrets[:p.formSecrets] {
+			if v := strings.TrimSpace(fields[p.formHead-p.formSecrets+i].text.Value()); v != "" {
+				secret[s] = v
+			}
+		}
 		if name == "" {
-			name, fields = fields[0].value(), fields[1:]
+			name = fields[0].value()
 			if name == "" {
 				m.setFlash("a name is required", true)
 				return nil
 			}
 			cur = map[string]any{}
-		} else {
+		}
+		fields = fields[p.formHead:]
+		if p.formEnv != "" {
 			for _, e := range p.envs {
 				if e.Service == svc.Name && e.Name == name {
 					cur = decodeMap(e.Config)
@@ -331,6 +466,11 @@ func (m *Model) handleSvcFormKey(msg tea.KeyMsg) tea.Cmd {
 				e, err = be.AddEnv(ctx, svc.Name, name, patch)
 			} else {
 				e, err = be.EditEnv(ctx, svc.Name, name, patch)
+			}
+			if err == nil && len(secret) > 0 {
+				if err = be.SetSecret(ctx, svc.Name, name, secret); err == nil {
+					e.MissingSecrets = nil
+				}
 			}
 			flash := fmt.Sprintf("%s env %s saved", svc.Name, name)
 			if err == nil && adding && (len(e.MissingSecrets) > 0 || svc.Login) {

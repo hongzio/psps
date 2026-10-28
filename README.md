@@ -172,7 +172,9 @@ An **environment** is defined once and exposed per isolation:
 
 ```sh
 gero env add git work --allow-repo owner/repo [--read-only]
-gero env check git work                  # run its credential, ask GitHub who it is
+gero env secret git work                 # its GitHub token (or: --token-command gh)
+gero env choices git work repos          # the repositories that token opens
+gero env check git work                  # take its credential, ask GitHub who it is
 gero iso expose dev git work             # dev now routes owner/repo with that credential
 gero iso services dev
 gero iso unexpose dev git
@@ -189,7 +191,11 @@ by `gero-shim sync` and removed when the service is turned off.
 Secrets for services that keep one live in `~/.config/gero/credentials`, an
 INI of `[service env]` sections, 0600, read per request:
 `gero env secret SERVICE NAME` prompts for them (or reads one line per field
-from stdin). git uses the env's credential command instead (`gh auth token`).
+from stdin). git's is a GitHub token; an env may instead name a
+gh-compatible command (`--token-command gh`, which runs `gh auth token`), and
+a stored token wins over it. The web and TUI env forms for git ask for the
+token first and then list the repositories it opens to tick; until there is a
+token (or a command) the repository box stays disabled.
 
 AWS is a credential broker rather than a proxy: it assumes an IAM role with
 the Mac's AWS CLI (`aws sts assume-role --profile ...`) under a session policy
