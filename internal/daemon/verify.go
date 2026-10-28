@@ -27,13 +27,13 @@ import (
 // It changes nothing but the fence's own state, which a fresh measurement
 // replaces: a leak found here stops agents as it does anywhere.
 func (m *Manager) Verify(ctx context.Context, name string) (api.Verify, error) {
-	rec, err := m.store.Isolation(name)
+	rec, err := m.isolationNamed(name)
 	if err != nil {
-		return api.Verify{}, fmt.Errorf("isolation %s: %w", name, err)
+		return api.Verify{}, err
 	}
-	v := api.Verify{Isolation: name, Checks: []api.VerifyCheck{}}
+	v := api.Verify{Isolation: rec.Name, Checks: []api.VerifyCheck{}}
 	add := func(c ...api.VerifyCheck) { v.Checks = append(v.Checks, c...) }
-	if _, err := m.ensureIsolation(ctx, name); err != nil {
+	if _, err := m.ensureIsolation(ctx, rec.ID); err != nil {
 		add(api.VerifyCheck{Check: "isolation is up", Severity: api.SevConfig, Expected: "running", Got: "down", Detail: err.Error()})
 		return v, nil
 	}
@@ -63,7 +63,7 @@ func (m *Manager) verifyFenceChecks(ctx context.Context, iso store.Isolation) []
 		return []api.VerifyCheck{fail("network fence", api.SevConfig, "on", "off",
 			"created with --fence off: the isolation reaches the Mac and the LAN, and agents start without a measured fence")}
 	}
-	st := m.isoLock(iso.Name)
+	st := m.isoLock(iso.ID)
 	st.mu.Lock()
 	r := m.measureFenceLocked(ctx, iso)
 	st.mu.Unlock()
@@ -140,7 +140,7 @@ func (m *Manager) verifyServices(ctx context.Context, iso store.Isolation) []api
 	}
 	var xs []exposed
 	for _, svc := range m.registry().All() {
-		v, err := m.viewFor(iso.Name, svc)
+		v, err := m.viewFor(iso.ID, svc)
 		if err != nil {
 			return []api.VerifyCheck{fail(svc.Name()+" configuration readable", api.SevConfig, "read", "error", err.Error())}
 		}
@@ -155,8 +155,8 @@ func (m *Manager) verifyServices(ctx context.Context, iso store.Isolation) []api
 
 	// The tunnel was just kicked by ensureIsolation; give it the moment it
 	// takes to come up rather than report it starting.
-	status := m.tunnelStatus(iso.Name)
-	for deadline := time.Now().Add(10 * time.Second); status != "up" && time.Now().Before(deadline); status = m.tunnelStatus(iso.Name) {
+	status := m.tunnelStatus(iso.ID)
+	for deadline := time.Now().Add(10 * time.Second); status != "up" && time.Now().Before(deadline); status = m.tunnelStatus(iso.ID) {
 		select {
 		case <-ctx.Done():
 			return append(out, fail("proxy tunnel up", api.SevConfig, "up", "not measured", ctx.Err().Error()))

@@ -24,12 +24,11 @@ import (
 var ErrNotFound = errors.New("not found")
 
 type Isolation struct {
-	Name string `json:"name"`
-	// Base is what its container, network and volumes are named after,
-	// when that is not Name: the name it had when they were made, which a
-	// rename leaves them with, or one a new isolation took because its own
-	// was still in use that way.
-	Base      string `json:"base,omitempty"`
+	// ID is what an isolation is to gero, for good: every row that belongs
+	// to it names it by ID, and its container, network and volumes are
+	// named after it. Name is what people call it, and can change.
+	ID        string `json:"id"`
+	Name      string `json:"name"`
 	Container string `json:"container"`
 	Image     string `json:"image"`
 	CPUs      int    `json:"cpus,omitempty"`
@@ -49,16 +48,17 @@ type Isolation struct {
 }
 
 type Agent struct {
-	ID         string         `json:"id"`
-	Name       string         `json:"name"`
-	Kind       driver.Kind    `json:"kind"`
-	Isolation  string         `json:"isolation"`
-	Workdir    string         `json:"workdir"`
-	Repo       string         `json:"repo,omitempty"`
-	Options    driver.Options `json:"options"`
-	SessionID  string         `json:"session_id,omitempty"`
-	CreatedAt  time.Time      `json:"created_at"`
-	ArchivedAt *time.Time     `json:"archived_at,omitempty"`
+	ID   string      `json:"id"`
+	Name string      `json:"name"`
+	Kind driver.Kind `json:"kind"`
+	// IsolationID is the ID of the isolation it runs in.
+	IsolationID string         `json:"isolation_id"`
+	Workdir     string         `json:"workdir"`
+	Repo        string         `json:"repo,omitempty"`
+	Options     driver.Options `json:"options"`
+	SessionID   string         `json:"session_id,omitempty"`
+	CreatedAt   time.Time      `json:"created_at"`
+	ArchivedAt  *time.Time     `json:"archived_at,omitempty"`
 	// LastSrc is the newest shim log Seq whose events are committed.
 	LastSrc int64 `json:"-"`
 }
@@ -69,7 +69,8 @@ type Store struct {
 
 const schema = `
 CREATE TABLE IF NOT EXISTS isolations (
-	name       TEXT PRIMARY KEY,
+	id         TEXT PRIMARY KEY,
+	name       TEXT NOT NULL UNIQUE,
 	container  TEXT NOT NULL,
 	image      TEXT NOT NULL,
 	cpus       INTEGER NOT NULL DEFAULT 0,
@@ -81,7 +82,7 @@ CREATE TABLE IF NOT EXISTS agents (
 	id          TEXT PRIMARY KEY,
 	name        TEXT NOT NULL,
 	kind        TEXT NOT NULL,
-	isolation   TEXT NOT NULL REFERENCES isolations(name),
+	isolation   TEXT NOT NULL REFERENCES isolations(id),
 	workdir     TEXT NOT NULL,
 	repo        TEXT NOT NULL DEFAULT '',
 	options     TEXT NOT NULL DEFAULT '{}',
@@ -148,29 +149,118 @@ func (s *Store) Vacuum() error {
 var added = []struct{ table, column, def string }{
 	{"isolations", "network", "TEXT NOT NULL DEFAULT ''"},
 	{"isolations", "fence", "TEXT NOT NULL DEFAULT 'on'"},
-	{"isolations", "base", "TEXT NOT NULL DEFAULT ''"},
+}
+
+func hasColumn(db interface {
+	Query(string, ...any) (*sql.Rows, error)
+}, table, column string) (bool, error) {
+	rows, err := db.Query(`SELECT name FROM pragma_table_info(?)`, table)
+	if err != nil {
+		return false, err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var name string
+		rows.Scan(&name)
+		if name == column {
+			return true, nil
+		}
+	}
+	return false, rows.Err()
 }
 
 func migrate(db *sql.DB) error {
 	for _, a := range added {
-		rows, err := db.Query(`SELECT name FROM pragma_table_info(?)`, a.table)
+		have, err := hasColumn(db, a.table, a.column)
 		if err != nil {
 			return err
 		}
-		have := false
-		for rows.Next() {
-			var name string
-			rows.Scan(&name)
-			have = have || name == a.column
-		}
-		rows.Close()
 		if !have {
 			if _, err := db.Exec(fmt.Sprintf(`ALTER TABLE %s ADD COLUMN %s %s`, a.table, a.column, a.def)); err != nil {
 				return err
 			}
 		}
 	}
-	return nil
+	return migrateIsolationIDs(db)
+}
+
+// migrateIsolationIDs gives isolations from before IDs one: the name their
+// container, network and volumes are named after, which is their name
+// unless they were renamed (a base column remembered it then). The column
+// that was the name becomes the ID, so every row pointing at an isolation,
+// foreign keys included, keeps pointing at it; the name is a column of its
+// own from then on.
+func migrateIsolationIDs(db *sql.DB) error {
+	if have, err := hasColumn(db, "isolations", "id"); err != nil || have {
+		return err
+	}
+	tx, err := db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	if _, err := tx.Exec(`PRAGMA defer_foreign_keys = ON`); err != nil {
+		return err
+	}
+	hasBase, err := hasColumn(tx, "isolations", "base")
+	if err != nil {
+		return err
+	}
+	moves := map[string]string{} // name -> base, for renamed isolations
+	if hasBase {
+		rows, err := tx.Query(`SELECT name, base FROM isolations WHERE base != '' AND base != name`)
+		if err != nil {
+			return err
+		}
+		for rows.Next() {
+			var name, base string
+			rows.Scan(&name, &base)
+			moves[name] = base
+		}
+		rows.Close()
+	}
+	for _, q := range []string{
+		`ALTER TABLE isolations RENAME COLUMN name TO id`,
+		`ALTER TABLE isolations ADD COLUMN name TEXT NOT NULL DEFAULT ''`,
+		`UPDATE isolations SET name = id`,
+	} {
+		if _, err := tx.Exec(q); err != nil {
+			return err
+		}
+	}
+	// A renamed isolation's ID is its base. Moved in two steps, through a
+	// value no name can be: a base can be another isolation's name, and so
+	// for now its ID.
+	move := func(from, to string) error {
+		if _, err := tx.Exec(`UPDATE isolations SET id = ? WHERE id = ?`, to, from); err != nil {
+			return err
+		}
+		for _, table := range []string{"agents", "exposures", "tokens", "account_links"} {
+			if _, err := tx.Exec(`UPDATE `+table+` SET isolation = ? WHERE isolation = ?`, to, from); err != nil {
+				return err
+			}
+		}
+		return nil
+	}
+	for name := range moves {
+		if err := move(name, "#"+name); err != nil {
+			return err
+		}
+	}
+	for name, base := range moves {
+		if err := move("#"+name, base); err != nil {
+			return err
+		}
+	}
+	if hasBase {
+		if _, err := tx.Exec(`ALTER TABLE isolations DROP COLUMN base`); err != nil {
+			return err
+		}
+	}
+	if _, err := tx.Exec(`CREATE UNIQUE INDEX isolations_name ON isolations(name)`); err != nil {
+		return err
+	}
+	return tx.Commit()
 }
 
 func (s *Store) Close() error { return s.db.Close() }
@@ -182,72 +272,30 @@ func parseTS(s string) time.Time {
 	return t
 }
 
+// ErrExists refuses a name another isolation has.
+var ErrExists = errors.New("already exists")
+
 func (s *Store) PutIsolation(iso Isolation) error {
+	if iso.ID == "" || iso.Name == "" {
+		return errors.New("store: an isolation needs an ID and a name")
+	}
 	env, _ := json.Marshal(iso.Env)
 	if iso.Fence == "" {
 		iso.Fence = "on"
 	}
-	_, err := s.db.Exec(`INSERT INTO isolations (name, container, image, cpus, memory, env, created_at, network, fence, base)
+	_, err := s.db.Exec(`INSERT INTO isolations (id, name, container, image, cpus, memory, env, created_at, network, fence)
 		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-		ON CONFLICT(name) DO UPDATE SET container=excluded.container, image=excluded.image,
+		ON CONFLICT(id) DO UPDATE SET name=excluded.name, container=excluded.container, image=excluded.image,
 			cpus=excluded.cpus, memory=excluded.memory, env=excluded.env,
-			network=excluded.network, fence=excluded.fence, base=excluded.base`,
-		iso.Name, iso.Container, iso.Image, iso.CPUs, iso.Memory, string(env), ts(iso.CreatedAt), iso.Network, iso.Fence, iso.Base)
+			network=excluded.network, fence=excluded.fence`,
+		iso.ID, iso.Name, iso.Container, iso.Image, iso.CPUs, iso.Memory, string(env), ts(iso.CreatedAt), iso.Network, iso.Fence)
 	return err
-}
-
-// BaseName is what the isolation's container, network and volumes are
-// named after.
-func (iso Isolation) BaseName() string {
-	if iso.Base != "" {
-		return iso.Base
-	}
-	return iso.Name
-}
-
-// ErrExists refuses a name another isolation has.
-var ErrExists = errors.New("already exists")
-
-// RenameIsolation moves an isolation, and everything that names it, to a
-// new name in one transaction. Its container, network and volumes keep
-// theirs: Base remembers it.
-func (s *Store) RenameIsolation(from, to string) error {
-	tx, err := s.db.Begin()
-	if err != nil {
-		return err
-	}
-	defer tx.Rollback()
-	// The rows that point at the isolation follow it within this
-	// transaction; checked at commit, the references hold again.
-	if _, err := tx.Exec(`PRAGMA defer_foreign_keys = ON`); err != nil {
-		return err
-	}
-	var n int
-	if err := tx.QueryRow(`SELECT COUNT(*) FROM isolations WHERE name = ?`, to).Scan(&n); err != nil {
-		return err
-	}
-	if n > 0 {
-		return fmt.Errorf("isolation %s %w", to, ErrExists)
-	}
-	res, err := tx.Exec(`UPDATE isolations SET name = ?, base = CASE WHEN base = '' THEN name ELSE base END WHERE name = ?`, to, from)
-	if err != nil {
-		return err
-	}
-	if n, _ := res.RowsAffected(); n == 0 {
-		return fmt.Errorf("isolation %s: %w", from, ErrNotFound)
-	}
-	for _, table := range []string{"agents", "exposures", "tokens", "account_links"} {
-		if _, err := tx.Exec(`UPDATE `+table+` SET isolation = ? WHERE isolation = ?`, to, from); err != nil {
-			return err
-		}
-	}
-	return tx.Commit()
 }
 
 func scanIsolation(row interface{ Scan(...any) error }) (Isolation, error) {
 	var iso Isolation
 	var env, created string
-	err := row.Scan(&iso.Name, &iso.Container, &iso.Image, &iso.CPUs, &iso.Memory, &env, &created, &iso.Network, &iso.Fence, &iso.Base)
+	err := row.Scan(&iso.ID, &iso.Name, &iso.Container, &iso.Image, &iso.CPUs, &iso.Memory, &env, &created, &iso.Network, &iso.Fence)
 	if errors.Is(err, sql.ErrNoRows) {
 		return iso, ErrNotFound
 	}
@@ -256,9 +304,15 @@ func scanIsolation(row interface{ Scan(...any) error }) (Isolation, error) {
 	return iso, err
 }
 
-const isolationCols = `name, container, image, cpus, memory, env, created_at, network, fence, base`
+const isolationCols = `id, name, container, image, cpus, memory, env, created_at, network, fence`
 
-func (s *Store) Isolation(name string) (Isolation, error) {
+// Isolation is the isolation with that ID.
+func (s *Store) Isolation(id string) (Isolation, error) {
+	return scanIsolation(s.db.QueryRow(`SELECT `+isolationCols+` FROM isolations WHERE id = ?`, id))
+}
+
+// IsolationNamed is the isolation people call name.
+func (s *Store) IsolationNamed(name string) (Isolation, error) {
 	return scanIsolation(s.db.QueryRow(`SELECT `+isolationCols+` FROM isolations WHERE name = ?`, name))
 }
 
@@ -279,21 +333,46 @@ func (s *Store) Isolations() ([]Isolation, error) {
 	return out, rows.Err()
 }
 
-func (s *Store) DeleteIsolation(name string) error {
+func (s *Store) DeleteIsolation(id string) error {
 	var n int
-	s.db.QueryRow(`SELECT COUNT(*) FROM agents WHERE isolation = ?`, name).Scan(&n)
+	s.db.QueryRow(`SELECT COUNT(*) FROM agents WHERE isolation = ?`, id).Scan(&n)
 	if n > 0 {
-		return fmt.Errorf("isolation %s still has %d agent(s)", name, n)
+		return fmt.Errorf("%d agent(s) still belong to it", n)
 	}
-	_, err := s.db.Exec(`DELETE FROM isolations WHERE name = ?`, name)
+	_, err := s.db.Exec(`DELETE FROM isolations WHERE id = ?`, id)
 	return err
+}
+
+// RenameIsolation gives an isolation a new name. Nothing else names it by
+// name, so nothing else changes.
+func (s *Store) RenameIsolation(id, to string) error {
+	tx, err := s.db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	var n int
+	if err := tx.QueryRow(`SELECT COUNT(*) FROM isolations WHERE name = ? AND id != ?`, to, id).Scan(&n); err != nil {
+		return err
+	}
+	if n > 0 {
+		return fmt.Errorf("isolation %s %w", to, ErrExists)
+	}
+	res, err := tx.Exec(`UPDATE isolations SET name = ? WHERE id = ?`, to, id)
+	if err != nil {
+		return err
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		return fmt.Errorf("isolation %s: %w", id, ErrNotFound)
+	}
+	return tx.Commit()
 }
 
 func (s *Store) CreateAgent(a Agent) error {
 	opts, _ := json.Marshal(a.Options)
 	_, err := s.db.Exec(`INSERT INTO agents (id, name, kind, isolation, workdir, repo, options, session_id, created_at)
 		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		a.ID, a.Name, string(a.Kind), a.Isolation, a.Workdir, a.Repo, string(opts), a.SessionID, ts(a.CreatedAt))
+		a.ID, a.Name, string(a.Kind), a.IsolationID, a.Workdir, a.Repo, string(opts), a.SessionID, ts(a.CreatedAt))
 	return err
 }
 
@@ -303,7 +382,7 @@ func scanAgent(row interface{ Scan(...any) error }) (Agent, error) {
 	var a Agent
 	var kind, opts, created string
 	var archived sql.NullString
-	err := row.Scan(&a.ID, &a.Name, &kind, &a.Isolation, &a.Workdir, &a.Repo, &opts, &a.SessionID,
+	err := row.Scan(&a.ID, &a.Name, &kind, &a.IsolationID, &a.Workdir, &a.Repo, &opts, &a.SessionID,
 		&a.LastSrc, &created, &archived)
 	if errors.Is(err, sql.ErrNoRows) {
 		return a, ErrNotFound

@@ -32,7 +32,7 @@ const usage = `gero — run coding agents in isolated containers
 
   gero iso create NAME [--cpus N] [--memory 4G] [--fence off]
   gero iso ls
-  gero iso rename NAME NEW-NAME     its container, network and volumes keep their names; agents keep running
+  gero iso rename NAME NEW-NAME     nothing else changes; agents keep running
   gero iso set NAME [--cpus N] [--memory 8G]   resize the VM: replaces the container, keeping volumes
   gero iso upgrade NAME         move onto the current base image, keeping volumes
   gero iso rm NAME [--purge]

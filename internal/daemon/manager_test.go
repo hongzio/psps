@@ -402,6 +402,24 @@ func (f *fakeContainers) shutdown() {
 	}
 }
 
+// The test isolation is called dev and its ID is not: a name passed where an
+// ID belongs, or the other way round, fails here instead of passing by luck,
+// as it would for an isolation from before IDs, whose ID is its name.
+const (
+	testIsoID = "i1dev"
+	testCtr   = "gero-" + testIsoID
+)
+
+// id is the ID of the test isolation called name.
+func (e *testEnv) id(name string) string {
+	e.t.Helper()
+	iso, err := e.st.IsolationNamed(name)
+	if err != nil {
+		e.t.Fatal(err)
+	}
+	return iso.ID
+}
+
 type testEnv struct {
 	t        *testing.T
 	st       *store.Store
@@ -448,11 +466,11 @@ func newTestEnv(t *testing.T) *testEnv {
 	t.Cleanup(func() { st.Close() })
 	fc := &fakeContainers{t: t, base: base, ctrs: map[string]*fakeCtr{}, held: map[string]bool{}}
 	t.Cleanup(fc.shutdown)
-	if err := st.PutIsolation(store.Isolation{Name: "dev", Container: "gero-dev", Image: "fake:1", Network: "gero-dev-net",
+	if err := st.PutIsolation(store.Isolation{ID: testIsoID, Name: "dev", Container: testCtr, Image: "fake:1", Network: "gero-" + testIsoID + "-net",
 		CreatedAt: time.Now()}); err != nil {
 		t.Fatal(err)
 	}
-	if err := fc.boot("gero-dev"); err != nil {
+	if err := fc.boot(testCtr); err != nil {
 		t.Fatal(err)
 	}
 	return &testEnv{t: t, st: st, fc: fc, fence: &fakeFence{installed: true}, workRoot: filepath.Join(base, "work"),
@@ -556,7 +574,7 @@ func TestAgentSurvivesDaemonRestartAndReboot(t *testing.T) {
 	m2.Send(a.ID, "hang")
 	e.waitFor("hanging turn", func() bool { return status(m2, a.ID) == event.StatusWorking })
 	stop2()
-	e.fc.reboot("gero-dev", true)
+	e.fc.reboot(testCtr, true)
 
 	m3, stop3 := e.daemon()
 	defer stop3()
@@ -596,7 +614,7 @@ func TestMessageQueuedWhileDisconnectedIsDelivered(t *testing.T) {
 
 	// The isolation goes away; a new daemon accepts a message it cannot
 	// deliver yet, then the isolation comes back.
-	e.fc.reboot("gero-dev", false)
+	e.fc.reboot(testCtr, false)
 	m2, stop2 := e.daemon()
 	defer stop2()
 	if err := m2.Send(a.ID, "two"); err != nil {
@@ -639,9 +657,9 @@ func TestPendingMessageSurvivesDaemonDeath(t *testing.T) {
 	e.waitFor("first answer", func() bool { return e.hasAssistant(a.ID, "echo: one") })
 	stop1()
 
-	e.fc.reboot("gero-dev", false)
+	e.fc.reboot(testCtr, false)
 	e.fc.mu.Lock()
-	e.fc.held["gero-dev"] = true
+	e.fc.held[testCtr] = true
 	e.fc.mu.Unlock()
 	m2, stop2 := e.daemon()
 	if err := m2.Send(a.ID, "two"); err != nil {
@@ -650,7 +668,7 @@ func TestPendingMessageSurvivesDaemonDeath(t *testing.T) {
 	stop2()
 
 	e.fc.mu.Lock()
-	delete(e.fc.held, "gero-dev")
+	delete(e.fc.held, testCtr)
 	e.fc.mu.Unlock()
 	m3, stop3 := e.daemon()
 	defer stop3()
@@ -710,7 +728,7 @@ func TestAgentsWaitForTheFence(t *testing.T) {
 	}
 
 	e.fence.set(true)
-	m.markFenceStale("dev")
+	m.markFenceStale(testIsoID)
 	a, err := m.CreateAgent(ctx, api.CreateAgent{Isolation: "dev", Kind: driver.Codex, Prompt: "one"})
 	if err != nil {
 		t.Fatal(err)
@@ -728,7 +746,7 @@ func TestAgentsWaitForTheFence(t *testing.T) {
 	e.fc.mu.Lock()
 	e.fc.leak = true
 	e.fc.mu.Unlock()
-	m.markFenceStale("dev")
+	m.markFenceStale(testIsoID)
 	m.Send(a.ID, "two")
 	e.waitFor("the agent to report the broken fence", func() bool {
 		v, _ := m.Agent(a.ID)
@@ -746,7 +764,7 @@ func TestAgentsWaitForTheFence(t *testing.T) {
 
 func TestLegacyIsolationMustMoveOffTheDefaultNetwork(t *testing.T) {
 	e := newTestEnv(t)
-	iso, _ := e.st.Isolation("dev")
+	iso, _ := e.st.Isolation(testIsoID)
 	iso.Network = ""
 	e.st.PutIsolation(iso)
 	m, stop := e.daemon()
@@ -772,7 +790,7 @@ func TestRunningAgentGetsNoTurnsBehindAnUnverifiedFence(t *testing.T) {
 
 	// The helper goes away while the agent process is up.
 	e.fence.set(false)
-	m.markFenceStale("dev")
+	m.markFenceStale(testIsoID)
 	m.Send(a.ID, "two")
 	e.waitFor("the agent to say it is waiting", func() bool {
 		v, _ := m.Agent(a.ID)
@@ -796,7 +814,7 @@ func TestRunningAgentGetsNoTurnsBehindAnUnverifiedFence(t *testing.T) {
 	e.fc.mu.Lock()
 	e.fc.leak = true
 	e.fc.mu.Unlock()
-	m.markFenceStale("dev")
+	m.markFenceStale(testIsoID)
 	m.Send(a.ID, "three")
 	e.waitFor("the agent stopped behind a leaking fence", func() bool {
 		v, _ := m.Agent(a.ID)
@@ -818,7 +836,7 @@ func TestTheFenceIsMeasuredOnlyOnceItsIPv6RulesCoverTheBridge(t *testing.T) {
 	ctx := context.Background()
 	m, stop := e.daemon()
 	defer stop()
-	iso, _ := e.st.Isolation("dev")
+	iso, _ := e.st.Isolation(testIsoID)
 	probes := func() [][]string {
 		e.fc.mu.Lock()
 		defer e.fc.mu.Unlock()
@@ -880,7 +898,7 @@ func TestAProbeThatNeverLeftIsNeitherAPassNorALeak(t *testing.T) {
 	ctx := context.Background()
 	m, stop := e.daemon()
 	defer stop()
-	iso, _ := e.st.Isolation("dev")
+	iso, _ := e.st.Isolation(testIsoID)
 	e.fc.mu.Lock()
 	e.fc.unsent = true
 	e.fc.mu.Unlock()
@@ -948,8 +966,8 @@ func agentPID(t *testing.T, m *Manager, id string) int {
 	return 0
 }
 
-// A rename is gero's alone: the VM, and the agent processes in it, never
-// notice.
+// A rename is the name alone: the agent, its process and the VM it runs in
+// know the isolation by ID and carry on as they were.
 func TestRenamingAnIsolationKeepsItsAgentsRunning(t *testing.T) {
 	e := newTestEnv(t)
 	ctx := context.Background()
@@ -968,49 +986,43 @@ func TestRenamingAnIsolationKeepsItsAgentsRunning(t *testing.T) {
 	if pid == 0 {
 		t.Fatal("no agent process")
 	}
-	before := len(e.events(a.ID))
+	r1, _ := m.runtime(a.ID)
 
 	iso, err := m.UpdateIsolation(ctx, "dev", api.UpdateIsolation{Name: "work"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if iso.Name != "work" || iso.Container != "gero-dev" || iso.Network != "gero-dev-net" || iso.BaseName() != "dev" {
+	if iso.Name != "work" || iso.ID != testIsoID || iso.Container != testCtr {
 		t.Fatalf("renamed: %+v", iso.Isolation)
 	}
-	if _, err := e.st.Isolation("dev"); !errors.Is(err, store.ErrNotFound) {
+	if _, err := e.st.IsolationNamed("dev"); !errors.Is(err, store.ErrNotFound) {
 		t.Fatalf("old name: %v", err)
 	}
-	e.waitFor("the agent back under the new name", func() bool {
-		v, _ := m.Agent(a.ID)
-		return v.Isolation == "work" && v.State.Alive && v.State.Status == event.StatusIdle
-	})
+	if v, _ := m.Agent(a.ID); v.Isolation != "work" || v.IsolationID != testIsoID {
+		t.Fatalf("the agent is in %q (%s)", v.Isolation, v.IsolationID)
+	}
+	if r2, _ := m.runtime(a.ID); r2 != r1 {
+		t.Fatal("the rename replaced the agent's runtime")
+	}
 	if got := agentPID(t, m, a.ID); got != pid {
 		t.Fatalf("agent process %d became %d: the rename restarted it", pid, got)
-	}
-	if after := len(e.events(a.ID)); after != before {
-		t.Fatalf("reattaching stored %d events twice", after-before)
 	}
 	if err := m.Send(a.ID, "env"); err != nil {
 		t.Fatal(err)
 	}
 	e.waitFor("a turn under the new name", func() bool { return e.hasAssistant(a.ID, "echo: env=v1") })
-	for _, ev := range e.events(a.ID) {
-		if ev.Kind == event.KindNotice && strings.HasPrefix(ev.Text, "thread/resume") {
-			t.Fatalf("the agent was restarted: %v", kindsOf(e.events(a.ID)))
-		}
-	}
 
-	// The old name is free again, but its container is not: a new "dev"
-	// gets things named its own way.
+	// The old name is free again, and a new "dev" is a new isolation: an
+	// ID, a container and volumes of its own.
 	nd, err := m.CreateIsolation(ctx, api.CreateIsolation{Name: "dev"}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if nd.Container == "gero-dev" || !strings.HasPrefix(nd.Base, "dev-") || nd.Container != "gero-"+nd.Base || nd.Network != "gero-"+nd.Base+"-net" {
-		t.Fatalf("new dev: %+v", nd)
+	if nd.ID == testIsoID || nd.Container != "gero-"+nd.ID || nd.Network != "gero-"+nd.ID+"-net" || e.fc.lastCreated() != nd.ID+" 0 " {
+		t.Fatalf("new dev: %+v, created %q", nd, e.fc.lastCreated())
 	}
-	if st, _ := e.fc.State(ctx, "gero-dev"); st != "running" {
-		t.Fatalf("work's container is %s", st)
+	if _, err := m.CreateIsolation(ctx, api.CreateIsolation{Name: "work"}, nil); !errors.Is(err, store.ErrExists) {
+		t.Fatalf("a second isolation called work: %v", err)
 	}
 }
 
@@ -1019,7 +1031,7 @@ func TestARenameIsCheckedBeforeAnythingMoves(t *testing.T) {
 	ctx := context.Background()
 	m, stop := e.daemon()
 	defer stop()
-	if err := e.st.PutIsolation(store.Isolation{Name: "other", Container: "gero-other", Image: "fake:1", CreatedAt: time.Now()}); err != nil {
+	if err := e.st.PutIsolation(store.Isolation{ID: "i2other", Name: "other", Container: "gero-i2other", Image: "fake:1", CreatedAt: time.Now()}); err != nil {
 		t.Fatal(err)
 	}
 	var he httpError
@@ -1034,7 +1046,7 @@ func TestARenameIsCheckedBeforeAnythingMoves(t *testing.T) {
 	if _, err := m.UpdateIsolation(ctx, "dev", api.UpdateIsolation{Name: "work", Memory: &bad}); !errors.As(err, &he) || he.code != http.StatusBadRequest {
 		t.Fatalf("bare-number memory: %v", err)
 	}
-	if _, err := e.st.Isolation("dev"); err != nil {
+	if _, err := e.st.IsolationNamed("dev"); err != nil {
 		t.Fatalf("dev after refused updates: %v", err)
 	}
 }
@@ -1051,7 +1063,7 @@ func TestResizingAnIsolationReplacesItsContainer(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if iso.CPUs != 2 || iso.Memory != "8G" || e.fc.lastCreated() != "dev 2 8G" || iso.State != "running" {
+	if iso.CPUs != 2 || iso.Memory != "8G" || e.fc.lastCreated() != testIsoID+" 2 8G" || iso.State != "running" {
 		t.Fatalf("resized: %+v, created %q", iso.Isolation, e.fc.lastCreated())
 	}
 
@@ -1062,11 +1074,11 @@ func TestResizingAnIsolationReplacesItsContainer(t *testing.T) {
 	if _, err := m.UpdateIsolation(ctx, "dev", api.UpdateIsolation{Memory: &big}); err == nil || !strings.Contains(err.Error(), "back at its old size") {
 		t.Fatalf("a size container refused: %v", err)
 	}
-	stored, _ := e.st.Isolation("dev")
-	if stored.Memory != "8G" || e.fc.lastCreated() != "dev 2 8G" {
+	stored, _ := e.st.Isolation(testIsoID)
+	if stored.Memory != "8G" || e.fc.lastCreated() != testIsoID+" 2 8G" {
 		t.Fatalf("after a refused size: memory %q, created %q", stored.Memory, e.fc.lastCreated())
 	}
-	if st, _ := e.fc.State(ctx, "gero-dev"); st != "running" {
+	if st, _ := e.fc.State(ctx, testCtr); st != "running" {
 		t.Fatalf("container is %s", st)
 	}
 
@@ -1143,7 +1155,7 @@ func TestDeletingAnAgent(t *testing.T) {
 		e.waitFor("an answer", func() bool { return e.hasAssistant(a.ID, "echo: "+prompt) && status(m, a.ID) == event.StatusIdle })
 		return a
 	}
-	shimDir := func(id string) string { return filepath.Join(e.fc.base, "gero-dev", "agents", id) }
+	shimDir := func(id string) string { return filepath.Join(e.fc.base, testCtr, "agents", id) }
 	rollout := filepath.Join(e.home, ".codex/sessions/2026/10/28/rollout-2026-10-28T05-38-13-th-fake.jsonl")
 	other := filepath.Join(e.home, ".codex/sessions/2026/10/28/rollout-2026-10-28T05-38-22-th-other.jsonl")
 	touch(t, rollout)
@@ -1192,13 +1204,13 @@ func TestPurgingAClaudeAgentTouchesOnlyItsOwnPaths(t *testing.T) {
 	ctx := context.Background()
 	m, stop := e.daemon()
 	defer stop()
-	iso, _ := e.st.Isolation("dev")
+	iso, _ := e.st.Isolation(testIsoID)
 	const sid = "7ff11a91-1572-4c8d-b0b9-c1444836c7d0"
 	// As Claude Code names them: dev has -home-agent-work-77b17c2c.
 	if got := projectName.ReplaceAllString(isolation.WorkRoot+"/77b17c2c", "-"); got != "-home-agent-work-77b17c2c" {
 		t.Fatalf("project name %q", got)
 	}
-	a := store.Agent{ID: "c1", Kind: driver.Claude, Isolation: "dev", Workdir: m.workRoot + "/c1", SessionID: sid}
+	a := store.Agent{ID: "c1", Kind: driver.Claude, IsolationID: testIsoID, Workdir: m.workRoot + "/c1", SessionID: sid}
 	project := filepath.Join(e.home, ".claude/projects", projectName.ReplaceAllString(a.Workdir, "-"))
 	mine := []string{filepath.Join(a.Workdir, "main.go"), filepath.Join(project, sid+".jsonl"), filepath.Join(e.home, ".claude/session-env", sid, "x")}
 	theirs := []string{filepath.Join(m.workRoot, "c2", "main.go"), filepath.Join(e.home, ".claude/projects", projectName.ReplaceAllString(m.workRoot+"/c2", "-"), "s.jsonl"),
@@ -1234,7 +1246,7 @@ func TestAnAmbiguousPrefixDeletesNothing(t *testing.T) {
 	defer stop()
 	now := time.Now()
 	for _, id := range []string{"ab12", "ab34"} {
-		if err := e.st.CreateAgent(store.Agent{ID: id, Name: id, Kind: driver.Codex, Isolation: "dev", Workdir: m.workRoot + "/" + id, CreatedAt: now}); err != nil {
+		if err := e.st.CreateAgent(store.Agent{ID: id, Name: id, Kind: driver.Codex, IsolationID: testIsoID, Workdir: m.workRoot + "/" + id, CreatedAt: now}); err != nil {
 			t.Fatal(err)
 		}
 		e.st.SetArchived(id, &now)

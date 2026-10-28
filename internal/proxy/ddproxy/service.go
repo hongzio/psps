@@ -277,7 +277,7 @@ func (in *instance) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if !v.Enabled {
-		in.refuse(w, r, 503, fmt.Sprintf("datadog: the proxy is off for isolation %s; the operator turns it on with `gero iso expose %s datadog <env>`", in.h.Isolation, in.h.Isolation), 0)
+		in.refuse(w, r, 503, fmt.Sprintf("datadog: the proxy is off for isolation %s; the operator turns it on with `gero iso expose %s datadog <env>`", in.h.Name(), in.h.Name()), 0)
 		return
 	}
 	// The caller's proof, from the header SDKs use or the parameter
@@ -307,7 +307,7 @@ func (in *instance) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	e, ok := envs[name]
 	if !ok {
-		in.refuse(w, r, 503, fmt.Sprintf("datadog: environment %q was removed from gero's registry but is still exposed here; the operator re-exposes with `gero iso expose %s datadog ...`", name, in.h.Isolation), 0)
+		in.refuse(w, r, 503, fmt.Sprintf("datadog: environment %q was removed from gero's registry but is still exposed here; the operator re-exposes with `gero iso expose %s datadog ...`", name, in.h.Name()), 0)
 		return
 	}
 	// The read family is checked first even for a write: an operator whose

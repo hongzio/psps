@@ -221,7 +221,7 @@ func (in *instance) admit(w http.ResponseWriter, r *http.Request) (admitted, boo
 		return admitted{}, false
 	}
 	if !v.Enabled {
-		in.refuse(w, r, 503, fmt.Sprintf("notion: the proxy is off for isolation %s; the operator turns it on with `gero iso expose %s notion <env>`", in.h.Isolation, in.h.Isolation), nil, true)
+		in.refuse(w, r, 503, fmt.Sprintf("notion: the proxy is off for isolation %s; the operator turns it on with `gero iso expose %s notion <env>`", in.h.Name(), in.h.Name()), nil, true)
 		return admitted{}, false
 	}
 	presented := ""
@@ -260,7 +260,7 @@ func (in *instance) admit(w http.ResponseWriter, r *http.Request) (admitted, boo
 	}
 	e, ok := envs[name]
 	if !ok {
-		in.refuse(w, r, 503, fmt.Sprintf("notion: environment %q was removed from gero's registry but is still exposed here; the operator re-exposes with `gero iso expose %s notion ...`", name, in.h.Isolation), nil, true)
+		in.refuse(w, r, 503, fmt.Sprintf("notion: environment %q was removed from gero's registry but is still exposed here; the operator re-exposes with `gero iso expose %s notion ...`", name, in.h.Name()), nil, true)
 		return admitted{}, false
 	}
 	return admitted{v, name, e}, true

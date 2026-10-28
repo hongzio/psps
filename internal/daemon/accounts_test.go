@@ -26,7 +26,8 @@ func withCreds(t *testing.T, m *Manager) *creds.Store {
 
 func addIsolation(t *testing.T, e *testEnv, name string, env map[string]string) {
 	t.Helper()
-	if err := e.st.PutIsolation(store.Isolation{Name: name, Container: "gero-" + name, Image: "fake:1", Network: "gero-" + name + "-net",
+	id := "i-" + name
+	if err := e.st.PutIsolation(store.Isolation{ID: id, Name: name, Container: "gero-" + id, Image: "fake:1", Network: "gero-" + id + "-net",
 		Env: env, CreatedAt: time.Now()}); err != nil {
 		t.Fatal(err)
 	}
@@ -74,7 +75,7 @@ func TestAnAccountIsSharedByIsolationsAndReachesTheirAgents(t *testing.T) {
 		t.Fatalf("%+v", as)
 	}
 	for _, iso := range []string{"dev", "lab"} {
-		if env, _ := m.launchEnv(iso); !hasEnv(env, "CLAUDE_CODE_OAUTH_TOKEN=sk-ant-oat01-one") {
+		if env, _ := m.launchEnv(e.id(iso)); !hasEnv(env, "CLAUDE_CODE_OAUTH_TOKEN=sk-ant-oat01-one") {
 			t.Fatalf("%s starts agents without the account: %v", iso, env)
 		}
 	}
@@ -85,7 +86,7 @@ func TestAnAccountIsSharedByIsolationsAndReachesTheirAgents(t *testing.T) {
 	// A variable set on the isolation itself still wins.
 	v := "sk-ant-oat01-mine"
 	m.SetEnv("lab", api.SetEnv{"CLAUDE_CODE_OAUTH_TOKEN": &v})
-	env, _ := m.launchEnv("lab")
+	env, _ := m.launchEnv(e.id("lab"))
 	if i, j := slices.Index(env, "CLAUDE_CODE_OAUTH_TOKEN=sk-ant-oat01-one"), slices.Index(env, "CLAUDE_CODE_OAUTH_TOKEN=sk-ant-oat01-mine"); i < 0 || j < i {
 		t.Fatalf("the isolation's own variable does not come last: %v", env)
 	}
@@ -93,7 +94,7 @@ func TestAnAccountIsSharedByIsolationsAndReachesTheirAgents(t *testing.T) {
 	if _, err := m.PutAccount("claude", api.PutAccount{Secret: "sk-ant-oat01-two"}, false); err != nil {
 		t.Fatal(err)
 	}
-	if env, _ := m.launchEnv("dev"); !hasEnv(env, "CLAUDE_CODE_OAUTH_TOKEN=sk-ant-oat01-two") {
+	if env, _ := m.launchEnv(testIsoID); !hasEnv(env, "CLAUDE_CODE_OAUTH_TOKEN=sk-ant-oat01-two") {
 		t.Fatalf("the replaced secret did not reach the next agent: %v", env)
 	}
 
@@ -103,13 +104,13 @@ func TestAnAccountIsSharedByIsolationsAndReachesTheirAgents(t *testing.T) {
 	if err := m.DeleteAccount("claude", true); err != nil {
 		t.Fatal(err)
 	}
-	if env, _ := m.launchEnv("dev"); strings.Contains(strings.Join(env, " "), "CLAUDE_CODE_OAUTH_TOKEN") {
+	if env, _ := m.launchEnv(testIsoID); strings.Contains(strings.Join(env, " "), "CLAUDE_CODE_OAUTH_TOKEN") {
 		t.Fatalf("a deleted account still reaches agents: %v", env)
 	}
 	if _, err := c.Read("account", "claude"); err == nil {
 		t.Fatal("the deleted account's secret is still in the credentials file")
 	}
-	if used, _ := e.st.AccountsUsed("dev"); len(used) != 0 {
+	if used, _ := e.st.AccountsUsed(testIsoID); len(used) != 0 {
 		t.Fatalf("%v", used)
 	}
 }
@@ -153,7 +154,7 @@ func TestAgentsRestartOntoTheirAccount(t *testing.T) {
 
 func TestTokensMoveFromIsolationEnvironmentsIntoAccountsOnce(t *testing.T) {
 	e := newTestEnv(t)
-	dev, _ := e.st.Isolation("dev")
+	dev, _ := e.st.Isolation(testIsoID)
 	dev.Env = map[string]string{"CLAUDE_CODE_OAUTH_TOKEN": "sk-ant-oat01-a", "OTHER": "kept"}
 	e.st.PutIsolation(dev)
 	addIsolation(t, e, "lab", map[string]string{"CLAUDE_CODE_OAUTH_TOKEN": "sk-ant-oat01-a"})
@@ -166,20 +167,20 @@ func TestTokensMoveFromIsolationEnvironmentsIntoAccountsOnce(t *testing.T) {
 		t.Fatal(err)
 	}
 	for iso, want := range map[string]string{"dev": "claude", "lab": "claude", "solo": "solo-claude"} {
-		used, _ := e.st.AccountsUsed(iso)
+		used, _ := e.st.AccountsUsed(e.id(iso))
 		if used[driver.Claude] != want {
 			t.Errorf("%s uses %v, want %s", iso, used, want)
 		}
-		rec, _ := e.st.Isolation(iso)
+		rec, _ := e.st.Isolation(e.id(iso))
 		if _, still := rec.Env["CLAUDE_CODE_OAUTH_TOKEN"]; still {
 			t.Errorf("%s still holds the token in its environment", iso)
 		}
 	}
-	if rec, _ := e.st.Isolation("dev"); rec.Env["OTHER"] != "kept" {
+	if rec, _ := e.st.Isolation(testIsoID); rec.Env["OTHER"] != "kept" {
 		t.Errorf("dev lost an unrelated variable: %v", rec.Env)
 	}
 	// One account per CLI: the API key stays where it was.
-	if rec, _ := e.st.Isolation("solo"); rec.Env["ANTHROPIC_API_KEY"] != "sk-ant-api03-c" {
+	if rec, _ := e.st.Isolation(e.id("solo")); rec.Env["ANTHROPIC_API_KEY"] != "sk-ant-api03-c" {
 		t.Errorf("%v", rec.Env)
 	}
 	if v, _ := c.Read("account", "solo-claude"); v["token"] != "sk-ant-oat01-b" {
@@ -190,14 +191,14 @@ func TestTokensMoveFromIsolationEnvironmentsIntoAccountsOnce(t *testing.T) {
 	}
 
 	// Once: a token put back afterwards is the user's choice.
-	dev, _ = e.st.Isolation("dev")
+	dev, _ = e.st.Isolation(testIsoID)
 	dev.Env["CLAUDE_CODE_OAUTH_TOKEN"] = "sk-ant-oat01-z"
 	e.st.PutIsolation(dev)
 	m.UseAccount("dev", "claude", "")
 	if err := m.migrateEnvAccounts(); err != nil {
 		t.Fatal(err)
 	}
-	if rec, _ := e.st.Isolation("dev"); rec.Env["CLAUDE_CODE_OAUTH_TOKEN"] != "sk-ant-oat01-z" {
+	if rec, _ := e.st.Isolation(testIsoID); rec.Env["CLAUDE_CODE_OAUTH_TOKEN"] != "sk-ant-oat01-z" {
 		t.Errorf("moved again: %v", rec.Env)
 	}
 }

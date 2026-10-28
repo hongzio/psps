@@ -205,7 +205,7 @@ func newHarness(t *testing.T, secure bool) *harness {
 	u, _ := url.Parse(up.URL)
 	port, _ := strconv.Atoi(u.Port())
 	h.setEnv("main", Env{Host: u.Hostname(), Port: port, Secure: &secure}, token)
-	in := Service{Transport: up.Client().Transport}.New(proxy.Host{Isolation: "work", View: h.getView, Creds: cs, Log: log.New(io.Discard, "", 0)})
+	in := Service{Transport: up.Client().Transport}.New(proxy.Host{Name: func() string { return "work" }, View: h.getView, Creds: cs, Log: log.New(io.Discard, "", 0)})
 	l, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)
@@ -221,7 +221,7 @@ func (h *harness) setEnv(name string, e Env, tok string) {
 	defer h.mu.Unlock()
 	if h.view.Envs == nil {
 		h.view = proxy.View{Isolation: "work", Enabled: true, Envs: map[string]json.RawMessage{}, Tokens: map[string]string{}}
-		h.view.Exposure = store.Exposure{Isolation: "work", Service: "clickhouse", Default: name}
+		h.view.Exposure = store.Exposure{IsolationID: "work", Service: "clickhouse", Default: name}
 	}
 	b, _ := json.Marshal(e)
 	h.view.Envs[name] = b

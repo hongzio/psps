@@ -47,8 +47,6 @@ type runtime struct {
 
 	outbox    []store.Pending
 	decisions map[string]driver.Decision
-	// done closes when loop has returned.
-	done chan struct{}
 }
 
 func (m *Manager) newRuntime(a store.Agent) (*runtime, error) {
@@ -62,7 +60,7 @@ func (m *Manager) newRuntime(a store.Agent) (*runtime, error) {
 	}
 	ctx, cancel := context.WithCancel(m.ctx)
 	return &runtime{m: m, ctx: ctx, cancel: cancel, agent: a, drv: drv, outbox: outbox,
-		decisions: map[string]driver.Decision{}, done: make(chan struct{})}, nil
+		decisions: map[string]driver.Decision{}}, nil
 }
 
 func (r *runtime) loop() {
@@ -88,7 +86,7 @@ func (r *runtime) loop() {
 }
 
 func (r *runtime) session() error {
-	client, err := r.m.ensureIsolation(r.ctx, r.agent.Isolation)
+	client, err := r.m.ensureIsolation(r.ctx, r.agent.IsolationID)
 	if err != nil {
 		return err
 	}
@@ -211,14 +209,14 @@ func (r *runtime) kickLocked() {
 	}
 	// Fail closed on turns, not just on processes: an agent that was
 	// already running gets no new work behind a fence nobody measured.
-	fenced, why := r.m.fenceOK(r.agent.Isolation)
+	fenced, why := r.m.fenceOK(r.agent.IsolationID)
 	r.drv.Hold(!fenced)
 	if !fenced {
 		if msg := "waiting for the network fence: " + why; msg != r.problem {
 			r.problem = msg
 			r.m.hub.publish(event.Event{Agent: r.agent.ID, Time: time.Now().UTC(), Kind: event.KindNotice, Text: msg, Ephemeral: true})
 		}
-		r.m.waitForFence(r.agent.Isolation)
+		r.m.waitForFence(r.agent.IsolationID)
 	} else if strings.HasPrefix(r.problem, "waiting for the network fence") {
 		r.problem = ""
 	}
@@ -243,7 +241,7 @@ func (r *runtime) kickLocked() {
 	r.restartWhenIdle = false
 	if st.Queued > 0 && !r.starting && !r.stopping && fenced {
 		r.starting = true
-		env, mcp := r.m.launchEnv(r.agent.Isolation)
+		env, mcp := r.m.launchEnv(r.agent.IsolationID)
 		spec := shimproto.Spec{Argv: launchArgv(r.agent.Kind, r.drv.Command(), mcp), Dir: r.agent.Workdir, Env: env}
 		client, id := r.client, r.agent.ID
 		go func() {

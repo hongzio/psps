@@ -40,6 +40,8 @@ func Deny(format string, a ...any) *Denied { return &Denied{Reason: fmt.Sprintf(
 
 // View is one isolation's current configuration of one service.
 type View struct {
+	// Isolation is the isolation's name as it is now, for what is said to
+	// people.
 	Isolation string
 	// Enabled is whether the service is exposed to the isolation at all.
 	Enabled  bool
@@ -73,7 +75,9 @@ func (v View) Settings(into any) {
 
 // Host is what an Instance gets from the daemon.
 type Host struct {
-	Isolation string
+	// Name is the isolation's name as it is now: an isolation can be
+	// renamed while its instances serve it.
+	Name func() string
 	// View reads the current configuration. Call it per connection or per
 	// request, never once at start.
 	View  func() (View, error)
@@ -82,7 +86,7 @@ type Host struct {
 }
 
 func (h Host) Logf(service, format string, a ...any) {
-	h.Log.Printf("[%s:%s] %s", service, h.Isolation, fmt.Sprintf(format, a...))
+	h.Log.Printf("[%s:%s] %s", service, h.Name(), fmt.Sprintf(format, a...))
 }
 
 // Instance serves one service for one isolation, for the daemon's life.

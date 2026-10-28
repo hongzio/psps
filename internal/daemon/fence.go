@@ -64,7 +64,7 @@ func (m *Manager) stopAgents(iso string) {
 	m.mu.Lock()
 	var rs []*runtime
 	for _, r := range m.runtimes {
-		if r.agent.Isolation == iso {
+		if r.agent.IsolationID == iso {
 			rs = append(rs, r)
 		}
 	}
@@ -97,7 +97,7 @@ func (m *Manager) checkFence(ctx context.Context, iso store.Isolation) {
 		return
 	}
 	m.mu.Lock()
-	fs := m.fenceStateLocked(iso.Name)
+	fs := m.fenceStateLocked(iso.ID)
 	// A pass with a caveat (DNS not answering yet, seconds after boot) is
 	// measured again soon, so the caveat does not outlive its cause.
 	clean := fs.why == "verified"
@@ -114,7 +114,7 @@ func (m *Manager) checkFence(ctx context.Context, iso store.Isolation) {
 func (m *Manager) measureFenceLocked(ctx context.Context, iso store.Isolation) fenceResult {
 	r := m.verifyFence(ctx, iso)
 	m.mu.Lock()
-	fs := m.fenceStateLocked(iso.Name)
+	fs := m.fenceStateLocked(iso.ID)
 	wasOK, wasWhy := fs.ok, fs.why
 	fs.ok, fs.why, fs.tried, fs.stale = r.ok, r.why, time.Now(), false
 	m.mu.Unlock()
@@ -122,10 +122,10 @@ func (m *Manager) measureFenceLocked(ctx context.Context, iso store.Isolation) f
 		m.log.Printf("isolation %s: network fence %s", iso.Name, r.why)
 	}
 	if r.ok && !wasOK {
-		go m.kickIsolation(iso.Name)
+		go m.kickIsolation(iso.ID)
 	}
 	if !r.ok && strings.HasPrefix(r.why, leakPrefix) {
-		go m.stopAgents(iso.Name)
+		go m.stopAgents(iso.ID)
 	}
 	return r
 }
@@ -186,7 +186,7 @@ func (m *Manager) kickIsolation(iso string) {
 	m.mu.Lock()
 	var rs []*runtime
 	for _, r := range m.runtimes {
-		if r.agent.Isolation == iso {
+		if r.agent.IsolationID == iso {
 			rs = append(rs, r)
 		}
 	}

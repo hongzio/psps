@@ -153,16 +153,16 @@ TUI and on the web), changed at any time:
   daemon catches up from the log. A reboot or container stop ends the agent
   process; the turn in flight shows as `interrupted`, and the next message
   starts a process that resumes the same session.
-- An isolation's container, network and volumes are named after the name it
-  was created with (`gero-dev`, `gero-dev-net`, `gero-dev-home`,
-  `gero-dev-state`). `gero iso rename` changes only gero's name for it: they
-  keep theirs, so nothing in the VM moves and its agents keep running (their
-  runtimes reattach under the new name, as after a daemon restart). A new
-  isolation given a name whose resources are still in use that way gets a
-  suffix (`gero-dev-3f2a`). `container` cannot resize a VM, so `gero iso set`
-  replaces the container on the same volumes, as an upgrade does: running
-  agents end, sessions and workspaces stay, and a size the new container
-  will not start with is put back.
+- An isolation is an ID to gero (`7f3a9c1b`); its name is what people call
+  it. Everything that belongs to it names it by ID: its agents, exposures,
+  tokens and accounts in the store, and its container, network and volumes
+  (`gero-7f3a9c1b`, `-net`, `-home`, `-state`; `gero iso ls` shows the
+  container). So `gero iso rename` changes the name and nothing else, and a
+  new isolation never picks up an old one's volumes. Isolations from before
+  IDs kept their name as their ID. `container` cannot resize a VM, so
+  `gero iso set` replaces the container on the same volumes, as an upgrade
+  does: running agents end, sessions and workspaces stay, and a size the new
+  container will not start with is put back.
 
 ## Network fence
 

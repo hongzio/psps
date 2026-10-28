@@ -185,7 +185,7 @@ func (in *instance) source(env string, e Env, policy string) *Source {
 		return c.src
 	}
 	src := &Source{AWS: e.cli(), RoleARN: e.RoleARN, Profile: e.Profile,
-		SessionName: "gero-" + in.h.Isolation, Policy: policy}
+		SessionName: "gero-" + in.h.Name(), Policy: policy}
 	in.sources[env] = &cached{key: key, src: src}
 	return src
 }
@@ -219,7 +219,7 @@ func (in *instance) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if !v.Enabled {
-		msg := fmt.Sprintf("the AWS broker is off for isolation %s; the operator turns it on with `gero iso expose %s aws <env>`", in.h.Isolation, in.h.Isolation)
+		msg := fmt.Sprintf("the AWS broker is off for isolation %s; the operator turns it on with `gero iso expose %s aws <env>`", in.h.Name(), in.h.Name())
 		send(w, 503, reason(msg))
 		in.logf("DENY %s: off", r.URL.Path)
 		return

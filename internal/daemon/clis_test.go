@@ -72,7 +72,7 @@ func cliEnv(t *testing.T) (*testEnv, *Manager, string) {
 	e.fc.mu.Unlock()
 	m, stop := e.daemon()
 	t.Cleanup(stop)
-	return e, m, filepath.Join(e.fc.base, "gero-dev", "home")
+	return e, m, filepath.Join(e.fc.base, testCtr, "home")
 }
 
 // loggedInCodex stores a Codex login in the isolation's home, as account.
@@ -241,7 +241,7 @@ func TestACLILoginEndsWhenCancelledOrExpired(t *testing.T) {
 	if _, err := m.StartCLILogin(ctx, "dev", "codex"); err != nil {
 		t.Fatal(err)
 	}
-	l := m.findCLILogin("dev", driver.Codex)
+	l := m.findCLILogin(testIsoID, driver.Codex)
 	if err := m.CancelCLILogin("dev", "codex"); err != nil {
 		t.Fatal(err)
 	}
@@ -262,7 +262,7 @@ func TestACLILoginEndsWhenCancelledOrExpired(t *testing.T) {
 	if _, err := m.StartCLILogin(ctx, "dev", "codex"); err != nil {
 		t.Fatal(err)
 	}
-	l = m.findCLILogin("dev", driver.Codex)
+	l = m.findCLILogin(testIsoID, driver.Codex)
 	if v := l.await(ctx, 10*time.Second, api.CLILoginOpen); v.State != api.CLILoginFailed || v.Message != "the login expired; start it again" {
 		t.Fatalf("%+v", v)
 	}

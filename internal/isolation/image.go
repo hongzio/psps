@@ -95,18 +95,17 @@ func (c CLI) EnsureImage(ctx context.Context, progress io.Writer) (string, error
 	return tag, c.Build(ctx, tag, dir, progress)
 }
 
-// Names of what one isolation owns, from its BaseName.
-func ContainerName(iso string) string { return "gero-" + iso }
-func NetworkName(iso string) string   { return "gero-" + iso + "-net" }
-func HomeVolume(iso string) string    { return "gero-" + iso + "-home" }
-func StateVolume(iso string) string   { return "gero-" + iso + "-state" }
+// Names of what one isolation owns, from its ID.
+func ContainerName(id string) string { return "gero-" + id }
+func NetworkName(id string) string   { return "gero-" + id + "-net" }
+func HomeVolume(id string) string    { return "gero-" + id + "-home" }
+func StateVolume(id string) string   { return "gero-" + id + "-state" }
 
-// Create starts a fresh container for an isolation, named after base (its
-// BaseName). Its volumes are created if missing and reused if present, which
-// is also how a container is recreated without losing agents' sessions and
-// workspaces.
-func (c CLI) Create(ctx context.Context, base, image string, cpus int, memory, network string) error {
-	for _, v := range []string{HomeVolume(base), StateVolume(base)} {
+// Create starts a fresh container for the isolation with that ID. Its
+// volumes are created if missing and reused if present, which is how a
+// container is recreated without losing agents' sessions and workspaces.
+func (c CLI) Create(ctx context.Context, id, image string, cpus int, memory, network string) error {
+	for _, v := range []string{HomeVolume(id), StateVolume(id)} {
 		if err := c.VolumeEnsure(ctx, v); err != nil {
 			return err
 		}
@@ -117,15 +116,15 @@ func (c CLI) Create(ctx context.Context, base, image string, cpus int, memory, n
 		}
 	}
 	return c.Run(ctx, RunSpec{
-		Name:    ContainerName(base),
+		Name:    ContainerName(id),
 		Image:   image,
 		CPUs:    cpus,
 		Memory:  memory,
 		Network: network,
 		Volumes: [][2]string{
-			{HomeVolume(base), AgentHome},
-			{StateVolume(base), StateRoot},
+			{HomeVolume(id), AgentHome},
+			{StateVolume(id), StateRoot},
 		},
-		Labels: map[string]string{"dev.gero.isolation": base},
+		Labels: map[string]string{"dev.gero.isolation": id},
 	})
 }

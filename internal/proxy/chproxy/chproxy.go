@@ -358,7 +358,7 @@ func (in *instance) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if !v.Enabled {
-		in.refuse(w, r, 503, fmt.Sprintf("the clickhouse proxy is off for isolation %s; the operator turns it on with `gero iso expose %s clickhouse <env>`", in.h.Isolation, in.h.Isolation), 0)
+		in.refuse(w, r, 503, fmt.Sprintf("the clickhouse proxy is off for isolation %s; the operator turns it on with `gero iso expose %s clickhouse <env>`", in.h.Name(), in.h.Name()), 0)
 		return
 	}
 	presented := r.Header.Get("X-ClickHouse-Key")
@@ -389,7 +389,7 @@ func (in *instance) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	e, ok := envs[name]
 	if !ok {
-		in.refuse(w, r, 503, fmt.Sprintf("environment %q was removed from gero's registry but is still exposed here; the operator re-exposes with `gero iso expose %s clickhouse ...`", name, in.h.Isolation), 0)
+		in.refuse(w, r, 503, fmt.Sprintf("environment %q was removed from gero's registry but is still exposed here; the operator re-exposes with `gero iso expose %s clickhouse ...`", name, in.h.Name()), 0)
 		return
 	}
 	login, err := in.h.Creds.Read("clickhouse", name)

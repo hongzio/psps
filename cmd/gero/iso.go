@@ -57,7 +57,7 @@ func isoCmd(p paths.Paths, args []string) error {
 			return err
 		}
 		tw := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
-		fmt.Fprintln(tw, "NAME\tSTATE\tFENCE\tPROXIES\tSIZE\tIMAGE\tENV")
+		fmt.Fprintln(tw, "NAME\tSTATE\tFENCE\tPROXIES\tSIZE\tCONTAINER\tIMAGE\tENV")
 		short := func(s string) string {
 			if r := []rune(s); len(r) > 60 {
 				return string(r[:59]) + "…"
@@ -65,7 +65,7 @@ func isoCmd(p paths.Paths, args []string) error {
 			return orDash(s)
 		}
 		for _, iso := range isos {
-			fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\t%s\t%s\n", iso.Name, iso.State, short(iso.FenceState), short(iso.Proxies), size(iso.CPUs, iso.Memory), iso.Image, strings.Join(iso.EnvKeys, ","))
+			fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n", iso.Name, iso.State, short(iso.FenceState), short(iso.Proxies), size(iso.CPUs, iso.Memory), iso.Container, iso.Image, strings.Join(iso.EnvKeys, ","))
 		}
 		return tw.Flush()
 
@@ -78,7 +78,7 @@ func isoCmd(p paths.Paths, args []string) error {
 		if err != nil {
 			return err
 		}
-		fmt.Printf("isolation %s is now %s; its agents kept running (container %s keeps its name)\n", pos[0], iso.Name, iso.Container)
+		fmt.Printf("isolation %s is now %s; nothing else changed, its agents included\n", pos[0], iso.Name)
 		return nil
 
 	case "set":
@@ -122,7 +122,20 @@ func isoCmd(p paths.Paths, args []string) error {
 		if len(pos) != 1 {
 			return errors.New("usage: gero iso rm NAME [--purge]")
 		}
-		return c.DeleteIsolation(ctx, pos[0], *purge)
+		iso, err := c.Isolation(ctx, pos[0])
+		if err != nil {
+			return err
+		}
+		if err := c.DeleteIsolation(ctx, pos[0], *purge); err != nil {
+			return err
+		}
+		if !*purge {
+			// Nothing will use them again: a new isolation gets volumes
+			// named after its own ID.
+			home, state := isolation.HomeVolume(iso.ID), isolation.StateVolume(iso.ID)
+			fmt.Printf("deleted %s; its volumes are kept: %s, %s\nremove them with  container volume rm %s %s\n", iso.Name, home, state, home, state)
+		}
+		return nil
 
 	case "env":
 		pos := parse(fs, args[1:])

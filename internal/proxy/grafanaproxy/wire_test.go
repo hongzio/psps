@@ -110,13 +110,13 @@ func newHarness(t *testing.T) *harness {
 		}
 	}
 	h.view = proxy.View{Isolation: "work", Enabled: true, Envs: map[string]json.RawMessage{}, Tokens: map[string]string{}}
-	h.view.Exposure = store.Exposure{Isolation: "work", Service: "grafana", Default: "prod"}
+	h.view.Exposure = store.Exposure{IsolationID: "work", Service: "grafana", Default: "prod"}
 	h.setEnv("prod", Env{BaseURL: h.tls.URL, Families: []string{"dashboards", "query"}, Datasources: []string{"uid-prom"}}, prodToken)
 	h.setEnv("dev", Env{BaseURL: h.plain.URL + "/grafana", Families: []string{"dashboards"}}, devToken)
 	h.setEnv("sandbox", Env{BaseURL: h.tls.URL, Families: []string{"dashboards"}, Writes: []string{"dashboards"}, Folders: []string{"agent-sbx"}}, sbxToken)
 	// The TLS server's client trusts its certificate and speaks plain HTTP
 	// to the other one.
-	h.in = Service{Transport: h.tls.Client().Transport}.New(proxy.Host{Isolation: "work", View: h.getView, Creds: cs, Log: log.New(io.Discard, "", 0)}).(*instance)
+	h.in = Service{Transport: h.tls.Client().Transport}.New(proxy.Host{Name: func() string { return "work" }, View: h.getView, Creds: cs, Log: log.New(io.Discard, "", 0)}).(*instance)
 	l, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)

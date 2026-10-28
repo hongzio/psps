@@ -94,9 +94,9 @@ func newHarness(t *testing.T, prod Env) *harness {
 	cs.Write("datadog", "prod", map[string]string{"api_key": "REAL-API", "app_key": "REAL-APP"})
 	h := &harness{t: t, tap: newTap(t)}
 	h.view = proxy.View{Isolation: "work", Enabled: true, Envs: map[string]json.RawMessage{}, Tokens: map[string]string{}}
-	h.view.Exposure = store.Exposure{Isolation: "work", Service: "datadog", Default: "prod"}
+	h.view.Exposure = store.Exposure{IsolationID: "work", Service: "datadog", Default: "prod"}
 	h.setEnv("prod", prod, token)
-	h.in = Service{Transport: h.tap}.New(proxy.Host{Isolation: "work", View: h.getView, Creds: cs, Log: log.New(io.Discard, "", 0)}).(*instance)
+	h.in = Service{Transport: h.tap}.New(proxy.Host{Name: func() string { return "work" }, View: h.getView, Creds: cs, Log: log.New(io.Discard, "", 0)}).(*instance)
 	l, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)

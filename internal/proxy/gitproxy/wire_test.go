@@ -80,7 +80,7 @@ func newHarness(t *testing.T, envs map[string]Env, public ...string) *harness {
 		e.TokenCommand = []string{"/bin/sh", "-c", fmt.Sprintf("echo x >> %s; echo real-gh-token", h.counter)}
 		envs[name] = e
 	}
-	host := proxy.Host{Isolation: "dev", View: h.view, Log: log.New(io.Discard, "", 0)}
+	host := proxy.Host{Name: func() string { return "dev" }, View: h.view, Log: log.New(io.Discard, "", 0)}
 	svc := Service{GitUpstream: up.URL, APIUpstream: up.URL, Transport: http.DefaultTransport}
 	h.in = svc.New(host).(*instance)
 	h.in.public = newFakePublic(public...)
@@ -98,7 +98,7 @@ func newHarness(t *testing.T, envs map[string]Env, public ...string) *harness {
 
 func (h *harness) view() (proxy.View, error) {
 	v := proxy.View{Isolation: "dev", Enabled: true, Envs: map[string]json.RawMessage{}}
-	v.Exposure = store.Exposure{Isolation: "dev", Service: "git"}
+	v.Exposure = store.Exposure{IsolationID: "dev", Service: "git"}
 	for name, e := range h.envs {
 		b, _ := json.Marshal(e)
 		v.Envs[name] = b

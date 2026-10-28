@@ -125,7 +125,7 @@ func drain(p isolation.Proc, got func([]byte)) error {
 
 // CLIs reads each agent CLI's version and login from inside the isolation.
 func (m *Manager) CLIs(ctx context.Context, name string) ([]api.CLI, error) {
-	iso, err := m.store.Isolation(name)
+	iso, err := m.isolationNamed(name)
 	if err != nil {
 		return nil, err
 	}
@@ -148,10 +148,10 @@ func (m *Manager) CLIs(ctx context.Context, name string) ([]api.CLI, error) {
 		}()
 	}
 	wg.Wait()
-	used := m.accountsOf(name)
+	used := m.accountsOf(iso.ID)
 	for i := range out {
 		out[i].Account = used[out[i].Tool]
-		if l := m.findCLILogin(name, out[i].Tool); l != nil {
+		if l := m.findCLILogin(iso.ID, out[i].Tool); l != nil {
 			v := l.snapshot()
 			out[i].Login = &v
 		}
@@ -171,7 +171,7 @@ func (m *Manager) cliStatus(ctx context.Context, iso store.Isolation, tool drive
 	}
 	// Exit codes say "not logged in" as often as "broken": the output is
 	// what is read.
-	env := append(m.accountEnv(iso.Name), userEnv(iso)...)
+	env := append(m.accountEnv(iso.ID), userEnv(iso)...)
 	out, err := m.runInIsolation(ctx, iso.Container, env, "sh", "-c", script+" 2>&1")
 	version, status, ok := strings.Cut(out, cliSep)
 	if !ok {
@@ -314,8 +314,8 @@ func lastWords(out []byte) string {
 
 func cliKey(iso string, tool driver.Kind) string { return iso + "/" + string(tool) }
 
-// findCLILogin is the isolation's login for tool, if one is running or ended
-// recently.
+// findCLILogin is the isolation's (by ID) login for tool, if one is running
+// or ended recently.
 func (m *Manager) findCLILogin(iso string, tool driver.Kind) *cliLogin {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -340,11 +340,11 @@ func (m *Manager) StartCLILogin(ctx context.Context, name, toolName string) (api
 	if err != nil {
 		return api.CLILogin{}, err
 	}
-	iso, err := m.store.Isolation(name)
+	iso, err := m.isolationNamed(name)
 	if err != nil {
 		return api.CLILogin{}, err
 	}
-	if _, err := m.ensureIsolation(ctx, name); err != nil {
+	if _, err := m.ensureIsolation(ctx, iso.ID); err != nil {
 		return api.CLILogin{}, err
 	}
 	lctx, cancel := context.WithTimeout(m.ctx, cliLoginTTL)
@@ -364,13 +364,13 @@ func (m *Manager) StartCLILogin(ctx context.Context, name, toolName string) (api
 	if m.cliLogins == nil {
 		m.cliLogins = map[string]*cliLogin{}
 	}
-	old := m.cliLogins[cliKey(name, tool)]
-	m.cliLogins[cliKey(name, tool)] = l
+	old := m.cliLogins[cliKey(iso.ID, tool)]
+	m.cliLogins[cliKey(iso.ID, tool)] = l
 	m.mu.Unlock()
 	if old != nil {
 		old.cancel()
 	}
-	go m.runCLILogin(lctx, name, l, p)
+	go m.runCLILogin(lctx, iso.ID, l, p)
 	return l.await(ctx, 20*time.Second, api.CLILoginStarting), nil
 }
 
@@ -414,7 +414,7 @@ func (m *Manager) runCLILogin(lctx context.Context, iso string, l *cliLogin, p i
 	l.mu.Unlock()
 	l.cancel()
 	if done {
-		m.log.Printf("isolation %s: %s logged in", iso, tool)
+		m.log.Printf("isolation %s: %s logged in", m.isoName(iso), tool)
 		m.cliChanged(iso, tool)
 	}
 }
@@ -426,7 +426,11 @@ func (m *Manager) SendCLICode(ctx context.Context, name, toolName, code string) 
 	if err != nil {
 		return api.CLILogin{}, err
 	}
-	l := m.findCLILogin(name, tool)
+	iso, err := m.isolationNamed(name)
+	if err != nil {
+		return api.CLILogin{}, err
+	}
+	l := m.findCLILogin(iso.ID, tool)
 	if l == nil {
 		return api.CLILogin{}, httpError{404, fmt.Errorf("no %s login in progress in %s", tool, name)}
 	}
@@ -459,7 +463,11 @@ func (m *Manager) CLILogin(name, toolName string) (api.CLILogin, error) {
 	if err != nil {
 		return api.CLILogin{}, err
 	}
-	l := m.findCLILogin(name, tool)
+	iso, err := m.isolationNamed(name)
+	if err != nil {
+		return api.CLILogin{}, err
+	}
+	l := m.findCLILogin(iso.ID, tool)
 	if l == nil {
 		return api.CLILogin{}, httpError{404, fmt.Errorf("no %s login in %s", tool, name)}
 	}
@@ -472,9 +480,13 @@ func (m *Manager) CancelCLILogin(name, toolName string) error {
 	if err != nil {
 		return err
 	}
+	iso, err := m.isolationNamed(name)
+	if err != nil {
+		return err
+	}
 	m.mu.Lock()
-	l := m.cliLogins[cliKey(name, tool)]
-	delete(m.cliLogins, cliKey(name, tool))
+	l := m.cliLogins[cliKey(iso.ID, tool)]
+	delete(m.cliLogins, cliKey(iso.ID, tool))
 	m.mu.Unlock()
 	if l != nil {
 		l.cancel()
@@ -489,11 +501,11 @@ func (m *Manager) CLILogout(ctx context.Context, name, toolName string) error {
 	if err != nil {
 		return err
 	}
-	iso, err := m.store.Isolation(name)
+	iso, err := m.isolationNamed(name)
 	if err != nil {
 		return err
 	}
-	if _, err := m.ensureIsolation(ctx, name); err != nil {
+	if _, err := m.ensureIsolation(ctx, iso.ID); err != nil {
 		return err
 	}
 	argv := []string{"claude", "auth", "logout"}
@@ -505,19 +517,19 @@ func (m *Manager) CLILogout(ctx context.Context, name, toolName string) error {
 	if out, err := m.runInIsolation(ctx, iso.Container, nil, argv...); err != nil {
 		return fmt.Errorf("%s: %s", strings.Join(argv, " "), orStr(out, err.Error()))
 	}
-	m.log.Printf("isolation %s: %s logged out", name, tool)
-	m.cliChanged(name, tool)
+	m.log.Printf("isolation %s: %s logged out", iso.Name, tool)
+	m.cliChanged(iso.ID, tool)
 	return nil
 }
 
-// cliChanged restarts the isolation's agents of that kind at their next
+// cliChanged restarts the isolation's (by ID) agents of that kind at their next
 // idle moment: Codex reads its login only when it starts, and neither
 // should carry on with one that was removed.
 func (m *Manager) cliChanged(iso string, tool driver.Kind) {
 	m.mu.Lock()
 	var affected []*runtime
 	for _, r := range m.runtimes {
-		if r.agent.Isolation == iso && r.agent.Kind == tool {
+		if r.agent.IsolationID == iso && r.agent.Kind == tool {
 			affected = append(affected, r)
 		}
 	}

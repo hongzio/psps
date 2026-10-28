@@ -67,7 +67,7 @@ func TestAnEmptyAllowlistIsLegalButWarned(t *testing.T) {
 
 func view(envs map[string]Env, def string) proxy.View {
 	v := proxy.View{Isolation: "dev", Enabled: true, Envs: map[string]json.RawMessage{}, Tokens: map[string]string{"": "tok"}}
-	v.Exposure = store.Exposure{Isolation: "dev", Service: "aws", Default: def}
+	v.Exposure = store.Exposure{IsolationID: "dev", Service: "aws", Default: def}
 	for n, e := range envs {
 		b, _ := json.Marshal(e)
 		v.Envs[n] = b

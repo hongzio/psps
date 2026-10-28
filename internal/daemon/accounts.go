@@ -26,7 +26,8 @@ func (m *Manager) accountView(a store.Account) api.Account {
 	if k, ok := api.AccountKindNamed(a.Kind); ok {
 		v.Tool = k.Tool
 	}
-	v.UsedBy, _ = m.store.AccountUsers(a.Name)
+	users, _ := m.store.AccountUsers(a.Name)
+	v.UsedBy = m.isoNames(users)
 	if _, err := m.accountSecret(a.Name); err != nil {
 		v.SecretError = err.Error()
 	}
@@ -142,7 +143,7 @@ func (m *Manager) DeleteAccount(name string, force bool) error {
 		return err
 	}
 	if len(users) > 0 && !force {
-		return badRequest(fmt.Errorf("account %s is used by %s; stop using it there first, or force", name, strings.Join(users, ", ")))
+		return badRequest(fmt.Errorf("account %s is used by %s; stop using it there first, or force", name, strings.Join(m.isoNames(users), ", ")))
 	}
 	if err := m.store.DeleteAccount(name); err != nil {
 		return err
@@ -164,12 +165,13 @@ func (m *Manager) DeleteAccount(name string, force bool) error {
 // UseAccount sets the account an isolation's CLI uses; "" goes back to a
 // login inside the isolation. Its agents of that kind restart with it at
 // their next idle moment.
-func (m *Manager) UseAccount(iso, toolName, account string) error {
+func (m *Manager) UseAccount(name, toolName, account string) error {
 	tool, err := cliTool(toolName)
 	if err != nil {
 		return err
 	}
-	if _, err := m.store.Isolation(iso); err != nil {
+	iso, err := m.isolationNamed(name)
+	if err != nil {
 		return err
 	}
 	if account != "" {
@@ -182,19 +184,19 @@ func (m *Manager) UseAccount(iso, toolName, account string) error {
 			return badRequest(fmt.Errorf("account %s is a %s, which %s cannot use", account, a.Kind, tool))
 		}
 	}
-	if err := m.store.UseAccount(iso, tool, account); err != nil {
+	if err := m.store.UseAccount(iso.ID, tool, account); err != nil {
 		return err
 	}
 	if account == "" {
-		m.log.Printf("isolation %s: %s uses a login inside it", iso, tool)
+		m.log.Printf("isolation %s: %s uses a login inside it", iso.Name, tool)
 	} else {
-		m.log.Printf("isolation %s: %s uses account %s", iso, tool, account)
+		m.log.Printf("isolation %s: %s uses account %s", iso.Name, tool, account)
 	}
-	m.cliChanged(iso, tool)
+	m.cliChanged(iso.ID, tool)
 	return nil
 }
 
-// accountEnv is what the isolation's accounts give its agents: each one's
+// accountEnv is what the isolation's (by ID) accounts give its agents: each one's
 // variable. An account whose secret cannot be read is left out, and the
 // CLI's status says why.
 func (m *Manager) accountEnv(iso string) []string {
@@ -214,7 +216,7 @@ func (m *Manager) accountEnv(iso string) []string {
 		}
 		secret, err := m.accountSecret(name)
 		if err != nil {
-			m.log.Printf("isolation %s: %v", iso, err)
+			m.log.Printf("isolation %s: %v", m.isoName(iso), err)
 			continue
 		}
 		env = append(env, k.Env+"="+secret)
@@ -240,7 +242,7 @@ func (m *Manager) migrateEnvAccounts() error {
 	}
 	moved := false
 	for _, iso := range isos {
-		used, err := m.store.AccountsUsed(iso.Name)
+		used, err := m.store.AccountsUsed(iso.ID)
 		if err != nil {
 			return err
 		}
@@ -253,7 +255,7 @@ func (m *Manager) migrateEnvAccounts() error {
 			if err != nil {
 				return err
 			}
-			if err := m.store.UseAccount(iso.Name, k.Tool, name); err != nil {
+			if err := m.store.UseAccount(iso.ID, k.Tool, name); err != nil {
 				return err
 			}
 			delete(iso.Env, k.Env)
@@ -303,7 +305,7 @@ func (m *Manager) accountFor(k api.AccountKind, secret, iso string) (string, err
 	return name, m.store.PutAccount(store.Account{Name: name, Kind: k.Name})
 }
 
-// accountsOf is the account each of the isolation's CLIs uses.
+// accountsOf is the account each of the isolation's (by ID) CLIs uses.
 func (m *Manager) accountsOf(iso string) map[driver.Kind]string {
 	used, _ := m.store.AccountsUsed(iso)
 	if len(used) == 0 {

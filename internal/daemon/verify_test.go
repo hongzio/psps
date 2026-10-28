@@ -191,14 +191,14 @@ func TestVerifyFailsALeakAndAHostMount(t *testing.T) {
 	}
 	// What verify measured is what the daemon now believes: the leak keeps
 	// agents from starting.
-	if ok, why := m.fenceOK("dev"); ok || !strings.HasPrefix(why, leakPrefix) {
+	if ok, why := m.fenceOK(testIsoID); ok || !strings.HasPrefix(why, leakPrefix) {
 		t.Errorf("fence state after a measured leak: %v %q", ok, why)
 	}
 }
 
 func TestVerifyReportsAnUnfencedIsolationAsConfiguration(t *testing.T) {
 	e, m, _ := verifyEnv(t, proxy.NewRegistry(echoService{}))
-	iso, _ := e.st.Isolation("dev")
+	iso, _ := e.st.Isolation(testIsoID)
 	iso.Fence = "off"
 	e.st.PutIsolation(iso)
 	v, err := m.Verify(context.Background(), "dev")

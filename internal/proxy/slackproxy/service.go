@@ -228,7 +228,7 @@ func (in *instance) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if !v.Enabled {
-		in.refuse(w, r, 503, fmt.Sprintf("slack: the slack proxy is off for isolation %s; the operator turns it on with `gero iso expose %s slack <env>`", in.h.Isolation, in.h.Isolation), 0)
+		in.refuse(w, r, 503, fmt.Sprintf("slack: the slack proxy is off for isolation %s; the operator turns it on with `gero iso expose %s slack <env>`", in.h.Name(), in.h.Name()), 0)
 		return
 	}
 	name := ResolveEnv(v.Tokens, v.Exposure.Envs, bearer(r.Header.Get("Authorization")))
@@ -253,7 +253,7 @@ func (in *instance) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	e, ok := envs[name]
 	if !ok {
-		in.refuse(w, r, 503, fmt.Sprintf("slack: environment %q was removed from gero's registry but is still exposed here; the operator re-exposes with `gero iso expose %s slack ...`", name, in.h.Isolation), 0)
+		in.refuse(w, r, 503, fmt.Sprintf("slack: environment %q was removed from gero's registry but is still exposed here; the operator re-exposes with `gero iso expose %s slack ...`", name, in.h.Name()), 0)
 		return
 	}
 	if d := Allowed(e, name, method); d != nil {

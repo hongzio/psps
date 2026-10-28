@@ -1021,7 +1021,7 @@ function isoSettingsForm(i) {
   })
   return h('div', { class: 'subform' },
     h('div', { class: 'field' }, h('label', null, 'Name'), name,
-      h('span', { class: 'hint' }, 'A new name changes nothing in the VM: its container and volumes keep theirs, and agents keep running.')),
+      h('span', { class: 'hint' }, 'Only the name changes; agents keep running.')),
     h('div', { class: 'row spaced' },
       h('div', { class: 'field' }, h('label', null, 'CPUs'), cpus),
       h('div', { class: 'field' }, h('label', null, 'Memory'), memory, h('span', { class: 'hint' }, 'Like 8G. A new size replaces the container.'))),

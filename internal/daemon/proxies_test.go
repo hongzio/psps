@@ -68,7 +68,7 @@ func (e echoInstance) Serve(_ int, l net.Listener) error {
 				v, _ := e.h.View()
 				var cfg struct{ Greeting string }
 				v.Decode(v.Exposure.Default, &cfg)
-				fmt.Fprintf(c, "%s %s from %s\n", cfg.Greeting, sc.Text(), e.h.Isolation)
+				fmt.Fprintf(c, "%s %s from %s\n", cfg.Greeting, sc.Text(), e.h.Name())
 			}
 		}()
 	}
@@ -115,10 +115,10 @@ func TestProxiesReachTheIsolationAndFollowItsConfiguration(t *testing.T) {
 	if _, err := m.Expose(ctx, "dev", "echo", api.Expose{Envs: []string{"prod"}}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := m.ensureIsolation(ctx, "dev"); err != nil {
+	if _, err := m.ensureIsolation(ctx, testIsoID); err != nil {
 		t.Fatal(err)
 	}
-	e.waitFor("the tunnel", func() bool { return m.tunnelStatus("dev") == "up" })
+	e.waitFor("the tunnel", func() bool { return m.tunnelStatus(testIsoID) == "up" })
 
 	// A connection made inside the isolation reaches this isolation's
 	// instance, with the env's current definition.
@@ -144,11 +144,11 @@ func TestProxiesReachTheIsolationAndFollowItsConfiguration(t *testing.T) {
 			skill = f.Content
 		}
 	}
-	toks, _ := e.st.Tokens("dev", "echo")
+	toks, _ := e.st.Tokens(testIsoID, "echo")
 	if !strings.Contains(envFile, "export ECHO_URL='http://127.0.0.1:3020'") || !strings.Contains(envFile, toks["prod"]) || skill != "echo skill" {
 		t.Fatalf("sync request: %+v", req)
 	}
-	if env := strings.Join(m.isolationEnv("dev"), "\n"); !strings.Contains(env, "ECHO_TOKEN="+toks["prod"]) {
+	if env := strings.Join(m.isolationEnv(testIsoID), "\n"); !strings.Contains(env, "ECHO_TOKEN="+toks["prod"]) {
 		t.Fatalf("agent env lacks the proxy's: %s", env)
 	}
 
@@ -165,7 +165,7 @@ func TestProxiesReachTheIsolationAndFollowItsConfiguration(t *testing.T) {
 			t.Fatal("the environment still names a service that is off")
 		}
 	}
-	if toks, _ := e.st.Tokens("dev", "echo"); len(toks) != 0 {
+	if toks, _ := e.st.Tokens(testIsoID, "echo"); len(toks) != 0 {
 		t.Fatalf("tokens outlived the exposure: %v", toks)
 	}
 }
@@ -180,26 +180,26 @@ func TestATunnelComesBackAfterTheContainerRestarts(t *testing.T) {
 	m.tunnelPort = func(int) int { return port }
 	m.PutEnv(ctx, "echo", "prod", proxy.Patch{}, true)
 	m.Expose(ctx, "dev", "echo", api.Expose{Envs: []string{"prod"}})
-	m.ensureIsolation(ctx, "dev")
-	e.waitFor("the tunnel", func() bool { return m.tunnelStatus("dev") == "up" })
+	m.ensureIsolation(ctx, testIsoID)
+	e.waitFor("the tunnel", func() bool { return m.tunnelStatus(testIsoID) == "up" })
 	_, before := e.fc.lastSync()
 
 	// The container goes down and comes back: the tunnel through it dies
 	// with it, and the next ensure brings both back.
-	e.fc.reboot("gero-dev", false)
-	e.waitFor("the tunnel to notice", func() bool { return m.tunnelStatus("dev") != "up" })
+	e.fc.reboot(testCtr, false)
+	e.waitFor("the tunnel to notice", func() bool { return m.tunnelStatus(testIsoID) != "up" })
 	if got := ask(t, port, "gone"); !strings.HasPrefix(got, "dial") && !strings.HasPrefix(got, "read") {
 		t.Fatalf("a dead tunnel answered: %q", got)
 	}
 	// As if the health cache had run out, as it does five seconds on.
-	st := m.isoLock("dev")
+	st := m.isoLock(testIsoID)
 	st.mu.Lock()
 	st.healthy = time.Time{}
 	st.mu.Unlock()
-	if _, err := m.ensureIsolation(ctx, "dev"); err != nil {
+	if _, err := m.ensureIsolation(ctx, testIsoID); err != nil {
 		t.Fatal(err)
 	}
-	e.waitFor("the tunnel again", func() bool { return m.tunnelStatus("dev") == "up" })
+	e.waitFor("the tunnel again", func() bool { return m.tunnelStatus(testIsoID) == "up" })
 	if got := ask(t, port, "back"); got != "hello back from dev" {
 		t.Fatalf("reply = %q", got)
 	}
@@ -236,8 +236,8 @@ printf '{"Credentials": {"AccessKeyId": "ASIAFAKE", "SecretAccessKey": "s", "Ses
 	if _, err := m.Expose(ctx, "dev", "aws", api.Expose{Envs: []string{"dev"}}); err != nil {
 		t.Fatal(err)
 	}
-	m.ensureIsolation(ctx, "dev")
-	e.waitFor("the tunnel", func() bool { return m.tunnelStatus("dev") == "up" })
+	m.ensureIsolation(ctx, testIsoID)
+	e.waitFor("the tunnel", func() bool { return m.tunnelStatus(testIsoID) == "up" })
 
 	req, _ := e.fc.lastSync()
 	var token string
@@ -311,9 +311,9 @@ func TestMCPServersReachTheLaunchAndAnAgentOwnedConfig(t *testing.T) {
 	if _, err := m.Expose(ctx, "dev", "mcpx", api.Expose{Envs: []string{"main"}}); err != nil {
 		t.Fatal(err)
 	}
-	m.ensureIsolation(ctx, "dev")
+	m.ensureIsolation(ctx, testIsoID)
 	req, _ := e.fc.lastSync()
-	toks, _ := e.st.Tokens("dev", "mcpx")
+	toks, _ := e.st.Tokens(testIsoID, "mcpx")
 	var cfg *shimproto.SyncFile
 	for i, f := range req.Files {
 		if f.Path == MCPFile {
@@ -323,7 +323,7 @@ func TestMCPServersReachTheLaunchAndAnAgentOwnedConfig(t *testing.T) {
 	if cfg == nil || cfg.Mode != 0o600 || !cfg.Agent || !strings.Contains(cfg.Content, `"Authorization": "Bearer `+toks["main"]+`"`) {
 		t.Fatalf("mcp.json: %+v", cfg)
 	}
-	env, servers := m.launchEnv("dev")
+	env, servers := m.launchEnv(testIsoID)
 	if !containsString(env, "MCPX_TOKEN="+toks["main"]) || len(servers) != 1 {
 		t.Fatalf("%v %v", env, servers)
 	}
@@ -343,7 +343,7 @@ func TestMCPServersReachTheLaunchAndAnAgentOwnedConfig(t *testing.T) {
 	if req, _ = e.fc.lastSync(); !containsString(req.Remove, MCPFile) {
 		t.Fatalf("mcp.json outlived the service: %+v", req.Remove)
 	}
-	if _, servers = m.launchEnv("dev"); len(servers) != 0 {
+	if _, servers = m.launchEnv(testIsoID); len(servers) != 0 {
 		t.Fatalf("%v", servers)
 	}
 }
@@ -389,8 +389,9 @@ func TestABrowserLoginIsHeldByTheDaemonAndSpentOnce(t *testing.T) {
 	}
 }
 
-// The proxies answer for the isolation by name; renamed, it is served as
-// its new self, with the tokens its agents already hold.
+// A proxy knows its isolation by ID, and says the name as it is now:
+// renamed, the isolation keeps its tunnel and its agents' tokens, and the
+// proxies speak of it by its new name.
 func TestARenamedIsolationsProxiesServeItUnderItsNewName(t *testing.T) {
 	e := newTestEnv(t)
 	ctx := context.Background()
@@ -405,21 +406,28 @@ func TestARenamedIsolationsProxiesServeItUnderItsNewName(t *testing.T) {
 	if _, err := m.Expose(ctx, "dev", "echo", api.Expose{Envs: []string{"prod"}}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := m.ensureIsolation(ctx, "dev"); err != nil {
+	if _, err := m.ensureIsolation(ctx, testIsoID); err != nil {
 		t.Fatal(err)
 	}
-	e.waitFor("the tunnel", func() bool { return m.tunnelStatus("dev") == "up" })
-	toks, _ := e.st.Tokens("dev", "echo")
+	e.waitFor("the tunnel", func() bool { return m.tunnelStatus(testIsoID) == "up" })
+	toks, _ := e.st.Tokens(testIsoID, "echo")
+	e.fc.mu.Lock()
+	tunnels := len(e.fc.tunnels[testCtr])
+	e.fc.mu.Unlock()
 
 	if _, err := m.UpdateIsolation(ctx, "dev", api.UpdateIsolation{Name: "work"}); err != nil {
 		t.Fatal(err)
 	}
-	e.waitFor("the tunnel under the new name", func() bool { return m.tunnelStatus("work") == "up" })
-	e.waitFor("the new name's instance", func() bool { return ask(t, port, "ping") == "hello ping from work" })
-	if env := strings.Join(m.isolationEnv("work"), "\n"); !strings.Contains(env, "ECHO_TOKEN="+toks["prod"]) {
-		t.Fatalf("the agents' token changed: %s", env)
+	if got := ask(t, port, "ping"); got != "hello ping from work" {
+		t.Fatalf("reply = %q", got)
 	}
-	if m.tunnelStatus("dev") != "" {
-		t.Fatalf("a tunnel is still kept for the old name: %q", m.tunnelStatus("dev"))
+	e.fc.mu.Lock()
+	again := len(e.fc.tunnels[testCtr])
+	e.fc.mu.Unlock()
+	if m.tunnelStatus(testIsoID) != "up" || again != tunnels {
+		t.Fatalf("the tunnel was reopened (%d dials, then %d) or is %q", tunnels, again, m.tunnelStatus(testIsoID))
+	}
+	if env := strings.Join(m.isolationEnv(testIsoID), "\n"); !strings.Contains(env, "ECHO_TOKEN="+toks["prod"]) {
+		t.Fatalf("the agents' token changed: %s", env)
 	}
 }

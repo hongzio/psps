@@ -55,8 +55,9 @@ func (m *Manager) registry() *proxy.Registry {
 	return m.services
 }
 
+// viewFor is the isolation's (by ID) configuration of svc, as of now.
 func (m *Manager) viewFor(iso string, svc proxy.Service) (proxy.View, error) {
-	v := proxy.View{Isolation: iso, Envs: map[string]json.RawMessage{}, Tokens: map[string]string{}}
+	v := proxy.View{Isolation: m.isoName(iso), Envs: map[string]json.RawMessage{}, Tokens: map[string]string{}}
 	x, err := m.store.Exposure(iso, svc.Name())
 	if errors.Is(err, store.ErrNotFound) {
 		return v, nil
@@ -88,7 +89,7 @@ func (m *Manager) instance(iso string, svc proxy.Service) proxy.Instance {
 	}
 	in, ok := m.instances[iso][svc.Name()]
 	if !ok {
-		in = svc.New(proxy.Host{Isolation: iso, Creds: m.creds, Log: m.log,
+		in = svc.New(proxy.Host{Name: func() string { return m.isoName(iso) }, Creds: m.creds, Log: m.log,
 			View: func() (proxy.View, error) { return m.viewFor(iso, svc) }})
 		m.instances[iso][svc.Name()] = in
 	}
@@ -161,7 +162,7 @@ func (m *Manager) tunnelLoop(iso string, ts *tunnelState) {
 		}
 		msg := "down: " + err.Error()
 		if m.tunnelStatus(iso) != msg {
-			m.log.Printf("isolation %s: proxy tunnel %s", iso, msg)
+			m.log.Printf("isolation %s: proxy tunnel %s", m.isoName(iso), msg)
 		}
 		m.setTunnelStatus(ts, msg)
 		if time.Since(began) > time.Minute {
@@ -186,7 +187,7 @@ func (m *Manager) runTunnel(iso string, ts *tunnelState) error {
 		return err
 	}
 	if v := m.shimVersion(iso); v != "" && v < shimproto.Version {
-		return fmt.Errorf("the isolation's image predates the credential proxies; run `gero iso upgrade %s`", iso)
+		return fmt.Errorf("the isolation's image predates the credential proxies; run `gero iso upgrade %s`", rec.Name)
 	}
 	conn, err := m.cli.DialTunnel(m.ctx, rec.Container)
 	if err != nil {
@@ -229,7 +230,7 @@ func (m *Manager) runTunnel(iso string, ts *tunnelState) error {
 	}
 	status := "up"
 	if m.tunnelStatus(iso) != "up" {
-		m.log.Printf("isolation %s: proxy tunnel up", iso)
+		m.log.Printf("isolation %s: proxy tunnel up", rec.Name)
 	}
 	m.setTunnelStatus(ts, status)
 	select {
@@ -279,7 +280,7 @@ func (m *Manager) workspace(iso string) (isoWorkspace, error) {
 			continue
 		}
 		for _, n := range v.Missing {
-			m.log.Printf("isolation %s: %s env %q is exposed but no longer defined; dropped", iso, svc.Name(), n)
+			m.log.Printf("isolation %s: %s env %q is exposed but no longer defined; dropped", m.isoName(iso), svc.Name(), n)
 		}
 		ws, err := svc.Workspace(v)
 		if err != nil {
@@ -361,7 +362,7 @@ func (m *Manager) serviceWorkspace(iso string) isoWorkspace {
 	}
 	w, err := m.workspace(iso)
 	if err != nil {
-		m.log.Printf("isolation %s: %v", iso, err)
+		m.log.Printf("isolation %s: %v", m.isoName(iso), err)
 	}
 	return w
 }
@@ -372,10 +373,10 @@ func (m *Manager) syncLocked(ctx context.Context, iso store.Isolation) {
 	if len(m.registry().All()) == 0 {
 		return
 	}
-	if v := m.shimVersion(iso.Name); v != "" && v < shimproto.Version {
+	if v := m.shimVersion(iso.ID); v != "" && v < shimproto.Version {
 		return
 	}
-	w, err := m.workspace(iso.Name)
+	w, err := m.workspace(iso.ID)
 	if err != nil {
 		m.log.Printf("isolation %s: workspace: %v", iso.Name, err)
 		return
@@ -383,7 +384,7 @@ func (m *Manager) syncLocked(ctx context.Context, iso store.Isolation) {
 	req := w.req
 	b, _ := json.Marshal(req)
 	m.mu.Lock()
-	same := m.synced[iso.Name] == string(b)
+	same := m.synced[iso.ID] == string(b)
 	m.mu.Unlock()
 	if same {
 		return
@@ -394,7 +395,7 @@ func (m *Manager) syncLocked(ctx context.Context, iso store.Isolation) {
 		return
 	}
 	m.mu.Lock()
-	m.synced[iso.Name] = string(b)
+	m.synced[iso.ID] = string(b)
 	m.mu.Unlock()
 	if len(res.Written)+len(res.Removed) > 0 {
 		m.log.Printf("isolation %s: synced %d file(s), removed %d", iso.Name, len(res.Written), len(res.Removed))
@@ -407,29 +408,29 @@ func (m *Manager) shimVersion(iso string) string {
 	return m.versions[iso]
 }
 
-// servicesChanged follows an edit to what an isolation's proxies serve: its
-// files are rewritten now if it is up, and agents whose environment changed
-// get a new process at their next idle moment.
-func (m *Manager) servicesChanged(ctx context.Context, isos ...string) {
-	for _, name := range isos {
-		iso, err := m.store.Isolation(name)
+// servicesChanged follows an edit to what isolations' proxies serve, by ID:
+// their files are rewritten now if they are up, and agents whose
+// environment changed get a new process at their next idle moment.
+func (m *Manager) servicesChanged(ctx context.Context, ids ...string) {
+	for _, id := range ids {
+		iso, err := m.store.Isolation(id)
 		if err != nil {
 			continue
 		}
-		st := m.isoLock(name)
+		st := m.isoLock(id)
 		st.mu.Lock()
 		if state, err := m.cli.State(ctx, iso.Container); err == nil && state == "running" {
 			m.syncLocked(ctx, iso)
 		}
 		st.mu.Unlock()
 
-		sig := m.serviceWorkspace(name).signature()
+		sig := m.serviceWorkspace(id).signature()
 		m.mu.Lock()
-		changed := m.lastEnv[name] != sig
-		m.lastEnv[name] = sig
+		changed := m.lastEnv[id] != sig
+		m.lastEnv[id] = sig
 		var rs []*runtime
 		for _, r := range m.runtimes {
-			if r.agent.Isolation == name {
+			if r.agent.IsolationID == id {
 				rs = append(rs, r)
 			}
 		}
@@ -469,7 +470,8 @@ func (m *Manager) envView(e store.Env) api.Env {
 			v.CredentialElsewhere, v.MissingSecrets = true, nil
 		}
 	}
-	v.ExposedTo, _ = m.store.Exposing(e.Service, e.Name)
+	ids, _ := m.store.Exposing(e.Service, e.Name)
+	v.ExposedTo = m.isoNames(ids)
 	return v
 }
 
@@ -524,7 +526,8 @@ func (m *Manager) PutEnv(ctx context.Context, service, name string, p proxy.Patc
 	e, _ = m.store.Env(service, name)
 	v := m.envView(e)
 	v.Warnings = warnings
-	m.servicesChanged(ctx, v.ExposedTo...)
+	holders, _ := m.store.Exposing(service, name)
+	m.servicesChanged(ctx, holders...)
 	return v, nil
 }
 
@@ -653,19 +656,20 @@ func (m *Manager) CheckEnv(ctx context.Context, service, name string) (api.Check
 	return c, nil
 }
 
-func (m *Manager) Exposures(iso string) ([]api.Exposure, error) {
-	if _, err := m.store.Isolation(iso); err != nil {
+func (m *Manager) Exposures(name string) ([]api.Exposure, error) {
+	iso, err := m.isolationNamed(name)
+	if err != nil {
 		return nil, err
 	}
 	var out []api.Exposure
 	for _, svc := range m.registry().All() {
-		v, err := m.viewFor(iso, svc)
+		v, err := m.viewFor(iso.ID, svc)
 		if err != nil {
 			return nil, err
 		}
 		x := api.Exposure{Service: svc.Name(), Enabled: v.Enabled, Exposure: v.Exposure, Missing: v.Missing}
 		if !v.Enabled {
-			x.Exposure = store.Exposure{Isolation: iso, Service: svc.Name(), Envs: []string{}}
+			x.Exposure = store.Exposure{IsolationID: iso.ID, Service: svc.Name(), Envs: []string{}}
 		}
 		out = append(out, x)
 	}
@@ -678,19 +682,20 @@ type exposureChecker interface {
 	CheckExposure(v proxy.View) error
 }
 
-func (m *Manager) Expose(ctx context.Context, iso, service string, req api.Expose) (api.Exposure, error) {
+func (m *Manager) Expose(ctx context.Context, name, service string, req api.Expose) (api.Exposure, error) {
 	svc, err := m.registry().Get(service)
 	if err != nil {
 		return api.Exposure{}, badRequest(err)
 	}
-	if _, err := m.store.Isolation(iso); err != nil {
+	iso, err := m.isolationNamed(name)
+	if err != nil {
 		return api.Exposure{}, err
 	}
-	cur, err := m.store.Exposure(iso, service)
+	cur, err := m.store.Exposure(iso.ID, service)
 	if err != nil && !errors.Is(err, store.ErrNotFound) {
 		return api.Exposure{}, err
 	}
-	x := store.Exposure{Isolation: iso, Service: service, Envs: cur.Envs, Default: cur.Default, Settings: cur.Settings}
+	x := store.Exposure{IsolationID: iso.ID, Service: service, Envs: cur.Envs, Default: cur.Default, Settings: cur.Settings}
 	if req.Envs != nil {
 		x.Envs = nil
 		seen := map[string]bool{}
@@ -739,7 +744,7 @@ func (m *Manager) Expose(ctx context.Context, iso, service string, req api.Expos
 	}
 	x.Settings, _ = json.Marshal(settings)
 	if ec, ok := svc.(exposureChecker); ok {
-		v := proxy.View{Isolation: iso, Enabled: true, Exposure: x, Envs: map[string]json.RawMessage{}}
+		v := proxy.View{Isolation: iso.Name, Enabled: true, Exposure: x, Envs: map[string]json.RawMessage{}}
 		for _, n := range x.Envs {
 			e, _ := m.store.Env(service, n)
 			v.Envs[n] = e.Config
@@ -751,21 +756,25 @@ func (m *Manager) Expose(ctx context.Context, iso, service string, req api.Expos
 	if err := m.store.PutExposure(x); err != nil {
 		return api.Exposure{}, err
 	}
-	if _, err := m.store.EnsureTokens(iso, service, svc.TokenKeys(x)); err != nil {
+	if _, err := m.store.EnsureTokens(iso.ID, service, svc.TokenKeys(x)); err != nil {
 		return api.Exposure{}, err
 	}
-	m.servicesChanged(ctx, iso)
+	m.servicesChanged(ctx, iso.ID)
 	return api.Exposure{Service: service, Enabled: true, Exposure: x}, nil
 }
 
-func (m *Manager) Unexpose(ctx context.Context, iso, service string) error {
+func (m *Manager) Unexpose(ctx context.Context, name, service string) error {
 	if _, err := m.registry().Get(service); err != nil {
 		return badRequest(err)
 	}
-	if err := m.store.DeleteExposure(iso, service); err != nil {
+	iso, err := m.isolationNamed(name)
+	if err != nil {
 		return err
 	}
-	m.servicesChanged(ctx, iso)
+	if err := m.store.DeleteExposure(iso.ID, service); err != nil {
+		return err
+	}
+	m.servicesChanged(ctx, iso.ID)
 	return nil
 }
 

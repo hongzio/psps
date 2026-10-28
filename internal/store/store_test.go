@@ -6,6 +6,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -26,11 +27,11 @@ func open(t *testing.T) *Store {
 func TestCommitAssignsIDsAndAdvancesLastSrc(t *testing.T) {
 	s := open(t)
 	now := time.Now()
-	if err := s.PutIsolation(Isolation{Name: "dev", Container: "gero-dev", Image: "img", CreatedAt: now,
+	if err := s.PutIsolation(Isolation{ID: "dev", Name: "dev", Container: "gero-dev", Image: "img", CreatedAt: now,
 		Env: map[string]string{"K": "v"}}); err != nil {
 		t.Fatal(err)
 	}
-	if err := s.CreateAgent(Agent{ID: "a1", Name: "x", Kind: driver.Codex, Isolation: "dev", Workdir: "/w",
+	if err := s.CreateAgent(Agent{ID: "a1", Name: "x", Kind: driver.Codex, IsolationID: "dev", Workdir: "/w",
 		Options: driver.Options{Effort: "low"}, CreatedAt: now}); err != nil {
 		t.Fatal(err)
 	}
@@ -68,8 +69,8 @@ func TestCommitAssignsIDsAndAdvancesLastSrc(t *testing.T) {
 func TestPendingRoundTrip(t *testing.T) {
 	s := open(t)
 	now := time.Now()
-	s.PutIsolation(Isolation{Name: "dev", Container: "c", Image: "i", CreatedAt: now})
-	s.CreateAgent(Agent{ID: "a1", Name: "x", Kind: driver.Claude, Isolation: "dev", Workdir: "/w", CreatedAt: now})
+	s.PutIsolation(Isolation{ID: "dev", Name: "dev", Container: "c", Image: "i", CreatedAt: now})
+	s.CreateAgent(Agent{ID: "a1", Name: "x", Kind: driver.Claude, IsolationID: "dev", Workdir: "/w", CreatedAt: now})
 	id1, _ := s.AddPending("a1", "one", 3)
 	s.AddPending("a1", "two", 4)
 	s.DeletePending(id1)
@@ -110,14 +111,14 @@ func TestMigrationAddsColumnsToAnOldDatabase(t *testing.T) {
 func TestEnvsExposuresAndTokens(t *testing.T) {
 	s := open(t)
 	for _, n := range []string{"dev", "ci"} {
-		if err := s.PutIsolation(Isolation{Name: n, Container: "gero-" + n, Image: "img", CreatedAt: time.Now()}); err != nil {
+		if err := s.PutIsolation(Isolation{ID: n, Name: n, Container: "gero-" + n, Image: "img", CreatedAt: time.Now()}); err != nil {
 			t.Fatal(err)
 		}
 	}
 	s.PutEnv(Env{Service: "datadog", Name: "prod", Config: []byte(`{"site":"datadoghq.com"}`)})
 	s.PutEnv(Env{Service: "datadog", Name: "stage"})
-	s.PutExposure(Exposure{Isolation: "dev", Service: "datadog", Envs: []string{"prod", "stage"}, Default: "prod"})
-	s.PutExposure(Exposure{Isolation: "ci", Service: "datadog", Envs: []string{"stage"}, Default: "stage"})
+	s.PutExposure(Exposure{IsolationID: "dev", Service: "datadog", Envs: []string{"prod", "stage"}, Default: "prod"})
+	s.PutExposure(Exposure{IsolationID: "ci", Service: "datadog", Envs: []string{"stage"}, Default: "stage"})
 
 	toks, err := s.EnsureTokens("dev", "datadog", []string{"prod", "stage"})
 	if err != nil || len(toks) != 2 || toks["prod"] == toks["stage"] {
@@ -161,7 +162,7 @@ func TestEnvsExposuresAndTokens(t *testing.T) {
 func TestAccountUsesGoWithTheirIsolation(t *testing.T) {
 	s := open(t)
 	for _, n := range []string{"dev", "lab"} {
-		if err := s.PutIsolation(Isolation{Name: n, Container: "gero-" + n, Image: "i", CreatedAt: time.Now()}); err != nil {
+		if err := s.PutIsolation(Isolation{ID: n, Name: n, Container: "gero-" + n, Image: "i", CreatedAt: time.Now()}); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -199,10 +200,10 @@ func TestTheStoreIsTheOwnersAlone(t *testing.T) {
 	defer s.Close()
 	// What Vacuum is for: a secret deleted from the store is gone from its
 	// files.
-	if err := s.PutIsolation(Isolation{Name: "dev", Container: "c", Image: "i", Env: map[string]string{"K": "secret-1234567890"}, CreatedAt: time.Now()}); err != nil {
+	if err := s.PutIsolation(Isolation{ID: "dev", Name: "dev", Container: "c", Image: "i", Env: map[string]string{"K": "secret-1234567890"}, CreatedAt: time.Now()}); err != nil {
 		t.Fatal(err)
 	}
-	if err := s.PutIsolation(Isolation{Name: "dev", Container: "c", Image: "i", CreatedAt: time.Now()}); err != nil {
+	if err := s.PutIsolation(Isolation{ID: "dev", Name: "dev", Container: "c", Image: "i", CreatedAt: time.Now()}); err != nil {
 		t.Fatal(err)
 	}
 	if err := s.Vacuum(); err != nil {
@@ -223,74 +224,151 @@ func TestTheStoreIsTheOwnersAlone(t *testing.T) {
 	}
 }
 
-func TestRenamingAnIsolationMovesEverythingThatNamesIt(t *testing.T) {
+// A rename is the name alone: everything else knows the isolation by ID.
+func TestRenamingAnIsolationChangesItsNameAlone(t *testing.T) {
 	s := open(t)
 	now := time.Now()
 	for _, n := range []string{"dev", "other"} {
-		if err := s.PutIsolation(Isolation{Name: n, Container: "gero-" + n, Image: "img", Network: "gero-" + n + "-net",
-			CreatedAt: now, Env: map[string]string{"K": "v"}}); err != nil {
+		if err := s.PutIsolation(Isolation{ID: "id-" + n, Name: n, Container: "gero-id-" + n, Image: "img", CreatedAt: now}); err != nil {
 			t.Fatal(err)
 		}
 	}
-	if err := s.CreateAgent(Agent{ID: "a1", Name: "x", Kind: driver.Codex, Isolation: "dev", Workdir: "/w", CreatedAt: now}); err != nil {
+	// Everything that belongs to an isolation points at its ID, foreign
+	// keys included.
+	if err := s.CreateAgent(Agent{ID: "a1", Name: "x", Kind: driver.Codex, IsolationID: "id-dev", Workdir: "/w", CreatedAt: now}); err != nil {
 		t.Fatal(err)
 	}
-	if err := s.PutExposure(Exposure{Isolation: "dev", Service: "git", Envs: []string{}}); err != nil {
+	if err := s.PutExposure(Exposure{IsolationID: "id-dev", Service: "git", Envs: []string{}}); err != nil {
 		t.Fatal(err)
 	}
-	toks, err := s.EnsureTokens("dev", "git", []string{""})
-	if err != nil {
+	if _, err := s.EnsureTokens("id-dev", "git", []string{""}); err != nil {
 		t.Fatal(err)
 	}
-	if err := s.PutAccount(Account{Name: "work", Kind: "claude-token"}); err != nil {
+	if err := s.PutAccount(Account{Name: "claude", Kind: "claude-token"}); err != nil {
 		t.Fatal(err)
 	}
-	if err := s.UseAccount("dev", driver.Claude, "work"); err != nil {
+	if err := s.UseAccount("id-dev", driver.Claude, "claude"); err != nil {
 		t.Fatal(err)
 	}
-
-	if err := s.RenameIsolation("dev", "other"); !errors.Is(err, ErrExists) {
-		t.Fatalf("renamed onto another isolation: %v", err)
+	if err := s.RenameIsolation("id-dev", "other"); !errors.Is(err, ErrExists) {
+		t.Fatalf("renamed onto another isolation's name: %v", err)
 	}
 	if err := s.RenameIsolation("nope", "x"); !errors.Is(err, ErrNotFound) {
 		t.Fatalf("renamed a missing isolation: %v", err)
 	}
-	if err := s.RenameIsolation("dev", "work"); err != nil {
+	if err := s.RenameIsolation("id-dev", "work"); err != nil {
 		t.Fatal(err)
 	}
-
-	if _, err := s.Isolation("dev"); !errors.Is(err, ErrNotFound) {
-		t.Fatalf("the old name is still there: %v", err)
+	if _, err := s.IsolationNamed("dev"); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("the old name still finds it: %v", err)
 	}
-	iso, err := s.Isolation("work")
+	iso, err := s.IsolationNamed("work")
+	if err != nil || iso.ID != "id-dev" || iso.Container != "gero-id-dev" {
+		t.Fatalf("renamed: %+v, %v", iso, err)
+	}
+	if a, _ := s.Agent("a1"); a.IsolationID != "id-dev" {
+		t.Fatalf("agent is in %q", a.IsolationID)
+	}
+	if err := s.PutIsolation(Isolation{ID: "id-new", Name: "work", Container: "c", Image: "img", CreatedAt: now}); err == nil {
+		t.Fatal("two isolations took one name")
+	}
+}
+
+// Isolations from before IDs: the column that was the name becomes the ID,
+// so whatever pointed at one still does, and a renamed one's ID is the name
+// its container and volumes were made under.
+func TestIsolationsFromBeforeIDsKeepWhatPointsAtThem(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "old.db")
+	db, err := sql.Open("sqlite", "file:"+path+"?_pragma=foreign_keys(1)")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if iso.Base != "dev" || iso.BaseName() != "dev" || iso.Container != "gero-dev" || iso.Network != "gero-dev-net" || iso.Env["K"] != "v" {
-		t.Fatalf("renamed isolation: %+v", iso)
+	for _, q := range []string{
+		`CREATE TABLE isolations (name TEXT PRIMARY KEY, container TEXT NOT NULL, image TEXT NOT NULL,
+			cpus INTEGER NOT NULL DEFAULT 0, memory TEXT NOT NULL DEFAULT '', env TEXT NOT NULL DEFAULT '{}', created_at TEXT NOT NULL,
+			network TEXT NOT NULL DEFAULT '', fence TEXT NOT NULL DEFAULT 'on', base TEXT NOT NULL DEFAULT '')`,
+		`CREATE TABLE agents (id TEXT PRIMARY KEY, name TEXT NOT NULL, kind TEXT NOT NULL,
+			isolation TEXT NOT NULL REFERENCES isolations(name), workdir TEXT NOT NULL, repo TEXT NOT NULL DEFAULT '',
+			options TEXT NOT NULL DEFAULT '{}', session_id TEXT NOT NULL DEFAULT '', last_src INTEGER NOT NULL DEFAULT 0,
+			created_at TEXT NOT NULL, archived_at TEXT)`,
+		`CREATE TABLE exposures (isolation TEXT NOT NULL REFERENCES isolations(name) ON DELETE CASCADE, service TEXT NOT NULL,
+			envs TEXT NOT NULL DEFAULT '[]', default_env TEXT NOT NULL DEFAULT '', settings TEXT NOT NULL DEFAULT '{}',
+			PRIMARY KEY (isolation, service))`,
+		`CREATE TABLE tokens (isolation TEXT NOT NULL REFERENCES isolations(name) ON DELETE CASCADE, service TEXT NOT NULL,
+			env TEXT NOT NULL, token TEXT NOT NULL, PRIMARY KEY (isolation, service, env))`,
+		`CREATE TABLE accounts (name TEXT PRIMARY KEY, kind TEXT NOT NULL, created_at TEXT NOT NULL)`,
+		`CREATE TABLE account_links (isolation TEXT NOT NULL REFERENCES isolations(name) ON DELETE CASCADE, tool TEXT NOT NULL,
+			account TEXT NOT NULL REFERENCES accounts(name), PRIMARY KEY (isolation, tool))`,
+		// work was dev until renamed; the dev made after it is named
+		// dev-3f2a underneath; ci never moved.
+		`INSERT INTO isolations (name, container, image, created_at, network, base) VALUES
+			('work', 'gero-dev', 'img', '2026-01-01T00:00:00Z', 'gero-dev-net', 'dev'),
+			('dev', 'gero-dev-3f2a', 'img', '2026-01-02T00:00:00Z', 'gero-dev-3f2a-net', 'dev-3f2a'),
+			('ci', 'gero-ci', 'img', '2026-01-03T00:00:00Z', 'gero-ci-net', '')`,
+		`INSERT INTO agents (id, name, kind, isolation, workdir, created_at) VALUES
+			('a1', 'x', 'codex', 'work', '/w', '2026-01-01T00:00:00Z'), ('a2', 'y', 'claude', 'dev', '/w', '2026-01-02T00:00:00Z')`,
+		`INSERT INTO exposures (isolation, service) VALUES ('work', 'git')`,
+		`INSERT INTO tokens (isolation, service, env, token) VALUES ('ci', 'git', '', 'tok')`,
+		`INSERT INTO accounts (name, kind, created_at) VALUES ('claude', 'claude-token', '2026-01-01T00:00:00Z')`,
+		`INSERT INTO account_links (isolation, tool, account) VALUES ('dev', 'claude', 'claude')`,
+	} {
+		if _, err := db.Exec(q); err != nil {
+			t.Fatalf("%s: %v", q, err)
+		}
 	}
-	if a, _ := s.Agent("a1"); a.Isolation != "work" {
-		t.Fatalf("agent is in %q", a.Isolation)
+	db.Close()
+
+	s, err := Open(path)
+	if err != nil {
+		t.Fatal(err)
 	}
-	if _, err := s.Exposure("work", "git"); err != nil {
-		t.Fatalf("exposure: %v", err)
+	defer s.Close()
+	for id, name := range map[string]string{"dev": "work", "dev-3f2a": "dev", "ci": "ci"} {
+		iso, err := s.Isolation(id)
+		if err != nil || iso.Name != name {
+			t.Fatalf("isolation %s = %+v, %v; want it named %s", id, iso, err, name)
+		}
+		if iso.Container != "gero-"+id {
+			t.Fatalf("isolation %s's container is %s", id, iso.Container)
+		}
 	}
-	if got, _ := s.Tokens("work", "git"); got[""] != toks[""] || got[""] == "" {
-		t.Fatalf("tokens %v, had %v: the agents' environment would no longer match", got, toks)
+	if a, _ := s.Agent("a1"); a.IsolationID != "dev" {
+		t.Fatalf("a1 is in %q", a.IsolationID)
 	}
-	if used, _ := s.AccountsUsed("work"); used[driver.Claude] != "work" {
-		t.Fatalf("accounts %v", used)
+	if a, _ := s.Agent("a2"); a.IsolationID != "dev-3f2a" {
+		t.Fatalf("a2 is in %q", a.IsolationID)
+	}
+	if _, err := s.Exposure("dev", "git"); err != nil {
+		t.Fatalf("work's exposure: %v", err)
+	}
+	if toks, _ := s.Tokens("ci", "git"); toks[""] != "tok" {
+		t.Fatalf("ci's tokens: %v", toks)
+	}
+	if used, _ := s.AccountsUsed("dev-3f2a"); used[driver.Claude] != "claude" {
+		t.Fatalf("the new dev's accounts: %v", used)
 	}
 	var broken int
 	if err := s.db.QueryRow(`SELECT COUNT(*) FROM pragma_foreign_key_check`).Scan(&broken); err != nil || broken != 0 {
 		t.Fatalf("foreign keys: %d broken (%v)", broken, err)
 	}
+	if have, _ := hasColumn(s.db, "isolations", "base"); have {
+		t.Fatal("base is still a column")
+	}
+	var agents string
+	s.db.QueryRow(`SELECT sql FROM sqlite_master WHERE name = 'agents'`).Scan(&agents)
+	if !strings.Contains(agents, "REFERENCES isolations(id)") {
+		t.Fatalf("agents still point at the name: %s", agents)
+	}
+	if err := s.RenameIsolation("dev", "dev"); !errors.Is(err, ErrExists) {
+		t.Fatalf("a name already taken: %v", err)
+	}
 
-	// Renamed again, it is still named after where it started.
-	if err := s.RenameIsolation("work", "dev2"); err != nil {
+	// Opened again, there is nothing left to migrate.
+	s.Close()
+	if s, err = Open(path); err != nil {
 		t.Fatal(err)
 	}
-	if iso, _ := s.Isolation("dev2"); iso.BaseName() != "dev" {
-		t.Fatalf("base after a second rename: %q", iso.BaseName())
+	if iso, _ := s.IsolationNamed("work"); iso.ID != "dev" {
+		t.Fatalf("after reopening: %+v", iso)
 	}
 }

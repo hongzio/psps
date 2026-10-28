@@ -100,10 +100,10 @@ func newHarness(t *testing.T) *harness {
 	cs := &creds.Store{Path: filepath.Join(t.TempDir(), "credentials")}
 	cs.Write("slack", "main", map[string]string{"token": "xoxp-real-token"})
 	h.view = proxy.View{Isolation: "work", Enabled: true, Envs: map[string]json.RawMessage{}, Tokens: map[string]string{}}
-	h.view.Exposure = store.Exposure{Isolation: "work", Service: "slack", Default: "main"}
+	h.view.Exposure = store.Exposure{IsolationID: "work", Service: "slack", Default: "main"}
 	h.setEnv("main", Env{}, token)
 	svc := Service{API: h.api.srv.URL, Files: h.files.srv.URL, Transport: h.api.srv.Client().Transport}
-	h.in = svc.New(proxy.Host{Isolation: "work", View: h.getView, Creds: cs, Log: log.New(io.Discard, "", 0)}).(*instance)
+	h.in = svc.New(proxy.Host{Name: func() string { return "work" }, View: h.getView, Creds: cs, Log: log.New(io.Discard, "", 0)}).(*instance)
 	l, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)

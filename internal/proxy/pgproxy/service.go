@@ -190,7 +190,7 @@ func (in *instance) handle(c net.Conn) {
 		return
 	}
 	if !v.Enabled {
-		in.refuse(c, deny("the pg proxy is off for isolation %s; the operator turns it on with `gero iso expose %s pg <env>`", in.h.Isolation, in.h.Isolation))
+		in.refuse(c, deny("the pg proxy is off for isolation %s; the operator turns it on with `gero iso expose %s pg <env>`", in.h.Name(), in.h.Name()))
 		return
 	}
 	if err := in.checkToken(c, r, v, envName); err != nil {

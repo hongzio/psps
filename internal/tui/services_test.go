@@ -136,7 +136,7 @@ func TestAnIsolationsServicesAreTurnedOnAndOffFromItsPage(t *testing.T) {
 	if len(h.be.exposed) != 1 || h.be.exposed[0] != `dev pg envs=[prod] default="" settings=` {
 		t.Fatalf("exposed %v", h.be.exposed)
 	}
-	h.be.exposures = []api.Exposure{{Service: "pg", Enabled: true, Exposure: store.Exposure{Isolation: "dev", Service: "pg", Envs: []string{"prod"}, Default: "prod"}}}
+	h.be.exposures = []api.Exposure{{Service: "pg", Enabled: true, Exposure: store.Exposure{IsolationID: "i-dev", Service: "pg", Envs: []string{"prod"}, Default: "prod"}}}
 	h.send(exposuresMsg{iso: "dev", exposures: h.be.exposures, services: h.be.services, envs: h.be.envs})
 	if !strings.Contains(h.m.View(), "prod (default prod)") {
 		t.Fatalf("after expose:\n%s", h.m.View())

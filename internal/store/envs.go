@@ -28,10 +28,10 @@ type Env struct {
 // serves there, in order. Envs may be empty: git then serves public
 // repositories only, and the other proxies refuse with the fix.
 type Exposure struct {
-	Isolation string   `json:"isolation"`
-	Service   string   `json:"service"`
-	Envs      []string `json:"envs"`
-	Default   string   `json:"default_env,omitempty"`
+	IsolationID string   `json:"isolation_id"`
+	Service     string   `json:"service"`
+	Envs        []string `json:"envs"`
+	Default     string   `json:"default_env,omitempty"`
 	// Settings are the service's per-isolation switches (git's public
 	// reads and API side, for instance).
 	Settings json.RawMessage `json:"settings,omitempty"`
@@ -47,7 +47,7 @@ CREATE TABLE IF NOT EXISTS envs (
 	PRIMARY KEY (service, name)
 );
 CREATE TABLE IF NOT EXISTS exposures (
-	isolation   TEXT NOT NULL REFERENCES isolations(name) ON DELETE CASCADE,
+	isolation   TEXT NOT NULL REFERENCES isolations(id) ON DELETE CASCADE,
 	service     TEXT NOT NULL,
 	envs        TEXT NOT NULL DEFAULT '[]',
 	default_env TEXT NOT NULL DEFAULT '',
@@ -55,7 +55,7 @@ CREATE TABLE IF NOT EXISTS exposures (
 	PRIMARY KEY (isolation, service)
 );
 CREATE TABLE IF NOT EXISTS tokens (
-	isolation TEXT NOT NULL REFERENCES isolations(name) ON DELETE CASCADE,
+	isolation TEXT NOT NULL REFERENCES isolations(id) ON DELETE CASCADE,
 	service   TEXT NOT NULL,
 	env       TEXT NOT NULL,
 	token     TEXT NOT NULL,
@@ -116,7 +116,7 @@ func (s *Store) Envs(service string) ([]Env, error) {
 	return out, rows.Err()
 }
 
-// Exposing lists the isolations whose exposure of service names env.
+// Exposing lists the isolations whose exposure of service names env, by ID.
 func (s *Store) Exposing(service, env string) ([]string, error) {
 	rows, err := s.db.Query(`SELECT DISTINCT x.isolation FROM exposures x, json_each(x.envs) j
 		WHERE x.service = ? AND j.value = ? ORDER BY x.isolation`, service, env)
@@ -133,7 +133,8 @@ func (s *Store) Exposing(service, env string) ([]string, error) {
 	return out, rows.Err()
 }
 
-// ErrExposed refuses deleting an env an isolation still serves.
+// ErrExposed refuses deleting an env an isolation still serves. Isolations
+// are their names.
 type ErrExposed struct {
 	Service, Env string
 	Isolations   []string
@@ -153,20 +154,20 @@ func (s *Store) DeleteEnv(service, name string, force bool) error {
 		return err
 	}
 	defer tx.Rollback()
-	rows, err := tx.Query(`SELECT x.isolation, x.envs, x.default_env FROM exposures x, json_each(x.envs) j
-		WHERE x.service = ? AND j.value = ?`, service, name)
+	rows, err := tx.Query(`SELECT x.isolation, i.name, x.envs, x.default_env FROM exposures x JOIN isolations i ON i.id = x.isolation,
+		json_each(x.envs) j WHERE x.service = ? AND j.value = ? ORDER BY i.name`, service, name)
 	if err != nil {
 		return err
 	}
 	type hit struct {
-		iso, def string
-		envs     []string
+		iso, name, def string
+		envs           []string
 	}
 	var hits []hit
 	for rows.Next() {
 		var h hit
 		var envs string
-		rows.Scan(&h.iso, &envs, &h.def)
+		rows.Scan(&h.iso, &h.name, &envs, &h.def)
 		json.Unmarshal([]byte(envs), &h.envs)
 		hits = append(hits, h)
 	}
@@ -174,7 +175,7 @@ func (s *Store) DeleteEnv(service, name string, force bool) error {
 	if len(hits) > 0 && !force {
 		e := &ErrExposed{Service: service, Env: name}
 		for _, h := range hits {
-			e.Isolations = append(e.Isolations, h.iso)
+			e.Isolations = append(e.Isolations, h.name)
 		}
 		return e
 	}
@@ -225,7 +226,7 @@ func (s *Store) PutExposure(x Exposure) error {
 	}
 	_, err := s.db.Exec(`INSERT INTO exposures (isolation, service, envs, default_env, settings) VALUES (?, ?, ?, ?, ?)
 		ON CONFLICT(isolation, service) DO UPDATE SET envs=excluded.envs, default_env=excluded.default_env, settings=excluded.settings`,
-		x.Isolation, x.Service, string(envs), x.Default, string(settings))
+		x.IsolationID, x.Service, string(envs), x.Default, string(settings))
 	return err
 }
 
@@ -249,7 +250,7 @@ func (s *Store) DeleteExposure(iso, service string) error {
 func scanExposure(row interface{ Scan(...any) error }) (Exposure, error) {
 	var x Exposure
 	var envs, settings string
-	err := row.Scan(&x.Isolation, &x.Service, &envs, &x.Default, &settings)
+	err := row.Scan(&x.IsolationID, &x.Service, &envs, &x.Default, &settings)
 	if errors.Is(err, sql.ErrNoRows) {
 		return x, ErrNotFound
 	}

@@ -24,7 +24,7 @@ CREATE TABLE IF NOT EXISTS accounts (
 	created_at TEXT NOT NULL
 );
 CREATE TABLE IF NOT EXISTS account_links (
-	isolation TEXT NOT NULL REFERENCES isolations(name) ON DELETE CASCADE,
+	isolation TEXT NOT NULL REFERENCES isolations(id) ON DELETE CASCADE,
 	tool      TEXT NOT NULL,
 	account   TEXT NOT NULL REFERENCES accounts(name),
 	PRIMARY KEY (isolation, tool)
@@ -121,7 +121,7 @@ func (s *Store) AccountsUsed(iso string) (map[driver.Kind]string, error) {
 	return out, rows.Err()
 }
 
-// AccountUsers are the isolations using the account, by name.
+// AccountUsers are the isolations using the account, by ID.
 func (s *Store) AccountUsers(name string) ([]string, error) {
 	rows, err := s.db.Query(`SELECT DISTINCT isolation FROM account_links WHERE account = ? ORDER BY isolation`, name)
 	if err != nil {

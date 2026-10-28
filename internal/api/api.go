@@ -45,8 +45,8 @@ type CreateIsolation struct {
 }
 
 // UpdateIsolation renames an isolation or resizes its VM; what it leaves out
-// stays as it is. A new name changes nothing in the VM: its container,
-// network and volumes keep theirs, and agents keep running. A new size
+// stays as it is. A new name changes nothing but the name: everything else
+// knows the isolation by its ID, and agents keep running. A new size
 // replaces the container (container cannot resize one): running agents end
 // and start again on their next message; sessions and workspaces are kept.
 type UpdateIsolation struct {
@@ -60,7 +60,9 @@ type SetEnv map[string]*string
 
 type Agent struct {
 	store.Agent
-	State driver.State `json:"state"`
+	// Isolation is the name of the isolation it runs in.
+	Isolation string       `json:"isolation"`
+	State     driver.State `json:"state"`
 	// Problem is an infrastructure error (isolation down, shim unreachable)
 	// that the agent's own status cannot express.
 	Problem string `json:"problem,omitempty"`

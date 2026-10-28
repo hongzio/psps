@@ -534,7 +534,7 @@ func newHarness(t *testing.T) *harness {
 	h := &harness{t: t, n: n, c: c}
 	h.setEnv("main", Env{}, token)
 	svc := Service{Issuer: n.srv.URL, Transport: http.DefaultTransport}
-	h.inst = svc.New(proxy.Host{Isolation: "work", View: h.getView, Creds: c, Log: log.New(io.Discard, "", 0)}).(*instance)
+	h.inst = svc.New(proxy.Host{Name: func() string { return "work" }, View: h.getView, Creds: c, Log: log.New(io.Discard, "", 0)}).(*instance)
 	l, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)
@@ -550,7 +550,7 @@ func (h *harness) setEnv(name string, e Env, tok string) {
 	defer h.mu.Unlock()
 	if h.view.Envs == nil {
 		h.view = proxy.View{Isolation: "work", Enabled: true, Envs: map[string]json.RawMessage{}, Tokens: map[string]string{},
-			Exposure: store.Exposure{Isolation: "work", Service: "notion", Default: name}}
+			Exposure: store.Exposure{IsolationID: "work", Service: "notion", Default: name}}
 	}
 	b, _ := json.Marshal(e)
 	h.view.Envs[name] = b

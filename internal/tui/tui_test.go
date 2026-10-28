@@ -64,7 +64,7 @@ func (f *fakeBackend) CreateAgent(_ context.Context, req api.CreateAgent) (api.A
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.created = append(f.created, req)
-	a := api.Agent{Agent: store.Agent{ID: "new1", Name: req.Prompt, Kind: req.Kind, Isolation: req.Isolation, CreatedAt: time.Now()}}
+	a := api.Agent{Agent: store.Agent{ID: "new1", Name: req.Prompt, Kind: req.Kind, CreatedAt: time.Now()}, Isolation: req.Isolation}
 	f.agents = append(f.agents, a)
 	return a, nil
 }
@@ -220,7 +220,7 @@ func (f *fakeBackend) Expose(_ context.Context, iso, svc string, req api.Expose)
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.exposed = append(f.exposed, fmt.Sprintf("%s %s envs=%v default=%q settings=%s", iso, svc, req.Envs, req.Default, patchString(req.Settings)))
-	return api.Exposure{Service: svc, Enabled: true, Exposure: store.Exposure{Isolation: iso, Service: svc, Envs: req.Envs, Default: req.Default}}, nil
+	return api.Exposure{Service: svc, Enabled: true, Exposure: store.Exposure{IsolationID: iso, Service: svc, Envs: req.Envs, Default: req.Default}}, nil
 }
 func (f *fakeBackend) Unexpose(_ context.Context, iso, svc string) error {
 	f.mu.Lock()
@@ -341,8 +341,9 @@ func patchString(p proxy.Patch) string {
 
 func agent(id, name string, status event.Status, created int) api.Agent {
 	return api.Agent{
-		Agent: store.Agent{ID: id, Name: name, Kind: driver.Codex, Isolation: "dev", CreatedAt: time.Unix(int64(created), 0)},
-		State: driver.State{Status: status},
+		Agent:     store.Agent{ID: id, Name: name, Kind: driver.Codex, IsolationID: "i-dev", CreatedAt: time.Unix(int64(created), 0)},
+		Isolation: "dev",
+		State:     driver.State{Status: status},
 	}
 }
 

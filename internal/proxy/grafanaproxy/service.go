@@ -301,7 +301,7 @@ func (in *instance) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if !v.Enabled {
-		in.refuse(w, r, 503, fmt.Sprintf("grafana: the grafana proxy is off for isolation %s; the operator turns it on with `gero iso expose %s grafana <env>`", in.h.Isolation, in.h.Isolation), 0)
+		in.refuse(w, r, 503, fmt.Sprintf("grafana: the grafana proxy is off for isolation %s; the operator turns it on with `gero iso expose %s grafana <env>`", in.h.Name(), in.h.Name()), 0)
 		return
 	}
 	name := ResolveEnv(v.Tokens, v.Exposure.Envs, presented(r))
@@ -320,7 +320,7 @@ func (in *instance) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	e, ok := envs[name]
 	if !ok {
-		in.refuse(w, r, 503, fmt.Sprintf("grafana: environment %q was removed from gero's registry but is still exposed here; the operator re-exposes with `gero iso expose %s grafana ...`", name, in.h.Isolation), 0)
+		in.refuse(w, r, 503, fmt.Sprintf("grafana: environment %q was removed from gero's registry but is still exposed here; the operator re-exposes with `gero iso expose %s grafana ...`", name, in.h.Name()), 0)
 		return
 	}
 	rawPath, rawQuery := proxy.RawTarget(r)

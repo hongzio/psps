@@ -275,7 +275,7 @@ func (in *instance) config() (liveConfig, error) {
 		return liveConfig{}, err
 	}
 	if !v.Enabled {
-		return liveConfig{}, fmt.Errorf("the git proxy is off for isolation %s; the operator turns it on with `gero iso expose %s git <env>`", in.h.Isolation, in.h.Isolation)
+		return liveConfig{}, fmt.Errorf("the git proxy is off for isolation %s; the operator turns it on with `gero iso expose %s git <env>`", in.h.Name(), in.h.Name())
 	}
 	envs, err := decodeEnvs(v)
 	if err != nil {

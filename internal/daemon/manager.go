@@ -167,7 +167,7 @@ func (m *Manager) ensureRuntime(a store.Agent) (*runtime, error) {
 	}
 	m.runtimes[a.ID] = r
 	m.loops.Add(1)
-	go func() { defer m.loops.Done(); defer close(r.done); r.loop() }()
+	go func() { defer m.loops.Done(); r.loop() }()
 	return r, nil
 }
 
@@ -196,42 +196,71 @@ func (m *Manager) runtime(idOrPrefix string) (*runtime, error) {
 	return found, nil
 }
 
-func (m *Manager) isoLock(name string) *isoState {
+func (m *Manager) isoLock(id string) *isoState {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	st, ok := m.isos[name]
+	st, ok := m.isos[id]
 	if !ok {
 		st = &isoState{}
-		m.isos[name] = st
+		m.isos[id] = st
 	}
 	return st
 }
 
+// isolationNamed is the isolation people call name. Every request that
+// names an isolation comes in through it; past it, an isolation is its ID.
+func (m *Manager) isolationNamed(name string) (store.Isolation, error) {
+	iso, err := m.store.IsolationNamed(name)
+	if err != nil {
+		return iso, fmt.Errorf("isolation %s: %w", name, err)
+	}
+	return iso, nil
+}
+
+// isoName is what the isolation with that ID is called now, for what is
+// said to people; the ID itself once it is gone.
+func (m *Manager) isoName(id string) string {
+	if iso, err := m.store.Isolation(id); err == nil {
+		return iso.Name
+	}
+	return id
+}
+
+// isoNames is isoName for a list, sorted.
+func (m *Manager) isoNames(ids []string) []string {
+	out := make([]string, 0, len(ids))
+	for _, id := range ids {
+		out = append(out, m.isoName(id))
+	}
+	sort.Strings(out)
+	return out
+}
+
 // isolationEnv is what an agent process starts with: the proxies'
 // addresses and workspace tokens, then whatever the user set, which wins.
-func (m *Manager) isolationEnv(name string) []string {
-	env, _ := m.launchEnv(name)
+func (m *Manager) isolationEnv(id string) []string {
+	env, _ := m.launchEnv(id)
 	return env
 }
 
 // launchEnv is what an agent process in the isolation starts with: the
 // proxies' environment, then its accounts', then the user's (which wins),
 // and the proxies' MCP servers.
-func (m *Manager) launchEnv(name string) ([]string, []proxy.MCPServer) {
-	iso, err := m.store.Isolation(name)
+func (m *Manager) launchEnv(id string) ([]string, []proxy.MCPServer) {
+	iso, err := m.store.Isolation(id)
 	if err != nil {
 		return nil, nil
 	}
-	ws := m.serviceWorkspace(name)
+	ws := m.serviceWorkspace(id)
 	m.mu.Lock()
-	m.lastEnv[name] = ws.signature()
+	m.lastEnv[id] = ws.signature()
 	m.mu.Unlock()
 	keys := make([]string, 0, len(iso.Env))
 	for k := range iso.Env {
 		keys = append(keys, k)
 	}
 	sort.Strings(keys)
-	env := append(append([]string(nil), ws.env...), m.accountEnv(name)...)
+	env := append(append([]string(nil), ws.env...), m.accountEnv(id)...)
 	for _, k := range keys {
 		env = append(env, k+"="+iso.Env[k])
 	}
@@ -241,19 +270,19 @@ func (m *Manager) launchEnv(name string) ([]string, []proxy.MCPServer) {
 // ensureIsolation brings an isolation's container up and waits for its shim.
 // A container that is gone is recreated from its volumes, so sessions and
 // workspaces outlive it.
-func (m *Manager) ensureIsolation(ctx context.Context, name string) (*shim.Client, error) {
-	st := m.isoLock(name)
+func (m *Manager) ensureIsolation(ctx context.Context, id string) (*shim.Client, error) {
+	st := m.isoLock(id)
 	st.mu.Lock()
 	defer st.mu.Unlock()
-	rec, err := m.store.Isolation(name)
+	rec, err := m.store.Isolation(id)
 	if err != nil {
-		return nil, fmt.Errorf("isolation %s: %w", name, err)
+		return nil, fmt.Errorf("isolation %s: %w", id, err)
 	}
 	client := &shim.Client{Dial: m.cli.ShimDialer(rec.Container)}
 	if time.Since(st.healthy) < 5*time.Second {
 		m.checkFence(ctx, rec)
 		m.syncLocked(ctx, rec)
-		m.ensureTunnel(name)
+		m.ensureTunnel(id)
 		return client, nil
 	}
 	ping := func() bool {
@@ -262,7 +291,7 @@ func (m *Manager) ensureIsolation(ctx context.Context, name string) (*shim.Clien
 		v, err := client.Ping(pctx)
 		if err == nil {
 			m.mu.Lock()
-			m.versions[name] = v
+			m.versions[id] = v
 			m.mu.Unlock()
 		}
 		return err == nil
@@ -273,13 +302,13 @@ func (m *Manager) ensureIsolation(ctx context.Context, name string) (*shim.Clien
 		st.healthy = time.Now()
 		m.checkFence(ctx, rec)
 		m.syncLocked(ctx, rec)
-		m.ensureTunnel(name)
+		m.ensureTunnel(id)
 		return client, nil
 	}
 	if ping() {
 		return up()
 	}
-	m.markFenceStale(name)
+	m.markFenceStale(id)
 
 	state, err := m.cli.State(ctx, rec.Container)
 	if err != nil {
@@ -289,12 +318,12 @@ func (m *Manager) ensureIsolation(ctx context.Context, name string) (*shim.Clien
 	case "running":
 		// Up but the shim is not answering yet; wait below.
 	case "stopped":
-		m.log.Printf("isolation %s: starting stopped container", name)
+		m.log.Printf("isolation %s: starting stopped container", rec.Name)
 		if err := m.cli.Start(ctx, rec.Container); err != nil {
 			return nil, err
 		}
 	case "missing":
-		m.log.Printf("isolation %s: container is gone; recreating it from its volumes", name)
+		m.log.Printf("isolation %s: container is gone; recreating it from its volumes", rec.Name)
 		if !m.cli.ImageExists(ctx, rec.Image) {
 			image, err := m.cli.EnsureImage(ctx, nil)
 			if err != nil {
@@ -303,11 +332,11 @@ func (m *Manager) ensureIsolation(ctx context.Context, name string) (*shim.Clien
 			rec.Image = image
 			m.store.PutIsolation(rec)
 		}
-		if err := m.cli.Create(ctx, rec.BaseName(), rec.Image, rec.CPUs, rec.Memory, rec.Network); err != nil {
+		if err := m.cli.Create(ctx, rec.ID, rec.Image, rec.CPUs, rec.Memory, rec.Network); err != nil {
 			return nil, err
 		}
 	default:
-		return nil, fmt.Errorf("isolation %s is %s", name, state)
+		return nil, fmt.Errorf("isolation %s is %s", rec.Name, state)
 	}
 
 	deadline := time.Now().Add(60 * time.Second)
@@ -321,7 +350,7 @@ func (m *Manager) ensureIsolation(ctx context.Context, name string) (*shim.Clien
 		case <-time.After(500 * time.Millisecond):
 		}
 	}
-	return nil, fmt.Errorf("isolation %s: shim did not answer within 60s", name)
+	return nil, fmt.Errorf("isolation %s: shim did not answer within 60s", rec.Name)
 }
 
 func (m *Manager) Isolations(ctx context.Context) ([]api.Isolation, error) {
@@ -337,9 +366,9 @@ func (m *Manager) Isolations(ctx context.Context) ([]api.Isolation, error) {
 		}
 		sort.Strings(v.EnvKeys)
 		v.State, _ = m.cli.State(ctx, iso.Container)
-		v.Proxies = m.tunnelStatus(iso.Name)
-		v.Accounts = m.accountsOf(iso.Name)
-		_, v.FenceState = m.fenceOK(iso.Name)
+		v.Proxies = m.tunnelStatus(iso.ID)
+		v.Accounts = m.accountsOf(iso.ID)
+		_, v.FenceState = m.fenceOK(iso.ID)
 		if iso.Fence == "off" {
 			v.FenceState = "off"
 		}
@@ -361,25 +390,32 @@ func (m *Manager) Isolation(ctx context.Context, name string) (api.Isolation, er
 	return api.Isolation{}, fmt.Errorf("isolation %s: %w", name, store.ErrNotFound)
 }
 
+// newIsolationID is an ID no isolation has and no container is named after.
+func (m *Manager) newIsolationID(ctx context.Context) (string, error) {
+	for {
+		id := newID()
+		if _, err := m.store.Isolation(id); err == nil {
+			continue
+		}
+		state, err := m.cli.State(ctx, isolation.ContainerName(id))
+		if err != nil {
+			return "", err
+		}
+		if state == "missing" {
+			return id, nil
+		}
+	}
+}
+
 func (m *Manager) CreateIsolation(ctx context.Context, req api.CreateIsolation, progress io.Writer) (store.Isolation, error) {
 	if !validIsolationName.MatchString(req.Name) {
-		return store.Isolation{}, fmt.Errorf("isolation name %q: use lowercase letters, digits and dashes", req.Name)
+		return store.Isolation{}, badRequest(fmt.Errorf("isolation name %q: use lowercase letters, digits and dashes", req.Name))
 	}
-	if _, err := m.store.Isolation(req.Name); err == nil {
-		return store.Isolation{}, fmt.Errorf("isolation %s already exists", req.Name)
+	if _, err := m.store.IsolationNamed(req.Name); err == nil {
+		return store.Isolation{}, fmt.Errorf("isolation %s %w", req.Name, store.ErrExists)
 	}
 	if err := checkSize(req.CPUs, req.Memory); err != nil {
 		return store.Isolation{}, err
-	}
-	base, err := m.freeBase(req.Name)
-	if err != nil {
-		return store.Isolation{}, err
-	}
-	container := isolation.ContainerName(base)
-	if state, err := m.cli.State(ctx, container); err != nil {
-		return store.Isolation{}, err
-	} else if state != "missing" {
-		return store.Isolation{}, fmt.Errorf("a container named %s already exists and is not gero's to adopt", container)
 	}
 	fence := req.Fence
 	switch fence {
@@ -387,24 +423,25 @@ func (m *Manager) CreateIsolation(ctx context.Context, req api.CreateIsolation, 
 		fence = "on"
 	case "on", "off":
 	default:
-		return store.Isolation{}, fmt.Errorf("fence must be on or off, not %q", fence)
+		return store.Isolation{}, badRequest(fmt.Errorf("fence must be on or off, not %q", fence))
+	}
+	id, err := m.newIsolationID(ctx)
+	if err != nil {
+		return store.Isolation{}, err
 	}
 	image, err := m.cli.EnsureImage(ctx, progress)
 	if err != nil {
 		return store.Isolation{}, err
 	}
-	iso := store.Isolation{Name: req.Name, Container: container, Image: image, CPUs: req.CPUs, Memory: req.Memory,
-		Network: isolation.NetworkName(base), Fence: fence, Env: map[string]string{}, CreatedAt: time.Now().UTC()}
-	if base != req.Name {
-		iso.Base = base
-	}
-	if err := m.cli.Create(ctx, base, image, req.CPUs, req.Memory, iso.Network); err != nil {
+	iso := store.Isolation{ID: id, Name: req.Name, Container: isolation.ContainerName(id), Image: image, CPUs: req.CPUs,
+		Memory: req.Memory, Network: isolation.NetworkName(id), Fence: fence, Env: map[string]string{}, CreatedAt: time.Now().UTC()}
+	if err := m.cli.Create(ctx, id, image, req.CPUs, req.Memory, iso.Network); err != nil {
 		return store.Isolation{}, err
 	}
 	if err := m.store.PutIsolation(iso); err != nil {
 		return store.Isolation{}, err
 	}
-	if _, err := m.ensureIsolation(ctx, req.Name); err != nil {
+	if _, err := m.ensureIsolation(ctx, id); err != nil {
 		return iso, err
 	}
 	return iso, nil
@@ -415,7 +452,7 @@ func (m *Manager) CreateIsolation(ctx context.Context, req api.CreateIsolation, 
 // workspace, are kept. Running agents end ("lost" if they do not exit in
 // time) and start again on their next message.
 func (m *Manager) UpgradeIsolation(ctx context.Context, name string, progress io.Writer) (store.Isolation, error) {
-	iso, err := m.store.Isolation(name)
+	iso, err := m.isolationNamed(name)
 	if err != nil {
 		return iso, err
 	}
@@ -423,7 +460,7 @@ func (m *Manager) UpgradeIsolation(ctx context.Context, name string, progress io
 	if err != nil {
 		return iso, err
 	}
-	st := m.isoLock(name)
+	st := m.isoLock(iso.ID)
 	st.mu.Lock()
 	err = m.cli.Remove(ctx, iso.Container)
 	if err == nil {
@@ -431,20 +468,20 @@ func (m *Manager) UpgradeIsolation(ctx context.Context, name string, progress io
 		// An isolation from before the fence leaves the shared default
 		// network for one of its own.
 		if iso.Network == "" {
-			iso.Network = isolation.NetworkName(iso.BaseName())
+			iso.Network = isolation.NetworkName(iso.ID)
 		}
 		err = m.store.PutIsolation(iso)
 	}
 	if err == nil {
-		err = m.cli.Create(ctx, iso.BaseName(), image, iso.CPUs, iso.Memory, iso.Network)
+		err = m.cli.Create(ctx, iso.ID, image, iso.CPUs, iso.Memory, iso.Network)
 	}
 	st.healthy = time.Time{}
 	st.mu.Unlock()
-	m.markFenceStale(name)
+	m.markFenceStale(iso.ID)
 	if err != nil {
 		return iso, err
 	}
-	_, err = m.ensureIsolation(ctx, name)
+	_, err = m.ensureIsolation(ctx, iso.ID)
 	return iso, err
 }
 
@@ -466,30 +503,14 @@ func checkSize(cpus int, memory string) error {
 	return nil
 }
 
-// freeBase is what a new isolation's container, network and volumes are
-// named after: its name, unless a renamed isolation's still are.
-func (m *Manager) freeBase(name string) (string, error) {
-	isos, err := m.store.Isolations()
-	if err != nil {
-		return "", err
-	}
-	taken := map[string]bool{}
-	for _, iso := range isos {
-		taken[iso.BaseName()] = true
-	}
-	base := name
-	for taken[base] {
-		base = name + "-" + newAgentID()[:4]
-	}
-	return base, nil
-}
-
 // UpdateIsolation renames an isolation and resizes its VM, as req asks (see
-// api.UpdateIsolation). Everything is checked before anything changes.
+// api.UpdateIsolation). Everything is checked before anything changes. A
+// rename is the name alone: nothing else knows an isolation by it, so its
+// agents, proxies and container carry on as they were.
 func (m *Manager) UpdateIsolation(ctx context.Context, name string, req api.UpdateIsolation) (api.Isolation, error) {
-	iso, err := m.store.Isolation(name)
+	iso, err := m.isolationNamed(name)
 	if err != nil {
-		return api.Isolation{}, fmt.Errorf("isolation %s: %w", name, err)
+		return api.Isolation{}, err
 	}
 	cpus, memory := iso.CPUs, iso.Memory
 	if req.CPUs != nil {
@@ -501,136 +522,22 @@ func (m *Manager) UpdateIsolation(ctx context.Context, name string, req api.Upda
 	if err := checkSize(cpus, memory); err != nil {
 		return api.Isolation{}, err
 	}
-	to := strings.TrimSpace(req.Name)
-	if to != "" && to != name {
+	if to := strings.TrimSpace(req.Name); to != "" && to != iso.Name {
 		if !validIsolationName.MatchString(to) {
 			return api.Isolation{}, badRequest(fmt.Errorf("isolation name %q: use lowercase letters, digits and dashes", to))
 		}
-		if _, err := m.store.Isolation(to); err == nil {
-			return api.Isolation{}, fmt.Errorf("isolation %s %w", to, store.ErrExists)
-		}
-		if err := m.renameIsolation(name, to); err != nil {
+		if err := m.store.RenameIsolation(iso.ID, to); err != nil {
 			return api.Isolation{}, err
 		}
+		m.log.Printf("isolation %s: renamed %s", iso.Name, to)
 		name = to
 	}
 	if cpus != iso.CPUs || memory != iso.Memory {
-		if err := m.resizeIsolation(ctx, name, cpus, memory); err != nil {
+		if err := m.resizeIsolation(ctx, iso.ID, cpus, memory); err != nil {
 			return api.Isolation{}, err
 		}
 	}
 	return m.Isolation(ctx, name)
-}
-
-// renameIsolation changes what gero calls an isolation. Nothing in the VM
-// moves: its container, network and volumes keep their names (Base), and
-// its agents keep running. Their runtimes, which carry the old name, are
-// replaced by ones under the new name that attach to the same processes the
-// way a restarted daemon's do. The proxies' tunnel is reopened under the new
-// name too: its instances answer for the old one.
-func (m *Manager) renameIsolation(from, to string) error {
-	if tool := m.cliLoginRunning(from); tool != "" {
-		return httpError{http.StatusConflict, fmt.Errorf("%s is logging in inside %s; finish or cancel the login first", tool, from)}
-	}
-	// Runtimes stop before the isolation's lock is taken, since one may be
-	// waiting for it, and each is gone before its successor reads the
-	// store: two would commit the same records.
-	detached := m.detachRuntimes(from)
-	m.mu.Lock()
-	_, tunneled := m.tunnels[from]
-	m.mu.Unlock()
-	m.stopTunnel(from)
-
-	st := m.isoLock(from)
-	st.mu.Lock()
-	err := m.store.RenameIsolation(from, to)
-	if err == nil {
-		m.mu.Lock()
-		m.isos[to] = st
-		delete(m.isos, from)
-		// The fence is the VM's network's and holds as it did. A loop
-		// still measuring under the old name ends by itself.
-		if fs, ok := m.fences[from]; ok {
-			m.fences[to] = &fenceState{ok: fs.ok, why: fs.why, tried: fs.tried, stale: fs.stale, off: fs.off, loaded: fs.loaded}
-			delete(m.fences, from)
-		}
-		for _, byIso := range []map[string]string{m.synced, m.versions, m.lastEnv} {
-			if v, ok := byIso[from]; ok {
-				byIso[to] = v
-				delete(byIso, from)
-			}
-		}
-		for k := range m.cliLogins {
-			if strings.HasPrefix(k, from+"/") {
-				delete(m.cliLogins, k)
-			}
-		}
-		m.mu.Unlock()
-		m.log.Printf("isolation %s: renamed %s", from, to)
-	}
-	st.mu.Unlock()
-
-	name := to
-	if err != nil {
-		name = from
-	}
-	if tunneled {
-		m.ensureTunnel(name)
-	}
-	// An agent created meanwhile came up under the old name.
-	detached = append(detached, m.detachRuntimes(from)...)
-	for _, id := range detached {
-		a, aerr := m.store.Agent(id)
-		if aerr == nil {
-			_, aerr = m.ensureRuntime(a)
-		}
-		if aerr != nil {
-			m.log.Printf("agent %s: %v", id, aerr)
-		}
-	}
-	return err
-}
-
-// detachRuntimes stops the runtimes of iso's agents and waits for each to
-// end, leaving the agents' processes running. It returns their IDs.
-func (m *Manager) detachRuntimes(iso string) []string {
-	m.mu.Lock()
-	var rs []*runtime
-	for id, r := range m.runtimes {
-		if r.agent.Isolation == iso {
-			rs = append(rs, r)
-			delete(m.runtimes, id)
-		}
-	}
-	m.mu.Unlock()
-	var ids []string
-	for _, r := range rs {
-		r.cancel()
-		select {
-		case <-r.done:
-		case <-m.ctx.Done():
-		}
-		ids = append(ids, r.agent.ID)
-	}
-	return ids
-}
-
-// cliLoginRunning is the agent CLI logging in inside iso, if one is.
-func (m *Manager) cliLoginRunning(iso string) driver.Kind {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	for k, l := range m.cliLogins {
-		if !strings.HasPrefix(k, iso+"/") {
-			continue
-		}
-		l.mu.Lock()
-		running, tool := l.ended.IsZero(), l.view.Tool
-		l.mu.Unlock()
-		if running {
-			return tool
-		}
-	}
-	return ""
 }
 
 // resizeIsolation gives an isolation's VM new CPUs and memory. container
@@ -638,12 +545,12 @@ func (m *Manager) cliLoginRunning(iso string) driver.Kind {
 // way an upgrade replaces it: the volumes, and every session and workspace,
 // are kept; running agents end and start again on their next message. A
 // container that will not start at the new size is put back at the old.
-func (m *Manager) resizeIsolation(ctx context.Context, name string, cpus int, memory string) error {
-	iso, err := m.store.Isolation(name)
+func (m *Manager) resizeIsolation(ctx context.Context, id string, cpus int, memory string) error {
+	iso, err := m.store.Isolation(id)
 	if err != nil {
 		return err
 	}
-	st := m.isoLock(name)
+	st := m.isoLock(id)
 	st.mu.Lock()
 	if !m.cli.ImageExists(ctx, iso.Image) {
 		image, err := m.cli.EnsureImage(ctx, nil)
@@ -657,11 +564,11 @@ func (m *Manager) resizeIsolation(ctx context.Context, name string, cpus int, me
 	iso.CPUs, iso.Memory = cpus, memory
 	err = m.cli.Remove(ctx, iso.Container)
 	if err == nil {
-		if err = m.cli.Create(ctx, iso.BaseName(), iso.Image, cpus, memory, iso.Network); err == nil {
+		if err = m.cli.Create(ctx, id, iso.Image, cpus, memory, iso.Network); err == nil {
 			err = m.store.PutIsolation(iso)
 		} else {
 			m.cli.Remove(ctx, iso.Container)
-			if berr := m.cli.Create(ctx, was.BaseName(), was.Image, was.CPUs, was.Memory, was.Network); berr != nil {
+			if berr := m.cli.Create(ctx, id, was.Image, was.CPUs, was.Memory, was.Network); berr != nil {
 				err = fmt.Errorf("%w; putting it back at its old size failed too: %v", err, berr)
 			} else {
 				m.store.PutIsolation(was)
@@ -671,22 +578,25 @@ func (m *Manager) resizeIsolation(ctx context.Context, name string, cpus int, me
 	}
 	st.healthy = time.Time{}
 	st.mu.Unlock()
-	m.markFenceStale(name)
+	m.markFenceStale(id)
 	if err != nil {
 		return err
 	}
-	m.log.Printf("isolation %s: resized (cpus %d, memory %q; 0 and \"\" are container's defaults)", name, cpus, memory)
-	_, err = m.ensureIsolation(ctx, name)
+	m.log.Printf("isolation %s: resized (cpus %d, memory %q; 0 and \"\" are container's defaults)", iso.Name, cpus, memory)
+	_, err = m.ensureIsolation(ctx, id)
 	return err
 }
 
+// DeleteIsolation removes an isolation and its container. Its volumes, and
+// with them its sessions and workspaces, stay unless purge; nothing reuses
+// them, since a new isolation gets an ID of its own.
 func (m *Manager) DeleteIsolation(ctx context.Context, name string, purge bool) error {
-	iso, err := m.store.Isolation(name)
+	iso, err := m.isolationNamed(name)
 	if err != nil {
 		return err
 	}
-	if err := m.store.DeleteIsolation(name); err != nil {
-		return err
+	if err := m.store.DeleteIsolation(iso.ID); err != nil {
+		return fmt.Errorf("isolation %s: %w; archive and delete them first (`gero agent rm`)", name, err)
 	}
 	if err := m.cli.Remove(ctx, iso.Container); err != nil {
 		return err
@@ -696,18 +606,18 @@ func (m *Manager) DeleteIsolation(ctx context.Context, name string, purge bool) 
 			return err
 		}
 	}
-	m.stopTunnel(name)
+	m.stopTunnel(iso.ID)
 	m.mu.Lock()
-	delete(m.fences, name)
-	delete(m.synced, name)
-	delete(m.versions, name)
-	delete(m.lastEnv, name)
+	delete(m.fences, iso.ID)
+	delete(m.synced, iso.ID)
+	delete(m.versions, iso.ID)
+	delete(m.lastEnv, iso.ID)
 	m.mu.Unlock()
 	if nets, err := m.fenceNetworks(ctx); err == nil && m.fence != nil {
 		m.fence.Apply(ctx, nets)
 	}
 	if purge {
-		for _, v := range []string{isolation.HomeVolume(iso.BaseName()), isolation.StateVolume(iso.BaseName())} {
+		for _, v := range []string{isolation.HomeVolume(iso.ID), isolation.StateVolume(iso.ID)} {
 			if err := m.cli.VolumeRemove(ctx, v); err != nil {
 				return err
 			}
@@ -717,7 +627,7 @@ func (m *Manager) DeleteIsolation(ctx context.Context, name string, purge bool) 
 }
 
 func (m *Manager) SetEnv(name string, set api.SetEnv) error {
-	iso, err := m.store.Isolation(name)
+	iso, err := m.isolationNamed(name)
 	if err != nil {
 		return err
 	}
@@ -739,7 +649,7 @@ func (m *Manager) SetEnv(name string, set api.SetEnv) error {
 	m.mu.Lock()
 	var affected []*runtime
 	for _, r := range m.runtimes {
-		if r.agent.Isolation == name {
+		if r.agent.IsolationID == iso.ID {
 			affected = append(affected, r)
 		}
 	}
@@ -750,7 +660,8 @@ func (m *Manager) SetEnv(name string, set api.SetEnv) error {
 	return nil
 }
 
-func newAgentID() string {
+// newID is an agent's or an isolation's ID.
+func newID() string {
 	var b [4]byte
 	rand.Read(b[:])
 	return hex.EncodeToString(b[:])
@@ -774,19 +685,19 @@ func (m *Manager) CreateAgent(ctx context.Context, req api.CreateAgent) (store.A
 	if err := req.Options.Check(); err != nil {
 		return store.Agent{}, badRequest(err)
 	}
-	iso, err := m.store.Isolation(req.Isolation)
+	iso, err := m.isolationNamed(req.Isolation)
 	if err != nil {
-		return store.Agent{}, fmt.Errorf("isolation %s: %w", req.Isolation, err)
+		return store.Agent{}, err
 	}
-	id := newAgentID()
+	id := newID()
 	drv, err := driver.New(req.Kind, id, "", req.Options)
 	if err != nil {
 		return store.Agent{}, err
 	}
-	if _, err := m.ensureIsolation(ctx, iso.Name); err != nil {
+	if _, err := m.ensureIsolation(ctx, iso.ID); err != nil {
 		return store.Agent{}, err
 	}
-	if ok, why := m.fenceOK(iso.Name); !ok {
+	if ok, why := m.fenceOK(iso.ID); !ok {
 		return store.Agent{}, fmt.Errorf("isolation %s has no verified network fence: %s", iso.Name, why)
 	}
 	workdir := m.workRoot + "/" + id
@@ -801,7 +712,7 @@ func (m *Manager) CreateAgent(ctx context.Context, req api.CreateAgent) (store.A
 	if name == "" {
 		name = nameFrom(req.Prompt)
 	}
-	a := store.Agent{ID: id, Name: name, Kind: req.Kind, Isolation: iso.Name, Workdir: workdir, Repo: req.Repo,
+	a := store.Agent{ID: id, Name: name, Kind: req.Kind, IsolationID: iso.ID, Workdir: workdir, Repo: req.Repo,
 		Options: req.Options, SessionID: drv.State().SessionID, CreatedAt: time.Now().UTC()}
 	if err := m.store.CreateAgent(a); err != nil {
 		return store.Agent{}, err
@@ -831,16 +742,16 @@ func (m *Manager) view(a store.Agent) api.Agent {
 	r, ok := m.runtimes[a.ID]
 	m.mu.Unlock()
 	if !ok {
-		return api.Agent{Agent: a}
+		return api.Agent{Agent: a, Isolation: m.isoName(a.IsolationID)}
 	}
 	live, st, problem := r.view()
-	return api.Agent{Agent: live, State: st, Problem: problem}
+	return api.Agent{Agent: live, Isolation: m.isoName(live.IsolationID), State: st, Problem: problem}
 }
 
 func (m *Manager) Agent(idOrPrefix string) (api.Agent, error) {
 	if r, err := m.runtime(idOrPrefix); err == nil {
 		live, st, problem := r.view()
-		return api.Agent{Agent: live, State: st, Problem: problem}, nil
+		return api.Agent{Agent: live, Isolation: m.isoName(live.IsolationID), State: st, Problem: problem}, nil
 	}
 	all, err := m.store.Agents()
 	if err != nil {
@@ -929,11 +840,11 @@ func (m *Manager) DeleteAgent(ctx context.Context, idOrPrefix string, purge bool
 	if a.ArchivedAt == nil || live {
 		return httpError{http.StatusConflict, fmt.Errorf("agent %s is live; archive it first (`gero agent archive %s`)", a.ID, a.ID)}
 	}
-	iso, err := m.store.Isolation(a.Isolation)
+	iso, err := m.store.Isolation(a.IsolationID)
 	if err != nil {
 		return err
 	}
-	client, err := m.ensureIsolation(ctx, iso.Name)
+	client, err := m.ensureIsolation(ctx, iso.ID)
 	if err != nil {
 		return err
 	}

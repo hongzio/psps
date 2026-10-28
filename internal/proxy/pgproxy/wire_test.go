@@ -102,7 +102,7 @@ func TestMessageFramingRoundTrips(t *testing.T) {
 
 func policyView(envs map[string]Env) proxy.View {
 	v := proxy.View{Isolation: "dev", Enabled: true, Envs: map[string]json.RawMessage{}, Tokens: map[string]string{"": "workspace-token"}}
-	v.Exposure = store.Exposure{Isolation: "dev", Service: "pg", Default: "dev"}
+	v.Exposure = store.Exposure{IsolationID: "dev", Service: "pg", Default: "dev"}
 	for n, e := range envs {
 		b, _ := json.Marshal(e)
 		v.Envs[n] = b
@@ -340,7 +340,7 @@ func newHarness(t *testing.T, up *fakeUpstream) *harness {
 	}
 	h := &harness{t: t, up: up}
 	h.view = policyView(map[string]Env{"dev": {Host: "127.0.0.1", Port: up.port(), User: "real_user", Databases: []string{"app"}, SSLMode: "disable"}})
-	in := Service{}.New(proxy.Host{Isolation: "dev", View: h.getView, Creds: cs, Log: log.New(io.Discard, "", 0)})
+	in := Service{}.New(proxy.Host{Name: func() string { return "dev" }, View: h.getView, Creds: cs, Log: log.New(io.Discard, "", 0)})
 	l, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)
