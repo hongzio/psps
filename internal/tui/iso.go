@@ -12,9 +12,8 @@ import (
 	"github.com/hongzio/gero/internal/api"
 )
 
-// The isolations page: create isolations, set their environment (where
-// credentials such as CLAUDE_CODE_OAUTH_TOKEN go), log agent CLIs in, and
-// upgrade or delete them.
+// The isolations page: create isolations, set their environment, log the
+// agent CLIs in (the accounts page), and upgrade or delete them.
 
 type isoMode int
 
@@ -22,20 +21,18 @@ const (
 	isoList isoMode = iota
 	isoNew
 	isoEnv
-	isoLogin
 	isoVerify
 )
 
-var loginTools = []string{"claude", "codex"}
-
 type isoPage struct {
-	sel   int
-	mode  isoMode
-	form  *form
-	login int
-	busy  string
-	// expose, while open, is the selected isolation's services.
+	sel  int
+	mode isoMode
+	form *form
+	busy string
+	// expose, while open, is the selected isolation's services; clis its
+	// accounts page.
 	expose *exposePage
+	clis   *clisPage
 	// report is the last verify, shown until a key is pressed.
 	report *api.Verify
 }
@@ -67,6 +64,9 @@ func (m *Model) handleIsoKey(msg tea.KeyMsg) tea.Cmd {
 	}
 	if p.expose != nil {
 		return m.handleExposeKey(msg)
+	}
+	if p.clis != nil {
+		return m.handleCLIsKey(msg)
 	}
 	if p.mode == isoVerify {
 		p.mode, p.report = isoList, nil
@@ -100,7 +100,7 @@ func (m *Model) handleIsoKey(msg tea.KeyMsg) tea.Cmd {
 		p.mode, p.form = isoEnv, &form{fields: []*field{key, val}}
 		key.focus(true)
 	case ok && k.Is(msg, "iso_login"):
-		p.mode, p.login = isoLogin, 0
+		return m.openCLIs(iso.Name)
 	case ok && k.Is(msg, "iso_services"):
 		p.expose = &exposePage{iso: iso.Name}
 		return m.fetchExposures(iso.Name)
@@ -143,24 +143,6 @@ func (m *Model) handleIsoFormKey(msg tea.KeyMsg) tea.Cmd {
 	p, k := m.isoPage, m.keys
 	iso, _ := p.current(m.isolations)
 	switch p.mode {
-	case isoLogin:
-		switch {
-		case k.Is(msg, "prev_option"), k.Is(msg, "up"):
-			p.login = (p.login + len(loginTools) - 1) % len(loginTools)
-		case k.Is(msg, "next_option"), k.Is(msg, "down"):
-			p.login = (p.login + 1) % len(loginTools)
-		case k.Is(msg, "submit"), k.Is(msg, "open"):
-			p.mode = isoList
-			tool := loginTools[p.login]
-			if m.login == nil {
-				m.setFlash("login is not available here; use `gero iso login`", true)
-				return nil
-			}
-			return tea.ExecProcess(m.login(iso.Container, tool), func(err error) tea.Msg {
-				return doneMsg{flash: tool + " login finished", err: err, refresh: true}
-			})
-		}
-		return nil
 	}
 
 	if !(k.Is(msg, "submit") || (msg.String() == "enter" && p.form.cur == len(p.form.fields)-1)) {
@@ -253,21 +235,9 @@ func (m *Model) renderIsolations(width int) string {
 	case isoVerify:
 		b.WriteString(m.renderVerify(*p.report, width))
 		b.WriteString(th.dim.Render("  any key closes · `gero iso verify "+p.report.Isolation+" --json` for the full record") + "\n")
-	case isoLogin:
-		iso, _ := p.current(m.isolations)
-		b.WriteString(th.title.Render("Log in inside "+iso.Name) + "  ")
-		for i, t := range loginTools {
-			if i == p.login {
-				b.WriteString(th.user.Render("‹ "+t+" ›") + " ")
-			} else {
-				b.WriteString("  " + t + "  ")
-			}
-		}
-		b.WriteString("\n" + th.dim.Render("  claude: browser login · codex: device code. Claude can also use a token from `claude setup-token` set as CLAUDE_CODE_OAUTH_TOKEN") + "\n")
-		b.WriteString(th.dim.Render(fmt.Sprintf("  %s start · %s cancel", k.Label("open"), k.Label("back"))) + "\n")
 	default:
 		hints := []string{
-			k.Label("iso_new") + " new", k.Label("iso_env") + " env", k.Label("iso_login") + " login", k.Label("iso_services") + " services",
+			k.Label("iso_new") + " new", k.Label("iso_env") + " env", k.Label("iso_login") + " accounts", k.Label("iso_services") + " services",
 			k.Label("iso_verify") + " verify", k.Label("iso_upgrade") + " upgrade", k.Label("iso_delete") + " delete", k.Label("back") + " back",
 		}
 		b.WriteString(th.dim.Render("  "+strings.Join(hints, " · ")) + "\n")

@@ -60,6 +60,63 @@ func (m *Manager) Handler() http.Handler {
 		reply(w, nil, m.SetEnv(r.PathValue("name"), req))
 	})
 
+	mux.HandleFunc("GET /v1/accounts", func(w http.ResponseWriter, r *http.Request) {
+		v, err := m.Accounts()
+		reply(w, v, err)
+	})
+	mux.HandleFunc("GET /v1/account-kinds", func(w http.ResponseWriter, r *http.Request) {
+		reply(w, api.AccountKinds, nil)
+	})
+	putAccount := func(create bool) http.HandlerFunc {
+		return func(w http.ResponseWriter, r *http.Request) {
+			var req api.PutAccount
+			if !decode(w, r, &req) {
+				return
+			}
+			v, err := m.PutAccount(r.PathValue("name"), req, create)
+			reply(w, v, err)
+		}
+	}
+	mux.HandleFunc("POST /v1/accounts/{name}", putAccount(true))
+	mux.HandleFunc("PATCH /v1/accounts/{name}", putAccount(false))
+	mux.HandleFunc("DELETE /v1/accounts/{name}", func(w http.ResponseWriter, r *http.Request) {
+		reply(w, nil, m.DeleteAccount(r.PathValue("name"), r.URL.Query().Get("force") == "1"))
+	})
+	mux.HandleFunc("PUT /v1/isolations/{name}/clis/{tool}/account", func(w http.ResponseWriter, r *http.Request) {
+		var req api.UseAccount
+		if !decode(w, r, &req) {
+			return
+		}
+		reply(w, nil, m.UseAccount(r.PathValue("name"), r.PathValue("tool"), req.Account))
+	})
+
+	mux.HandleFunc("GET /v1/isolations/{name}/clis", func(w http.ResponseWriter, r *http.Request) {
+		v, err := m.CLIs(r.Context(), r.PathValue("name"))
+		reply(w, v, err)
+	})
+	mux.HandleFunc("POST /v1/isolations/{name}/clis/{tool}/login", func(w http.ResponseWriter, r *http.Request) {
+		v, err := m.StartCLILogin(r.Context(), r.PathValue("name"), r.PathValue("tool"))
+		reply(w, v, err)
+	})
+	mux.HandleFunc("GET /v1/isolations/{name}/clis/{tool}/login", func(w http.ResponseWriter, r *http.Request) {
+		v, err := m.CLILogin(r.PathValue("name"), r.PathValue("tool"))
+		reply(w, v, err)
+	})
+	mux.HandleFunc("POST /v1/isolations/{name}/clis/{tool}/login/code", func(w http.ResponseWriter, r *http.Request) {
+		var req api.CLICode
+		if !decode(w, r, &req) {
+			return
+		}
+		v, err := m.SendCLICode(r.Context(), r.PathValue("name"), r.PathValue("tool"), req.Code)
+		reply(w, v, err)
+	})
+	mux.HandleFunc("DELETE /v1/isolations/{name}/clis/{tool}/login", func(w http.ResponseWriter, r *http.Request) {
+		reply(w, nil, m.CancelCLILogin(r.PathValue("name"), r.PathValue("tool")))
+	})
+	mux.HandleFunc("POST /v1/isolations/{name}/clis/{tool}/logout", func(w http.ResponseWriter, r *http.Request) {
+		reply(w, nil, m.CLILogout(r.Context(), r.PathValue("name"), r.PathValue("tool")))
+	})
+
 	mux.HandleFunc("GET /v1/services", func(w http.ResponseWriter, r *http.Request) {
 		reply(w, m.Services(), nil)
 	})

@@ -39,6 +39,13 @@ type fakeBackend struct {
 	redirects []string
 	finished  []string
 	exposed   []string
+
+	// The agent CLIs: claude not logged in, codex logged in; every call
+	// to them, in order.
+	clis     []api.CLI
+	cliLogin api.CLILogin
+	cliCalls []string
+	accounts []api.Account
 }
 
 func (f *fakeBackend) Agents(context.Context) ([]api.Agent, error) {
@@ -94,7 +101,18 @@ func (f *fakeBackend) UpgradeIsolation(context.Context, string) (api.Isolation, 
 	return api.Isolation{}, nil
 }
 func (f *fakeBackend) DeleteIsolation(context.Context, string, bool) error { return nil }
-func (f *fakeBackend) SetEnv(context.Context, string, api.SetEnv) error    { return nil }
+func (f *fakeBackend) SetEnv(_ context.Context, iso string, set api.SetEnv) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	for k, v := range set {
+		if v == nil {
+			f.cliCalls = append(f.cliCalls, "env "+iso+" "+k+" removed")
+		} else {
+			f.cliCalls = append(f.cliCalls, "env "+iso+" "+k+"="+*v)
+		}
+	}
+	return nil
+}
 func (f *fakeBackend) Verify(_ context.Context, name string) (api.Verify, error) {
 	return api.Verify{Isolation: name, Checks: []api.VerifyCheck{
 		{Check: "Mac unreachable at 192.168.1.5", OK: true, Severity: api.SevIsolation, Got: "blocked"},
@@ -169,6 +187,88 @@ func (f *fakeBackend) Unexpose(_ context.Context, iso, svc string) error {
 	return nil
 }
 
+func (f *fakeBackend) CLIs(_ context.Context, iso string) ([]api.CLI, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.clis == nil {
+		f.clis = []api.CLI{{Tool: driver.Claude, Version: "2.1.311"}, {Tool: driver.Codex, Version: "0.164.0", LoggedIn: true, Method: "ChatGPT"}}
+	}
+	return append([]api.CLI(nil), f.clis...), nil
+}
+func (f *fakeBackend) StartCLILogin(_ context.Context, iso, tool string) (api.CLILogin, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.cliCalls = append(f.cliCalls, "start "+iso+" "+tool)
+	f.cliLogin = api.CLILogin{Tool: driver.Kind(tool), State: api.CLILoginOpen, URL: "https://claude.com/cai/oauth/authorize?state=abc",
+		NeedsCode: true, Expires: time.Now().Add(15 * time.Minute)}
+	if tool == "codex" {
+		f.cliLogin.URL, f.cliLogin.Code, f.cliLogin.NeedsCode = "https://auth.openai.com/codex/device", "LK6M-R8WQK", false
+	}
+	return f.cliLogin, nil
+}
+func (f *fakeBackend) CLILogin(context.Context, string, string) (api.CLILogin, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.cliLogin, nil
+}
+func (f *fakeBackend) SendCLICode(_ context.Context, iso, tool, code string) (api.CLILogin, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.cliCalls = append(f.cliCalls, "code "+iso+" "+tool+" "+code)
+	f.cliLogin.State, f.cliLogin.Message, f.cliLogin.URL = api.CLILoginDone, "Login successful.", ""
+	f.clis[0].LoggedIn, f.clis[0].Method = true, "Claude subscription (max)"
+	return f.cliLogin, nil
+}
+func (f *fakeBackend) CancelCLILogin(_ context.Context, iso, tool string) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.cliCalls = append(f.cliCalls, "cancel "+iso+" "+tool)
+	return nil
+}
+func (f *fakeBackend) Accounts(context.Context) ([]api.Account, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return append([]api.Account(nil), f.accounts...), nil
+}
+func (f *fakeBackend) AddAccount(_ context.Context, name, kind, secret string) (api.Account, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.cliCalls = append(f.cliCalls, "add "+name+" "+kind+" "+secret)
+	k, _ := api.AccountKindNamed(kind)
+	a := api.Account{Account: store.Account{Name: name, Kind: kind}, Tool: k.Tool}
+	f.accounts = append(f.accounts, a)
+	return a, nil
+}
+func (f *fakeBackend) SetAccountSecret(_ context.Context, name, secret string) (api.Account, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.cliCalls = append(f.cliCalls, "secret "+name+" "+secret)
+	return api.Account{Account: store.Account{Name: name}}, nil
+}
+func (f *fakeBackend) DeleteAccount(_ context.Context, name string, force bool) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.cliCalls = append(f.cliCalls, fmt.Sprintf("rm %s force=%v", name, force))
+	return nil
+}
+func (f *fakeBackend) UseAccount(_ context.Context, iso, tool, account string) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.cliCalls = append(f.cliCalls, "use "+iso+" "+tool+" "+account)
+	for i := range f.clis {
+		if string(f.clis[i].Tool) == tool {
+			f.clis[i].Account = account
+		}
+	}
+	return nil
+}
+func (f *fakeBackend) CLILogout(_ context.Context, iso, tool string) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.cliCalls = append(f.cliCalls, "logout "+iso+" "+tool)
+	return nil
+}
+
 func patchString(p proxy.Patch) string {
 	keys := make([]string, 0, len(p.Set))
 	for k := range p.Set {
@@ -209,7 +309,7 @@ func newHarness(t *testing.T) *harness {
 			"bbbb": {{ID: 1, Agent: "bbbb", Kind: event.KindUser, Text: "hi second"}},
 		},
 	}
-	h := &harness{t: t, m: New(be, nil, defaultKeymap(), nil), be: be}
+	h := &harness{t: t, m: New(be, defaultKeymap(), nil), be: be}
 	h.send(tea.WindowSizeMsg{Width: 120, Height: 30})
 	h.send(agentsMsg{agents: be.agents})
 	h.send(isolationsMsg{isos: be.isos})

@@ -46,6 +46,7 @@ type Containers interface {
 	Probe(ctx context.Context, container string, targets []string) (isolation.ProbeResult, error)
 	DialTunnel(ctx context.Context, container string) (isolation.TunnelConn, error)
 	Sync(ctx context.Context, container string, req shimproto.SyncRequest) (shimproto.SyncResult, error)
+	StartAsAgent(ctx context.Context, container string, env []string, argv ...string) (isolation.Proc, error)
 }
 
 // Fence is the root helper that keeps isolation networks off the Mac and its
@@ -93,6 +94,7 @@ type Manager struct {
 	versions  map[string]string
 	lastEnv   map[string]string
 	logins    map[string]pendingLogin // browser logins in progress, by id
+	cliLogins map[string]*cliLogin    // agent CLI logins, by isolation/tool
 }
 
 // fenceState is whether an isolation's network fence was measured to hold.
@@ -209,8 +211,8 @@ func (m *Manager) isolationEnv(name string) []string {
 }
 
 // launchEnv is what an agent process in the isolation starts with: the
-// proxies' environment, then the user's (which wins), and the proxies' MCP
-// servers.
+// proxies' environment, then its accounts', then the user's (which wins),
+// and the proxies' MCP servers.
 func (m *Manager) launchEnv(name string) ([]string, []proxy.MCPServer) {
 	iso, err := m.store.Isolation(name)
 	if err != nil {
@@ -225,7 +227,7 @@ func (m *Manager) launchEnv(name string) ([]string, []proxy.MCPServer) {
 		keys = append(keys, k)
 	}
 	sort.Strings(keys)
-	env := ws.env
+	env := append(append([]string(nil), ws.env...), m.accountEnv(name)...)
 	for _, k := range keys {
 		env = append(env, k+"="+iso.Env[k])
 	}
@@ -332,6 +334,7 @@ func (m *Manager) Isolations(ctx context.Context) ([]api.Isolation, error) {
 		sort.Strings(v.EnvKeys)
 		v.State, _ = m.cli.State(ctx, iso.Container)
 		v.Proxies = m.tunnelStatus(iso.Name)
+		v.Accounts = m.accountsOf(iso.Name)
 		_, v.FenceState = m.fenceOK(iso.Name)
 		if iso.Fence == "off" {
 			v.FenceState = "off"

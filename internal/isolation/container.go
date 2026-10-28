@@ -291,6 +291,56 @@ func (c CLI) RunAsAgent(ctx context.Context, name string, argv ...string) (strin
 	return s, nil
 }
 
+// Proc is a process in an isolation, started by StartAsAgent, with its
+// stdin and its output (stdout and stderr together) piped.
+type Proc struct {
+	Stdin  io.WriteCloser
+	Output io.ReadCloser
+	// Wait waits for the process to exit. Something it started may still
+	// hold the output open after that.
+	Wait func() error
+}
+
+// StartAsAgent starts argv as the agent user. env is handed over by name
+// (`-e KEY`), the values in the `container` process's own environment, so a
+// credential among them never shows in the Mac's process list. Cancelling
+// ctx sends SIGTERM, which `container exec` passes on: a SIGKILL would end
+// the client and leave the process running inside.
+func (c CLI) StartAsAgent(ctx context.Context, name string, env []string, argv ...string) (Proc, error) {
+	args := []string{"exec", "-i", "-u", AgentUser, "-w", AgentHome, "-e", "HOME=" + AgentHome}
+	cmd := exec.CommandContext(ctx, c.Bin)
+	cmd.Env = os.Environ()
+	for _, kv := range env {
+		k, _, _ := strings.Cut(kv, "=")
+		args = append(args, "-e", k)
+		cmd.Env = append(cmd.Env, kv)
+	}
+	cmd.Args = append(append(append([]string{c.Bin}, args...), name), argv...)
+	cmd.Cancel = func() error { return cmd.Process.Signal(syscall.SIGTERM) }
+	cmd.WaitDelay = 10 * time.Second
+	return StartProc(cmd)
+}
+
+// StartProc starts cmd with its stdin and output piped.
+func StartProc(cmd *exec.Cmd) (Proc, error) {
+	stdin, err := cmd.StdinPipe()
+	if err != nil {
+		return Proc{}, err
+	}
+	r, w, err := os.Pipe()
+	if err != nil {
+		return Proc{}, err
+	}
+	cmd.Stdout, cmd.Stderr = w, w
+	err = cmd.Start()
+	w.Close()
+	if err != nil {
+		r.Close()
+		return Proc{}, err
+	}
+	return Proc{Stdin: stdin, Output: r, Wait: cmd.Wait}, nil
+}
+
 // ShimDialer reaches the shim through `container exec -i ... gero-shim client`.
 // Every connection is one exec process whose stdio is the byte stream.
 func (c CLI) ShimDialer(name string) shim.Dialer {

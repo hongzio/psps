@@ -104,6 +104,8 @@ type fakeContainers struct {
 	// isolation ends of open tunnels, which a reboot cuts.
 	syncs   []shimproto.SyncRequest
 	tunnels map[string][]pipeRW
+	// bin goes first on PATH for StartAsAgent: the agent CLIs' fakes.
+	bin string
 }
 
 type fakeCtr struct {
@@ -253,6 +255,28 @@ func (f *fakeContainers) RunAsAgent(ctx context.Context, _ string, argv ...strin
 	}
 	out, err := exec.CommandContext(ctx, argv[0], argv[1:]...).CombinedOutput()
 	return strings.TrimSpace(string(out)), err
+}
+
+// StartAsAgent runs argv on this Mac with the fakes in bin first on PATH,
+// and HOME the container's own directory, as the agent's home.
+func (f *fakeContainers) StartAsAgent(ctx context.Context, name string, env []string, argv ...string) (isolation.Proc, error) {
+	f.mu.Lock()
+	bin := f.bin
+	f.mu.Unlock()
+	// Through sh, so argv[0] is looked up on that PATH.
+	cmd := exec.CommandContext(ctx, "sh", append([]string{"-c", `exec "$@"`, "sh"}, argv...)...)
+	// Its own process group, signalled whole: in the isolation timeout(1)
+	// passes the SIGTERM on to everything the login started.
+	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	cmd.Cancel = func() error { return syscall.Kill(-cmd.Process.Pid, syscall.SIGTERM) }
+	cmd.WaitDelay = 5 * time.Second
+	home := filepath.Join(f.base, name, "home")
+	if err := os.MkdirAll(home, 0o700); err != nil {
+		return isolation.Proc{}, err
+	}
+	cmd.Env = append(os.Environ(), "PATH="+bin+":"+os.Getenv("PATH"), "HOME="+home)
+	cmd.Env = append(cmd.Env, env...)
+	return isolation.StartProc(cmd)
 }
 
 func (f *fakeContainers) ShimDialer(name string) shim.Dialer {

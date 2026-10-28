@@ -62,11 +62,18 @@ var defaultBindings = []binding{
 
 	{"iso_new", []string{"n"}, "isolations", "new isolation"},
 	{"iso_env", []string{"e"}, "isolations", "set an environment variable"},
-	{"iso_login", []string{"l"}, "isolations", "log an agent CLI in"},
+	{"iso_login", []string{"l"}, "isolations", "accounts: what Claude and Codex log in with there"},
 	{"iso_upgrade", []string{"u"}, "isolations", "upgrade to the current image"},
 	{"iso_delete", []string{"d"}, "isolations", "delete"},
 	{"iso_services", []string{"p"}, "isolations", "what the isolation's credential proxies serve"},
 	{"iso_verify", []string{"v"}, "isolations", "measure the isolation's guarantees now (gero iso verify)"},
+
+	{"cli_login", []string{"l"}, "clis", "log the CLI in inside the isolation (from any browser)"},
+	{"cli_logout", []string{"o"}, "clis", "log the CLI out inside the isolation"},
+	{"cli_account", []string{"a"}, "clis", "choose the account the CLI uses, or a login inside"},
+	{"acct_new", []string{"n"}, "clis", "new account (a Claude token, an API key)"},
+	{"acct_secret", []string{"s"}, "clis", "replace the selected account's secret"},
+	{"acct_delete", []string{"d"}, "clis", "remove the selected account"},
 
 	{"svc_new", []string{"n"}, "services", "new environment for the service under the cursor"},
 	{"svc_edit", []string{"e"}, "services", "edit (an env; in an isolation, a service)"},
@@ -74,7 +81,7 @@ var defaultBindings = []binding{
 	{"svc_check", []string{"c"}, "services", "check the env from the Mac, now"},
 	{"svc_delete", []string{"d"}, "services", "remove the env"},
 	{"svc_off", []string{"x"}, "services", "turn a service off for the isolation"},
-	{"copy", []string{"y"}, "services", "copy the login address to the clipboard"},
+	{"copy", []string{"y"}, "services", "copy the login address to the clipboard (also on accounts)"},
 }
 
 type Keymap struct {

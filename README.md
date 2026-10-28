@@ -18,7 +18,7 @@ mise run test
 bin/gero                                  # start the daemon (registers a LaunchAgent)
 sudo bin/gero pf install                  # once: the network fence helper (see below)
 bin/gero iso create dev                   # first run builds the base image
-bin/gero iso login dev codex              # or: claude, or set CLAUDE_CODE_OAUTH_TOKEN
+bin/gero iso login dev codex              # or claude; or from the web / TUI (see below)
 bin/gero iso upgrade dev                  # after a gero upgrade: new image, same volumes
 bin/gero iso verify dev                   # measure the fence, the proxies, the mounts
 bin/gero agent new --iso dev --kind codex "fix the flaky test"
@@ -36,8 +36,9 @@ bin/gero tui
 Agents on the left (status at a glance; archived ones folded at the bottom),
 the selected agent's conversation in the middle, the input at the bottom with
 the agent's settings behind `ctrl+o`. `ctrl+n` starts an agent, `ctrl+g`
-manages isolations (environment, logins, upgrades, `v` to verify one, and with
-`p` the credential proxies each one serves), `ctrl+r` the proxies' environments (secrets and
+manages isolations (environment, upgrades, `v` to verify one, `l` its accounts
+(what Claude and Codex log in with), and with `p` the credential proxies each one serves), `ctrl+r` the
+proxies' environments (secrets and
 browser logins included), `ctrl+a` answers a pending approval, `f1` lists
 every key. Rebind any of them:
 
@@ -51,8 +52,9 @@ bin/gero tui --keys > ~/.config/gero/keys.toml   # then edit
 bin/gero web          # opens http://127.0.0.1:4376 signed in
 ```
 
-The same agents, conversations, approvals, isolation settings and credential
-proxies (the Services page, and each isolation's services), laid out for a
+The same agents, conversations, approvals, isolation settings, accounts
+(what Claude and Codex log in with) and credential proxies (the Services page, and each isolation's
+services), laid out for a
 desktop browser or a phone. The daemon serves it on loopback only, and
 every API call needs the token `gero web` signs you in with (`--rotate`
 issues a new one and signs every browser out). To use it from a phone,
@@ -62,6 +64,47 @@ HTTPS certificate and decides which devices can reach it.
 
 For development, `GERO_HOME=$PWD/.dev` keeps all state under `.dev/` and runs
 the daemon as a plain background process instead of touching launchd.
+
+### Claude & Codex: accounts and logins
+
+An agent CLI in an isolation gets its credential one of two ways.
+
+**An account**, defined once on the Mac and used by any number of
+isolations (one per CLI in each). Only credentials that stay valid wherever
+they are used at once qualify: a Claude token from `claude setup-token`
+(your subscription, valid for a year) or an Anthropic API key. The secret
+lives in the credentials file under `[account NAME]`; agents get it as
+`CLAUDE_CODE_OAUTH_TOKEN` / `ANTHROPIC_API_KEY` when they start.
+
+```sh
+claude setup-token                                  # on any machine with a browser
+bin/gero account add claude --kind claude-token     # paste it
+bin/gero iso account dev claude claude              # dev's Claude uses it (- goes back to a login inside)
+bin/gero account set claude                         # rotate: idle agents restart with the new one
+```
+
+A ChatGPT login cannot be shared that way: its refresh token is single-use,
+so copies of one login in several places log each other out, and OpenAI
+offers Plus/Pro no long-lived token (Codex access tokens are for Business
+and Enterprise workspaces). Codex therefore logs in inside each isolation.
+A token that used to sit in an isolation's environment was moved into an
+account, once, when the daemon first started with accounts.
+
+**A login inside the isolation.** `gero iso login dev` shows both CLIs as
+an agent there finds them (account and environment applied). A login is run
+by the daemon inside the isolation, with no terminal, so the web page (a
+phone's included), the TUI and the CLI all drive the same one:
+
+- **Claude**: `claude auth login` prints an address; sign in there and the
+  page ends on a code, which you paste back. A wrong code ends the login;
+  start it again.
+- **Codex**: `codex login --device-auth` prints an address and a one-time
+  code to enter there, and notices by itself.
+
+The daemon passes the address and the codes along and keeps them only in
+memory for the login's 15 minutes; the credential lands in the isolation as
+before. A login (or `gero iso logout`) restarts the isolation's idle agents
+of that kind, since Codex reads its login only when it starts.
 
 ## How it holds together
 

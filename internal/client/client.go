@@ -98,6 +98,65 @@ func (c *Client) Verify(ctx context.Context, name string) (api.Verify, error) {
 	return v, c.do(ctx, "POST", "/v1/isolations/"+url.PathEscape(name)+"/verify", nil, &v)
 }
 
+func (c *Client) Accounts(ctx context.Context) ([]api.Account, error) {
+	var v []api.Account
+	return v, c.do(ctx, "GET", "/v1/accounts", nil, &v)
+}
+
+func (c *Client) AddAccount(ctx context.Context, name, kind, secret string) (api.Account, error) {
+	var v api.Account
+	return v, c.do(ctx, "POST", "/v1/accounts/"+url.PathEscape(name), api.PutAccount{Kind: kind, Secret: secret}, &v)
+}
+
+func (c *Client) SetAccountSecret(ctx context.Context, name, secret string) (api.Account, error) {
+	var v api.Account
+	return v, c.do(ctx, "PATCH", "/v1/accounts/"+url.PathEscape(name), api.PutAccount{Secret: secret}, &v)
+}
+
+func (c *Client) DeleteAccount(ctx context.Context, name string, force bool) error {
+	q := ""
+	if force {
+		q = "?force=1"
+	}
+	return c.do(ctx, "DELETE", "/v1/accounts/"+url.PathEscape(name)+q, nil, nil)
+}
+
+func (c *Client) UseAccount(ctx context.Context, iso, tool, account string) error {
+	return c.do(ctx, "PUT", cliPath(iso, tool)+"/account", api.UseAccount{Account: account}, nil)
+}
+
+func cliPath(iso, tool string) string {
+	return "/v1/isolations/" + url.PathEscape(iso) + "/clis/" + url.PathEscape(tool)
+}
+
+func (c *Client) CLIs(ctx context.Context, iso string) ([]api.CLI, error) {
+	var v []api.CLI
+	return v, c.do(ctx, "GET", "/v1/isolations/"+url.PathEscape(iso)+"/clis", nil, &v)
+}
+
+func (c *Client) StartCLILogin(ctx context.Context, iso, tool string) (api.CLILogin, error) {
+	var v api.CLILogin
+	return v, c.do(ctx, "POST", cliPath(iso, tool)+"/login", nil, &v)
+}
+
+func (c *Client) CLILogin(ctx context.Context, iso, tool string) (api.CLILogin, error) {
+	var v api.CLILogin
+	return v, c.do(ctx, "GET", cliPath(iso, tool)+"/login", nil, &v)
+}
+
+func (c *Client) SendCLICode(ctx context.Context, iso, tool, code string) (api.CLILogin, error) {
+	var v api.CLILogin
+	return v, c.do(ctx, "POST", cliPath(iso, tool)+"/login/code", api.CLICode{Code: code}, &v)
+}
+
+func (c *Client) CancelCLILogin(ctx context.Context, iso, tool string) error {
+	return c.do(ctx, "DELETE", cliPath(iso, tool)+"/login", nil, nil)
+}
+
+func (c *Client) CLILogout(ctx context.Context, iso, tool string) error {
+	return c.do(ctx, "POST", cliPath(iso, tool)+"/logout", nil, nil)
+}
+
 func (c *Client) DeleteIsolation(ctx context.Context, name string, purge bool) error {
 	q := ""
 	if purge {

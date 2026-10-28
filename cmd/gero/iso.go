@@ -11,6 +11,7 @@ import (
 	"text/tabwriter"
 
 	"github.com/hongzio/gero/internal/api"
+	"github.com/hongzio/gero/internal/driver"
 	"github.com/hongzio/gero/internal/isolation"
 	"github.com/hongzio/gero/internal/paths"
 	"github.com/hongzio/gero/internal/services"
@@ -18,7 +19,7 @@ import (
 
 func isoCmd(p paths.Paths, args []string) error {
 	if len(args) == 0 {
-		return errors.New("usage: gero iso create|ls|upgrade|rm|env|login|shell|verify|services|expose|unexpose")
+		return errors.New("usage: gero iso create|ls|upgrade|rm|env|login|logout|account|shell|verify|services|expose|unexpose")
 	}
 	c, err := connect(p)
 	if err != nil {
@@ -233,23 +234,68 @@ func isoCmd(p paths.Paths, args []string) error {
 		fmt.Printf("%s is off for %s; its files and variables are removed from the isolation\n", pos[1], pos[0])
 		return nil
 
-	case "login", "shell":
+	case "login":
 		pos := parse(fs, args[1:])
-		var argv []string
-		switch {
-		case args[0] == "shell" && len(pos) == 1:
-			argv = []string{"bash", "-l"}
-		case args[0] == "login" && len(pos) == 2:
-			argv = loginArgv(pos[1])
+		switch len(pos) {
+		case 1:
+			return printCLIs(ctx, c, pos[0], os.Stdout)
+		case 2:
+			return loginCLI(ctx, c, pos[0], pos[1], os.Stdin, os.Stdout)
 		}
-		if argv == nil {
-			return errors.New("usage: gero iso login NAME claude|codex  /  gero iso shell NAME")
+		return errors.New("usage: gero iso login NAME [claude|codex]  (no CLI: show both logins)")
+
+	case "logout":
+		pos := parse(fs, args[1:])
+		if len(pos) != 2 {
+			return errors.New("usage: gero iso logout NAME claude|codex")
+		}
+		if err := c.CLILogout(ctx, pos[0], pos[1]); err != nil {
+			return err
+		}
+		fmt.Printf("%s is logged out in %s; a token set with `gero iso env` stays\n", pos[1], pos[0])
+		return nil
+
+	case "account":
+		pos := parse(fs, args[1:])
+		switch len(pos) {
+		case 2:
+			iso, err := c.Isolation(ctx, pos[0])
+			if err != nil {
+				return err
+			}
+			if a := iso.Accounts[driver.Kind(pos[1])]; a != "" {
+				fmt.Printf("%s in %s uses account %s\n", pos[1], pos[0], a)
+			} else {
+				fmt.Printf("%s in %s uses a login inside it (gero iso login %s)\n", pos[1], pos[0], pos[0])
+			}
+			return nil
+		case 3:
+			account := pos[2]
+			if account == "-" {
+				account = ""
+			}
+			if err := c.UseAccount(ctx, pos[0], pos[1], account); err != nil {
+				return err
+			}
+			if account == "" {
+				fmt.Printf("%s in %s goes back to a login inside it; its idle agents restart\n", pos[1], pos[0])
+			} else {
+				fmt.Printf("%s in %s uses account %s; its idle agents restart with it\n", pos[1], pos[0], account)
+			}
+			return nil
+		}
+		return errors.New("usage: gero iso account NAME claude|codex [ACCOUNT|-]")
+
+	case "shell":
+		pos := parse(fs, args[1:])
+		if len(pos) != 1 {
+			return errors.New("usage: gero iso shell NAME")
 		}
 		iso, err := c.Isolation(ctx, pos[0])
 		if err != nil {
 			return err
 		}
-		cmd, err := interactive(ctx, iso.Container, argv)
+		cmd, err := interactive(ctx, iso.Container, []string{"bash", "-l"})
 		if err != nil {
 			return err
 		}
@@ -259,19 +305,9 @@ func isoCmd(p paths.Paths, args []string) error {
 	return fmt.Errorf("unknown iso command %q", args[0])
 }
 
-func loginArgv(tool string) []string {
-	switch tool {
-	case "claude":
-		return []string{"claude", "auth", "login"}
-	case "codex":
-		return []string{"codex", "login", "--device-auth"}
-	}
-	return nil
-}
-
 // interactive builds argv in the isolation as the agent user, for this
-// terminal. It talks to `container` directly: a login is between the user
-// and the agent CLI, and the daemon has no business in the middle of it.
+// terminal. It talks to `container` directly: a shell is between the user
+// and the isolation.
 func interactive(ctx context.Context, container string, argv []string) (*exec.Cmd, error) {
 	cli, err := isolation.FindCLI()
 	if err != nil {

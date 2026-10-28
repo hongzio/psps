@@ -1,8 +1,10 @@
 package store
 
 import (
+	"bytes"
 	"database/sql"
 	"errors"
+	"os"
 	"path/filepath"
 	"testing"
 	"time"
@@ -153,5 +155,70 @@ func TestEnvsExposuresAndTokens(t *testing.T) {
 	}
 	if toks, _ := s.Tokens("dev", "datadog"); len(toks) != 0 {
 		t.Fatalf("tokens outlived the isolation: %v", toks)
+	}
+}
+
+func TestAccountUsesGoWithTheirIsolation(t *testing.T) {
+	s := open(t)
+	for _, n := range []string{"dev", "lab"} {
+		if err := s.PutIsolation(Isolation{Name: n, Container: "gero-" + n, Image: "i", CreatedAt: time.Now()}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := s.PutAccount(Account{Name: "claude", Kind: "claude-token"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.UseAccount("dev", driver.Claude, "nope"); err == nil {
+		t.Fatal("used an account that does not exist")
+	}
+	for _, n := range []string{"dev", "lab"} {
+		if err := s.UseAccount(n, driver.Claude, "claude"); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := s.DeleteIsolation("lab"); err != nil {
+		t.Fatal(err)
+	}
+	if users, _ := s.AccountUsers("claude"); len(users) != 1 || users[0] != "dev" {
+		t.Fatalf("%v", users)
+	}
+	if err := s.UseAccount("dev", driver.Claude, ""); err != nil {
+		t.Fatal(err)
+	}
+	if used, _ := s.AccountsUsed("dev"); len(used) != 0 {
+		t.Fatalf("%v", used)
+	}
+}
+
+func TestTheStoreIsTheOwnersAlone(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "gero.db")
+	s, err := Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	// What Vacuum is for: a secret deleted from the store is gone from its
+	// files.
+	if err := s.PutIsolation(Isolation{Name: "dev", Container: "c", Image: "i", Env: map[string]string{"K": "secret-1234567890"}, CreatedAt: time.Now()}); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.PutIsolation(Isolation{Name: "dev", Container: "c", Image: "i", CreatedAt: time.Now()}); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Vacuum(); err != nil {
+		t.Fatal(err)
+	}
+	for _, f := range []string{path, path + "-wal"} {
+		b, _ := os.ReadFile(f)
+		if bytes.Contains(b, []byte("secret-1234567890")) {
+			t.Errorf("%s still holds the deleted secret", filepath.Base(f))
+		}
+	}
+	fi, err := os.Stat(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if fi.Mode().Perm() != 0o600 {
+		t.Fatalf("store is %v", fi.Mode().Perm())
 	}
 }

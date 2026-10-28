@@ -32,6 +32,8 @@ var Fields = map[string][]string{
 	"clickhouse": {"user", "password"},
 	"grafana":    {"token"},
 	"notion":     {"client_id", "refresh_token"},
+	// Agent CLI accounts (a Claude token, an API key), by account name.
+	"account": {"token"},
 }
 
 // Optional fields are kept when present and never demanded: notion's access

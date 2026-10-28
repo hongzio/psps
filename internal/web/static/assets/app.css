@@ -399,3 +399,15 @@ code, pre { font-family: var(--mono); font-size: 13px; }
 .approval.grow { flex: 1; }
 .popover-actions { display: flex; gap: 8px; margin-top: 12px; }
 .row.spaced { margin-top: 10px; }
+
+/* Claude & Codex */
+.chip.ok { color: var(--ok); background: color-mix(in srgb, var(--ok) 14%, transparent); }
+.cli { border-top: 1px solid var(--border); padding-top: 10px; margin-top: 10px; }
+.cli .head { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.cli .cli-name { font-weight: 600; }
+.cli .ver { color: var(--muted); font-family: var(--mono); font-size: 13px; flex: 1; }
+.cli .facts { color: var(--muted); font-size: 13px; margin-top: 4px; font-family: var(--mono); overflow-wrap: anywhere; }
+.cli .actions { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 8px; }
+.device-code { font-family: var(--mono); font-size: 26px; font-weight: 600; letter-spacing: .08em; margin: 0 0 10px; user-select: all; }
+.cli .picker { margin: 8px 0 0; max-width: 360px; }
+.cli .picker select { padding: 7px 10px; border-radius: 8px; border: 1px solid var(--border); background: var(--bg); color: var(--text); }

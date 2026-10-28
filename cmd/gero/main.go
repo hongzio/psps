@@ -35,12 +35,19 @@ const usage = `gero — run coding agents in isolated containers
   gero iso upgrade NAME         move onto the current base image, keeping volumes
   gero iso rm NAME [--purge]
   gero iso env NAME KEY=VALUE... | KEY=
-  gero iso login NAME claude|codex
+  gero iso login NAME [claude|codex]   log an agent CLI in inside it; no CLI: show both logins
+  gero iso logout NAME claude|codex
+  gero iso account NAME claude|codex [ACCOUNT|-]   the account a CLI uses there; - goes back to a login inside
   gero iso shell NAME
   gero iso verify [NAME...] [--json]   measure the guarantees now; exit 0 ok / 1 isolation / 2 config
   gero iso services NAME        which credential proxies the isolation has
   gero iso expose NAME SERVICE [ENV,...] [--default-env ENV] [flags]
   gero iso unexpose NAME SERVICE
+
+  gero account ls               agent CLI accounts: defined once, used by any number of isolations
+  gero account add NAME --kind claude-token|anthropic-api-key   prompts; or one line on stdin
+  gero account set NAME         replace its secret
+  gero account rm NAME [--force]
 
   gero env ls [SERVICE]         environments a credential proxy can serve
   gero env add|edit SERVICE NAME [flags]   (gero env help SERVICE lists them)
@@ -96,6 +103,8 @@ func run(args []string) error {
 		return agentCmd(p, args[1:])
 	case "env":
 		return envCmd(p, args[1:])
+	case "account":
+		return accountCmd(p, args[1:])
 	case "pf":
 		return pfCmd(args[1:])
 	case "pfd":

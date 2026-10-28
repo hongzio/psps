@@ -1,10 +1,8 @@
 package main
 
 import (
-	"context"
 	"flag"
 	"fmt"
-	"os/exec"
 	"path/filepath"
 
 	tea "github.com/charmbracelet/bubbletea"
@@ -27,16 +25,9 @@ func tuiCmd(p paths.Paths, args []string) error {
 		return err
 	}
 	keys, warnings := tui.LoadKeymap(filepath.Join(p.Config, "keys.toml"))
-	login := func(container, tool string) *exec.Cmd {
-		cmd, err := interactive(context.Background(), container, loginArgv(tool))
-		if err != nil {
-			return exec.Command("sh", "-c", "echo "+err.Error()+"; sleep 2")
-		}
-		return cmd
-	}
 	// Ask the terminal for its background now: the query reads stdin, and
 	// done lazily inside the program it swallows the user's first keys.
 	lipgloss.HasDarkBackground()
-	_, err = tea.NewProgram(tui.New(c, login, keys, warnings), tea.WithAltScreen()).Run()
+	_, err = tea.NewProgram(tui.New(c, keys, warnings), tea.WithAltScreen()).Run()
 	return err
 }

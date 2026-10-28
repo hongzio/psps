@@ -66,6 +66,13 @@ const S = {
   checkOut: null,
   verifyOut: null, // the open verify report
   verifying: null, // the isolation being measured
+  // Claude & Codex: each isolation's CLIs as read from inside it (an
+  // array, or {error}), the login on screen, the CLI an action runs for.
+  clis: {},
+  cliLogin: null, // { iso, tool, login }
+  cliBusy: null, // `${iso}/${tool}`
+  accounts: null, // agent CLI accounts, shared by isolations
+  accountKinds: [],
 }
 
 const coarse = matchMedia('(pointer: coarse)').matches
@@ -266,6 +273,13 @@ async function refreshIsolations() {
     if (!editing('isolations')) renderIsolations()
   }
   if (S.view === 'new') S.refillIsolations?.()
+  if (S.view === 'setup') {
+    if (S.accounts == null) await refreshAccounts()
+    // Reading a CLI starts it inside the isolation: once per visit, not on
+    // every poll.
+    const missing = S.isolations.map((i) => i.name).filter((n) => !(n in S.clis))
+    if (missing.length) await refreshCLIs(missing)
+  }
 }
 
 // editing is whether redrawing page id now would lose what the operator is
@@ -339,7 +353,8 @@ function show(view) {
   S.drawer = false
   S.settingsOpen = false
   S.openForm = null
-  setHash({ new: '#/new', isolations: '#/isolations', services: '#/services' }[view] || location.hash)
+  setHash({ new: '#/new', isolations: '#/isolations', services: '#/services', setup: '#/setup' }[view] || location.hash)
+  if (view === 'setup') { S.clis = {}; S.accounts = null }
   render()
   if (view !== 'agent') guarded(refreshIsolations)
   if (view === 'services') guarded(refreshServices)
@@ -351,6 +366,7 @@ function route() {
   else if (location.hash === '#/new') S.view = 'new'
   else if (location.hash === '#/isolations') S.view = 'isolations'
   else if (location.hash === '#/services') { S.view = 'services'; guarded(refreshServices) }
+  else if (location.hash === '#/setup') { S.view = 'setup'; S.clis = {}; S.accounts = null; guarded(refreshIsolations) }
   else S.view = 'agent'
   S.drawer = false
   S.settingsOpen = false
@@ -385,9 +401,11 @@ function render() {
   if (S.view === 'new') main.append(topbar('New agent'), newAgentView())
   else if (S.view === 'isolations') main.append(topbar('Isolations'), h('div', { class: 'page', id: 'isolations' }))
   else if (S.view === 'services') main.append(topbar('Services'), h('div', { class: 'page', id: 'services' }))
+  else if (S.view === 'setup') main.append(topbar('Accounts'), h('div', { class: 'page', id: 'setup' }))
   else main.append(agentView())
   if (S.view === 'isolations') renderIsolations()
   if (S.view === 'services') renderServices()
+  if (S.view === 'setup') renderSetup()
   renderToast()
 }
 
@@ -421,7 +439,8 @@ function renderSidebar() {
       S.showArchived ? archived.map(row) : null),
     h('div', { class: 'side-foot' },
       h('button', { class: S.view === 'isolations' ? 'active' : '', onclick: () => show('isolations') }, '⚙ Isolations'),
-      h('button', { class: S.view === 'services' ? 'active' : '', onclick: () => show('services') }, '⚿ Services')),
+      h('button', { class: S.view === 'services' ? 'active' : '', onclick: () => show('services') }, '⚿ Services'),
+      h('button', { class: S.view === 'setup' ? 'active' : '', onclick: () => show('setup') }, '✦ Accounts')),
   )
 }
 
@@ -710,8 +729,8 @@ function renderIsolations() {
             await guarded(async () => { await api('DELETE', `/v1/isolations/${i.name}`); toast(`${i.name} deleted`); await refreshIsolations() })
           },
         }, 'Delete')),
-      h('p', { class: 'note' }, 'Log an agent CLI in from a terminal on the Mac: ', h('code', null, `gero iso login ${i.name} codex`),
-        ' — or give Claude a token from ', h('code', null, 'claude setup-token'), ' as CLAUDE_CODE_OAUTH_TOKEN.'))
+      h('p', { class: 'note' }, 'What its Claude and Codex log in with: ',
+        h('a', { href: '#/setup', onclick: (e) => { e.preventDefault(); show('setup') } }, 'Accounts'), '.'))
   }
   const name = h('input', { placeholder: 'name', autocomplete: 'off' })
   const memory = h('input', { value: '4G' })
@@ -751,6 +770,7 @@ const envPath = (svc, name) => `/v1/envs/${enc(svc)}/${enc(name)}`
 function rerender() {
   if (S.view === 'services') renderServices()
   else if (S.view === 'isolations') renderIsolations()
+  else if (S.view === 'setup') renderSetup()
 }
 function openForm(key) { S.openForm = key; rerender() }
 function closeForm() { S.openForm = null; S.login = null; S.checkOut = null; S.verifyOut = null; rerender() }
@@ -1097,6 +1117,316 @@ function loginView() {
     h('div', { class: 'field' }, h('label', null, 'Or paste the token'), tok),
     err,
     h('button', { class: 'btn primary', onclick: go }, 'Sign in'))
+}
+
+// ---- Claude & Codex: each isolation's agent CLIs and where their
+// credential comes from. An account is defined once, on the Mac, and any
+// number of isolations use it (a Claude token, an API key). Otherwise the
+// daemon runs a login inside the isolation: Claude's ends on a page showing
+// a code to paste back here, Codex's asks for a code to be entered in the
+// browser and notices by itself.
+
+const cliName = (t) => (t === 'codex' ? 'Codex' : 'Claude Code')
+const liveLogin = (l) => !!l && ['starting', 'open', 'verifying'].includes(l.state)
+const cliPath = (iso, tool) => `/v1/isolations/${enc(iso)}/clis/${enc(tool)}`
+const onScreen = (iso, tool) => !!S.cliLogin && S.cliLogin.iso === iso && S.cliLogin.tool === tool
+const INSIDE = ''
+
+async function refreshAccounts() {
+  const [accounts, kinds] = await Promise.all([api('GET', '/v1/accounts'), S.accountKinds.length ? S.accountKinds : api('GET', '/v1/account-kinds')])
+  S.accounts = accounts || []
+  S.accountKinds = kinds || []
+  if (S.view === 'setup' && !editing('setup')) renderSetup()
+}
+
+async function refreshCLIs(names) {
+  for (const n of names) S.clis[n] = null
+  if (S.view === 'setup' && !editing('setup')) renderSetup()
+  await Promise.all(names.map(async (n) => {
+    try {
+      S.clis[n] = await api('GET', `/v1/isolations/${enc(n)}/clis`)
+    } catch (e) {
+      if (e instanceof Unauthorized) throw e
+      S.clis[n] = { error: e.message }
+    }
+  }))
+  // A login started elsewhere (the TUI, the CLI) is picked up here.
+  if (!S.cliLogin) {
+    for (const [iso, cs] of Object.entries(S.clis)) {
+      const c = Array.isArray(cs) && cs.find((c) => liveLogin(c.login))
+      if (c) { showCLILogin(iso, c.tool, c.login); break }
+    }
+  }
+  if (S.view === 'setup' && !editing('setup')) renderSetup()
+}
+
+function showCLILogin(iso, tool, login) {
+  const first = !onScreen(iso, tool)
+  S.cliLogin = { iso, tool, login }
+  if (first) pollCLILogin(iso, tool)
+}
+
+async function pollCLILogin(iso, tool) {
+  while (onScreen(iso, tool) && liveLogin(S.cliLogin.login)) {
+    await new Promise((r) => setTimeout(r, 1500))
+    if (!onScreen(iso, tool) || document.hidden) continue
+    let l
+    try {
+      l = await api('GET', cliPath(iso, tool) + '/login')
+    } catch (e) {
+      if (e instanceof Unauthorized) { S.authed = false; render(); return }
+      l = { state: 'failed', message: e.message }
+    }
+    if (!onScreen(iso, tool)) return
+    const was = S.cliLogin.login.state
+    S.cliLogin.login = l
+    if (!liveLogin(l)) { cliLoginEnded(iso, tool, l); return }
+    if (l.state !== was && S.view === 'setup') renderSetup()
+  }
+}
+
+function cliLoginEnded(iso, tool, l) {
+  if (!onScreen(iso, tool)) return
+  S.cliLogin = null
+  if (l.state === 'done') toast(`${cliName(tool)} is logged in in ${iso}; its idle agents restart with it`)
+  else toast(`${cliName(tool)} login: ${l.message || l.state}`, true)
+  if (S.view === 'setup') renderSetup()
+  guarded(() => refreshCLIs([iso]))
+}
+
+async function startCLILogin(iso, tool) {
+  if (S.cliLogin) await cancelCLILogin()
+  S.cliBusy = `${iso}/${tool}`
+  renderSetup()
+  await guarded(async () => {
+    const l = await api('POST', cliPath(iso, tool) + '/login')
+    if (liveLogin(l)) showCLILogin(iso, tool, l)
+    else toast(`${cliName(tool)} login: ${l.message || l.state}`, true)
+  })
+  S.cliBusy = null
+  renderSetup()
+}
+
+async function cancelCLILogin() {
+  const cur = S.cliLogin
+  if (!cur) return
+  S.cliLogin = null
+  renderSetup()
+  await guarded(() => api('DELETE', cliPath(cur.iso, cur.tool) + '/login'))
+}
+
+async function cliLogout(iso, tool) {
+  if (!confirm(`Log ${cliName(tool)} out in ${iso}? Its agents there stop working until it logs in again.`)) return
+  S.cliBusy = `${iso}/${tool}`
+  renderSetup()
+  await guarded(async () => {
+    await api('POST', cliPath(iso, tool) + '/logout')
+    toast(`${cliName(tool)} is logged out in ${iso}`)
+  })
+  S.cliBusy = null
+  await guarded(() => refreshCLIs([iso]))
+}
+
+function copyButton(text, label) {
+  return h('button', {
+    class: 'btn', onclick: async () => {
+      try { await navigator.clipboard.writeText(text); toast('Copied') } catch { toast('The browser refused the clipboard; copy it by hand', true) }
+    },
+  }, label)
+}
+
+const clock = (t) => new Date(t).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+
+function renderSetup() {
+  const page = document.getElementById('setup')
+  if (!page) return
+  page.replaceChildren(h('div', { class: 'page-inner' },
+    h('h2', null, 'Accounts'),
+    h('p', { class: 'lead' }, 'An agent CLI uses an account from the Mac, which any number of isolations can share, or a login inside its isolation. That login runs inside the isolation, so any browser can finish it, a phone’s included.'),
+    accountsCard(),
+    S.isolations.length ? S.isolations.map(setupCard)
+      : h('div', { class: 'empty' }, h('p', null, 'No isolations yet.'),
+        h('a', { href: '#/isolations', onclick: (e) => { e.preventDefault(); show('isolations') } }, 'Create one'))))
+}
+
+function setupCard(i) {
+  const cs = S.clis[i.name]
+  let body
+  if (cs == null) body = h('p', { class: 'note' }, 'Reading the logins from inside the isolation…')
+  else if (!Array.isArray(cs)) body = h('p', { class: 'form-error' }, cs.error)
+  else body = cs.map((c) => cliRow(i, c))
+  return h('div', { class: 'card' },
+    h('div', { class: 'head' }, h('h3', null, i.name), h('span', { class: 'chip ' + (i.state === 'running' ? '' : 'blocked') }, i.state)),
+    body)
+}
+
+function cliRow(i, c) {
+  const busy = S.cliBusy === `${i.name}/${c.tool}`
+  const chip = c.error ? h('span', { class: 'chip error' }, 'unknown')
+    : c.logged_in ? h('span', { class: 'chip ok' }, 'logged in')
+      : h('span', { class: 'chip blocked' }, 'not logged in')
+  const how = c.error || [c.method, c.email].filter(Boolean).join(' · ')
+  let below
+  if (onScreen(i.name, c.tool)) below = cliLoginForm(i.name, c.tool, S.cliLogin.login)
+  else if (c.account) below = h('p', { class: 'note' }, `Its agents use the account ${c.account}.`)
+  else {
+    below = h('div', { class: 'actions' },
+      h('button', { class: 'btn' + (c.logged_in ? '' : ' primary'), disabled: busy || i.state !== 'running', onclick: () => startCLILogin(i.name, c.tool) },
+        busy ? 'Working…' : c.logged_in ? 'Log in again' : 'Log in'),
+      c.logged_in ? h('button', { class: 'btn', disabled: busy, onclick: () => cliLogout(i.name, c.tool) }, 'Log out') : null)
+  }
+  return h('div', { class: 'cli' },
+    h('div', { class: 'head' }, h('span', { class: 'cli-name' }, cliName(c.tool)), c.version ? h('span', { class: 'ver' }, c.version) : null, chip),
+    how ? h('div', { class: 'facts' }, how) : null,
+    accountPicker(i, c, busy),
+    below)
+}
+
+// accountPicker chooses what the CLI uses in the isolation: an account of
+// its kind, or a login inside. Drawn only for a CLI some account kind is for.
+function accountPicker(i, c, busy) {
+  if (!S.accountKinds.some((k) => k.tool === c.tool)) return null
+  const mine = (S.accounts || []).filter((a) => a.tool === c.tool)
+  const sel = h('select', { disabled: busy, 'aria-label': `What ${cliName(c.tool)} uses in ${i.name}` },
+    h('option', { value: INSIDE, selected: !c.account }, 'A login inside the isolation'),
+    mine.map((a) => h('option', { value: a.name, selected: c.account === a.name }, `Account ${a.name} (${a.kind})`)))
+  sel.addEventListener('change', async () => {
+    const account = sel.value
+    S.cliBusy = `${i.name}/${c.tool}`
+    renderSetup()
+    await guarded(async () => {
+      await api('PUT', cliPath(i.name, c.tool) + '/account', { account })
+      toast(account ? `${cliName(c.tool)} in ${i.name} uses ${account}; its idle agents restart with it` : `${cliName(c.tool)} in ${i.name} goes back to a login inside`)
+    })
+    S.cliBusy = null
+    await guarded(refreshAccounts)
+    await guarded(() => refreshCLIs([i.name]))
+  })
+  return h('div', { class: 'field picker' }, h('label', null, 'Uses'), sel,
+    mine.length ? null : h('span', { class: 'hint' }, 'No account of its kind yet; add one above.'))
+}
+
+function accountsCard() {
+  if (S.accounts == null) return h('div', { class: 'card' }, h('p', { class: 'note' }, 'Reading the accounts…'))
+  const usedBy = (a) => a.used_by?.length ? 'used by ' + a.used_by.join(', ') : 'unused'
+  const rows = S.accounts.map((a) => h('div', { class: 'cli' },
+    h('div', { class: 'head' }, h('span', { class: 'cli-name' }, a.name), h('span', { class: 'ver' }, a.kind),
+      a.secret_error ? h('span', { class: 'chip error' }, 'no secret') : null),
+    h('div', { class: 'facts' }, usedBy(a)),
+    S.openForm === 'acct-secret:' + a.name ? accountSecretForm(a)
+      : h('div', { class: 'actions' },
+        h('button', { class: 'btn', onclick: () => { S.openForm = 'acct-secret:' + a.name; renderSetup() } }, 'Replace secret'),
+        h('button', {
+          class: 'btn danger', onclick: async () => {
+            const used = a.used_by?.length ? ` ${a.used_by.join(', ')} go back to a login inside.` : ''
+            if (!confirm(`Remove account ${a.name} and its secret?${used}`)) return
+            await guarded(async () => { await api('DELETE', `/v1/accounts/${enc(a.name)}?force=1`); toast(`Account ${a.name} removed`) })
+            await guarded(refreshAccounts)
+            if (a.used_by?.length) await guarded(() => refreshCLIs(a.used_by))
+          },
+        }, 'Remove'))))
+  return h('div', { class: 'card' },
+    h('div', { class: 'head' }, h('h3', null, 'Shared accounts'),
+      S.openForm === 'acct-new' ? null : h('button', { class: 'btn', onclick: () => { S.openForm = 'acct-new'; renderSetup() } }, 'New account')),
+    h('p', { class: 'note' }, 'Defined once, on the Mac; any number of isolations can use one. A ChatGPT login cannot be shared this way (its refresh token is single-use), so Codex logs in inside each isolation.'),
+    S.openForm === 'acct-new' ? newAccountForm() : null,
+    rows.length ? rows : null)
+}
+
+function newAccountForm() {
+  const name = h('input', { autocomplete: 'off', placeholder: 'e.g. claude' })
+  const kind = h('select', null, S.accountKinds.map((k) => h('option', { value: k.name }, k.name)))
+  const hint = h('span', { class: 'hint' })
+  const showHint = () => { hint.textContent = S.accountKinds.find((k) => k.name === kind.value)?.summary || '' }
+  kind.addEventListener('change', showHint)
+  showHint()
+  const secret = h('input', { type: 'password', autocomplete: 'new-password', placeholder: 'sk-ant-…' })
+  const err = h('p', { class: 'form-error' })
+  const save = h('button', { class: 'btn primary' }, 'Add account')
+  save.addEventListener('click', async () => {
+    err.textContent = ''
+    try {
+      await api('POST', `/v1/accounts/${enc(name.value.trim())}`, { kind: kind.value, secret: secret.value.trim() })
+      S.openForm = null
+      toast(`Account ${name.value.trim()} added; choose it for a CLI below`)
+      await refreshAccounts()
+      renderSetup()
+    } catch (x) {
+      if (x instanceof Unauthorized) { S.authed = false; render(); return }
+      err.textContent = x.message
+    }
+  })
+  return h('div', { class: 'subform' },
+    h('div', { class: 'row' }, h('div', { class: 'field' }, h('label', null, 'Name'), name), h('div', { class: 'field' }, h('label', null, 'Kind'), kind, hint)),
+    h('div', { class: 'field' }, h('label', null, 'Secret'), secret,
+      h('span', { class: 'hint' }, 'A token from ', h('code', null, 'claude setup-token'), ' (run it on any machine with a browser), or an API key. Stored in the Mac’s credentials file (0600), never shown again.')),
+    err,
+    h('div', { class: 'actions' }, save, h('button', { class: 'btn', onclick: () => { S.openForm = null; renderSetup() } }, 'Cancel')))
+}
+
+// accountSecretForm replaces an account's secret.
+function accountSecretForm(a) {
+  const secret = h('input', { type: 'password', autocomplete: 'new-password', placeholder: 'the new token or key' })
+  const err = h('p', { class: 'form-error' })
+  const save = h('button', { class: 'btn primary' }, 'Save')
+  save.addEventListener('click', async () => {
+    err.textContent = ''
+    try {
+      await api('PATCH', `/v1/accounts/${enc(a.name)}`, { secret: secret.value.trim() })
+      S.openForm = null
+      toast(`Replaced the secret of ${a.name}` + (a.used_by?.length ? `; idle agents in ${a.used_by.join(', ')} restart with it` : ''))
+      await refreshAccounts()
+      renderSetup()
+    } catch (x) {
+      if (x instanceof Unauthorized) { S.authed = false; render(); return }
+      err.textContent = x.message
+    }
+  })
+  return h('div', { class: 'subform' }, h('div', { class: 'field' }, secret), err,
+    h('div', { class: 'actions' }, save, h('button', { class: 'btn', onclick: () => { S.openForm = null; renderSetup() } }, 'Cancel')))
+}
+
+function cliLoginForm(iso, tool, l) {
+  const cancel = h('button', { class: 'btn', onclick: cancelCLILogin }, 'Cancel')
+  if (l.state === 'starting' || l.state === 'verifying') {
+    return h('div', { class: 'subform' }, h('p', null, l.state === 'starting' ? 'Starting the login…' : 'Checking the code…'), h('div', { class: 'actions' }, cancel))
+  }
+  const link = (text) => h('a', { href: l.url, target: '_blank', rel: 'noopener noreferrer' }, text)
+  if (!l.needs_code) {
+    return h('div', { class: 'subform' },
+      h('p', null, '1. Open ', link(l.url.replace(/^https:\/\//, '')), ' and sign in.'),
+      h('p', null, '2. Enter this code:'),
+      h('div', { class: 'device-code' }, l.code),
+      h('p', { class: 'note' }, `Waiting for the browser… the code expires at ${clock(l.expires)}.`),
+      h('div', { class: 'actions' }, copyButton(l.code, 'Copy code'), cancel))
+  }
+  const code = h('input', { type: 'password', autocomplete: 'off', placeholder: 'code', 'aria-label': 'The code the login page shows' })
+  const err = h('p', { class: 'form-error' })
+  const finish = h('button', { class: 'btn primary' }, 'Finish login')
+  const submit = async () => {
+    err.textContent = ''
+    const v = code.value.trim()
+    if (!v) { err.textContent = 'Paste the code the login page ends on.'; return }
+    finish.disabled = true
+    finish.textContent = 'Checking…'
+    try {
+      const r = await api('POST', cliPath(iso, tool) + '/login/code', { code: v })
+      if (liveLogin(r)) { if (onScreen(iso, tool)) { S.cliLogin.login = r; renderSetup() } }
+      else cliLoginEnded(iso, tool, r)
+    } catch (x) {
+      if (x instanceof Unauthorized) { S.authed = false; render(); return }
+      finish.disabled = false
+      finish.textContent = 'Finish login'
+      err.textContent = x.message
+    }
+  }
+  finish.addEventListener('click', submit)
+  code.addEventListener('keydown', (e) => { if (e.key === 'Enter') submit() })
+  return h('div', { class: 'subform' },
+    h('p', null, '1. ', link('Open the Claude login'), ' and sign in.'),
+    h('p', null, '2. The page ends on a code. Paste it here:'),
+    h('div', { class: 'field' }, code), err,
+    h('div', { class: 'actions' }, finish, copyButton(l.url, 'Copy address'), cancel))
 }
 
 function renderToast() {

@@ -110,6 +110,9 @@ func (m *Model) renderMain(w, h int) string {
 		if m.isoPage != nil && m.isoPage.expose != nil {
 			return m.renderExpose(w)
 		}
+		if m.isoPage != nil && m.isoPage.clis != nil {
+			return m.renderCLIs(w)
+		}
 		if m.isoPage != nil {
 			return m.renderIsolations(w)
 		}

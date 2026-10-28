@@ -7,7 +7,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"os/exec"
 	"strings"
 	"time"
 
@@ -40,6 +39,19 @@ type Backend interface {
 	SetEnv(ctx context.Context, name string, set api.SetEnv) error
 	Verify(ctx context.Context, name string) (api.Verify, error)
 
+	// The agent CLIs' own logins.
+	CLIs(ctx context.Context, iso string) ([]api.CLI, error)
+	StartCLILogin(ctx context.Context, iso, tool string) (api.CLILogin, error)
+	CLILogin(ctx context.Context, iso, tool string) (api.CLILogin, error)
+	SendCLICode(ctx context.Context, iso, tool, code string) (api.CLILogin, error)
+	CancelCLILogin(ctx context.Context, iso, tool string) error
+	CLILogout(ctx context.Context, iso, tool string) error
+	Accounts(ctx context.Context) ([]api.Account, error)
+	AddAccount(ctx context.Context, name, kind, secret string) (api.Account, error)
+	SetAccountSecret(ctx context.Context, name, secret string) (api.Account, error)
+	DeleteAccount(ctx context.Context, name string, force bool) error
+	UseAccount(ctx context.Context, iso, tool, account string) error
+
 	// The credential proxies.
 	Services(ctx context.Context) ([]api.Service, error)
 	Envs(ctx context.Context, service string) ([]api.Env, error)
@@ -54,10 +66,6 @@ type Backend interface {
 	Expose(ctx context.Context, iso, service string, req api.Expose) (api.Exposure, error)
 	Unexpose(ctx context.Context, iso, service string) error
 }
-
-// LoginCmd builds the interactive command that logs tool (claude, codex) in
-// inside a container. The TUI suspends while it runs.
-type LoginCmd func(container, tool string) *exec.Cmd
 
 type focus int
 
@@ -85,10 +93,9 @@ const (
 )
 
 type Model struct {
-	be    Backend
-	login LoginCmd
-	keys  Keymap
-	th    theme
+	be   Backend
+	keys Keymap
+	th   theme
 
 	width, height int
 	agents        []api.Agent
@@ -130,7 +137,7 @@ type confirmation struct {
 	onYes  func() tea.Cmd
 }
 
-func New(be Backend, login LoginCmd, keys Keymap, warnings []string) *Model {
+func New(be Backend, keys Keymap, warnings []string) *Model {
 	in := textarea.New()
 	in.Placeholder = "Message the agent…"
 	in.ShowLineNumbers = false
@@ -139,7 +146,7 @@ func New(be Backend, login LoginCmd, keys Keymap, warnings []string) *Model {
 	in.SetHeight(1)
 	in.KeyMap.InsertNewline = key.NewBinding(key.WithKeys(keys.keys["newline"]...))
 	in.FocusedStyle.CursorLine = lipgloss.NewStyle()
-	m := &Model{be: be, login: login, keys: keys, th: newTheme(), sel: selNew,
+	m := &Model{be: be, keys: keys, th: newTheme(), sel: selNew,
 		convos: map[string]*convo{}, drafts: map[string]string{}, feed: make(chan tea.Msg, 512),
 		vp: viewport.New(0, 0), input: in}
 	if len(warnings) > 0 {
@@ -427,6 +434,9 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		if m.isoPage != nil {
 			m.isoPage.busy = ""
+			if m.isoPage.clis != nil {
+				m.isoPage.clis.busy = ""
+			}
 		}
 		if m.svcPage != nil {
 			m.svcPage.busy = ""
@@ -438,6 +448,9 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			if m.isoPage != nil && m.isoPage.expose != nil {
 				cmds = append(cmds, m.fetchExposures(m.isoPage.expose.iso))
+			}
+			if m.isoPage != nil && m.isoPage.clis != nil {
+				cmds = append(cmds, m.fetchCLIs(m.isoPage.clis.iso))
 			}
 			return m, tea.Batch(cmds...)
 		}
@@ -506,6 +519,13 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 		}
 		return m, m.fetchIsolations()
+
+	case clisMsg:
+		return m, m.onCLIs(msg)
+	case cliLoginMsg:
+		return m, m.onCLILogin(msg)
+	case cliPollMsg:
+		return m, m.pollCLILogin(msg)
 
 	case exposuresMsg:
 		if m.isoPage != nil && m.isoPage.expose != nil && m.isoPage.expose.iso == msg.iso {
