@@ -30,7 +30,12 @@ const (
 	AgentHome = "/home/agent"
 	WorkRoot  = AgentHome + "/work"
 	shimPath  = "/usr/local/bin/gero-shim"
+	// StateRoot is the shim's durable state, on the state volume.
+	StateRoot = "/var/lib/gero"
 )
+
+// AgentStateDir is where the shim keeps one agent's log.
+func AgentStateDir(id string) string { return StateRoot + "/agents/" + id }
 
 type CLI struct {
 	Bin string

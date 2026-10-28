@@ -210,6 +210,16 @@ func (c *Client) Archive(ctx context.Context, id string) error {
 	return c.do(ctx, "POST", "/v1/agents/"+url.PathEscape(id)+"/archive", nil, nil)
 }
 
+// DeleteAgent forgets an archived agent; purge also removes its workspace
+// and its CLI's session transcript from the isolation.
+func (c *Client) DeleteAgent(ctx context.Context, id string, purge bool) error {
+	q := ""
+	if purge {
+		q = "?purge=1"
+	}
+	return c.do(ctx, "DELETE", "/v1/agents/"+url.PathEscape(id)+q, nil, nil)
+}
+
 func (c *Client) Events(ctx context.Context, id string, after int64) ([]event.Event, error) {
 	var v []event.Event
 	return v, c.do(ctx, "GET", fmt.Sprintf("/v1/agents/%s/events?after=%d", url.PathEscape(id), after), nil, &v)

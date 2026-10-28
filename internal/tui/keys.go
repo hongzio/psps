@@ -39,6 +39,7 @@ var defaultBindings = []binding{
 	{"down", []string{"down", "j"}, "list", "move down"},
 	{"open", []string{"enter"}, "list", "open"},
 	{"archive", []string{"x"}, "sidebar", "archive the selected agent"},
+	{"delete_agent", []string{"d"}, "sidebar", "delete the selected archived agent"},
 	{"toggle_archived", []string{"z"}, "sidebar", "show / hide archived agents"},
 
 	{"scroll_up", []string{"up", "k"}, "conversation", "scroll up"},

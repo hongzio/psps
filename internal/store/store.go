@@ -339,6 +339,21 @@ func (s *Store) Agents() ([]Agent, error) {
 	return out, rows.Err()
 }
 
+// DeleteAgent removes an agent and everything stored for it.
+func (s *Store) DeleteAgent(id string) error {
+	tx, err := s.db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	for _, q := range []string{`DELETE FROM events WHERE agent = ?`, `DELETE FROM outbox WHERE agent = ?`, `DELETE FROM agents WHERE id = ?`} {
+		if _, err := tx.Exec(q, id); err != nil {
+			return err
+		}
+	}
+	return tx.Commit()
+}
+
 func (s *Store) SetOptions(id string, o driver.Options) error {
 	b, _ := json.Marshal(o)
 	_, err := s.db.Exec(`UPDATE agents SET options = ? WHERE id = ?`, string(b), id)

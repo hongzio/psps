@@ -32,6 +32,7 @@ type Backend interface {
 	Interrupt(ctx context.Context, id string) error
 	SetOptions(ctx context.Context, id string, o driver.Options) error
 	Archive(ctx context.Context, id string) error
+	DeleteAgent(ctx context.Context, id string, purge bool) error
 	Follow(ctx context.Context, id string, after int64, fn func(event.Event) error) error
 	CreateIsolation(ctx context.Context, req api.CreateIsolation) (api.Isolation, error)
 	UpdateIsolation(ctx context.Context, name string, req api.UpdateIsolation) (api.Isolation, error)
@@ -137,6 +138,9 @@ type Model struct {
 type confirmation struct {
 	prompt string
 	onYes  func() tea.Cmd
+	// alt, when set, is a second answer besides y, and onAlt what it does.
+	alt   string
+	onAlt func() tea.Cmd
 }
 
 func New(be Backend, keys Keymap, warnings []string) *Model {
@@ -378,6 +382,15 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		m.connErr = ""
 		m.agents = msg.agents
+		if _, ok := m.agent(m.openID); m.openID != "" && !ok {
+			// Deleted: stop following it.
+			if m.stopFeed != nil {
+				m.stopFeed()
+			}
+			delete(m.convos, m.openID)
+			m.openID = ""
+			m.feedGen++
+		}
 		if _, ok := m.agent(m.sel); !ok && !isFixed(m.sel) {
 			m.sel = selNew
 		}
@@ -608,6 +621,9 @@ func (m *Model) handleKey(msg tea.KeyMsg) tea.Cmd {
 		if msg.String() == "y" {
 			return c.onYes()
 		}
+		if c.alt != "" && msg.String() == c.alt {
+			return c.onAlt()
+		}
 		m.setFlash("cancelled", false)
 		return nil
 	}
@@ -720,6 +736,30 @@ func (m *Model) handleSidebarKey(msg tea.KeyMsg) tea.Cmd {
 		}
 		if a, ok := m.agent(m.sel); ok && a.ArchivedAt == nil {
 			m.setFocus(focusInput)
+		}
+		return nil
+	case k.Is(msg, "delete_agent"):
+		a, ok := m.agent(m.sel)
+		if !ok {
+			return nil
+		}
+		if a.ArchivedAt == nil {
+			m.setFlash("archive it first ("+k.Label("archive")+"); only archived agents are deleted", true)
+			return nil
+		}
+		be, id := m.be, a.ID
+		del := func(purge bool) func() tea.Cmd {
+			return func() tea.Cmd {
+				done := "deleted " + id + "; its workspace stays in " + a.Isolation
+				if purge {
+					done = "deleted " + id + " with its workspace and session transcript"
+				}
+				return m.do(done, true, func(ctx context.Context) error { return be.DeleteAgent(ctx, id, purge) })
+			}
+		}
+		m.confirm = &confirmation{
+			prompt: fmt.Sprintf("delete %q? y: its history and log; p: its workspace and session transcript in %s too; other keys cancel", a.Name, a.Isolation),
+			onYes:  del(false), alt: "p", onAlt: del(true),
 		}
 		return nil
 	case k.Is(msg, "archive"):

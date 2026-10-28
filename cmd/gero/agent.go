@@ -16,7 +16,7 @@ import (
 
 func agentCmd(p paths.Paths, args []string) error {
 	if len(args) == 0 {
-		return errors.New("usage: gero agent new|ls|log|send|approve|interrupt|set|archive")
+		return errors.New("usage: gero agent new|ls|log|send|approve|interrupt|set|archive|rm")
 	}
 	c, err := connect(p)
 	if err != nil {
@@ -159,6 +159,27 @@ func agentCmd(p paths.Paths, args []string) error {
 			return errors.New("usage: gero agent archive ID")
 		}
 		return c.Archive(ctx, pos[0])
+
+	case "rm":
+		purge := fs.Bool("purge", false, "also remove its workspace and its CLI's session transcript from the isolation")
+		pos := parse(fs, args[1:])
+		if len(pos) != 1 {
+			return errors.New("usage: gero agent rm ID [--purge]   (an archived agent)")
+		}
+		a, err := c.Agent(ctx, pos[0])
+		if err != nil {
+			return err
+		}
+		// The daemon resolves the prefix itself, refusing an ambiguous one.
+		if err := c.DeleteAgent(ctx, pos[0], *purge); err != nil {
+			return err
+		}
+		if *purge {
+			fmt.Printf("deleted agent %s, with its workspace and session transcript in %s\n", a.ID, a.Isolation)
+		} else {
+			fmt.Printf("deleted agent %s; its workspace %s stays in %s (--purge removes it)\n", a.ID, a.Workdir, a.Isolation)
+		}
+		return nil
 	}
 	return fmt.Errorf("unknown agent command %q", args[0])
 }

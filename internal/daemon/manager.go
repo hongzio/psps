@@ -71,8 +71,9 @@ type Manager struct {
 	bridgeOf  func(gateway4 string) string
 	log       *log.Logger
 	hub       *hub
-	// workRoot is where agent workspaces go inside an isolation.
-	workRoot string
+	// workRoot is where agent workspaces go inside an isolation, home the
+	// agent user's home there.
+	workRoot, home string
 	// webURL / webErr: what Run managed to serve the web UI on.
 	webURL, webErr string
 
@@ -122,7 +123,7 @@ type agentView = api.Agent
 
 func NewManager(ctx context.Context, st *store.Store, cli Containers, fence Fence, logger *log.Logger) *Manager {
 	return &Manager{ctx: ctx, store: st, cli: cli, fence: fence, hostAddrs: pf.SystemAddrs, bridgeOf: pf.SystemBridge,
-		log: logger, hub: newHub(), workRoot: isolation.WorkRoot,
+		log: logger, hub: newHub(), workRoot: isolation.WorkRoot, home: isolation.AgentHome,
 		runtimes: map[string]*runtime{}, isos: map[string]*isoState{}, fences: map[string]*fenceState{},
 		tunnelPort: func(p int) int { return p }, instances: map[string]map[string]proxy.Instance{},
 		tunnels: map[string]*tunnelState{}, synced: map[string]string{}, versions: map[string]string{}, lastEnv: map[string]string{}}
@@ -910,5 +911,121 @@ func (m *Manager) Archive(ctx context.Context, id string) error {
 	m.mu.Lock()
 	delete(m.runtimes, r.agent.ID)
 	m.mu.Unlock()
+	return nil
+}
+
+// DeleteAgent forgets an archived agent: its history here and its log in
+// the isolation. Its workspace and the CLI's transcript of its session stay
+// in the isolation's volume unless purge, the way an isolation's volumes
+// stay unless it is deleted with purge.
+func (m *Manager) DeleteAgent(ctx context.Context, idOrPrefix string, purge bool) error {
+	a, err := m.storedAgent(idOrPrefix)
+	if err != nil {
+		return err
+	}
+	m.mu.Lock()
+	_, live := m.runtimes[a.ID]
+	m.mu.Unlock()
+	if a.ArchivedAt == nil || live {
+		return httpError{http.StatusConflict, fmt.Errorf("agent %s is live; archive it first (`gero agent archive %s`)", a.ID, a.ID)}
+	}
+	iso, err := m.store.Isolation(a.Isolation)
+	if err != nil {
+		return err
+	}
+	client, err := m.ensureIsolation(ctx, iso.Name)
+	if err != nil {
+		return err
+	}
+	// Its log goes only once nothing writes to it.
+	infos, err := client.List(ctx)
+	if err != nil {
+		return err
+	}
+	for _, in := range infos {
+		if in.ID == a.ID && in.Running {
+			return httpError{http.StatusConflict, fmt.Errorf("agent %s's process is still exiting; try again in a moment", a.ID)}
+		}
+	}
+	if purge {
+		if err := m.purgeAgent(ctx, iso, a); err != nil {
+			return err
+		}
+	}
+	if _, err := m.cli.Sync(ctx, iso.Container, shimproto.SyncRequest{Remove: []string{isolation.AgentStateDir(a.ID)}}); err != nil {
+		return err
+	}
+	if err := m.store.DeleteAgent(a.ID); err != nil {
+		return err
+	}
+	// Its conversation is gone from the file too, not left in free pages.
+	if err := m.store.Vacuum(); err != nil {
+		m.log.Printf("store: vacuum: %v", err)
+	}
+	m.log.Printf("agent %s: deleted (purge %v)", a.ID, purge)
+	return nil
+}
+
+// storedAgent is the agent, live or archived, whose ID is idOrPrefix or the
+// only one starting with it.
+func (m *Manager) storedAgent(idOrPrefix string) (store.Agent, error) {
+	all, err := m.store.Agents()
+	if err != nil {
+		return store.Agent{}, err
+	}
+	var found []store.Agent
+	for _, a := range all {
+		if a.ID == idOrPrefix {
+			return a, nil
+		}
+		if idOrPrefix != "" && strings.HasPrefix(a.ID, idOrPrefix) {
+			found = append(found, a)
+		}
+	}
+	switch len(found) {
+	case 0:
+		return store.Agent{}, fmt.Errorf("agent %s: %w", idOrPrefix, store.ErrNotFound)
+	case 1:
+		return found[0], nil
+	}
+	return store.Agent{}, badRequest(fmt.Errorf("agent prefix %q is ambiguous", idOrPrefix))
+}
+
+var (
+	validSession = regexp.MustCompile(`^[0-9A-Za-z][0-9A-Za-z-]*$`)
+	// Claude Code names a project after its working directory, every
+	// character but a letter or digit made a dash.
+	projectName = regexp.MustCompile(`[^A-Za-z0-9]`)
+)
+
+// purgeAgent removes what the agent left in the isolation's home: its
+// workspace and its CLI's transcript of the session. Every path is derived
+// from the agent's own ID, workspace and session, nothing else.
+func (m *Manager) purgeAgent(ctx context.Context, iso store.Isolation, a store.Agent) error {
+	if a.Workdir != m.workRoot+"/"+a.ID {
+		return badRequest(fmt.Errorf("agent %s's workspace %s is not where gero makes one; delete it without purge and remove that yourself", a.ID, a.Workdir))
+	}
+	steps := [][]string{{"rm", "-rf", "--", a.Workdir}}
+	sid := a.SessionID
+	if !validSession.MatchString(sid) {
+		sid = ""
+	}
+	switch a.Kind {
+	case driver.Claude:
+		steps = append(steps, []string{"rm", "-rf", "--", m.home + "/.claude/projects/" + projectName.ReplaceAllString(a.Workdir, "-")})
+		if sid != "" {
+			steps = append(steps, []string{"rm", "-rf", "--", m.home + "/.claude/session-env/" + sid})
+		}
+	case driver.Codex:
+		sessions := m.home + "/.codex/sessions"
+		if _, err := m.cli.RunAsAgent(ctx, iso.Container, "test", "-d", sessions); sid != "" && err == nil {
+			steps = append(steps, []string{"find", sessions, "-name", "rollout-*-" + sid + ".jsonl", "-delete"})
+		}
+	}
+	for _, argv := range steps {
+		if _, err := m.cli.RunAsAgent(ctx, iso.Container, argv...); err != nil {
+			return err
+		}
+	}
 	return nil
 }

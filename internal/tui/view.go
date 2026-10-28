@@ -217,7 +217,7 @@ func (m *Model) renderStatus() string {
 		switch m.focus {
 		case focusSidebar:
 			hints = []string{"↑↓ move", k.Label("open") + " open", k.Label("new_agent") + " new", k.Label("archive") + " archive",
-				k.Label("toggle_archived") + " archived", k.Label("focus_next") + " next pane"}
+				k.Label("delete_agent") + " delete", k.Label("toggle_archived") + " archived", k.Label("focus_next") + " next pane"}
 		case focusConvo:
 			hints = []string{"↑↓ scroll", k.Label("page_up") + "/" + k.Label("page_down") + " page", k.Label("focus_next") + " next pane"}
 		case focusInput:

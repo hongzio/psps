@@ -124,7 +124,7 @@ func (c CLI) Create(ctx context.Context, base, image string, cpus int, memory, n
 		Network: network,
 		Volumes: [][2]string{
 			{HomeVolume(base), AgentHome},
-			{StateVolume(base), "/var/lib/gero"},
+			{StateVolume(base), StateRoot},
 		},
 		Labels: map[string]string{"dev.gero.isolation": base},
 	})

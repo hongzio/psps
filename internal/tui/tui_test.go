@@ -50,6 +50,8 @@ type fakeBackend struct {
 	choiceAsks []string
 	// updates are the isolation settings sent, as "name name=… cpus=… memory=…".
 	updates []string
+	// deleted are the agents deleted, as "id purge=…".
+	deleted []string
 }
 
 func (f *fakeBackend) Agents(context.Context) ([]api.Agent, error) {
@@ -86,6 +88,19 @@ func (f *fakeBackend) SetOptions(_ context.Context, _ string, o driver.Options) 
 	return nil
 }
 func (f *fakeBackend) Archive(context.Context, string) error { return nil }
+func (f *fakeBackend) DeleteAgent(_ context.Context, id string, purge bool) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.deleted = append(f.deleted, fmt.Sprintf("%s purge=%v", id, purge))
+	var keep []api.Agent
+	for _, a := range f.agents {
+		if a.ID != id {
+			keep = append(keep, a)
+		}
+	}
+	f.agents = keep
+	return nil
+}
 func (f *fakeBackend) Follow(ctx context.Context, id string, after int64, fn func(event.Event) error) error {
 	f.mu.Lock()
 	evs := f.events[id]
@@ -435,6 +450,35 @@ func (h *harness) key(s string) {
 // typeText delivers s the way a paste arrives: one message, many runes.
 func (h *harness) typeText(s string) {
 	h.send(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune(s)})
+}
+
+func TestOnlyAnArchivedAgentIsDeletedAndItsWorkspaceOnlyWhenAsked(t *testing.T) {
+	h := newHarness(t)
+	h.drainFeed()
+	if h.m.sel != "bbbb" {
+		t.Fatalf("sel %q", h.m.sel)
+	}
+	h.key("d")
+	if h.m.confirm != nil || len(h.be.deleted) != 0 {
+		t.Fatal("offered to delete a live agent")
+	}
+	now := time.Now()
+	h.be.mu.Lock()
+	h.be.agents[1].ArchivedAt = &now
+	agents := append([]api.Agent(nil), h.be.agents...)
+	h.be.mu.Unlock()
+	h.send(agentsMsg{agents: agents})
+	h.key("d")
+	if h.m.confirm == nil || !strings.Contains(h.m.confirm.prompt, `delete "second"?`) {
+		t.Fatalf("confirm %+v", h.m.confirm)
+	}
+	h.key("p")
+	if len(h.be.deleted) != 1 || h.be.deleted[0] != "bbbb purge=true" {
+		t.Fatalf("deleted %v", h.be.deleted)
+	}
+	if h.m.openID == "bbbb" {
+		t.Fatal("still following a deleted agent")
+	}
 }
 
 func TestIsolationSettingsRenameAtOnceAndAskBeforeAResize(t *testing.T) {

@@ -337,11 +337,20 @@ func (p pipeRW) Write(b []byte) (int, error) { return p.w.Write(b) }
 func (p pipeRW) Close() error                { p.w.Close(); return p.r.Close() }
 func (p pipeRW) Stderr() string              { return "" }
 
+// Sync records each request and does its removals under the shim's state,
+// which is the container's own directory here.
 func (f *fakeContainers) Sync(_ context.Context, name string, req shimproto.SyncRequest) (shimproto.SyncResult, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.syncs = append(f.syncs, req)
-	return shimproto.SyncResult{}, nil
+	var res shimproto.SyncResult
+	for _, p := range req.Remove {
+		if rel, ok := strings.CutPrefix(p, isolation.StateRoot+"/"); ok {
+			os.RemoveAll(filepath.Join(f.base, name, rel))
+			res.Removed = append(res.Removed, p)
+		}
+	}
+	return res, nil
 }
 
 func (f *fakeContainers) lastSync() (shimproto.SyncRequest, int) {
@@ -399,6 +408,7 @@ type testEnv struct {
 	fc       *fakeContainers
 	fence    *fakeFence
 	workRoot string
+	home     string // the agent user's, in the isolation
 
 	mu       sync.Mutex
 	noBridge bool // the isolation's bridge is not up (yet)
@@ -445,7 +455,8 @@ func newTestEnv(t *testing.T) *testEnv {
 	if err := fc.boot("gero-dev"); err != nil {
 		t.Fatal(err)
 	}
-	return &testEnv{t: t, st: st, fc: fc, fence: &fakeFence{installed: true}, workRoot: filepath.Join(base, "work")}
+	return &testEnv{t: t, st: st, fc: fc, fence: &fakeFence{installed: true}, workRoot: filepath.Join(base, "work"),
+		home: filepath.Join(base, "home")}
 }
 
 // daemon starts a manager the way daemon.Run does; stop ends it like a
@@ -463,7 +474,7 @@ func (e *testEnv) daemon() (m *Manager, stop func()) {
 			{Iface: testBridge, Prefix: netip.MustParsePrefix("fe80::1/64")},
 		}, nil
 	}
-	m.workRoot = e.workRoot
+	m.workRoot, m.home = e.workRoot, e.home
 	if err := m.Reconcile(); err != nil {
 		e.t.Fatal(err)
 	}
@@ -1101,5 +1112,138 @@ func TestARenameDoesNotInterruptATurn(t *testing.T) {
 		if ev.Kind == event.KindTurnEnd {
 			t.Fatalf("the turn ended: %v", kindsOf(e.events(a.ID)))
 		}
+	}
+}
+
+func exists(path string) bool { _, err := os.Stat(path); return err == nil }
+
+func touch(t *testing.T, path string) {
+	t.Helper()
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte("{}\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// Deleting forgets an archived agent everywhere gero keeps it; what it left
+// in the isolation goes only when asked to.
+func TestDeletingAnAgent(t *testing.T) {
+	e := newTestEnv(t)
+	ctx := context.Background()
+	m, stop := e.daemon()
+	defer stop()
+	newAgent := func(prompt string) store.Agent {
+		t.Helper()
+		a, err := m.CreateAgent(ctx, api.CreateAgent{Isolation: "dev", Kind: driver.Codex, Prompt: prompt})
+		if err != nil {
+			t.Fatal(err)
+		}
+		e.waitFor("an answer", func() bool { return e.hasAssistant(a.ID, "echo: "+prompt) && status(m, a.ID) == event.StatusIdle })
+		return a
+	}
+	shimDir := func(id string) string { return filepath.Join(e.fc.base, "gero-dev", "agents", id) }
+	rollout := filepath.Join(e.home, ".codex/sessions/2026/10/28/rollout-2026-10-28T05-38-13-th-fake.jsonl")
+	other := filepath.Join(e.home, ".codex/sessions/2026/10/28/rollout-2026-10-28T05-38-22-th-other.jsonl")
+	touch(t, rollout)
+	touch(t, other)
+
+	a := newAgent("one")
+	var he httpError
+	if err := m.DeleteAgent(ctx, a.ID, false); !errors.As(err, &he) || he.code != http.StatusConflict {
+		t.Fatalf("deleted a live agent: %v", err)
+	}
+	if err := m.Archive(ctx, a.ID); err != nil {
+		t.Fatal(err)
+	}
+	e.waitFor("its process to end", func() bool { return m.DeleteAgent(ctx, a.ID, false) == nil })
+	if _, err := e.st.Agent(a.ID); !errors.Is(err, store.ErrNotFound) {
+		t.Fatalf("agent still stored: %v", err)
+	}
+	if evs, _ := e.st.Events(a.ID, 0, 0); len(evs) != 0 {
+		t.Fatalf("%d events kept", len(evs))
+	}
+	if exists(shimDir(a.ID)) {
+		t.Fatal("the shim's log of it is still in the isolation")
+	}
+	if !exists(a.Workdir) || !exists(rollout) {
+		t.Fatal("without purge, what it left in the isolation went too")
+	}
+
+	b := newAgent("two")
+	if err := m.Archive(ctx, b.ID); err != nil {
+		t.Fatal(err)
+	}
+	e.waitFor("its process to end", func() bool { return m.DeleteAgent(ctx, b.ID, true) == nil })
+	if exists(b.Workdir) || exists(rollout) || exists(shimDir(b.ID)) {
+		t.Fatalf("purge left workspace=%v rollout=%v log=%v", exists(b.Workdir), exists(rollout), exists(shimDir(b.ID)))
+	}
+	if !exists(other) || !exists(a.Workdir) {
+		t.Fatal("purge reached another session or another agent's workspace")
+	}
+	if err := m.DeleteAgent(ctx, b.ID, false); !errors.Is(err, store.ErrNotFound) {
+		t.Fatalf("deleted twice: %v", err)
+	}
+}
+
+func TestPurgingAClaudeAgentTouchesOnlyItsOwnPaths(t *testing.T) {
+	e := newTestEnv(t)
+	ctx := context.Background()
+	m, stop := e.daemon()
+	defer stop()
+	iso, _ := e.st.Isolation("dev")
+	const sid = "7ff11a91-1572-4c8d-b0b9-c1444836c7d0"
+	// As Claude Code names them: dev has -home-agent-work-77b17c2c.
+	if got := projectName.ReplaceAllString(isolation.WorkRoot+"/77b17c2c", "-"); got != "-home-agent-work-77b17c2c" {
+		t.Fatalf("project name %q", got)
+	}
+	a := store.Agent{ID: "c1", Kind: driver.Claude, Isolation: "dev", Workdir: m.workRoot + "/c1", SessionID: sid}
+	project := filepath.Join(e.home, ".claude/projects", projectName.ReplaceAllString(a.Workdir, "-"))
+	mine := []string{filepath.Join(a.Workdir, "main.go"), filepath.Join(project, sid+".jsonl"), filepath.Join(e.home, ".claude/session-env", sid, "x")}
+	theirs := []string{filepath.Join(m.workRoot, "c2", "main.go"), filepath.Join(e.home, ".claude/projects", projectName.ReplaceAllString(m.workRoot+"/c2", "-"), "s.jsonl"),
+		filepath.Join(e.home, ".claude/session-env", "other", "x"), filepath.Join(e.home, ".claude/settings.json")}
+	for _, p := range append(append([]string(nil), mine...), theirs...) {
+		touch(t, p)
+	}
+	if err := m.purgeAgent(ctx, iso, a); err != nil {
+		t.Fatal(err)
+	}
+	for _, p := range mine {
+		if exists(p) {
+			t.Errorf("%s kept", p)
+		}
+	}
+	for _, p := range theirs {
+		if !exists(p) {
+			t.Errorf("%s removed", p)
+		}
+	}
+
+	// A workspace gero did not make is not gero's to remove.
+	odd := a
+	odd.Workdir = theirs[0][:len(theirs[0])-len("/main.go")]
+	if err := m.purgeAgent(ctx, iso, odd); err == nil || !exists(theirs[0]) {
+		t.Fatalf("purged a workspace elsewhere: %v", err)
+	}
+}
+
+func TestAnAmbiguousPrefixDeletesNothing(t *testing.T) {
+	e := newTestEnv(t)
+	m, stop := e.daemon()
+	defer stop()
+	now := time.Now()
+	for _, id := range []string{"ab12", "ab34"} {
+		if err := e.st.CreateAgent(store.Agent{ID: id, Name: id, Kind: driver.Codex, Isolation: "dev", Workdir: m.workRoot + "/" + id, CreatedAt: now}); err != nil {
+			t.Fatal(err)
+		}
+		e.st.SetArchived(id, &now)
+	}
+	var he httpError
+	if err := m.DeleteAgent(context.Background(), "ab", false); !errors.As(err, &he) || he.code != http.StatusBadRequest {
+		t.Fatalf("ambiguous prefix: %v", err)
+	}
+	if all, _ := e.st.Agents(); len(all) != 2 {
+		t.Fatalf("%d agents left", len(all))
 	}
 }

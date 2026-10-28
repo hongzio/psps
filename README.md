@@ -27,6 +27,9 @@ bin/gero agent new --iso dev --kind codex "fix the flaky test"
 bin/gero agent ls
 bin/gero agent log <id> -f
 bin/gero agent send <id> "also update the changelog"
+bin/gero agent archive <id>               # stops it; its history is kept
+bin/gero agent rm <id> [--purge]          # an archived one: gone from gero; --purge also
+                                          # removes its workspace and session transcript
 ```
 
 ### TUI
@@ -35,7 +38,8 @@ bin/gero agent send <id> "also update the changelog"
 bin/gero tui
 ```
 
-Agents on the left (status at a glance; archived ones folded at the bottom),
+Agents on the left (status at a glance; archived ones folded at the bottom,
+`d` deletes one),
 the selected agent's conversation in the middle, the input at the bottom with
 the agent's settings behind `ctrl+o`. `ctrl+n` starts an agent, `ctrl+g`
 manages isolations (environment, `s` to rename or resize one, upgrades, `v` to verify one, `l` its accounts

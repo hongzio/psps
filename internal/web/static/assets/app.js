@@ -102,8 +102,9 @@ async function guarded(fn) {
 // ask is the page's own confirm(): a modal with the question, what follows
 // from it, and a button named for the action. It resolves true when the
 // operator takes the action; Esc, Cancel or a click outside leave it be.
-// A destructive one starts on Cancel, so a stray Enter does nothing.
-function ask({ title, body, ok, danger }) {
+// A destructive one starts on Cancel, so a stray Enter does nothing. extra
+// is shown under the body: a choice the caller reads once it resolves.
+function ask({ title, body, ok, danger, extra }) {
   return new Promise((resolve) => {
     const cancel = h('button', { class: 'btn', value: 'cancel' }, 'Cancel')
     const go = h('button', { class: 'btn primary' + (danger ? ' danger' : ''), value: 'ok' }, ok)
@@ -111,6 +112,7 @@ function ask({ title, body, ok, danger }) {
       h('form', { method: 'dialog' },
         h('h3', { id: 'dialog-title' }, title),
         body ? h('p', { id: 'dialog-body' }, body) : null,
+        extra || null,
         h('div', { class: 'dialog-actions' }, cancel, go)))
     // Outside is the backdrop, which is the dialog itself as a target; a
     // drag that starts inside and ends outside is not a click outside.
@@ -660,6 +662,24 @@ function renderTopbar() {
       h('span', { class: 'chip ' + st }, st),
       h('div', { class: 'actions' },
         working ? h('button', { class: 'btn', onclick: () => guarded(() => api('POST', `/v1/agents/${a.id}/interrupt`)) }, '■', h('span', { class: 'label' }, ' Stop')) : null,
+        a.archived_at ? h('button', {
+          class: 'btn ghost danger', title: 'Delete', onclick: async () => {
+            const purge = h('input', { type: 'checkbox' })
+            if (!await ask({
+              title: `Delete "${a.name}"?`,
+              body: `Its history and its log in ${a.isolation} are removed. This cannot be undone.`,
+              extra: h('label', { class: 'check' }, purge, `Also remove its workspace and session transcript from ${a.isolation}`),
+              ok: 'Delete', danger: true,
+            })) return
+            await guarded(async () => {
+              await api('DELETE', `/v1/agents/${enc(a.id)}` + (purge.checked ? '?purge=1' : ''))
+              toast(purge.checked ? `Deleted, with its workspace` : `Deleted; its workspace stays in ${a.isolation}`)
+              S.sel = null
+              await refreshAgents()
+              render()
+            })
+          },
+        }, '🗑', h('span', { class: 'label' }, ' Delete')) : null,
         a.archived_at ? null : h('button', {
           class: 'btn ghost', title: 'Archive', onclick: async () => {
             if (!await ask({ title: `Archive "${a.name}"?`, body: 'Its history is kept.', ok: 'Archive' })) return
