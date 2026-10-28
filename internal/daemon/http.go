@@ -263,6 +263,26 @@ func (m *Manager) Handler() http.Handler {
 		}
 		reply(w, nil, m.SetOptions(r.PathValue("id"), req))
 	})
+	mux.HandleFunc("GET /v1/agents/{id}/inbox", func(w http.ResponseWriter, r *http.Request) {
+		v, err := m.Inbox(r.PathValue("id"))
+		reply(w, v, err)
+	})
+	mux.HandleFunc("GET /v1/agents/{id}/mail", func(w http.ResponseWriter, r *http.Request) {
+		v, err := m.Mail(r.PathValue("id"))
+		reply(w, v, err)
+	})
+	mux.HandleFunc("DELETE /v1/agents/{id}/inbox", func(w http.ResponseWriter, r *http.Request) {
+		n, err := m.ClearInbox(r.PathValue("id"))
+		reply(w, api.Cleared{Removed: n}, err)
+	})
+	mux.HandleFunc("DELETE /v1/agents/{id}/inbox/{mail}", func(w http.ResponseWriter, r *http.Request) {
+		id, err := strconv.ParseInt(r.PathValue("mail"), 10, 64)
+		if err != nil {
+			reply(w, nil, badRequest(fmt.Errorf("%q is not a mail number", r.PathValue("mail"))))
+			return
+		}
+		reply(w, nil, m.DiscardMail(r.PathValue("id"), id))
+	})
 	mux.HandleFunc("POST /v1/agents/{id}/archive", func(w http.ResponseWriter, r *http.Request) {
 		reply(w, nil, m.Archive(r.Context(), r.PathValue("id")))
 	})

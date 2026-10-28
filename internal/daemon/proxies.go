@@ -17,6 +17,7 @@ import (
 	"github.com/hongzio/gero/internal/creds"
 	"github.com/hongzio/gero/internal/driver"
 	"github.com/hongzio/gero/internal/proxy"
+	"github.com/hongzio/gero/internal/proxy/mailproxy"
 	"github.com/hongzio/gero/internal/shimproto"
 	"github.com/hongzio/gero/internal/store"
 	"github.com/hongzio/gero/internal/tunnel"
@@ -90,7 +91,7 @@ func (m *Manager) instance(iso string, svc proxy.Service) proxy.Instance {
 	in, ok := m.instances[iso][svc.Name()]
 	if !ok {
 		in = svc.New(proxy.Host{Name: func() string { return m.isoName(iso) }, Creds: m.creds, Log: m.log,
-			View: func() (proxy.View, error) { return m.viewFor(iso, svc) }})
+			View: func() (proxy.View, error) { return m.viewFor(iso, svc) }, Mail: m.mailHandler(iso)})
 		m.instances[iso][svc.Name()] = in
 	}
 	return in
@@ -257,6 +258,9 @@ type isoWorkspace struct {
 	req shimproto.SyncRequest
 	env []string
 	mcp []proxy.MCPServer
+	// mail: the isolation takes mail, so each agent starts with its own
+	// address (mailEnv).
+	mail bool
 }
 
 // signature changes whenever what an agent process starts with does.
@@ -264,6 +268,9 @@ func (w isoWorkspace) signature() string {
 	sig := strings.Join(w.env, "\n")
 	for _, s := range w.mcp {
 		sig += "\nmcp " + s.Name + " " + s.URL + " " + s.TokenEnv
+	}
+	if w.mail {
+		sig += "\nmail"
 	}
 	return sig
 }
@@ -286,6 +293,7 @@ func (m *Manager) workspace(iso string) (isoWorkspace, error) {
 		if err != nil {
 			return w, fmt.Errorf("%s: %w", svc.Name(), err)
 		}
+		w.mail = w.mail || svc.Name() == mailproxy.Name
 		w.req.Files = append(w.req.Files, ws.Files...)
 		w.env = append(w.env, ws.Env...)
 		w.mcp = append(w.mcp, ws.MCP...)
@@ -668,6 +676,7 @@ func (m *Manager) Exposures(name string) ([]api.Exposure, error) {
 			return nil, err
 		}
 		x := api.Exposure{Service: svc.Name(), Enabled: v.Enabled, Exposure: v.Exposure, Missing: v.Missing}
+		x.Settings = m.settingsOut(svc, x.Settings)
 		if !v.Enabled {
 			x.Exposure = store.Exposure{IsolationID: iso.ID, Service: svc.Name(), Envs: []string{}}
 		}
@@ -735,8 +744,11 @@ func (m *Manager) Expose(ctx context.Context, name, service string, req api.Expo
 			x.Default = x.Envs[0]
 		}
 	}
-	settings, err := proxy.Apply(svc.Settings(), x.Settings, req.Settings)
+	settings, err := proxy.Apply(svc.Settings(), m.settingsOut(svc, x.Settings), req.Settings)
 	if err != nil {
+		return api.Exposure{}, badRequest(err)
+	}
+	if err := m.settingsIn(svc, settings); err != nil {
 		return api.Exposure{}, badRequest(err)
 	}
 	if err := svc.NormalizeSettings(settings); err != nil {
@@ -760,6 +772,7 @@ func (m *Manager) Expose(ctx context.Context, name, service string, req api.Expo
 		return api.Exposure{}, err
 	}
 	m.servicesChanged(ctx, iso.ID)
+	x.Settings = m.settingsOut(svc, x.Settings)
 	return api.Exposure{Service: service, Enabled: true, Exposure: x}, nil
 }
 

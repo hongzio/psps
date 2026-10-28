@@ -47,6 +47,9 @@ type runtime struct {
 
 	outbox    []store.Pending
 	decisions map[string]driver.Decision
+	// inbox is how many mails wait for the agent: read one per turn,
+	// oldest first, whenever it is idle.
+	inbox int
 }
 
 func (m *Manager) newRuntime(a store.Agent) (*runtime, error) {
@@ -58,9 +61,13 @@ func (m *Manager) newRuntime(a store.Agent) (*runtime, error) {
 	if err != nil {
 		return nil, err
 	}
+	inbox, err := m.store.InboxCount(a.ID)
+	if err != nil {
+		return nil, err
+	}
 	ctx, cancel := context.WithCancel(m.ctx)
 	return &runtime{m: m, ctx: ctx, cancel: cancel, agent: a, drv: drv, outbox: outbox,
-		decisions: map[string]driver.Decision{}}, nil
+		decisions: map[string]driver.Decision{}, inbox: inbox}, nil
 }
 
 func (r *runtime) loop() {
@@ -226,6 +233,10 @@ func (r *runtime) kickLocked() {
 		r.problem = ""
 	}
 	st = r.drv.State()
+	if fenced && r.mailDueLocked(st) {
+		r.deliverMailLocked()
+		st = r.drv.State()
+	}
 	if st.Alive {
 		for _, l := range r.drv.Next() {
 			if err := r.att.Write(l); err != nil {
@@ -247,6 +258,7 @@ func (r *runtime) kickLocked() {
 	if st.Queued > 0 && !r.starting && !r.stopping && fenced {
 		r.starting = true
 		env, mcp := r.m.launchEnv(r.agent.IsolationID)
+		env = append(env, r.m.mailEnv(r.agent)...)
 		spec := shimproto.Spec{Argv: launchArgv(r.agent.Kind, r.drv.Command(), mcp), Dir: r.agent.Workdir, Env: env}
 		client, id := r.client, r.agent.ID
 		go func() {
@@ -288,22 +300,75 @@ func (r *runtime) send(text string) error {
 		return err
 	}
 	r.outbox = append(r.outbox, store.Pending{ID: id, Text: text, After: after})
-	if r.agent.Name == "" {
-		// Made without a prompt and not named since: its first message
-		// names it.
-		if name := nameFrom(text); name != "" {
-			if err := r.m.store.SetAgentName(r.agent.ID, name); err != nil {
-				r.m.log.Printf("agent %s: name: %v", r.agent.ID, err)
-			} else {
-				r.agent.Name = name
-			}
-		}
-	}
+	r.nameLocked(text)
 	if r.caughtUp {
 		r.drv.Send(text)
 		r.kickLocked()
 	}
 	return nil
+}
+
+// nameLocked names an agent made without a prompt and not named since
+// after its first message, text.
+func (r *runtime) nameLocked(text string) {
+	if r.agent.Name != "" {
+		return
+	}
+	if name := nameFrom(text); name != "" {
+		if err := r.m.store.SetAgentName(r.agent.ID, name); err != nil {
+			r.m.log.Printf("agent %s: name: %v", r.agent.ID, err)
+		} else {
+			r.agent.Name = name
+		}
+	}
+}
+
+// mailDueLocked is whether the agent is free for its next mail: idle, with
+// nothing of the operator's still on its way to it, and no process about
+// to be replaced. An agent in error or interrupted keeps its mail until
+// the operator's next message: one that cannot work would otherwise spend
+// its inbox failing.
+func (r *runtime) mailDueLocked(st driver.State) bool {
+	return r.inbox > 0 && len(r.outbox) == 0 && st.Queued == 0 && st.Status == event.StatusIdle &&
+		!r.starting && !r.stopping && !(st.Alive && (st.Restart || r.restartWhenIdle))
+}
+
+// deliverMailLocked moves the oldest mail from the inbox to the outbox,
+// in one transaction, and hands it to the driver: from then on it is a
+// message like the operator's, delivered after a daemon restart as theirs
+// are. Mail waits while the agent's isolation takes none.
+func (r *runtime) deliverMailLocked() {
+	if on, _, err := r.m.mailReach(r.agent.IsolationID); err != nil || !on {
+		return
+	}
+	ml, err := r.m.store.NextMail(r.agent.ID)
+	if err == nil {
+		after := max(r.lastSeen, r.agent.LastSrc)
+		var p store.Pending
+		if p, err = r.m.store.DeliverMail(ml.ID, r.m.letter(ml), after); err == nil {
+			r.outbox = append(r.outbox, p)
+			r.nameLocked(ml.Body)
+			r.drv.Send(p.Text)
+			r.m.log.Printf("agent %s: mail #%d from %s delivered", r.agent.ID, ml.ID, ml.From)
+		}
+	}
+	if err != nil && !errors.Is(err, store.ErrNotFound) {
+		r.m.log.Printf("agent %s: mail: %v", r.agent.ID, err)
+		return
+	}
+	if n, err := r.m.store.InboxCount(r.agent.ID); err == nil {
+		r.inbox = n
+	}
+}
+
+// inboxChanged follows mail arriving or taken out of the inbox.
+func (r *runtime) inboxChanged() {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if n, err := r.m.store.InboxCount(r.agent.ID); err == nil {
+		r.inbox = n
+	}
+	r.kickLocked()
 }
 
 func (r *runtime) envChanged() {

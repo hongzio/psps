@@ -225,6 +225,30 @@ func (c *Client) DeleteAgent(ctx context.Context, id string, purge bool) error {
 	return c.do(ctx, "DELETE", "/v1/agents/"+url.PathEscape(id)+q, nil, nil)
 }
 
+// Inbox is the mail waiting for an agent, in the order it will read it.
+func (c *Client) Inbox(ctx context.Context, id string) ([]api.Mail, error) {
+	var v []api.Mail
+	return v, c.do(ctx, "GET", "/v1/agents/"+url.PathEscape(id)+"/inbox", nil, &v)
+}
+
+// Mail is an agent's mail history, newest first: what it was sent and what
+// it wrote.
+func (c *Client) Mail(ctx context.Context, id string) ([]api.Mail, error) {
+	var v []api.Mail
+	return v, c.do(ctx, "GET", "/v1/agents/"+url.PathEscape(id)+"/mail", nil, &v)
+}
+
+// DiscardMail takes one mail out of an agent's inbox unread.
+func (c *Client) DiscardMail(ctx context.Context, id string, mail int64) error {
+	return c.do(ctx, "DELETE", fmt.Sprintf("/v1/agents/%s/inbox/%d", url.PathEscape(id), mail), nil, nil)
+}
+
+// ClearInbox takes all of an agent's mail out of its inbox unread.
+func (c *Client) ClearInbox(ctx context.Context, id string) (int, error) {
+	var v api.Cleared
+	return v.Removed, c.do(ctx, "DELETE", "/v1/agents/"+url.PathEscape(id)+"/inbox", nil, &v)
+}
+
 func (c *Client) Events(ctx context.Context, id string, after int64) ([]event.Event, error) {
 	var v []event.Event
 	return v, c.do(ctx, "GET", fmt.Sprintf("/v1/agents/%s/events?after=%d", url.PathEscape(id), after), nil, &v)

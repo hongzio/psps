@@ -193,6 +193,8 @@ code, pre { font-family: var(--mono); font-size: 13px; }
 .convo { flex: 1; overflow-y: auto; padding: 20px 16px 8px; overscroll-behavior: contain; }
 .convo-inner { max-width: 820px; margin: 0 auto; display: flex; flex-direction: column; gap: 10px; }
 .msg-user { align-self: flex-end; max-width: min(85%, 640px); background: var(--accent-soft); padding: 10px 14px; border-radius: 14px 14px 4px 14px; }
+.msg-mail { align-self: flex-end; max-width: min(85%, 640px); border: 1px solid var(--border); background: var(--panel); padding: 10px 14px; border-radius: 14px 14px 4px 14px; }
+.msg-mail .who { font-size: 12.5px; font-weight: 600; color: var(--accent); margin-bottom: 4px; }
 .msg-agent { max-width: 100%; }
 .msg-agent .who { font-size: 12.5px; font-weight: 600; color: var(--ok); margin-bottom: 2px; }
 .msg-agent.live .text::after { content: "▍"; color: var(--accent); animation: pulse 1s infinite; }
@@ -449,6 +451,19 @@ code, pre { font-family: var(--mono); font-size: 13px; }
   font-weight: 400;
 }
 .dialog .dialog-error { margin: 12px 0 0; color: var(--err); }
+.inbox { display: grid; gap: 10px; margin-top: 14px; max-height: 50vh; overflow-y: auto; }
+.inbox .mail { border: 1px solid var(--border); border-radius: 8px; padding: 8px 10px; }
+.inbox .mail-head { display: flex; align-items: center; gap: 4px; font-size: 13px; }
+.inbox .mail-head .btn { margin-left: auto; }
+.inbox .mail-meta { font-size: 12px; color: var(--muted); }
+.inbox .mail.sent { background: var(--bg); }
+.inbox .chip { font-size: 11px; }
+.chip.waiting { color: var(--accent); background: var(--accent-soft); }
+.chip.discarded { color: var(--faint); }
+.mail-lead { margin: 4px 0 0; color: var(--muted); font-size: 14px; }
+.mail-lead + .btn { margin-top: 10px; }
+.btn .badge { margin-left: 6px; min-width: 18px; padding: 0 5px; border-radius: 9px; background: var(--accent); color: var(--accent-text); font-size: 11px; line-height: 18px; text-align: center; }
+.inbox .mail-text { white-space: pre-wrap; overflow-wrap: anywhere; font-size: 13px; margin-top: 4px; color: var(--text); }
 .btn.primary.danger { background: var(--err); color: var(--on-err); }
 .dialog[open] { animation: dialog-in .14s ease-out; }
 .dialog[open]::backdrop { animation: backdrop-in .14s ease-out; }

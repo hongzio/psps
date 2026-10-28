@@ -29,6 +29,7 @@ bin/gero agent new --iso dev --kind codex --id login "fix the login bug"
 bin/gero agent ls
 bin/gero agent log <id> -f
 bin/gero agent send <id> "also update the changelog"
+bin/gero agent inbox <id> [--rm N|--clear] # mail other agents sent it (see Mail)
 bin/gero agent rename <id> login bug      # only the name changes; a turn carries on
 bin/gero agent id <id> login              # an ID of your own (--clear gives it back)
 bin/gero agent archive <id>               # stops it; its history is kept
@@ -218,6 +219,7 @@ tests included. Inside the isolation they are fixed loopback addresses:
 127.0.0.1:3026   GitHub API GITHUB_API_URL points here
 127.0.0.1:3027   Grafana    GRAFANA_URL points here
 127.0.0.1:3028   Notion     NOTION_MCP_URL; every agent gets it as an MCP server
+127.0.0.1:3029   mail       GERO_MAIL_URL, each agent's own (see Mail)
 ```
 
 The proxies run inside the daemon; nothing listens on the Mac. Each isolation
@@ -313,6 +315,42 @@ mcp_servers.…` — so neither tool's own configuration is touched.
 
 Isolations created before the proxies need `gero iso upgrade NAME` once;
 `gero iso ls` says so under PROXIES.
+
+## Mail
+
+Agents write to each other through gero. Every agent has an inbox; a mail
+waits there until its agent is idle, then arrives as a turn of its own, one
+mail at a time, oldest first. An agent that is in error or was interrupted
+keeps its mail until your next message, which always goes before mail.
+
+```sh
+gero iso expose dev mail                  # dev's agents write to each other
+gero iso expose scratch mail --to dev     # ...and scratch's to dev's too (one way)
+gero agent inbox <id>                     # what waits; --rm N / --clear take it out unread
+gero agent mail <id>                      # its history: what it was sent, read or not, and wrote
+```
+
+In the web, ✉ Mail on an agent's top bar shows the same history, with what
+waits counted on it; a mail it read also shows in its conversation, as mail.
+Mail stays as history once read or discarded; deleting an agent deletes the
+mail it was sent, and what it wrote stays with its recipients.
+
+Inside the isolation, `GERO_MAIL_URL` is each agent's own address: it carries a
+token that names the sender, handed to that agent's process alone, and the
+`gero-mail` skill says how to use it (`GET $GERO_MAIL_URL/agents`, `POST
+$GERO_MAIL_URL/send?to=<id>`). The recipient reads who wrote, from where, and
+that it is another agent and not you, ahead of the text.
+
+A mail is an instruction to the agent that reads it, so it crosses isolations
+only where you say: an isolation's agents write to their own isolation's, and
+to those of the isolations `--to` names (kept by ID: a rename keeps the way
+open, a new isolation given the old name gets none), if those take mail. The
+tunnel proves which isolation a mail comes from. Within one isolation the
+agents run as one user and can read each other's environment, so there the
+token names the sender rather than proving it. A mail is at most 32 KiB, an
+inbox holds 50, and an isolation's agents send 20 a minute at most. Agents
+answering each other can go on forever: the skill tells them not to answer
+what needs no answer, and `gero agent inbox <id> --clear` stops a loop.
 
 ## Verify
 

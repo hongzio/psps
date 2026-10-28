@@ -86,6 +86,7 @@ CREATE TABLE IF NOT EXISTS isolations (
 CREATE TABLE IF NOT EXISTS agents (
 	id          TEXT PRIMARY KEY,
 	handle      TEXT,
+	mail_token  TEXT,
 	name        TEXT NOT NULL,
 	kind        TEXT NOT NULL,
 	isolation   TEXT NOT NULL REFERENCES isolations(id),
@@ -121,7 +122,7 @@ func Open(path string) (*Store, error) {
 	// One writer is all SQLite allows anyway; a single connection turns
 	// contention into queueing instead of SQLITE_BUSY.
 	db.SetMaxOpenConns(1)
-	if _, err := db.Exec(schema + envSchema + accountSchema); err != nil {
+	if _, err := db.Exec(schema + envSchema + accountSchema + mailSchema); err != nil {
 		db.Close()
 		return nil, fmt.Errorf("store: schema: %w", err)
 	}
@@ -156,6 +157,9 @@ var added = []struct{ table, column, def string }{
 	{"isolations", "network", "TEXT NOT NULL DEFAULT ''"},
 	{"isolations", "fence", "TEXT NOT NULL DEFAULT 'on'"},
 	{"agents", "handle", "TEXT"},
+	{"agents", "mail_token", "TEXT"},
+	{"mail", "delivered_at", "TEXT"},
+	{"mail", "discarded_at", "TEXT"},
 }
 
 func hasColumn(db interface {
@@ -188,9 +192,15 @@ func migrate(db *sql.DB) error {
 			}
 		}
 	}
-	// NULL is no handle; any number of agents have none.
-	if _, err := db.Exec(`CREATE UNIQUE INDEX IF NOT EXISTS agents_handle ON agents(handle)`); err != nil {
-		return err
+	// NULL is no handle, or no mail token yet; any number of agents have
+	// none.
+	for _, q := range []string{
+		`CREATE UNIQUE INDEX IF NOT EXISTS agents_handle ON agents(handle)`,
+		`CREATE UNIQUE INDEX IF NOT EXISTS agents_mail_token ON agents(mail_token)`,
+	} {
+		if _, err := db.Exec(q); err != nil {
+			return err
+		}
 	}
 	return migrateIsolationIDs(db)
 }
@@ -472,14 +482,17 @@ func (s *Store) Agents() ([]Agent, error) {
 	return out, rows.Err()
 }
 
-// DeleteAgent removes an agent and everything stored for it.
+// DeleteAgent removes an agent and everything stored for it, the mail it
+// was sent included (from its senders' histories too: it was its). Mail it
+// wrote stays, in its recipients' histories.
 func (s *Store) DeleteAgent(id string) error {
 	tx, err := s.db.Begin()
 	if err != nil {
 		return err
 	}
 	defer tx.Rollback()
-	for _, q := range []string{`DELETE FROM events WHERE agent = ?`, `DELETE FROM outbox WHERE agent = ?`, `DELETE FROM agents WHERE id = ?`} {
+	for _, q := range []string{`DELETE FROM events WHERE agent = ?`, `DELETE FROM outbox WHERE agent = ?`, `DELETE FROM mail WHERE agent = ?`,
+		`DELETE FROM agents WHERE id = ?`} {
 		if _, err := tx.Exec(q, id); err != nil {
 			return err
 		}

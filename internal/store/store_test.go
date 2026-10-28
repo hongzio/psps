@@ -3,6 +3,7 @@ package store
 import (
 	"bytes"
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"os"
 	"path/filepath"
@@ -419,5 +420,165 @@ func TestAnAgentsOwnIDIsNobodyElses(t *testing.T) {
 	}
 	if err := s.RenameAgent("nope", nil, h("x")); !errors.Is(err, ErrNotFound) {
 		t.Fatalf("renamed nobody: %v", err)
+	}
+}
+
+func TestMailWaitsInItsInboxAndLeavesItOnce(t *testing.T) {
+	s := open(t)
+	now := time.Now()
+	s.PutIsolation(Isolation{ID: "i1", Name: "dev", Container: "gero-i1", Image: "img", CreatedAt: now})
+	for _, id := range []string{"a1", "b1"} {
+		if err := s.CreateAgent(Agent{ID: id, Name: id, Kind: driver.Codex, IsolationID: "i1", Workdir: "/w", CreatedAt: now}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	var ids []int64
+	for i, body := range []string{"one", "two", "three"} {
+		m, waiting, err := s.AddMail(Mail{To: "b1", From: "a1", FromID: "alice", FromIsolation: "i1", Body: body}, 3)
+		if err != nil || waiting != i+1 {
+			t.Fatalf("%s: %d waiting, %v", body, waiting, err)
+		}
+		ids = append(ids, m.ID)
+	}
+	if _, waiting, err := s.AddMail(Mail{To: "b1", From: "a1", Body: "four"}, 3); !errors.Is(err, ErrInboxFull) || waiting != 3 {
+		t.Fatalf("a full inbox took more: %d, %v", waiting, err)
+	}
+
+	next, err := s.NextMail("b1")
+	if err != nil || next.ID != ids[0] || next.Body != "one" || next.FromID != "alice" {
+		t.Fatalf("next %+v %v", next, err)
+	}
+	p, err := s.DeliverMail(next.ID, "letter one", 9)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Out of the inbox and into the outbox, together.
+	if pend, _ := s.Pending("b1"); len(pend) != 1 || pend[0] != p || p.Text != "letter one" || p.After != 9 {
+		t.Fatalf("outbox %+v, delivered %+v", pend, p)
+	}
+	if _, err := s.DeliverMail(next.ID, "letter one", 9); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("delivered twice: %v", err)
+	}
+	if n, _ := s.InboxCount("b1"); n != 2 {
+		t.Fatalf("%d waiting after a delivery", n)
+	}
+	if pend, _ := s.Pending("b1"); len(pend) != 1 {
+		t.Fatalf("a second delivery added %+v", pend)
+	}
+
+	if err := s.DiscardMail("a1", ids[1]); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("deleted from another agent's inbox: %v", err)
+	}
+	if err := s.DiscardMail("b1", ids[1]); err != nil {
+		t.Fatal(err)
+	}
+	if in, _ := s.Inbox("b1"); len(in) != 1 || in[0].Body != "three" {
+		t.Fatalf("inbox %+v", in)
+	}
+	if n, _ := s.InboxCounts(); n["b1"] != 1 || len(n) != 1 {
+		t.Fatalf("counts %v", n)
+	}
+	if n, err := s.ClearInbox("b1"); n != 1 || err != nil {
+		t.Fatalf("cleared %d, %v", n, err)
+	}
+	if n, _ := s.InboxCounts(); len(n) != 0 {
+		t.Fatalf("counts after clearing %v", n)
+	}
+	// Delivered or discarded, mail stays as the two agents' history.
+	hist, _ := s.MailOf("b1", 10)
+	var states []string
+	for _, m := range hist {
+		state := "waiting"
+		switch {
+		case m.DeliveredAt != nil:
+			state = "delivered"
+		case m.DiscardedAt != nil:
+			state = "discarded"
+		}
+		states = append(states, m.Body+":"+state)
+	}
+	if got := strings.Join(states, " "); got != "three:discarded two:discarded one:delivered" {
+		t.Fatalf("b1's history: %s", got)
+	}
+	if sent, _ := s.MailOf("a1", 10); len(sent) != 3 {
+		t.Fatalf("a1 wrote %d", len(sent))
+	}
+	if last, _ := s.MailOf("b1", 1); len(last) != 1 || last[0].Body != "three" {
+		t.Fatalf("limit: %+v", last)
+	}
+
+	// A deleted agent's mail goes with it; what it wrote stays.
+	s.AddMail(Mail{To: "b1", From: "a1", Body: "for b"}, 3)
+	s.AddMail(Mail{To: "a1", From: "b1", Body: "from b"}, 3)
+	if err := s.DeleteAgent("b1"); err != nil {
+		t.Fatal(err)
+	}
+	if n, _ := s.InboxCounts(); n["b1"] != 0 || n["a1"] != 1 {
+		t.Fatalf("counts after delete %v", n)
+	}
+	// Mail b1 was sent went with it, from its sender's history too.
+	if hist, _ := s.MailOf("a1", 10); len(hist) != 1 || hist[0].Body != "from b" {
+		t.Fatalf("a1's history after b1 went: %+v", hist)
+	}
+}
+
+func TestAnAgentsMailTokenIsItsAloneAndShownNowhere(t *testing.T) {
+	s := open(t)
+	now := time.Now()
+	s.PutIsolation(Isolation{ID: "i1", Name: "dev", Container: "gero-i1", Image: "img", CreatedAt: now})
+	s.CreateAgent(Agent{ID: "a1", Name: "a", Kind: driver.Codex, IsolationID: "i1", Workdir: "/w", CreatedAt: now})
+	s.CreateAgent(Agent{ID: "b1", Name: "b", Kind: driver.Codex, IsolationID: "i1", Workdir: "/w", CreatedAt: now})
+	ta, err := s.MailToken("a1")
+	if err != nil || len(ta) < 40 {
+		t.Fatalf("%q %v", ta, err)
+	}
+	if again, _ := s.MailToken("a1"); again != ta {
+		t.Fatal("the token changed")
+	}
+	if tb, _ := s.MailToken("b1"); tb == ta {
+		t.Fatal("two agents share a token")
+	}
+	if a, err := s.AgentByMailToken(ta); err != nil || a.ID != "a1" {
+		t.Fatalf("%+v %v", a, err)
+	}
+	for _, tok := range []string{"", "nope"} {
+		if _, err := s.AgentByMailToken(tok); !errors.Is(err, ErrNotFound) {
+			t.Fatalf("%q: %v", tok, err)
+		}
+	}
+	if _, err := s.MailToken("nobody"); !errors.Is(err, ErrNotFound) {
+		t.Fatal(err)
+	}
+	a, _ := s.Agent("a1")
+	if b, _ := json.Marshal(a); bytes.Contains(b, []byte(ta)) {
+		t.Fatalf("shown: %s", b)
+	}
+}
+
+// Mail from before the history keeps waiting where it waited.
+func TestMailFromBeforeTheHistoryStillWaits(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "gero.db")
+	s, err := Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now()
+	s.PutIsolation(Isolation{ID: "i1", Name: "dev", Container: "gero-i1", Image: "img", CreatedAt: now})
+	s.CreateAgent(Agent{ID: "b1", Name: "b", Kind: driver.Codex, IsolationID: "i1", Workdir: "/w", CreatedAt: now})
+	// The mail table as it first shipped: a delivered mail left it.
+	for _, q := range []string{`DROP TABLE mail`, `CREATE TABLE mail (id INTEGER PRIMARY KEY AUTOINCREMENT, agent TEXT NOT NULL REFERENCES agents(id),
+		sender TEXT NOT NULL, sender_id TEXT NOT NULL, sender_iso TEXT NOT NULL, body TEXT NOT NULL, created_at TEXT NOT NULL)`,
+		`INSERT INTO mail (agent, sender, sender_id, sender_iso, body, created_at) VALUES ('b1', 'a1', 'alice', 'i1', 'old', '2026-10-29T00:00:00Z')`} {
+		if _, err := s.db.Exec(q); err != nil {
+			t.Fatal(err)
+		}
+	}
+	s.Close()
+	if s, err = Open(path); err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	if in, err := s.Inbox("b1"); err != nil || len(in) != 1 || in[0].Body != "old" || !in[0].Waiting() {
+		t.Fatalf("%+v %v", in, err)
 	}
 }

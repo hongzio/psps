@@ -18,6 +18,7 @@ import (
 	"github.com/hongzio/gero/internal/driver"
 	"github.com/hongzio/gero/internal/event"
 	"github.com/hongzio/gero/internal/proxy"
+	"github.com/hongzio/gero/internal/proxy/mailproxy"
 	"github.com/hongzio/gero/internal/store"
 )
 
@@ -724,6 +725,26 @@ func TestDeltasGrowAndFinalReplaces(t *testing.T) {
 	out := c.render(60, "Codex", newTheme())
 	if !strings.Contains(out, "Hello there") || strings.Contains(out, "▍") || strings.Count(out, "Codex") != 1 {
 		t.Fatalf("final did not replace the live entry: %q", out)
+	}
+}
+
+// Mail from another agent reads as mail, not as the operator's message, and
+// what waits is counted where the agent is listed.
+func TestMailShowsAsMailAndWhatWaitsIsCounted(t *testing.T) {
+	c := newConvo()
+	c.apply(event.Event{ID: 1, Kind: event.KindUser, Text: mailproxy.Letter(7, "brave-otter", "dev", "the build is green")})
+	c.apply(event.Event{ID: 2, Kind: event.KindUser, Text: "thanks"})
+	out := c.render(80, "Codex", newTheme())
+	if !strings.Contains(out, "✉ Mail #7 from brave-otter · dev") || !strings.Contains(out, "the build is green") ||
+		strings.Contains(out, "gero mail #") || strings.Count(out, "You") != 1 {
+		t.Fatalf("%s", out)
+	}
+
+	h := newHarness(t)
+	h.be.agents[1].Inbox = 2
+	h.send(agentsMsg{agents: h.be.agents})
+	if v := h.m.View(); strings.Count(v, "✉ 2") != 2 || !strings.Contains(v, "✉ 2 waiting") {
+		t.Fatalf("not counted:\n%s", v)
 	}
 }
 

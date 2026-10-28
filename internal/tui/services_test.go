@@ -212,3 +212,33 @@ func TestAGitEnvWithACredentialLooksUpAsItOpens(t *testing.T) {
 		t.Fatalf("asks %v", asks)
 	}
 }
+
+// Mail has no envs: its form is its reach, offered as the other isolations.
+func TestMailIsTurnedOnWithTheIsolationsItReaches(t *testing.T) {
+	h := servicesHarness(t)
+	h.be.services = append(h.be.services, api.Service{Name: "mail", Summary: "mail between agents",
+		Settings: []proxy.Field{{Key: "to", Kind: proxy.List, Flag: "to", Clear: "clear-to", Isolations: true}}})
+	h.be.isos = append(h.be.isos, api.Isolation{Isolation: store.Isolation{Name: "prod", Container: "gero-prod"}, State: "running"})
+	h.send(isolationsMsg{isos: h.be.isos})
+	h.key("ctrl+g")
+	h.key("p")
+	h.key("down")
+	h.key("down")
+	h.key("enter") // mail
+	if v := h.m.View(); !strings.Contains(v, "mail in dev") || strings.Contains(v, "envs") || !strings.Contains(v, "prod") {
+		t.Fatalf("mail form:\n%s", v)
+	}
+	h.key("space") // tick prod
+	h.key("ctrl+s")
+	if len(h.be.exposed) != 1 || h.be.exposed[0] != `dev mail envs=[] default="" settings=to=[prod]` {
+		t.Fatalf("exposed %v", h.be.exposed)
+	}
+
+	h = servicesHarness(t)
+	h.be.services = []api.Service{{Name: "mail", Summary: "mail between agents"}}
+	h.key("ctrl+r")
+	h.key("n")
+	if h.m.view != viewServices || h.m.svcPage.form != nil || !strings.Contains(h.m.View(), "nothing to define") {
+		t.Fatalf("an env form for mail:\n%s", h.m.View())
+	}
+}

@@ -82,6 +82,13 @@ const agentById = (id) => S.agents.find((a) => a.id === id)
 const agentTitle = (a) => a.name || 'New agent'
 // shownID is the ID an agent goes by: its own, or the key gero gave it.
 const shownID = (a) => a.handle || a.id
+// letter reads a mail from another agent as the agent got it (the daemon's
+// mailproxy.Letter): who wrote it, from where, and what it says.
+const LETTER = /^\[gero mail #(\d+) from agent (\S+) in isolation (\S+)\. [^\n]*\]\n\n/
+function letter(text) {
+  const m = LETTER.exec(text)
+  return m && { id: m[1], from: m[2], iso: m[3], body: text.slice(m[0].length) }
+}
 const label = (a) => (a.kind === 'codex' ? 'Codex' : 'Claude')
 const effortOptions = (kind) =>
   (kind === 'codex' ? ['', 'low', 'medium', 'high', 'xhigh'] : ['', 'low', 'medium', 'high', 'xhigh', 'max'])
@@ -111,11 +118,12 @@ async function guarded(fn) {
 // is shown under the body: a choice the caller reads once it resolves.
 // fields hold text inputs for the answer instead: the first starts
 // focused, and Enter in any takes the action. onOk, if given, does the
-// action: what it throws is shown in the dialog, which stays open.
-function ask({ title, body, ok, danger, extra, fields, onOk }) {
+// action: what it throws is shown in the dialog, which stays open. Without
+// ok it is only something to look at, closed with cancel ("Close").
+function ask({ title, body, ok, cancel: cancelLabel = 'Cancel', danger, extra, fields, onOk }) {
   return new Promise((resolve) => {
-    const cancel = h('button', { class: 'btn', value: 'cancel' }, 'Cancel')
-    const go = h('button', { class: 'btn primary' + (danger ? ' danger' : ''), value: 'ok' }, ok)
+    const cancel = h('button', { class: 'btn', value: 'cancel' }, cancelLabel)
+    const go = ok ? h('button', { class: 'btn primary' + (danger ? ' danger' : ''), value: 'ok' }, ok) : null
     const err = h('p', { class: 'form-error dialog-error', role: 'alert', hidden: true })
     const d = h('dialog', { class: 'dialog', 'aria-labelledby': 'dialog-title', 'aria-describedby': body ? 'dialog-body' : null },
       h('form', { method: 'dialog' },
@@ -137,7 +145,7 @@ function ask({ title, body, ok, danger, extra, fields, onOk }) {
         go.disabled = false
       }
     }
-    if (onOk) go.addEventListener('click', (e) => { e.preventDefault(); take() })
+    if (onOk && go) go.addEventListener('click', (e) => { e.preventDefault(); take() })
     // Outside is the backdrop, which is the dialog itself as a target; a
     // drag that starts inside and ends outside is not a click outside.
     let downOn = null
@@ -147,13 +155,13 @@ function ask({ title, body, ok, danger, extra, fields, onOk }) {
     const inputs = (fields || []).flatMap((f) => f.matches('input') ? [f] : [...f.querySelectorAll('input')])
     for (const i of inputs) {
       i.addEventListener('keydown', (e) => {
-        if (e.key === 'Enter' && !e.isComposing) { e.preventDefault(); if (!go.disabled) take() }
+        if (e.key === 'Enter' && !e.isComposing) { e.preventDefault(); if (go && !go.disabled) take() }
       })
     }
     document.body.append(d)
     d.showModal()
     if (inputs.length) inputs[0].select()
-    else (danger ? cancel : go).focus()
+    else (danger || !go ? cancel : go).focus()
   })
 }
 
@@ -643,7 +651,8 @@ function renderSidebar() {
   const archived = S.agents.filter((a) => a.archived_at)
   const row = (a) => {
     const st = a.archived_at ? 'idle' : a.state?.status || 'idle'
-    const meta = a.problem ? h('span', { class: 'problem' }, '⚠ ' + a.problem) : `${a.kind} · ${a.isolation} · ${st}`
+    const meta = a.problem ? h('span', { class: 'problem' }, '⚠ ' + a.problem)
+      : `${a.kind} · ${a.isolation} · ${st}` + (a.inbox ? ` · ✉ ${a.inbox}` : '')
     return h('button', {
       class: 'agent' + (a.id === S.sel && S.view === 'agent' ? ' selected' : '') + (a.archived_at ? ' archived' : ''),
       onclick: () => select(a.id),
@@ -698,6 +707,8 @@ function renderTopbar() {
       h('span', { class: 'chip ' + st }, st),
       h('div', { class: 'actions' },
         working ? h('button', { class: 'btn', onclick: () => guarded(() => api('POST', `/v1/agents/${a.id}/interrupt`)) }, '■', h('span', { class: 'label' }, ' Stop')) : null,
+        h('button', { class: 'btn ghost', title: 'Its mail: what it was sent and what it wrote', onclick: () => openMail(a) },
+          '✉', h('span', { class: 'label' }, ' Mail'), a.inbox ? h('span', { class: 'badge' }, String(a.inbox)) : null),
         h('button', { class: 'btn ghost', title: 'Name and ID', onclick: () => editAgent(a) }, '✎', h('span', { class: 'label' }, ' Name & ID')),
         a.archived_at ? h('button', {
           class: 'btn ghost danger', title: 'Delete', onclick: async () => {
@@ -728,6 +739,43 @@ function renderTopbar() {
         }, '🗄', h('span', { class: 'label' }, ' Archive')))),
     a.problem ? h('div', { class: 'banner' }, a.problem) : null,
   ].filter(Boolean))
+}
+
+// openMail shows an agent's mail, newest first: what other agents sent it,
+// read or still waiting, and what it wrote to them. Waiting mail can be
+// taken out unread.
+async function openMail(a) {
+  const list = h('div', { class: 'inbox' })
+  const lead = h('p', { class: 'mail-lead' })
+  const clear = h('button', { type: 'button', class: 'btn danger small', hidden: true }, 'Discard all waiting')
+  const draw = async () => {
+    const mails = await guarded(() => api('GET', `/v1/agents/${enc(a.id)}/mail`))
+    if (!mails) return
+    const waiting = mails.filter((m) => m.state === 'waiting' && !m.sent).length
+    lead.textContent = waiting
+      ? `${waiting} waiting: it reads one per turn, oldest first, whenever it is idle. Discarded mail is never read.`
+      : mails.length ? 'Nothing waits for it.' : 'It has neither sent nor been sent mail.'
+    clear.hidden = !waiting
+    list.replaceChildren(...mails.map((m) => h('div', { class: 'mail' + (m.sent ? ' sent' : '') },
+      h('div', { class: 'mail-head' },
+        h('strong', null, m.sent ? `→ ${m.to}` : `← ${m.from}`),
+        h('span', { class: 'chip ' + m.state }, m.state),
+        m.state === 'waiting' && !m.sent ? h('button', {
+          type: 'button', class: 'btn ghost danger', onclick: () => guarded(async () => {
+            await api('DELETE', `/v1/agents/${enc(a.id)}/inbox/${m.id}`)
+            await draw()
+          }),
+        }, 'Discard') : null),
+      h('div', { class: 'mail-meta' }, `#${m.id} · ${m.sent ? m.to_isolation : m.from_isolation} · ${new Date(m.created_at).toLocaleString()}`),
+      h('div', { class: 'mail-text' }, clip(m.text, 8)))))
+  }
+  clear.addEventListener('click', () => guarded(async () => {
+    await api('DELETE', `/v1/agents/${enc(a.id)}/inbox`)
+    await draw()
+  }))
+  await draw()
+  await ask({ title: `Mail of "${agentTitle(a)}"`, extra: h('div', null, lead, clear, list), cancel: 'Close' })
+  await guarded(refreshAgents)
 }
 
 // editAgent changes what an agent is called: its name, and its own ID,
@@ -773,7 +821,11 @@ function renderConvo(forceBottom) {
 
 function entryView(en, a) {
   switch (en.kind) {
-    case 'user': return h('div', { class: 'msg-user text' }, richText(en.text))
+    case 'user': {
+      const l = letter(en.text)
+      if (!l) return h('div', { class: 'msg-user text' }, richText(en.text))
+      return h('div', { class: 'msg-mail' }, h('div', { class: 'who' }, `✉ Mail #${l.id} from ${l.from} · ${l.iso}`), h('div', { class: 'text' }, richText(l.body)))
+    }
     case 'assistant':
       return h('div', { class: 'msg-agent' + (en.live ? ' live' : '') }, h('div', { class: 'who' }, label(a)), h('div', { class: 'text' }, richText(en.text)))
     case 'reasoning': return h('div', { class: 'reasoning' }, en.text)
@@ -1113,7 +1165,9 @@ function closeForm() { S.openForm = null; S.login = null; S.checkOut = null; S.v
 // fieldControls draws a service's fields, the same list the CLI builds its
 // flags from, and reads them back as the CLI's edit: what was given is set,
 // a list emptied is cleared, the rest is left alone.
-function fieldControls(fields, cur, adding, lookup) {
+// An isolations field (mail's reach) offers the other isolations by name;
+// self is the isolation the form is for.
+function fieldControls(fields, cur, adding, lookup, self) {
   cur = cur || {}
   const rows = []
   const readers = []
@@ -1130,9 +1184,13 @@ function fieldControls(fields, cur, adding, lookup) {
       const sel = typeof v === 'boolean' ? (v ? 'on' : 'off') : DEFAULT
       ctl = dropdown(opts, { value: sel, label: f.key })
       read = (p) => { if (ctl.value === 'on') p.set[f.key] = true; else if (ctl.value === 'off') p.set[f.key] = false }
-    } else if (f.kind === 'list' && f.choices?.length) {
+    } else if (f.isolations && !S.isolations.some((i) => i.name !== self)) {
+      ctl = h('span', { class: 'hint' }, 'there is no other isolation')
+      read = () => {}
+    } else if (f.kind === 'list' && (f.choices?.length || f.isolations)) {
       const have = new Set(Array.isArray(v) ? v : [])
-      const boxes = f.choices.map((c) => ({ c, el: h('input', { type: 'checkbox', checked: have.has(c) }) }))
+      const choices = f.isolations ? S.isolations.map((i) => i.name).filter((n) => n !== self) : f.choices
+      const boxes = choices.map((c) => ({ c, el: h('input', { type: 'checkbox', checked: have.has(c) }) }))
       ctl = h('div', { class: 'ticks' }, boxes.map(({ c, el }) => h('label', { class: 'check' }, el, c)))
       read = (p) => {
         const got = boxes.filter((b) => b.el.checked).map((b) => b.c)
@@ -1253,7 +1311,9 @@ function serviceCard(s) {
   return h('div', { class: 'card' },
     h('div', { class: 'head' }, h('h3', null, s.name), h('span', { class: 'note' }, s.summary)),
     envs.map((e) => envRow(s, e)),
-    S.openForm === key ? envForm(s, null) : h('div', { class: 'actions' }, h('button', { class: 'btn', onclick: () => openForm(key) }, '+ New environment')))
+    // A service with nothing to define (mail) is only turned on.
+    !s.fields?.length ? h('p', { class: 'note' }, 'Nothing to define here: turn it on for an isolation on the Isolations page.')
+      : S.openForm === key ? envForm(s, null) : h('div', { class: 'actions' }, h('button', { class: 'btn', onclick: () => openForm(key) }, '+ New environment')))
 }
 
 function secretChip(s, e) {
@@ -1478,9 +1538,9 @@ function exposuresView(i) {
     S.services.map((s) => {
       const x = byName[s.name] || { service: s.name, enabled: false, envs: [] }
       const key = `expose:${i.name}:${s.name}`
-      const detail = x.enabled
-        ? [(x.envs || []).join(', ') || 'no env', x.default_env ? `(default ${x.default_env})` : '', compactConfig(x.settings)].filter(Boolean).join(' ')
-        : 'off'
+      const detail = !x.enabled ? 'off'
+        : !s.fields?.length ? compactConfig(x.settings) || 'on'
+          : [(x.envs || []).join(', ') || 'no env', x.default_env ? `(default ${x.default_env})` : '', compactConfig(x.settings)].filter(Boolean).join(' ')
       return h('div', { class: 'svc-row' },
         h('div', { class: 'svc-line' },
           h('span', { class: 'dot' + (x.enabled ? ' on' : '') }),
@@ -1496,7 +1556,8 @@ function exposeForm(i, s, x) {
   const have = new Set(x.envs || [])
   const boxes = names.map((n) => ({ n, el: h('input', { type: 'checkbox', checked: have.has(n) }) }))
   const def = dropdown([DEFAULT, ...names], { value: x.default_env || DEFAULT, label: 'Default' })
-  const ctl = fieldControls(s.settings, x.settings || {}, !x.enabled)
+  const ctl = fieldControls(s.settings, x.settings || {}, !x.enabled, null, i.name)
+  const noEnvs = !s.fields?.length
   const err = h('p', { class: 'form-error' })
   const apply = h('button', { class: 'btn primary' }, x.enabled ? 'Apply' : 'Turn on')
   apply.addEventListener('click', async () => {
@@ -1515,11 +1576,11 @@ function exposeForm(i, s, x) {
     }
   })
   return h('div', { class: 'subform' },
-    h('div', { class: 'field' }, h('label', null, 'Environments'),
+    noEnvs ? null : h('div', { class: 'field' }, h('label', null, 'Environments'),
       names.length ? h('div', { class: 'ticks' }, boxes.map(({ n, el }) => h('label', { class: 'check' }, el, n)))
         : h('span', { class: 'hint' }, 'none defined yet — ', h('a', { href: '#/services', onclick: (ev) => { ev.preventDefault(); show('services') } }, 'define one')),
       h('span', { class: 'hint' }, 'None ticked: the service with no credential (git: public repositories only).')),
-    names.length > 1 ? h('div', { class: 'field' }, h('label', null, 'Default'), def, h('span', { class: 'hint' }, 'what the plain variables point at')) : null,
+    !noEnvs && names.length > 1 ? h('div', { class: 'field' }, h('label', null, 'Default'), def, h('span', { class: 'hint' }, 'what the plain variables point at')) : null,
     ctl.rows, err,
     h('div', { class: 'actions' }, apply,
       x.enabled ? h('button', {

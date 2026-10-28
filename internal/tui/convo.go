@@ -7,6 +7,7 @@ import (
 	"github.com/charmbracelet/lipgloss"
 
 	"github.com/hongzio/gero/internal/event"
+	"github.com/hongzio/gero/internal/proxy/mailproxy"
 )
 
 // A conversation is the agent's events folded into what a person reads:
@@ -35,9 +36,12 @@ const (
 )
 
 type entry struct {
-	kind     entryKind
-	item     string
-	text     string
+	kind entryKind
+	item string
+	text string
+	// from says who wrote a user entry that is mail from another agent;
+	// text is then what the mail says.
+	from     string
 	live     bool
 	tool     *toolEntry
 	approval *event.Approval
@@ -76,7 +80,11 @@ func (c *convo) apply(e event.Event) {
 	}
 	switch e.Kind {
 	case event.KindUser:
-		add(&entry{kind: eUser, text: e.Text})
+		en := &entry{kind: eUser, text: e.Text}
+		if l, ok := mailproxy.ReadLetter(e.Text); ok {
+			en.from, en.text = fmt.Sprintf("✉ Mail #%d from %s · %s", l.ID, l.From, l.Isolation), l.Body
+		}
+		add(en)
 	case event.KindDelta:
 		en := c.byItem[e.Item]
 		if en == nil || en.kind != eAssistant || !en.live {
@@ -192,7 +200,11 @@ func (c *convo) render(width int, agentLabel string, th theme) string {
 		prev = en.kind
 		switch en.kind {
 		case eUser:
-			b.WriteString(th.user.Render("You") + "\n")
+			who := "You"
+			if en.from != "" {
+				who = en.from
+			}
+			b.WriteString(th.user.Render(who) + "\n")
 			b.WriteString(body.Render(en.text) + "\n")
 		case eAssistant:
 			b.WriteString(th.agent.Render(agentLabel) + "\n")

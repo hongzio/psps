@@ -155,6 +155,8 @@ func (m *Model) handleSvcKey(msg tea.KeyMsg) tea.Cmd {
 		p.sel = max(0, p.sel-1)
 	case k.Is(msg, "down"):
 		p.sel = min(len(p.rows())-1, p.sel+1)
+	case ok && k.Is(msg, "svc_new") && len(row.svc.Fields) == 0:
+		m.setFlash(row.svc.Name+" has nothing to define: turn it on for an isolation from the isolations page", false)
 	case ok && k.Is(msg, "svc_new"):
 		return m.openEnvForm(row.svc, nil)
 	case ok && row.env != nil && (k.Is(msg, "svc_edit") || k.Is(msg, "open")):
@@ -612,6 +614,12 @@ type exposePage struct {
 	sel       int
 	form      *form
 	formSvc   api.Service
+	// formSettings are the form's settings fields: the service's, an
+	// isolations field offering the other isolations.
+	formSettings []proxy.Field
+	// formEnvs: the form starts with envs and a default. A service with
+	// nothing to define (mail) has none.
+	formEnvs bool
 }
 
 type exposuresMsg struct {
@@ -665,12 +673,15 @@ func (m *Model) handleExposeKey(msg tea.KeyMsg) tea.Cmd {
 			return cmd
 		}
 		svc, iso := e.formSvc, e.iso
-		envs := e.form.fields[0].values()
-		def := e.form.fields[1].value()
-		if def == optDefault {
-			def = ""
+		var envs []string
+		def, rest := "", e.form.fields
+		if e.formEnvs {
+			envs, def, rest = e.form.fields[0].values(), e.form.fields[1].value(), e.form.fields[2:]
+			if def == optDefault {
+				def = ""
+			}
 		}
-		settings, err := patchFrom(svc.Settings, e.form.fields[2:], decodeMap(e.exposure(svc.Name).Settings))
+		settings, err := patchFrom(e.formSettings, rest, decodeMap(e.exposure(svc.Name).Settings))
 		if err != nil {
 			m.setFlash(err.Error(), true)
 			return nil
@@ -728,11 +739,28 @@ func (m *Model) openExposeForm(svc api.Service) {
 			names = append(names, env.Name)
 		}
 	}
-	envs := checkField("envs", names, x.Envs, "space ticks; none: the service with no credential (git: public reads only)")
-	def := selectField("default", append([]string{optDefault}, names...), "the env plain variables point at; default: the first ticked")
-	def.idx = indexOf(def.options, x.Default)
-	fields := append([]*field{envs, def}, genFields(svc.Settings, decodeMap(x.Settings), !x.Enabled)...)
-	e.form, e.formSvc = &form{fields: fields}, svc
+	var others []string
+	for _, iso := range m.isolations {
+		if iso.Name != e.iso {
+			others = append(others, iso.Name)
+		}
+	}
+	settings := make([]proxy.Field, 0, len(svc.Settings))
+	for _, f := range svc.Settings {
+		if f.Isolations {
+			f.Choices = others
+		}
+		settings = append(settings, f)
+	}
+	var fields []*field
+	if e.formEnvs = len(svc.Fields) > 0; e.formEnvs {
+		envs := checkField("envs", names, x.Envs, "space ticks; none: the service with no credential (git: public reads only)")
+		def := selectField("default", append([]string{optDefault}, names...), "the env plain variables point at; default: the first ticked")
+		def.idx = indexOf(def.options, x.Default)
+		fields = []*field{envs, def}
+	}
+	fields = append(fields, genFields(settings, decodeMap(x.Settings), !x.Enabled)...)
+	e.form, e.formSvc, e.formSettings = &form{fields: fields}, svc, settings
 }
 
 func (m *Model) renderExpose(width int) string {
@@ -749,7 +777,7 @@ func (m *Model) renderExpose(width int) string {
 		if x.Enabled {
 			state = th.ok.Render("on ")
 			envs := strings.Join(x.Envs, ",")
-			if envs == "" {
+			if envs == "" && len(s.Fields) > 0 {
 				envs = "no env"
 			}
 			detail = envs
@@ -775,7 +803,9 @@ func (m *Model) renderExpose(width int) string {
 		b.WriteString(th.title.Render(e.formSvc.Name+" in "+e.iso) + "\n" + e.form.render(th, width))
 		b.WriteString(th.dim.Render(fmt.Sprintf("  %s apply · %s next · space tick · ←/→ change · %s cancel",
 			k.Label("submit"), k.Label("focus_next"), k.Label("back"))) + "\n")
-		b.WriteString(th.dim.Render("  envs are defined on the services page ("+k.Label("services")+")") + "\n")
+		if e.formEnvs {
+			b.WriteString(th.dim.Render("  envs are defined on the services page ("+k.Label("services")+")") + "\n")
+		}
 	} else {
 		b.WriteString(th.dim.Render(fmt.Sprintf("  %s turn on / change · %s turn off · %s back",
 			k.Label("open"), k.Label("svc_off"), k.Label("back"))) + "\n")

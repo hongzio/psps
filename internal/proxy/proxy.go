@@ -18,6 +18,7 @@ import (
 	"fmt"
 	"log"
 	"net"
+	"net/http"
 	"regexp"
 	"sort"
 	"strings"
@@ -83,6 +84,9 @@ type Host struct {
 	View  func() (View, error)
 	Creds *creds.Store
 	Log   *log.Logger
+	// Mail is the daemon's own answer to the mail service, which is not a
+	// proxy: it holds the agents' inboxes. The other services ignore it.
+	Mail http.Handler
 }
 
 func (h Host) Logf(service, format string, a ...any) {
@@ -122,6 +126,10 @@ type Field struct {
 	// ChoiceLister) once the env's credential is known: the repositories a
 	// token opens. Forms ask for the credential first.
 	Lookup bool `json:"lookup,omitempty"`
+	// Isolations is a List of isolations: typed and shown by name, kept by
+	// ID, so a rename keeps what it grants and a name used again later
+	// grants nothing.
+	Isolations bool `json:"isolations,omitempty"`
 }
 
 // Patch changes an env definition or an exposure's settings the way the CLI

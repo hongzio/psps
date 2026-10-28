@@ -66,6 +66,40 @@ type Agent struct {
 	// Problem is an infrastructure error (isolation down, shim unreachable)
 	// that the agent's own status cannot express.
 	Problem string `json:"problem,omitempty"`
+	// Inbox is how many mails from other agents wait for it.
+	Inbox int `json:"inbox,omitempty"`
+}
+
+// Mail is one agent's mail to another. From and To are the two agents as
+// they are called now (as it was called, for a sender that is gone), with
+// the isolations the mail went between. Sent: the agent whose mail this
+// was asked for wrote it.
+type Mail struct {
+	ID            int64  `json:"id"`
+	From          string `json:"from"`
+	FromIsolation string `json:"from_isolation"`
+	To            string `json:"to"`
+	ToIsolation   string `json:"to_isolation"`
+	Sent          bool   `json:"sent,omitempty"`
+	// State is MailWaiting, MailDelivered or MailDiscarded.
+	State       string     `json:"state"`
+	Text        string     `json:"text"`
+	CreatedAt   time.Time  `json:"created_at"`
+	DeliveredAt *time.Time `json:"delivered_at,omitempty"`
+	DiscardedAt *time.Time `json:"discarded_at,omitempty"`
+}
+
+// Mail states: in the recipient's inbox; handed to it as a turn; taken out
+// of the inbox unread by the operator.
+const (
+	MailWaiting   = "waiting"
+	MailDelivered = "delivered"
+	MailDiscarded = "discarded"
+)
+
+// Cleared is how many mails a cleared inbox held.
+type Cleared struct {
+	Removed int `json:"removed"`
 }
 
 // UpdateAgent renames an agent, live or archived, or changes its own ID;

@@ -62,6 +62,8 @@ const usage = `gero — run coding agents in isolated containers
   gero agent ls [--all]
   gero agent log ID [-f]
   gero agent send ID TEXT...
+  gero agent inbox ID [--rm N | --clear]   mail from other agents, read one per turn when idle
+  gero agent mail ID   its mail history: what it was sent and what it wrote
   gero agent approve ID APPROVAL accept|decline|cancel
   gero agent interrupt ID
   gero agent set ID [--model M] [--effort E] [--approvals never|auto|ask|default]

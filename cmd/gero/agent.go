@@ -16,7 +16,7 @@ import (
 
 func agentCmd(p paths.Paths, args []string) error {
 	if len(args) == 0 {
-		return errors.New("usage: gero agent new|ls|log|send|approve|interrupt|set|rename|id|archive|rm")
+		return errors.New("usage: gero agent new|ls|log|send|inbox|mail|approve|interrupt|set|rename|id|archive|rm")
 	}
 	c, err := connect(p)
 	if err != nil {
@@ -68,7 +68,7 @@ func agentCmd(p paths.Paths, args []string) error {
 			return err
 		}
 		tw := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
-		fmt.Fprintln(tw, "ID\tSTATUS\tKIND\tISOLATION\tNAME")
+		fmt.Fprintln(tw, "ID\tSTATUS\tKIND\tISOLATION\tMAIL\tNAME")
 		for _, a := range agents {
 			status := string(a.State.Status)
 			switch {
@@ -80,7 +80,11 @@ func agentCmd(p paths.Paths, args []string) error {
 			case a.Problem != "":
 				status += " (!)"
 			}
-			fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\n", shownID(a), status, a.Kind, a.Isolation, orDash(a.Name))
+			mail := "-"
+			if a.Inbox > 0 {
+				mail = fmt.Sprint(a.Inbox)
+			}
+			fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\t%s\n", shownID(a), status, a.Kind, a.Isolation, mail, orDash(a.Name))
 		}
 		return tw.Flush()
 
@@ -193,6 +197,69 @@ func agentCmd(p paths.Paths, args []string) error {
 		}
 		return nil
 
+	case "inbox":
+		clear := fs.Bool("clear", false, "take every waiting mail out, unread")
+		rm := fs.Int64("rm", 0, "take mail `N` out, unread")
+		pos := parse(fs, args[1:])
+		if len(pos) != 1 || (*clear && *rm != 0) {
+			return errors.New("usage: gero agent inbox AGENT [--rm N | --clear]")
+		}
+		switch {
+		case *clear:
+			n, err := c.ClearInbox(ctx, pos[0])
+			if err != nil {
+				return err
+			}
+			fmt.Printf("took %d mail(s) out of %s's inbox unread\n", n, pos[0])
+			return nil
+		case *rm != 0:
+			if err := c.DiscardMail(ctx, pos[0], *rm); err != nil {
+				return err
+			}
+			fmt.Printf("took mail #%d out of %s's inbox unread\n", *rm, pos[0])
+			return nil
+		}
+		mails, err := c.Inbox(ctx, pos[0])
+		if err != nil {
+			return err
+		}
+		if len(mails) == 0 {
+			fmt.Printf("no mail waits for %s\n", pos[0])
+			return nil
+		}
+		// Oldest first: the order the agent reads them in, one per turn
+		// whenever it is idle.
+		tw := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
+		fmt.Fprintln(tw, "#\tFROM\tISOLATION\tSENT\tMAIL")
+		for _, m := range mails {
+			fmt.Fprintf(tw, "%d\t%s\t%s\t%s\t%s\n", m.ID, m.From, m.FromIsolation, m.CreatedAt.Local().Format("Jan 2 15:04"), mailLine(m.Text))
+		}
+		return tw.Flush()
+
+	case "mail":
+		pos := parse(fs, args[1:])
+		if len(pos) != 1 {
+			return errors.New("usage: gero agent mail AGENT   (what it was sent and what it wrote, newest first)")
+		}
+		mails, err := c.Mail(ctx, pos[0])
+		if err != nil {
+			return err
+		}
+		if len(mails) == 0 {
+			fmt.Printf("%s has neither sent nor been sent mail\n", pos[0])
+			return nil
+		}
+		tw := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
+		fmt.Fprintln(tw, "#\tSENT\tFROM/TO\tSTATE\tMAIL")
+		for _, m := range mails {
+			with := "← " + m.From + " (" + m.FromIsolation + ")"
+			if m.Sent {
+				with = "→ " + m.To + " (" + m.ToIsolation + ")"
+			}
+			fmt.Fprintf(tw, "%d\t%s\t%s\t%s\t%s\n", m.ID, m.CreatedAt.Local().Format("Jan 2 15:04"), with, m.State, mailLine(m.Text))
+		}
+		return tw.Flush()
+
 	case "archive":
 		pos := parse(fs, args[1:])
 		if len(pos) != 1 {
@@ -222,6 +289,15 @@ func agentCmd(p paths.Paths, args []string) error {
 		return nil
 	}
 	return fmt.Errorf("unknown agent command %q", args[0])
+}
+
+// mailLine is a mail's first line, short enough for a table.
+func mailLine(text string) string {
+	first, _, _ := strings.Cut(strings.TrimSpace(text), "\n")
+	if r := []rune(first); len(r) > 60 {
+		first = string(r[:60]) + "…"
+	}
+	return first
 }
 
 // shownID is the ID an agent goes by: its own, or the key gero gave it.

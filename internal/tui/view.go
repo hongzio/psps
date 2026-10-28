@@ -59,6 +59,9 @@ func (m *Model) renderSidebar(w int) string {
 			continue
 		}
 		meta := fmt.Sprintf("  %s · %s · %s", a.Kind, a.Isolation, a.State.Status)
+		if a.Inbox > 0 {
+			meta += fmt.Sprintf(" · ✉ %d", a.Inbox)
+		}
 		if a.Problem != "" {
 			meta = "  " + th.err.Render("! ") + truncate(a.Problem, w-6)
 		}
@@ -151,6 +154,9 @@ func (m *Model) renderAgent(w int) string {
 	status := th.statusIcon(a.State.Status, m.frame) + " " + string(a.State.Status)
 	if a.ArchivedAt != nil {
 		status = th.dim.Render("archived")
+	}
+	if a.Inbox > 0 {
+		status = th.dim.Render(fmt.Sprintf("✉ %d waiting  ", a.Inbox)) + status
 	}
 	left := th.title.Render(truncate(title(a), w/2)) + "  " + th.dim.Render(fmt.Sprintf("%s · %s · %s", a.Kind, a.Isolation, shownID(a)))
 	gap := max(w-lipgloss.Width(left)-lipgloss.Width(status)-1, 1)

@@ -103,6 +103,8 @@ type Manager struct {
 	lastEnv   map[string]string
 	logins    map[string]pendingLogin // browser logins in progress, by id
 	cliLogins map[string]*cliLogin    // agent CLI logins, by isolation/tool
+	// mailBuckets are each isolation's budget for sending mail.
+	mailBuckets map[string]*proxy.TokenBucket
 }
 
 // fenceState is whether an isolation's network fence was measured to hold.
@@ -130,7 +132,8 @@ func NewManager(ctx context.Context, st *store.Store, cli Containers, fence Fenc
 		log: logger, hub: newHub(), workRoot: isolation.WorkRoot, home: isolation.AgentHome,
 		runtimes: map[string]*runtime{}, isos: map[string]*isoState{}, fences: map[string]*fenceState{},
 		tunnelPort: func(p int) int { return p }, instances: map[string]map[string]proxy.Instance{},
-		tunnels: map[string]*tunnelState{}, synced: map[string]string{}, versions: map[string]string{}, lastEnv: map[string]string{}}
+		tunnels: map[string]*tunnelState{}, synced: map[string]string{}, versions: map[string]string{}, lastEnv: map[string]string{},
+		mailBuckets: map[string]*proxy.TokenBucket{}}
 }
 
 // Reconcile is what the daemon does on every start, whatever the previous
@@ -802,35 +805,42 @@ func (m *Manager) Agents() ([]api.Agent, error) {
 	if err != nil {
 		return nil, err
 	}
+	counts, err := m.store.InboxCounts()
+	if err != nil {
+		return nil, err
+	}
 	out := make([]api.Agent, 0, len(all))
 	for _, a := range all {
-		out = append(out, m.view(a))
+		out = append(out, m.view(a, counts[a.ID]))
 	}
 	sortAgents(out)
 	return out, nil
 }
 
-func (m *Manager) view(a store.Agent) api.Agent {
+// view is a, live if it is, with inbox mails waiting.
+func (m *Manager) view(a store.Agent, inbox int) api.Agent {
 	m.mu.Lock()
 	r, ok := m.runtimes[a.ID]
 	m.mu.Unlock()
 	if !ok {
-		return api.Agent{Agent: a, Isolation: m.isoName(a.IsolationID)}
+		return api.Agent{Agent: a, Isolation: m.isoName(a.IsolationID), Inbox: inbox}
 	}
 	live, st, problem := r.view()
-	return api.Agent{Agent: live, Isolation: m.isoName(live.IsolationID), State: st, Problem: problem}
+	return api.Agent{Agent: live, Isolation: m.isoName(live.IsolationID), State: st, Problem: problem, Inbox: inbox}
 }
 
 func (m *Manager) Agent(idOrPrefix string) (api.Agent, error) {
+	var a store.Agent
 	if r, err := m.runtime(idOrPrefix); err == nil {
-		live, st, problem := r.view()
-		return api.Agent{Agent: live, Isolation: m.isoName(live.IsolationID), State: st, Problem: problem}, nil
+		a, _, _ = r.view()
+	} else if a, err = m.storedAgent(idOrPrefix); err != nil {
+		return api.Agent{}, err
 	}
-	a, err := m.storedAgent(idOrPrefix)
+	inbox, err := m.store.InboxCount(a.ID)
 	if err != nil {
 		return api.Agent{}, err
 	}
-	return m.view(a), nil
+	return m.view(a, inbox), nil
 }
 
 func (m *Manager) Send(id, text string) error {
@@ -915,7 +925,11 @@ func (m *Manager) UpdateAgent(idOrPrefix string, req api.UpdateAgent) (api.Agent
 	if handle != nil {
 		a.Handle = *handle
 	}
-	return m.view(a), nil
+	inbox, err := m.store.InboxCount(a.ID)
+	if err != nil {
+		return api.Agent{}, err
+	}
+	return m.view(a, inbox), nil
 }
 
 // Archive stops the agent and keeps its history. Its session and workspace
