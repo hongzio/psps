@@ -98,6 +98,31 @@ async function guarded(fn) {
   }
 }
 
+// ask is the page's own confirm(): a modal with the question, what follows
+// from it, and a button named for the action. It resolves true when the
+// operator takes the action; Esc, Cancel or a click outside leave it be.
+// A destructive one starts on Cancel, so a stray Enter does nothing.
+function ask({ title, body, ok, danger }) {
+  return new Promise((resolve) => {
+    const cancel = h('button', { class: 'btn', value: 'cancel' }, 'Cancel')
+    const go = h('button', { class: 'btn primary' + (danger ? ' danger' : ''), value: 'ok' }, ok)
+    const d = h('dialog', { class: 'dialog', 'aria-labelledby': 'dialog-title', 'aria-describedby': body ? 'dialog-body' : null },
+      h('form', { method: 'dialog' },
+        h('h3', { id: 'dialog-title' }, title),
+        body ? h('p', { id: 'dialog-body' }, body) : null,
+        h('div', { class: 'dialog-actions' }, cancel, go)))
+    // Outside is the backdrop, which is the dialog itself as a target; a
+    // drag that starts inside and ends outside is not a click outside.
+    let downOn = null
+    d.addEventListener('pointerdown', (e) => { downOn = e.target })
+    d.addEventListener('click', (e) => { if (e.target === d && downOn === d) d.close('cancel') })
+    d.addEventListener('close', () => { d.remove(); resolve(d.returnValue === 'ok') })
+    document.body.append(d)
+    d.showModal()
+    ;(danger ? cancel : go).focus()
+  })
+}
+
 // ---- Conversation: events folded into what a person reads (mirrors the TUI)
 
 function convo(id) {
@@ -480,7 +505,7 @@ function renderTopbar() {
         working ? h('button', { class: 'btn', onclick: () => guarded(() => api('POST', `/v1/agents/${a.id}/interrupt`)) }, '■', h('span', { class: 'label' }, ' Stop')) : null,
         a.archived_at ? null : h('button', {
           class: 'btn ghost', title: 'Archive', onclick: async () => {
-            if (!confirm(`Archive "${a.name}"? Its history is kept.`)) return
+            if (!await ask({ title: `Archive "${a.name}"?`, body: 'Its history is kept.', ok: 'Archive' })) return
             await guarded(() => api('POST', `/v1/agents/${a.id}/archive`))
             S.sel = null
             await guarded(refreshAgents)
@@ -718,14 +743,14 @@ function renderIsolations() {
           S.verifying === i.name ? 'Measuring…' : 'Verify'),
         h('button', {
           class: 'btn', onclick: async () => {
-            if (!confirm(`Upgrade ${i.name} to the current image? Running agents restart; sessions are kept.`)) return
+            if (!await ask({ title: `Upgrade ${i.name} to the current image?`, body: 'Running agents restart; sessions are kept.', ok: 'Upgrade' })) return
             toast('Upgrading…')
             await guarded(async () => { await api('POST', `/v1/isolations/${i.name}/upgrade`); toast(`${i.name} upgraded`); await refreshIsolations() })
           },
         }, 'Upgrade'),
         h('button', {
           class: 'btn danger', onclick: async () => {
-            if (!confirm(`Delete isolation ${i.name}? Its volumes are kept.`)) return
+            if (!await ask({ title: `Delete isolation ${i.name}?`, body: 'Its volumes are kept.', ok: 'Delete', danger: true })) return
             await guarded(async () => { await api('DELETE', `/v1/isolations/${i.name}`); toast(`${i.name} deleted`); await refreshIsolations() })
           },
         }, 'Delete')),
@@ -953,7 +978,7 @@ function envRow(s, e) {
       h('button', {
         class: 'btn danger', onclick: async () => {
           const on = e.exposed_to?.length ? ` ${e.exposed_to.join(', ')} stop serving it.` : ''
-          if (!confirm(`Remove ${s.name} env ${e.name}?${on} Its secret stays until cleared.`)) return
+          if (!await ask({ title: `Remove ${s.name} env ${e.name}?`, body: `${on} Its secret stays until cleared.`.trim(), ok: 'Remove', danger: true })) return
           await guarded(async () => {
             await api('DELETE', envPath(s.name, e.name) + (on ? '?force=1' : ''))
             toast(`Removed ${s.name}/${e.name}`)
@@ -1047,7 +1072,7 @@ function secretForm(s, e) {
     h('div', { class: 'actions' }, save,
       h('button', {
         class: 'btn', onclick: async () => {
-          if (!confirm(`Delete the stored secret for ${s.name}/${e.name}?`)) return
+          if (!await ask({ title: `Delete the stored secret for ${s.name}/${e.name}?`, body: 'It is removed from the Mac’s credentials file.', ok: 'Delete', danger: true })) return
           await guarded(async () => { await api('DELETE', envPath(s.name, e.name) + '/secret'); S.openForm = null; toast('Secret removed'); await refreshServices(); renderServices() })
         },
       }, 'Clear'),
@@ -1189,7 +1214,7 @@ function exposeForm(i, s, x) {
     h('div', { class: 'actions' }, apply,
       x.enabled ? h('button', {
         class: 'btn danger', onclick: async () => {
-          if (!confirm(`Turn ${s.name} off for ${i.name}? Its files and variables are removed there.`)) return
+          if (!await ask({ title: `Turn ${s.name} off for ${i.name}?`, body: 'Its files and variables are removed there.', ok: 'Turn off', danger: true })) return
           await guarded(async () => {
             await api('DELETE', `/v1/isolations/${enc(i.name)}/services/${enc(s.name)}`)
             S.openForm = null
@@ -1318,7 +1343,7 @@ async function cancelCLILogin() {
 }
 
 async function cliLogout(iso, tool) {
-  if (!confirm(`Log ${cliName(tool)} out in ${iso}? Its agents there stop working until it logs in again.`)) return
+  if (!await ask({ title: `Log ${cliName(tool)} out in ${iso}?`, body: 'Its agents there stop working until it logs in again.', ok: 'Log out', danger: true })) return
   S.cliBusy = `${iso}/${tool}`
   renderSetup()
   await guarded(async () => {
@@ -1421,7 +1446,7 @@ function accountsCard() {
         h('button', {
           class: 'btn danger', onclick: async () => {
             const used = a.used_by?.length ? ` ${a.used_by.join(', ')} go back to a login inside.` : ''
-            if (!confirm(`Remove account ${a.name} and its secret?${used}`)) return
+            if (!await ask({ title: `Remove account ${a.name}?`, body: `Its secret is deleted.${used}`, ok: 'Remove', danger: true })) return
             await guarded(async () => { await api('DELETE', `/v1/accounts/${enc(a.name)}?force=1`); toast(`Account ${a.name} removed`) })
             await guarded(refreshAccounts)
             if (a.used_by?.length) await guarded(() => refreshCLIs(a.used_by))

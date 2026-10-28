@@ -14,6 +14,7 @@
   --warn-soft: #fff4e0;
   --err: #b42318;
   --err-soft: #fdecea;
+  --on-err: #ffffff;
   --code: #f2f2f6;
   --shadow: 0 6px 24px rgb(20 20 40 / 10%);
   --mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
@@ -36,6 +37,7 @@
     --warn-soft: #2e2512;
     --err: #ff8a80;
     --err-soft: #331b1a;
+    --on-err: #2a0e0c;
     --code: #1f1f26;
     --shadow: 0 6px 24px rgb(0 0 0 / 40%);
   }
@@ -420,3 +422,28 @@ code, pre { font-family: var(--mono); font-size: 13px; }
 .lookup .choices [hidden] { display: none; }
 .lookup .choices .check span:first-of-type { font-family: var(--mono); font-size: 13px; overflow-wrap: anywhere; }
 .lookup input[disabled] { opacity: .6; }
+
+/* Dialogs: the page's own confirm(), a modal <dialog> */
+.dialog {
+  width: min(420px, calc(100vw - 32px));
+  padding: 0;
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  background: var(--panel);
+  color: var(--text);
+  box-shadow: var(--shadow);
+}
+.dialog::backdrop { background: rgb(10 10 20 / 45%); }
+.dialog form { padding: 20px 20px 16px; }
+.dialog h3 { margin: 0 0 6px; font-size: 16px; line-height: 1.35; overflow-wrap: anywhere; }
+.dialog p { margin: 0; color: var(--muted); font-size: 14px; overflow-wrap: anywhere; }
+.dialog-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 20px; }
+.btn.primary.danger { background: var(--err); color: var(--on-err); }
+.dialog[open] { animation: dialog-in .14s ease-out; }
+.dialog[open]::backdrop { animation: backdrop-in .14s ease-out; }
+@keyframes dialog-in { from { opacity: 0; transform: translateY(6px) scale(.98); } }
+@keyframes backdrop-in { from { opacity: 0; } }
+@media (prefers-reduced-motion: reduce) { .dialog[open], .dialog[open]::backdrop { animation: none; } }
+@media (max-width: 760px) {
+  .dialog-actions .btn { flex: 1; padding: 10px 14px; }
+}
