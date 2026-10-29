@@ -388,6 +388,44 @@ inbox holds 50, and an isolation's agents send 20 a minute at most. Agents
 answering each other can go on forever: the skill tells them not to answer
 what needs no answer, and `gero agent inbox <id> --clear` stops a loop.
 
+## Shared folders
+
+A folder of the Mac's can be put in an isolation, at `/shared/<name>`:
+
+```sh
+gero env add share notes --path ~/Projects/notes           # read-only
+gero env add share out --path ./out --read-write           # a relative path is the CLI's own
+gero iso expose dev share notes,out                        # dev restarts with both
+gero iso unexpose dev share                                # ...and without them
+```
+
+It is a hole in the isolation, kept small:
+
+- **Read-only unless `--read-write`.** The VM's kernel refuses a write to a
+  read-only one ("Read-only file system").
+- **A writable one is yours.** The VM does not enforce file permissions on
+  it: an agent there overwrites a 0600 file, plants an executable git hook,
+  deletes what it likes, and on the Mac all of it is your own (measured).
+  Whatever runs from that folder on the Mac — git hooks, `.envrc`, scripts,
+  a Makefile — is then the agents' to write. A link an agent makes there is
+  a real one on the Mac, to the Mac's paths.
+- **Only a folder in your home folder**, and never the home folder itself, a
+  dot folder in it (`~/.ssh`, `~/.aws`, `~/.config`…), `~/Library`, or gero's
+  own directories; links are followed before that is checked, and again
+  whenever a container starts with the folder. Desktop, Documents and
+  Downloads are refused as well: macOS keeps the container runtime out of
+  them and the VM does not start ("Operation not permitted").
+
+`container` mounts a folder only when it starts a VM, so turning a share on
+or off for an isolation, or changing an exposed one, replaces its container,
+the way a resize does: volumes, sessions and workspaces are kept, running
+agents end and start again on their next message. The web and the TUI ask
+first. A container that will not start with a new folder is put back with
+the ones it had and the change is refused; one recreated later without a
+folder that has gone starts without it. Inside, the `gero-share` skill says
+which folder of the Mac's each one is, and how to treat it; Claude gets each
+one as `--add-dir`, and Codex's auto sandbox may write to the writable ones.
+
 ## Verify
 
 ```sh
@@ -398,7 +436,8 @@ gero iso verify dev --json
 
 Measures what an isolation can do, now, instead of trusting the
 configuration: the fence afresh (every address the Mac holds, from inside),
-that no Mac directory is mounted, and for each exposed proxy that the tunnel
+that no Mac directory is mounted but its shares, each the folder it was
+shared as and a read-only one read-only, and for each exposed proxy that the tunnel
 carries its ports, that it refuses a request it must refuse — a wrong
 workspace token, an unlisted repository — made from inside the isolation as
 the agent, with curl or psql, and that each env still answers from the Mac

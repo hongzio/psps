@@ -143,6 +143,13 @@ type Driver interface {
 	State() State
 }
 
+// Rooted is a driver whose own sandbox is told which folders besides the
+// workspace it may write to (Codex's auto). Claude is told on its command
+// line instead.
+type Rooted interface {
+	SetWritableRoots(roots []string)
+}
+
 // New returns a driver for one agent. sessionID is empty for an agent that
 // has never run.
 func New(kind Kind, agentID, sessionID string, opts Options) (Driver, error) {

@@ -13,6 +13,7 @@ import (
 	"os"
 	"os/exec"
 	"regexp"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -32,6 +33,9 @@ const (
 	shimPath  = "/usr/local/bin/gero-shim"
 	// StateRoot is the shim's durable state, on the state volume.
 	StateRoot = "/var/lib/gero"
+	// SharedRoot holds the folders of the Mac's shared with the isolation,
+	// one directory each, named after its share env.
+	SharedRoot = "/shared"
 )
 
 // AgentStateDir is where the shim keeps one agent's log.
@@ -97,6 +101,48 @@ func (c CLI) State(ctx context.Context, name string) (string, error) {
 		return "", fmt.Errorf("container inspect %s: unexpected output", name)
 	}
 	return info[0].Status.State, nil
+}
+
+// Mount is a directory of the Mac's in the isolation, as container's
+// virtiofs shares it.
+type Mount struct {
+	Source   string `json:"source"`
+	Target   string `json:"target"`
+	ReadOnly bool   `json:"read_only,omitempty"`
+}
+
+// Mounts are the directories of the Mac's a container was started with,
+// as container reports them; its volumes are not among them.
+func (c CLI) Mounts(ctx context.Context, name string) ([]Mount, error) {
+	out, err := c.run(ctx, "inspect", name)
+	if err != nil {
+		return nil, err
+	}
+	return parseMounts(out)
+}
+
+func parseMounts(inspect string) ([]Mount, error) {
+	var info []struct {
+		Configuration struct {
+			Mounts []struct {
+				Source      string                     `json:"source"`
+				Destination string                     `json:"destination"`
+				Options     []string                   `json:"options"`
+				Type        map[string]json.RawMessage `json:"type"`
+			} `json:"mounts"`
+		} `json:"configuration"`
+	}
+	if err := json.Unmarshal([]byte(inspect), &info); err != nil || len(info) == 0 {
+		return nil, errors.New("container inspect: unexpected output")
+	}
+	var out []Mount
+	for _, m := range info[0].Configuration.Mounts {
+		if _, ok := m.Type["virtiofs"]; !ok {
+			continue
+		}
+		out = append(out, Mount{Source: m.Source, Target: m.Destination, ReadOnly: slices.Contains(m.Options, "ro")})
+	}
+	return out, nil
 }
 
 func (c CLI) Start(ctx context.Context, name string) error {
@@ -190,6 +236,7 @@ type RunSpec struct {
 	Memory  string
 	Network string
 	Volumes [][2]string // volume name, mount path
+	Mounts  []Mount
 	Labels  map[string]string
 }
 
@@ -272,6 +319,13 @@ func (c CLI) Run(ctx context.Context, s RunSpec) error {
 	}
 	for _, v := range s.Volumes {
 		args = append(args, "-v", v[0]+":"+v[1])
+	}
+	for _, m := range s.Mounts {
+		spec := "type=bind,source=" + m.Source + ",target=" + m.Target
+		if m.ReadOnly {
+			spec += ",readonly"
+		}
+		args = append(args, "--mount", spec)
 	}
 	for k, v := range s.Labels {
 		args = append(args, "-l", k+"="+v)

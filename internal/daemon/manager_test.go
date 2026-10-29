@@ -137,6 +137,11 @@ type fakeContainers struct {
 	// size Create fails for, the way container refuses one.
 	created []string
 	refuse  string
+	// shares are the Mac's folders each container was started with, and
+	// refuseShare a folder Create fails for, as macOS privacy protection
+	// makes container fail.
+	shares      map[string][]isolation.Mount
+	refuseShare string
 }
 
 type fakeCtr struct {
@@ -191,15 +196,40 @@ func (f *fakeContainers) boot(name string) error {
 }
 
 func (f *fakeContainers) Start(_ context.Context, name string) error { return f.boot(name) }
-func (f *fakeContainers) Create(_ context.Context, base, _ string, cpus int, memory, _ string) error {
+func (f *fakeContainers) Create(_ context.Context, base, _ string, cpus int, memory, _ string, mounts []isolation.Mount) error {
 	f.mu.Lock()
-	f.created = append(f.created, fmt.Sprintf("%s %d %s", base, cpus, memory))
+	c := fmt.Sprintf("%s %d %s", base, cpus, memory)
+	for _, m := range mounts {
+		c += fmt.Sprintf(" %s:%s:ro=%v", m.Source, m.Target, m.ReadOnly)
+	}
+	f.created = append(f.created, c)
 	refused := f.refuse != "" && memory == f.refuse
+	for _, m := range mounts {
+		if f.refuseShare != "" && m.Source == f.refuseShare {
+			f.mu.Unlock()
+			return fmt.Errorf("container: failed to bootstrap: A directory sharing device configuration is invalid (Operation not permitted)")
+		}
+	}
+	if !refused {
+		if f.shares == nil {
+			f.shares = map[string][]isolation.Mount{}
+		}
+		f.shares["gero-"+base] = append([]isolation.Mount(nil), mounts...)
+	}
 	f.mu.Unlock()
 	if refused {
 		return fmt.Errorf("container: cannot give a VM %s", memory)
 	}
 	return f.boot("gero-" + base)
+}
+
+func (f *fakeContainers) Mounts(_ context.Context, name string) ([]isolation.Mount, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if _, ok := f.ctrs[name]; !ok {
+		return nil, fmt.Errorf("container %s not found", name)
+	}
+	return f.shares[name], nil
 }
 
 func (f *fakeContainers) lastCreated() string {
@@ -291,12 +321,22 @@ func (f *fakeContainers) Remove(_ context.Context, name string) error {
 
 // RunAsAgent runs argv on this Mac, which stands in for the isolation:
 // curl to 127.0.0.1 reaches the test tunnel's isolation end.
-func (f *fakeContainers) RunAsAgent(ctx context.Context, _ string, argv ...string) (string, error) {
+func (f *fakeContainers) RunAsAgent(ctx context.Context, name string, argv ...string) (string, error) {
 	if len(argv) == 2 && argv[0] == "cat" && argv[1] == "/proc/mounts" {
 		f.mu.Lock()
 		defer f.mu.Unlock()
 		if f.mounts == "" {
-			return "/dev/vdb / ext4 rw,relatime 0 0\n/dev/vdc /home/agent ext4 rw,relatime 0 0\nproc /proc proc rw 0 0", nil
+			out := "/dev/vdb / ext4 rw,relatime 0 0\n/dev/vdc /home/agent ext4 rw,relatime 0 0\nproc /proc proc rw 0 0"
+			for _, m := range f.shares[name] {
+				{
+					opt := "rw"
+					if m.ReadOnly {
+						opt = "ro"
+					}
+					out += fmt.Sprintf("\nvirtiofs %s virtiofs %s,relatime 0 0", m.Target, opt)
+				}
+			}
+			return out, nil
 		}
 		return f.mounts, nil
 	}

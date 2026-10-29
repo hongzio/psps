@@ -46,7 +46,8 @@ type Containers interface {
 	VolumeRemove(ctx context.Context, name string) error
 	ImageExists(ctx context.Context, ref string) bool
 	EnsureImage(ctx context.Context, progress io.Writer) (string, error)
-	Create(ctx context.Context, iso, image string, cpus int, memory, network string) error
+	Create(ctx context.Context, iso, image string, cpus int, memory, network string, mounts []isolation.Mount) error
+	Mounts(ctx context.Context, container string) ([]isolation.Mount, error)
 	RunAsAgent(ctx context.Context, container string, argv ...string) (string, error)
 	ShimDialer(container string) shim.Dialer
 	NetworkInspect(ctx context.Context, name string) (isolation.NetworkInfo, error)
@@ -345,7 +346,17 @@ func (m *Manager) ensureIsolation(ctx context.Context, id string) (*shim.Client,
 			rec.Image = image
 			m.store.PutIsolation(rec)
 		}
-		if err := m.cli.Create(ctx, rec.ID, rec.Image, rec.CPUs, rec.Memory, rec.Network); err != nil {
+		mounts, missing := m.mountsFor(rec.ID)
+		m.logMissing(rec.Name, missing)
+		err := m.cli.Create(ctx, rec.ID, rec.Image, rec.CPUs, rec.Memory, rec.Network, mounts)
+		if err != nil && len(mounts) > 0 {
+			// One that cannot start with its shares starts without them
+			// rather than not at all; its skill says they are not there.
+			m.log.Printf("isolation %s: does not start with its shared folders (%v); starting it without them", rec.Name, err)
+			m.cli.Remove(ctx, rec.Container)
+			err = m.cli.Create(ctx, rec.ID, rec.Image, rec.CPUs, rec.Memory, rec.Network, nil)
+		}
+		if err != nil {
 			return nil, err
 		}
 	default:
@@ -461,7 +472,8 @@ func (m *Manager) CreateIsolation(ctx context.Context, req api.CreateIsolation, 
 	}
 	iso = store.Isolation{ID: id, Name: req.Name, Container: isolation.ContainerName(id), Image: image, CPUs: req.CPUs,
 		Memory: req.Memory, Network: isolation.NetworkName(id), Fence: fence, Env: map[string]string{}, CreatedAt: time.Now().UTC()}
-	if err := m.cli.Create(ctx, id, image, req.CPUs, req.Memory, iso.Network); err != nil {
+	// A new isolation has no shares yet.
+	if err := m.cli.Create(ctx, id, image, req.CPUs, req.Memory, iso.Network, nil); err != nil {
 		return store.Isolation{}, err
 	}
 	if err := m.store.PutIsolation(iso); err != nil {
@@ -499,7 +511,9 @@ func (m *Manager) UpgradeIsolation(ctx context.Context, name string, progress io
 		err = m.store.PutIsolation(iso)
 	}
 	if err == nil {
-		err = m.cli.Create(ctx, iso.ID, image, iso.CPUs, iso.Memory, iso.Network)
+		mounts, missing := m.mountsFor(iso.ID)
+		m.logMissing(iso.Name, missing)
+		err = m.cli.Create(ctx, iso.ID, image, iso.CPUs, iso.Memory, iso.Network, mounts)
 	}
 	st.healthy = time.Time{}
 	st.mu.Unlock()
@@ -588,13 +602,14 @@ func (m *Manager) resizeIsolation(ctx context.Context, id string, cpus int, memo
 	}
 	was := iso
 	iso.CPUs, iso.Memory = cpus, memory
+	mounts, _ := m.cli.Mounts(ctx, iso.Container)
 	err = m.cli.Remove(ctx, iso.Container)
 	if err == nil {
-		if err = m.cli.Create(ctx, id, iso.Image, cpus, memory, iso.Network); err == nil {
+		if err = m.cli.Create(ctx, id, iso.Image, cpus, memory, iso.Network, mounts); err == nil {
 			err = m.store.PutIsolation(iso)
 		} else {
 			m.cli.Remove(ctx, iso.Container)
-			if berr := m.cli.Create(ctx, id, was.Image, was.CPUs, was.Memory, was.Network); berr != nil {
+			if berr := m.cli.Create(ctx, id, was.Image, was.CPUs, was.Memory, was.Network, mounts); berr != nil {
 				err = fmt.Errorf("%w; putting it back at its old size failed too: %v", err, berr)
 			} else {
 				m.store.PutIsolation(was)

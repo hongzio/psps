@@ -476,6 +476,30 @@ func TestACodexApprovalModeChangeReachesTheNextTurn(t *testing.T) {
 	}
 }
 
+// The isolation's writable shares are auto's to write to, like the
+// workspace; the other modes have no sandbox to tell.
+func TestCodexAutoWritesToTheWritableShares(t *testing.T) {
+	d := newCodex("a1", "", Options{Approvals: ApprovalsAuto})
+	var r Driver = d
+	r.(Rooted).SetWritableRoots([]string{"/shared/out"})
+	_, tu := codexOpen(t, d, &tape{})
+	sp, _ := tu["sandboxPolicy"].(map[string]any)
+	if roots, _ := sp["writableRoots"].([]any); sp["type"] != "workspaceWrite" || len(roots) != 1 || roots[0] != "/shared/out" {
+		t.Fatalf("turn/start sandbox %v", sp)
+	}
+	d = newCodex("a1", "", Options{Approvals: ApprovalsNever})
+	d.SetWritableRoots([]string{"/shared/out"})
+	_, tu = codexOpen(t, d, &tape{})
+	if sp, _ := tu["sandboxPolicy"].(map[string]any); sp["type"] != "dangerFullAccess" || sp["writableRoots"] != nil {
+		t.Fatalf("never's sandbox %v", sp)
+	}
+	d = newCodex("a1", "", Options{Approvals: ApprovalsAuto})
+	_, tu = codexOpen(t, d, &tape{})
+	if sp, _ := tu["sandboxPolicy"].(map[string]any); sp["writableRoots"] != nil {
+		t.Fatalf("no shares, yet roots: %v", sp)
+	}
+}
+
 // The shapes are from codex-cli 0.164.0's app-server, recorded in an
 // isolation: a network call let through, a credentials upload refused.
 func TestCodexAutoReviewsAreReported(t *testing.T) {

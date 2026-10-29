@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
 	"sort"
 	"strings"
 	"text/tabwriter"
@@ -100,7 +101,9 @@ func envCmd(p paths.Paths, args []string) error {
 		if args[0] == "add" && len(e.MissingSecrets) > 0 {
 			fmt.Printf("store its secret with: gero env secret %s %s\n", e.Service, e.Name)
 		}
-		if len(e.ExposedTo) > 0 {
+		if _, ok := svc.(proxy.Mounter); ok && len(e.ExposedTo) > 0 {
+			fmt.Printf("exposed to %s; their containers were replaced if the folder changed, so running agents ended and start again on their next message\n", strings.Join(e.ExposedTo, ", "))
+		} else if len(e.ExposedTo) > 0 {
 			fmt.Printf("exposed to %s; their proxies use the new definition now\n", strings.Join(e.ExposedTo, ", "))
 		}
 		return nil
@@ -340,7 +343,14 @@ func parsePatch(name string, fields []proxy.Field, args []string, extra ...func(
 		switch f.Kind {
 		case proxy.String:
 			if given[f.Flag] {
-				p.Set[f.Key] = *b.str
+				v := *b.str
+				// A relative folder is the CLI's, not the daemon's.
+				if f.Path && v != "" && !strings.HasPrefix(v, "~") && !filepath.IsAbs(v) {
+					if abs, err := filepath.Abs(v); err == nil {
+						v = abs
+					}
+				}
+				p.Set[f.Key] = v
 			}
 		case proxy.Int:
 			if given[f.Flag] {

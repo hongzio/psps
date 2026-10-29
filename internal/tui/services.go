@@ -485,10 +485,11 @@ func (m *Model) handleSvcFormKey(msg tea.KeyMsg) tea.Cmd {
 			cur = map[string]any{}
 		}
 		fields = fields[p.formHead:]
+		var exposed []string
 		if p.formEnv != "" {
 			for _, e := range p.envs {
 				if e.Service == svc.Name && e.Name == name {
-					cur = decodeMap(e.Config)
+					cur, exposed = decodeMap(e.Config), e.ExposedTo
 				}
 			}
 		}
@@ -499,8 +500,8 @@ func (m *Model) handleSvcFormKey(msg tea.KeyMsg) tea.Cmd {
 		}
 		adding := p.formEnv == ""
 		p.mode, p.form = svcList, nil
-		return func() tea.Msg {
-			ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
+		save := func() tea.Msg {
+			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 			defer cancel()
 			var e api.Env
 			var err error
@@ -523,6 +524,14 @@ func (m *Model) handleSvcFormKey(msg tea.KeyMsg) tea.Cmd {
 			}
 			return doneMsg{flash: flash, err: err, refresh: true}
 		}
+		if svc.Replaces && len(exposed) > 0 {
+			m.confirm = &confirmation{
+				prompt: fmt.Sprintf("save it and restart %s? a changed folder is mounted only as the VM starts; running agents end (y/n)", strings.Join(exposed, ", ")),
+				onYes:  func() tea.Cmd { return save },
+			}
+			return nil
+		}
+		return save
 	case svcSecret:
 		values := map[string]string{}
 		for i, s := range svc.Secrets {
@@ -726,21 +735,33 @@ func (m *Model) handleExposeKey(msg tea.KeyMsg) tea.Cmd {
 			m.setFlash(err.Error(), true)
 			return nil
 		}
+		was := e.exposure(svc.Name)
 		e.form = nil
 		be := m.be
-		return func() tea.Msg {
-			ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
+		run := func() tea.Msg {
+			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 			defer cancel()
 			x, err := be.Expose(ctx, iso, svc.Name, api.Expose{Envs: envs, Default: def, Settings: settings})
 			flash := fmt.Sprintf("%s is on for %s", svc.Name, iso)
-			if err == nil && len(x.Envs) > 0 {
-				flash += ": " + strings.Join(x.Envs, ", ") + " (default " + x.Default + ")"
-			}
-			if err == nil {
+			switch {
+			case err == nil && svc.Replaces:
+				flash = fmt.Sprintf("%s has %s", iso, orDash(sharedPaths(x.Envs)))
+			case err == nil && len(x.Envs) > 0:
+				flash += ": " + strings.Join(x.Envs, ", ") + " (default " + x.Default + "); agents pick it up at their next idle moment"
+			case err == nil:
 				flash += "; agents pick it up at their next idle moment"
 			}
 			return doneMsg{flash: flash, err: err, refresh: true}
 		}
+		// A share is mounted only when the VM starts: a change replaces it.
+		if svc.Replaces && (!was.Enabled || strings.Join(was.Envs, ",") != strings.Join(envs, ",")) {
+			m.confirm = &confirmation{
+				prompt: fmt.Sprintf("restart %s with %s? its container is replaced; running agents end and start again on their next message (y/n)", iso, orDash(sharedPaths(envs))),
+				onYes:  func() tea.Cmd { m.setFlash("restarting "+iso+"…", false); return run },
+			}
+			return nil
+		}
+		return run
 	}
 	switch {
 	case k.Is(msg, "back"):
@@ -762,7 +783,11 @@ func (m *Model) handleExposeKey(msg tea.KeyMsg) tea.Cmd {
 			m.setFlash(svc+" is already off for "+iso, false)
 			return nil
 		}
-		m.confirm = &confirmation{prompt: fmt.Sprintf("turn %s off for %s? its files and variables are removed there (y/n)", svc, iso),
+		prompt := fmt.Sprintf("turn %s off for %s? its files and variables are removed there (y/n)", svc, iso)
+		if e.services[e.sel].Replaces {
+			prompt = fmt.Sprintf("turn %s off for %s? its container is replaced without the shared folders; running agents end (y/n)", svc, iso)
+		}
+		m.confirm = &confirmation{prompt: prompt,
 			onYes: func() tea.Cmd {
 				return m.do(svc+" is off for "+iso, true, func(ctx context.Context) error { return be.Unexpose(ctx, iso, svc) })
 			}}
@@ -794,7 +819,11 @@ func (m *Model) openExposeForm(svc api.Service) {
 	}
 	var fields []*field
 	if e.formEnvs = len(svc.Fields) > 0; e.formEnvs {
-		envs := checkField("envs", names, x.Envs, "space ticks; none: the service with no credential (git: public reads only)")
+		hint := "space ticks; none: the service with no credential (git: public reads only)"
+		if svc.Replaces {
+			hint = "space ticks; each ticked folder is at /shared/NAME in the isolation"
+		}
+		envs := checkField("envs", names, x.Envs, hint)
 		def := selectField("default", append([]string{optDefault}, names...), "the env plain variables point at; default: the first ticked")
 		def.idx = indexOf(def.options, x.Default)
 		fields = []*field{envs, def}
@@ -851,4 +880,13 @@ func (m *Model) renderExpose(width int) string {
 			k.Label("open"), k.Label("svc_off"), k.Label("back"))) + "\n")
 	}
 	return b.String()
+}
+
+// sharedPaths is where share envs are in the isolation.
+func sharedPaths(envs []string) string {
+	var out []string
+	for _, n := range envs {
+		out = append(out, "/shared/"+n)
+	}
+	return strings.Join(out, ", ")
 }

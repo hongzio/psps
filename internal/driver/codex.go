@@ -80,7 +80,14 @@ type codex struct {
 	prompts   []prompt
 	revert    string
 	reverting *cxRevert
+	// roots are folders outside the workspace that auto's sandbox lets it
+	// write to as well: the isolation's writable shares.
+	roots []string
 }
+
+// SetWritableRoots is the folders besides the workspace an agent may write
+// to, for the process about to start.
+func (c *codex) SetWritableRoots(roots []string) { c.roots = roots }
 
 type cxRevert struct {
 	turn string
@@ -179,7 +186,11 @@ func (c *codex) approval() cxApproval {
 	case ApprovalsAsk:
 		return cxApproval{"untrusted", "user", "danger-full-access", map[string]any{"type": "dangerFullAccess"}}
 	case ApprovalsAuto:
-		return cxApproval{"on-request", "auto_review", "workspace-write", map[string]any{"type": "workspaceWrite"}}
+		policy := map[string]any{"type": "workspaceWrite"}
+		if len(c.roots) > 0 {
+			policy["writableRoots"] = c.roots
+		}
+		return cxApproval{"on-request", "auto_review", "workspace-write", policy}
 	case ApprovalsDefault:
 		if c.defaults != nil {
 			return *c.defaults

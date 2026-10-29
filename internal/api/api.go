@@ -158,6 +158,10 @@ type Service struct {
 	// means a browser login writes them instead.
 	Secrets []string `json:"secrets,omitempty"`
 	Login   bool     `json:"login,omitempty"`
+	// Replaces means turning it on or off for an isolation, or changing
+	// one of its envs, replaces the isolation's container (share): running
+	// agents end and start again on their next message.
+	Replaces bool `json:"replaces,omitempty"`
 }
 
 // Env is an env definition as clients see it: never the secret, only

@@ -326,3 +326,26 @@ func TestAStoredAwsAllowlistReadsBackNarrowed(t *testing.T) {
 		t.Fatalf("patches %v", h.be.patches)
 	}
 }
+
+// A share is mounted only when the VM starts: turning one on asks first,
+// since the isolation restarts.
+func TestTurningOnAShareAsksBeforeTheIsolationRestarts(t *testing.T) {
+	h := newHarness(t)
+	h.be.services = []api.Service{{Name: "share", Summary: "a folder of the Mac's", Replaces: true,
+		Fields: []proxy.Field{{Key: "path", Kind: proxy.String, Flag: "path", Path: true}}}}
+	h.be.envs = []api.Env{{Env: store.Env{Service: "share", Name: "notes", Config: json.RawMessage(`{"path":"/Users/x/notes","read_write":false}`)}}}
+	h.key("ctrl+g")
+	h.key("p")
+	h.key("enter") // share
+	h.viewHas("each ticked folder is at /shared/NAME")
+	h.key("space") // tick notes
+	h.key("ctrl+s")
+	if h.m.confirm == nil || !strings.Contains(h.m.confirm.prompt, "restart dev with /shared/notes?") || len(h.be.exposed) != 0 {
+		t.Fatalf("confirm %+v, exposed %v", h.m.confirm, h.be.exposed)
+	}
+	h.key("y")
+	if len(h.be.exposed) != 1 || h.be.exposed[0] != `dev share envs=[notes] default="" settings=` {
+		t.Fatalf("exposed %v", h.be.exposed)
+	}
+	h.viewHas("dev has /shared/notes")
+}

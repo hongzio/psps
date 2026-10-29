@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net"
 	"os"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -13,6 +14,7 @@ import (
 	"time"
 
 	"github.com/hongzio/gero/internal/api"
+	"github.com/hongzio/gero/internal/isolation"
 	"github.com/hongzio/gero/internal/proxy"
 	"github.com/hongzio/gero/internal/store"
 )
@@ -39,7 +41,7 @@ func (m *Manager) Verify(ctx context.Context, name string) (api.Verify, error) {
 	}
 
 	add(m.verifyFenceChecks(ctx, rec)...)
-	add(m.verifyMounts(ctx, rec))
+	add(m.verifyMounts(ctx, rec)...)
 	add(m.verifyServices(ctx, rec)...)
 	if c, ok := m.verifyCredsFile(); ok {
 		add(c)
@@ -105,29 +107,83 @@ func fenceAddr(target string) string {
 // machine: virtiofs is how `container run -v` shares the Mac's.
 var hostShares = []string{"virtiofs", "9p", "nfs", "nfs4", "cifs", "smb3", "fuse"}
 
-func (m *Manager) verifyMounts(ctx context.Context, iso store.Isolation) api.VerifyCheck {
-	const check = "no Mac directory mounted in the isolation"
+// verifyMounts measures, from inside, which of the Mac's directories the
+// isolation sees: its shares, a read-only one read-only, and nothing else.
+// Which folder of the Mac's each one is, container says (inspect).
+func (m *Manager) verifyMounts(ctx context.Context, iso store.Isolation) []api.VerifyCheck {
+	want, missing := m.mountsFor(iso.ID)
+	check := "no Mac directory mounted in the isolation"
+	if len(want) > 0 {
+		check = "no Mac directory mounted but its shares"
+	}
 	out, err := m.cli.RunAsAgent(ctx, iso.Container, "cat", "/proc/mounts")
 	if err != nil {
-		return fail(check, api.SevConfig, "none", "not measured", err.Error())
+		return []api.VerifyCheck{fail(check, api.SevConfig, "none", "not measured", err.Error())}
 	}
-	var shared []string
+	expected := map[string]isolation.Mount{}
+	for _, w := range want {
+		expected[w.Target] = w
+	}
+	seen := map[string]bool{}
+	var bad, shown []string
 	for _, line := range strings.Split(out, "\n") {
 		f := strings.Fields(line)
-		if len(f) < 3 {
+		if len(f) < 4 {
 			continue
 		}
 		for _, t := range hostShares {
-			if f[2] == t || strings.HasPrefix(f[2], t+".") {
-				shared = append(shared, f[1]+" ("+f[2]+")")
+			if f[2] != t && !strings.HasPrefix(f[2], t+".") {
+				continue
+			}
+			ro := slices.Contains(strings.Split(f[3], ","), "ro")
+			w, ok := expected[f[1]]
+			switch {
+			case !ok:
+				bad = append(bad, f[1]+" ("+f[2]+")")
+			case w.ReadOnly && !ro:
+				bad = append(bad, f[1]+" is writable, shared read-only")
+			default:
+				seen[f[1]] = true
+				shown = append(shown, f[1]+map[bool]string{true: " (read-only)", false: " (read-write)"}[ro])
 			}
 		}
 	}
-	if len(shared) > 0 {
-		return fail(check, api.SevIsolation, "none", strings.Join(shared, ", "),
-			"the isolation sees the Mac's files there, around every proxy; gero never mounts any, so something else created this container")
+	if len(bad) > 0 {
+		return []api.VerifyCheck{fail(check, api.SevIsolation, orNone(describeMounts(want)), strings.Join(bad, ", "),
+			"the isolation sees the Mac's files there, around every proxy; gero mounts only its shares, as shared, so something else created this container")}
 	}
-	return pass(check, api.SevIsolation, "none")
+	got := "none"
+	if len(shown) > 0 {
+		got = strings.Join(shown, ", ")
+	}
+	cs := []api.VerifyCheck{pass(check, api.SevIsolation, got)}
+	if len(want) == 0 && len(missing) == 0 {
+		return cs
+	}
+	var off []string
+	for _, w := range want {
+		if !seen[w.Target] {
+			off = append(off, w.Target)
+		}
+	}
+	if have, err := m.cli.Mounts(ctx, iso.Container); err == nil {
+		for _, h := range have {
+			if w, ok := expected[h.Target]; ok && w.Source != h.Source {
+				return append(cs, fail("each share is the folder it was shared as", api.SevIsolation, w.Source, h.Source,
+					h.Target+" is another folder of the Mac's than its share names"))
+			}
+		}
+	}
+	switch {
+	case len(off) > 0:
+		cs = append(cs, fail("its shares are mounted", api.SevConfig, strings.Join(off, ", "), "not mounted",
+			"the container did not start with them (the daemon's log says why); turning the share off and on again tries again"))
+	case len(missing) > 0:
+		cs = append(cs, fail("its shares are mounted", api.SevConfig, "all", "left out: "+strings.Join(missing, "; "), "a share whose folder is not there now is left out"))
+	default:
+		cs = append(cs, pass("its shares are mounted", api.SevConfig, describeMounts(want)))
+	}
+	return cs
 }
 
 // verifyServices covers each exposed proxy: that the tunnel carries its

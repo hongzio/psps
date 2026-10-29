@@ -264,7 +264,17 @@ func (r *runtime) kickLocked() {
 		r.starting = true
 		env, mcp := r.m.launchEnv(r.agent.IsolationID)
 		env = append(env, r.m.mailEnv(r.agent)...)
-		spec := shimproto.Spec{Argv: launchArgv(r.agent.Kind, r.drv.Command(), mcp), Dir: r.agent.Workdir, Env: env}
+		shares, _ := r.m.mountsFor(r.agent.IsolationID)
+		if d, ok := r.drv.(driver.Rooted); ok {
+			var roots []string
+			for _, s := range shares {
+				if !s.ReadOnly {
+					roots = append(roots, s.Target)
+				}
+			}
+			d.SetWritableRoots(roots)
+		}
+		spec := shimproto.Spec{Argv: launchArgv(r.agent.Kind, r.drv.Command(), mcp, shares), Dir: r.agent.Workdir, Env: env}
 		client, id := r.client, r.agent.ID
 		go func() {
 			_, err := client.Start(r.ctx, id, spec)

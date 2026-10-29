@@ -25,6 +25,7 @@ import (
 	"time"
 
 	"github.com/hongzio/gero/internal/creds"
+	"github.com/hongzio/gero/internal/isolation"
 	"github.com/hongzio/gero/internal/shimproto"
 	"github.com/hongzio/gero/internal/store"
 )
@@ -137,6 +138,9 @@ type Field struct {
 	// ID, so a rename keeps what it grants and a name used again later
 	// grants nothing.
 	Isolations bool `json:"isolations,omitempty"`
+	// Path is a String naming a directory on the Mac: the CLI makes a
+	// relative one absolute from where it runs, not where the daemon does.
+	Path bool `json:"path,omitempty"`
 }
 
 // Cap is one capability a List entry may keep, and what it allows.
@@ -316,6 +320,15 @@ type Service interface {
 	Check(ctx context.Context, env string, cfg json.RawMessage, c *creds.Store) (string, error)
 	// Refusals are requests the proxy must refuse while exposed as v.
 	Refusals(v View) []Refusal
+}
+
+// Mounter is a service that puts directories of the Mac's in the
+// isolation (share). container mounts them only when it starts a
+// container, so a change to what a Mounter mounts replaces the isolation's
+// container. Missing names the exposed envs whose directory is not there
+// now, which are left out.
+type Mounter interface {
+	Mounts(v View) (mounts []isolation.Mount, missing []string)
 }
 
 // Refusal is a request a proxy must refuse, which `gero iso verify` makes

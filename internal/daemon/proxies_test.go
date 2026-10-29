@@ -16,6 +16,7 @@ import (
 	"github.com/hongzio/gero/internal/api"
 	"github.com/hongzio/gero/internal/creds"
 	"github.com/hongzio/gero/internal/driver"
+	"github.com/hongzio/gero/internal/isolation"
 	"github.com/hongzio/gero/internal/proxy"
 	"github.com/hongzio/gero/internal/proxy/awsproxy"
 	"github.com/hongzio/gero/internal/shimproto"
@@ -327,13 +328,26 @@ func TestMCPServersReachTheLaunchAndAnAgentOwnedConfig(t *testing.T) {
 	if !containsString(env, "MCPX_TOKEN="+toks["main"]) || len(servers) != 1 {
 		t.Fatalf("%v %v", env, servers)
 	}
-	claude := launchArgv(driver.Claude, []string{"claude", "-p"}, servers)
+	claude := launchArgv(driver.Claude, []string{"claude", "-p"}, servers, nil)
 	if strings.Join(claude, " ") != "claude -p --mcp-config "+MCPFile {
 		t.Fatalf("claude argv %v", claude)
 	}
+	// Shared folders are Claude's own directories too, ahead of the MCP
+	// config; Codex is told by its sandbox policy instead.
+	shares := []isolation.Mount{{Source: "/Users/x/notes", Target: "/shared/notes", ReadOnly: true}, {Source: "/Users/x/out", Target: "/shared/out"}}
+	claude = launchArgv(driver.Claude, []string{"claude", "-p"}, servers, shares)
+	if strings.Join(claude, " ") != "claude -p --add-dir /shared/notes --add-dir /shared/out --mcp-config "+MCPFile {
+		t.Fatalf("claude argv with shares %v", claude)
+	}
+	if got := launchArgv(driver.Claude, []string{"claude"}, nil, shares); strings.Join(got, " ") != "claude --add-dir /shared/notes --add-dir /shared/out" {
+		t.Fatalf("claude argv with shares alone %v", got)
+	}
+	if got := launchArgv(driver.Codex, []string{"codex", "app-server"}, nil, shares); strings.Join(got, " ") != "codex app-server" {
+		t.Fatalf("codex argv with shares %v", got)
+	}
 	// Codex: overrides before the subcommand, the token by variable name,
 	// never on the command line.
-	codex := strings.Join(launchArgv(driver.Codex, []string{"codex", "app-server"}, servers), " ")
+	codex := strings.Join(launchArgv(driver.Codex, []string{"codex", "app-server"}, servers, shares), " ")
 	if codex != `codex -c mcp_servers.mcpx.url="http://127.0.0.1:3020/mcp" -c mcp_servers.mcpx.bearer_token_env_var="MCPX_TOKEN" app-server` || strings.Contains(codex, toks["main"]) {
 		t.Fatalf("codex argv %s", codex)
 	}

@@ -1553,7 +1553,9 @@ function envRow(s, e) {
       h('button', { class: 'btn', onclick: () => checkEnv(s, e, k('check')) }, 'Check'),
       h('button', {
         class: 'btn danger', onclick: async () => {
-          const on = e.exposed_to?.length ? ` ${e.exposed_to.join(', ')} stop serving it.` : ''
+          const on = !e.exposed_to?.length ? ''
+            : s.replaces ? ` ${e.exposed_to.join(', ')} restart without it; running agents end.`
+              : ` ${e.exposed_to.join(', ')} stop serving it.`
           if (!await ask({ title: `Remove ${s.name} env ${e.name}?`, body: `${on} Its secret stays until cleared.`.trim(), ok: 'Remove', danger: true })) return
           await guarded(async () => {
             await api('DELETE', envPath(s.name, e.name) + (on ? '?force=1' : ''))
@@ -1603,6 +1605,11 @@ function envForm(s, e) {
     err.textContent = ''
     const n = e ? e.name : name.value.trim()
     if (!n) { err.textContent = 'A name is required.'; return }
+    if (s.replaces && e?.exposed_to?.length && !await ask({
+      title: `Restart ${e.exposed_to.join(', ')} with it?`,
+      body: 'A changed folder is mounted only when the VM starts, so the container of each isolation that has it is replaced: running agents end and start again on their next message.',
+      ok: 'Save and restart',
+    })) return
     const secret = Object.fromEntries(secrets.map(({ f, el }) => [f, el.value.trim()]))
     try {
       const v = await api(e ? 'PATCH' : 'POST', envPath(s.name, n), ctl.patch())
@@ -1751,7 +1758,8 @@ function exposuresView(i) {
       const key = `expose:${i.name}:${s.name}`
       const detail = !x.enabled ? 'off'
         : !s.fields?.length ? compactConfig(x.settings) || 'on'
-          : [(x.envs || []).join(', ') || 'no env', x.default_env ? `(default ${x.default_env})` : '', compactConfig(x.settings)].filter(Boolean).join(' ')
+          : s.replaces ? (x.envs || []).map((n) => '/shared/' + n).join(', ') || 'no folder'
+            : [(x.envs || []).join(', ') || 'no env', x.default_env ? `(default ${x.default_env})` : '', compactConfig(x.settings)].filter(Boolean).join(' ')
       return h('div', { class: 'svc-row' },
         h('div', { class: 'svc-line' },
           h('span', { class: 'dot' + (x.enabled ? ' on' : '') }),
@@ -1773,30 +1781,54 @@ function exposeForm(i, s, x) {
   const apply = h('button', { class: 'btn primary' }, x.enabled ? 'Apply' : 'Turn on')
   apply.addEventListener('click', async () => {
     err.textContent = ''
+    const envs = boxes.filter((b) => b.el.checked).map((b) => b.n)
+    // A share is mounted only when the VM starts: a change replaces it.
+    const changed = !x.enabled || envs.length !== have.size || envs.some((n) => !have.has(n))
+    if (s.replaces && changed && !await ask({
+      title: `Restart ${i.name} with ${envs.length ? envs.map((n) => '/shared/' + n).join(', ') : 'no shared folder'}?`,
+      body: 'A folder is mounted only when the VM starts, so its container is replaced: volumes, sessions and workspaces are kept; running agents end and start again on their next message.',
+      ok: 'Restart',
+    })) return
+    apply.disabled = true
+    if (s.replaces && changed) apply.textContent = 'Restarting…'
     try {
-      const envs = boxes.filter((b) => b.el.checked).map((b) => b.n)
       await api('PUT', `/v1/isolations/${enc(i.name)}/services/${enc(s.name)}`,
         { envs, default_env: def.value === DEFAULT ? undefined : def.value, settings: ctl.patch() })
       S.openForm = null
-      toast(`${s.name} is on for ${i.name}; agents pick it up at their next idle moment`)
+      toast(s.replaces ? `${i.name} has ${envs.map((n) => '/shared/' + n).join(', ') || 'no shared folder'}`
+        : `${s.name} is on for ${i.name}; agents pick it up at their next idle moment`)
       await refreshIsolations()
       renderIsolations()
     } catch (e) {
       if (e instanceof Unauthorized) { S.authed = false; render(); return }
       err.textContent = e.message
+      apply.disabled = false
+      apply.textContent = x.enabled ? 'Apply' : 'Turn on'
     }
   })
+  // A share says which folder of the Mac's each env is.
+  const envNote = (n) => {
+    if (!s.replaces) return null
+    const c = S.envs.find((e) => e.service === s.name && e.name === n)?.config || {}
+    return h('span', { class: 'hint' }, `${c.path || '?'} · ${c.read_write ? 'read-write' : 'read-only'}`)
+  }
   return h('div', { class: 'subform' },
     noEnvs ? null : h('div', { class: 'field' }, h('label', null, 'Environments'),
-      names.length ? h('div', { class: 'ticks' }, boxes.map(({ n, el }) => h('label', { class: 'check' }, el, n)))
+      names.length ? h('div', { class: 'ticks' }, boxes.map(({ n, el }) => h('label', { class: 'check' }, el, n, envNote(n))))
         : h('span', { class: 'hint' }, 'none defined yet — ', h('a', { href: '#/services', onclick: (ev) => { ev.preventDefault(); show('services') } }, 'define one')),
-      h('span', { class: 'hint' }, 'None ticked: the service with no credential (git: public repositories only).')),
-    !noEnvs && names.length > 1 ? h('div', { class: 'field' }, h('label', null, 'Default'), def, h('span', { class: 'hint' }, 'what the plain variables point at')) : null,
+      h('span', { class: 'hint' }, s.replaces ? 'Each ticked folder is at /shared/NAME in the isolation.'
+        : 'None ticked: the service with no credential (git: public repositories only).')),
+    !noEnvs && !s.replaces && names.length > 1 ? h('div', { class: 'field' }, h('label', null, 'Default'), def, h('span', { class: 'hint' }, 'what the plain variables point at')) : null,
     ctl.rows, err,
     h('div', { class: 'actions' }, apply,
       x.enabled ? h('button', {
         class: 'btn danger', onclick: async () => {
-          if (!await ask({ title: `Turn ${s.name} off for ${i.name}?`, body: 'Its files and variables are removed there.', ok: 'Turn off', danger: true })) return
+          if (!await ask({
+            title: `Turn ${s.name} off for ${i.name}?`,
+            body: s.replaces ? 'Its container is replaced without the shared folders: running agents end and start again on their next message.'
+              : 'Its files and variables are removed there.',
+            ok: 'Turn off', danger: true,
+          })) return
           await guarded(async () => {
             await api('DELETE', `/v1/isolations/${enc(i.name)}/services/${enc(s.name)}`)
             S.openForm = null

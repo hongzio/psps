@@ -16,6 +16,7 @@ import (
 	"github.com/hongzio/gero/internal/api"
 	"github.com/hongzio/gero/internal/creds"
 	"github.com/hongzio/gero/internal/driver"
+	"github.com/hongzio/gero/internal/isolation"
 	"github.com/hongzio/gero/internal/proxy"
 	"github.com/hongzio/gero/internal/proxy/mailproxy"
 	"github.com/hongzio/gero/internal/shimproto"
@@ -341,14 +342,23 @@ func mcpConfig(servers []proxy.MCPServer, env []string) string {
 // launchArgv hands an agent process the proxies' MCP servers: Claude Code
 // through --mcp-config, Codex through -c overrides naming the token's
 // variable. Neither tool's own configuration is touched, so turning a
-// service off leaves nothing behind in them.
-func launchArgv(kind driver.Kind, argv []string, servers []proxy.MCPServer) []string {
-	if len(servers) == 0 || len(argv) == 0 {
+// service off leaves nothing behind in them. Claude is also given the
+// isolation's shared folders as directories of its own (--add-dir), so its
+// permission modes treat them as they do its workspace.
+func launchArgv(kind driver.Kind, argv []string, servers []proxy.MCPServer, shares []isolation.Mount) []string {
+	if len(argv) == 0 || (len(servers) == 0 && (len(shares) == 0 || kind != driver.Claude)) {
 		return argv
 	}
 	switch kind {
 	case driver.Claude:
-		return append(append([]string(nil), argv...), "--mcp-config", MCPFile)
+		out := append([]string(nil), argv...)
+		for _, s := range shares {
+			out = append(out, "--add-dir", s.Target)
+		}
+		if len(servers) > 0 {
+			out = append(out, "--mcp-config", MCPFile)
+		}
+		return out
 	case driver.Codex:
 		out := []string{argv[0]}
 		for _, s := range servers {
@@ -456,8 +466,9 @@ func (m *Manager) servicesChanged(ctx context.Context, ids ...string) {
 func (m *Manager) Services() []api.Service {
 	var out []api.Service
 	for _, s := range m.registry().All() {
+		_, replaces := s.(proxy.Mounter)
 		out = append(out, api.Service{Name: s.Name(), Summary: s.Summary(), Ports: s.Ports(), Fields: s.Fields(),
-			Settings: s.Settings(), Secrets: creds.Fields[s.Name()], Login: creds.LoginServices[s.Name()]})
+			Settings: s.Settings(), Secrets: creds.Fields[s.Name()], Login: creds.LoginServices[s.Name()], Replaces: replaces})
 	}
 	return out
 }
@@ -535,12 +546,16 @@ func (m *Manager) PutEnv(ctx context.Context, service, name string, p proxy.Patc
 	v := m.envView(e)
 	v.Warnings = warnings
 	holders, _ := m.store.Exposing(service, name)
+	if _, ok := svc.(proxy.Mounter); ok {
+		v.Warnings = append(v.Warnings, m.remountAll(ctx, holders)...)
+	}
 	m.servicesChanged(ctx, holders...)
 	return v, nil
 }
 
 func (m *Manager) DeleteEnv(ctx context.Context, service, name string, force bool) error {
-	if _, err := m.registry().Get(service); err != nil {
+	svc, err := m.registry().Get(service)
+	if err != nil {
 		return badRequest(err)
 	}
 	holders, _ := m.store.Exposing(service, name)
@@ -551,7 +566,14 @@ func (m *Manager) DeleteEnv(ctx context.Context, service, name string, force boo
 		}
 		return err
 	}
+	var problems []string
+	if _, ok := svc.(proxy.Mounter); ok {
+		problems = m.remountAll(ctx, holders)
+	}
 	m.servicesChanged(ctx, holders...)
+	if len(problems) > 0 {
+		return fmt.Errorf("%s/%s is removed, but %s", service, name, strings.Join(problems, "; "))
+	}
 	return nil
 }
 
@@ -704,6 +726,7 @@ func (m *Manager) Expose(ctx context.Context, name, service string, req api.Expo
 	if err != nil && !errors.Is(err, store.ErrNotFound) {
 		return api.Exposure{}, err
 	}
+	had := err == nil
 	x := store.Exposure{IsolationID: iso.ID, Service: service, Envs: cur.Envs, Default: cur.Default, Settings: cur.Settings}
 	if req.Envs != nil {
 		x.Envs = nil
@@ -771,13 +794,27 @@ func (m *Manager) Expose(ctx context.Context, name, service string, req api.Expo
 	if _, err := m.store.EnsureTokens(iso.ID, service, svc.TokenKeys(x)); err != nil {
 		return api.Exposure{}, err
 	}
+	if _, ok := svc.(proxy.Mounter); ok {
+		if err := m.remount(ctx, iso.ID); err != nil {
+			// What is stored is what runs: the exposure goes back to what
+			// the container still has.
+			if had {
+				m.store.PutExposure(cur)
+			} else {
+				m.store.DeleteExposure(iso.ID, service)
+			}
+			m.servicesChanged(ctx, iso.ID)
+			return api.Exposure{}, err
+		}
+	}
 	m.servicesChanged(ctx, iso.ID)
 	x.Settings = m.settingsOut(svc, x.Settings)
 	return api.Exposure{Service: service, Enabled: true, Exposure: x}, nil
 }
 
 func (m *Manager) Unexpose(ctx context.Context, name, service string) error {
-	if _, err := m.registry().Get(service); err != nil {
+	svc, err := m.registry().Get(service)
+	if err != nil {
 		return badRequest(err)
 	}
 	iso, err := m.isolationNamed(name)
@@ -787,8 +824,11 @@ func (m *Manager) Unexpose(ctx context.Context, name, service string) error {
 	if err := m.store.DeleteExposure(iso.ID, service); err != nil {
 		return err
 	}
+	if _, ok := svc.(proxy.Mounter); ok {
+		err = m.remount(ctx, iso.ID)
+	}
 	m.servicesChanged(ctx, iso.ID)
-	return nil
+	return err
 }
 
 func containsString(l []string, s string) bool {

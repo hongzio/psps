@@ -95,8 +95,10 @@ func TestVerifyMeasuresEveryProxyFromInsideTheIsolation(t *testing.T) {
 				t.Errorf("%s port %d: %+v", svc.Name(), p, cs)
 			}
 		}
+		// What answers on a port refuses something; a share has no port,
+		// and its mounts are measured instead.
 		refusals := checkNamed(v, svc.Name()+" refuses ")
-		if len(refusals) == 0 {
+		if len(refusals) == 0 && len(svc.Ports()) > 0 {
 			t.Errorf("%s has no refusal measured", svc.Name())
 		}
 		for _, r := range refusals {

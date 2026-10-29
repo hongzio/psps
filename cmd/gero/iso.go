@@ -15,6 +15,7 @@ import (
 	"github.com/hongzio/gero/internal/driver"
 	"github.com/hongzio/gero/internal/isolation"
 	"github.com/hongzio/gero/internal/paths"
+	"github.com/hongzio/gero/internal/proxy"
 	"github.com/hongzio/gero/internal/services"
 )
 
@@ -212,6 +213,11 @@ func isoCmd(p paths.Paths, args []string) error {
 				for _, port := range svc.Ports() {
 					addrs = append(addrs, fmt.Sprintf("127.0.0.1:%d", port))
 				}
+				if _, ok := svc.(proxy.Mounter); ok {
+					for _, n := range x.Envs {
+						addrs = append(addrs, isolation.SharedRoot+"/"+n)
+					}
+				}
 				where = strings.Join(addrs, ",")
 			}
 			if !x.Enabled {
@@ -265,6 +271,14 @@ func isoCmd(p paths.Paths, args []string) error {
 		}
 		fmt.Printf("%s is on for %s: envs %s%s; settings %s\n", svc.Name(), pos[0], orStr(strings.Join(x.Envs, ","), "(none)"),
 			map[bool]string{true: ", default " + x.Default}[x.Default != ""], compact(x.Settings))
+		if _, ok := svc.(proxy.Mounter); ok {
+			var at []string
+			for _, n := range x.Envs {
+				at = append(at, isolation.SharedRoot+"/"+n)
+			}
+			fmt.Printf("inside the isolation: %s; its container was replaced to mount them if they changed, so running agents ended and start again on their next message\n", orStr(strings.Join(at, ", "), "nothing"))
+			return nil
+		}
 		var addrs []string
 		for _, port := range svc.Ports() {
 			addrs = append(addrs, fmt.Sprintf("127.0.0.1:%d", port))
@@ -279,6 +293,12 @@ func isoCmd(p paths.Paths, args []string) error {
 		}
 		if err := c.Unexpose(ctx, pos[0], pos[1]); err != nil {
 			return err
+		}
+		if svc, err := services.Registry().Get(pos[1]); err == nil {
+			if _, ok := svc.(proxy.Mounter); ok {
+				fmt.Printf("%s is off for %s; its container was replaced without the shared folders, so running agents ended and start again on their next message\n", pos[1], pos[0])
+				return nil
+			}
 		}
 		fmt.Printf("%s is off for %s; its files and variables are removed from the isolation\n", pos[1], pos[0])
 		return nil
