@@ -11,7 +11,7 @@ On an Apple silicon Mac:
 ```sh
 brew trust hongzio/tap   # Homebrew 7 loads no third-party tap it does not trust
 brew tap hongzio/tap
-brew install gero        # builds it from the release's source; brings Apple's container
+brew install gero        # the release's binary; brings Apple's container
 ```
 
 `brew upgrade gero` is all an upgrade takes: the next gero command moves the
@@ -19,9 +19,9 @@ daemon onto the new version, its agents carrying on. Run `sudo gero pf install`
 again after one, since the fence helper is a copy of gero. Before
 `brew uninstall gero`, run `gero daemon uninstall` and `sudo gero pf uninstall`.
 
-A release is `sh scripts/release.sh 1.2.3`: it tags main, makes the GitHub
-release and points the tap's formula (from [packaging/gero.rb](packaging/gero.rb))
-at it.
+A release is `sh scripts/release.sh 1.2.3`: it tags main, builds gero, attaches
+it to the GitHub release and points the tap's formula (from
+[packaging/gero.rb](packaging/gero.rb)) at it.
 
 ## Build
 

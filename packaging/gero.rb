@@ -1,25 +1,21 @@
 class Gero < Formula
   desc "Run Claude Code and Codex agents inside Apple container isolations"
   homepage "https://github.com/hongzio/gero"
-  url "https://github.com/hongzio/gero/archive/refs/tags/v@VERSION@.tar.gz"
+  url "https://github.com/hongzio/gero/releases/download/v@VERSION@/gero-@VERSION@-darwin-arm64.tar.gz"
+  # Said outright: from the file name Homebrew would read the "64" of arm64.
+  version "@VERSION@"
   sha256 "@SHA256@"
-  head "https://github.com/hongzio/gero.git", branch: "main"
 
-  depends_on "go" => :build
-  # The isolations are Apple's container VMs and the shim gero puts in them
-  # is linux/arm64: Apple silicon only.
+  # The release's own binary (scripts/release.sh), so no Go toolchain here:
+  # pure Go, with the linux shim it puts in the isolations embedded. The
+  # isolations are Apple's container VMs and the shim is linux/arm64: Apple
+  # silicon only.
   depends_on arch: :arm64
   depends_on "container"
   depends_on :macos
 
   def install
-    ENV["CGO_ENABLED"] = "0"
-    # gero embeds the linux shim, so it is built first (`mise run shim`).
-    with_env(GOOS: "linux", GOARCH: "arm64") do
-      system "go", "build", "-trimpath", "-o", "internal/isolation/assets/gero-shim", "./cmd/gero-shim"
-    end
-    ldflags = "-X github.com/hongzio/gero/internal/api.Version=#{version}"
-    system "go", "build", *std_go_args(ldflags:), "./cmd/gero"
+    bin.install "gero"
   end
 
   def caveats

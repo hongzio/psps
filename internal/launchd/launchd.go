@@ -11,6 +11,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/hongzio/gero/internal/paths"
 )
@@ -95,10 +96,17 @@ func Ensure(exe string, p paths.Paths) error {
 		}
 	}
 	if !loaded {
-		if out, err := launchctl("bootstrap", domain(), PlistPath()); err != nil {
-			return fmt.Errorf("launchctl bootstrap: %v: %s", err, out)
+		// A job just booted out (here, or by `gero daemon stop`) takes a
+		// moment to go, and bootstrap fails with an I/O error until it has.
+		var out string
+		var err error
+		for range 25 {
+			if out, err = launchctl("bootstrap", domain(), PlistPath()); err == nil {
+				return nil
+			}
+			time.Sleep(200 * time.Millisecond)
 		}
-		return nil
+		return fmt.Errorf("launchctl bootstrap: %v: %s", err, out)
 	}
 	if out, err := launchctl("kickstart", domain()+"/"+Label); err != nil {
 		return fmt.Errorf("launchctl kickstart: %v: %s", err, out)
