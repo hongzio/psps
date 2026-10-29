@@ -73,6 +73,11 @@ const S = {
   cliBusy: null, // `${iso}/${tool}`
   accounts: null, // agent CLI accounts, shared by isolations
   accountKinds: [],
+  // The New isolation form: what is typed, the one being created, and why
+  // the last one was not.
+  isoDraft: { name: '', memory: '4G', fence: true },
+  isoCreating: null,
+  isoCreateError: null,
   // edit is the user message being rewritten in place: { agent, id, text,
   // sending }. openRewound holds the earlier versions shown unfolded.
   edit: null,
@@ -1155,21 +1160,37 @@ function renderIsolations() {
       h('p', { class: 'note' }, 'What its Claude and Codex log in with: ',
         h('a', { href: '#/setup', onclick: (e) => { e.preventDefault(); show('setup') } }, 'Accounts'), '.'))
   }
-  const name = h('input', { placeholder: 'name', autocomplete: 'off' })
-  const memory = h('input', { value: '4G' })
-  const fence = h('input', { type: 'checkbox', checked: true })
-  const create = h('button', { class: 'btn primary' }, 'Create isolation')
+  // The new isolation lives in S, typed and while it is created, since
+  // polling redraws this page: drawn from the DOM it came back empty two
+  // seconds after Create, as if nothing had happened.
+  const d = S.isoDraft
+  const busy = !!S.isoCreating
+  const name = h('input', { placeholder: 'name', autocomplete: 'off', value: d.name, disabled: busy })
+  const memory = h('input', { value: d.memory, disabled: busy })
+  const fence = h('input', { type: 'checkbox', checked: d.fence, disabled: busy })
+  name.addEventListener('input', () => { d.name = name.value })
+  memory.addEventListener('input', () => { d.memory = memory.value })
+  fence.addEventListener('change', () => { d.fence = fence.checked })
+  const create = h('button', { class: 'btn primary', disabled: busy },
+    busy ? `Creating ${S.isoCreating}… (building its image first when gero has changed)` : 'Create isolation')
   create.addEventListener('click', async () => {
-    if (!name.value.trim()) return
-    create.disabled = true
-    create.textContent = 'Creating… (the first one builds the image)'
-    await guarded(async () => {
-      await api('POST', '/v1/isolations', { name: name.value.trim(), memory: memory.value.trim(), fence: fence.checked ? 'on' : 'off' })
-      toast('Isolation created')
-      await refreshIsolations()
-    })
-    create.disabled = false
-    create.textContent = 'Create isolation'
+    const n = d.name.trim()
+    if (!n) return
+    S.isoCreating = n
+    S.isoCreateError = null
+    renderIsolations()
+    try {
+      await api('POST', '/v1/isolations', { name: n, memory: d.memory.trim(), fence: d.fence ? 'on' : 'off' })
+      S.isoDraft = { name: '', memory: '4G', fence: true }
+      toast(`Isolation ${n} created`)
+    } catch (x) {
+      if (x instanceof Unauthorized) { S.authed = false; render(); return }
+      S.isoCreateError = x.message
+    } finally {
+      S.isoCreating = null
+    }
+    await guarded(refreshIsolations)
+    renderIsolations()
   })
   page.replaceChildren(h('div', { class: 'page-inner' },
     h('h2', null, 'Isolations'),
@@ -1181,6 +1202,7 @@ function renderIsolations() {
         h('div', { class: 'field' }, h('label', null, 'Name'), name),
         h('div', { class: 'field' }, h('label', null, 'Memory'), memory)),
       h('label', { class: 'check' }, fence, 'Network fence (agents start only behind a verified fence)'),
+      S.isoCreateError ? h('p', { class: 'form-error' }, S.isoCreateError) : null,
       h('div', { class: 'actions' }, create))))
 }
 

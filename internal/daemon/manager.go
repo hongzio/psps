@@ -420,7 +420,7 @@ func (m *Manager) newIsolationID(ctx context.Context) (string, error) {
 	}
 }
 
-func (m *Manager) CreateIsolation(ctx context.Context, req api.CreateIsolation, progress io.Writer) (store.Isolation, error) {
+func (m *Manager) CreateIsolation(ctx context.Context, req api.CreateIsolation, progress io.Writer) (iso store.Isolation, err error) {
 	if !validIsolationName.MatchString(req.Name) {
 		return store.Isolation{}, badRequest(fmt.Errorf("isolation name %q: use lowercase letters, digits and dashes", req.Name))
 	}
@@ -438,6 +438,19 @@ func (m *Manager) CreateIsolation(ctx context.Context, req api.CreateIsolation, 
 	default:
 		return store.Isolation{}, badRequest(fmt.Errorf("fence must be on or off, not %q", fence))
 	}
+	// Said in the log, since nobody may be waiting for the answer: it can
+	// take minutes when the image is built first.
+	m.log.Printf("isolation %s: creating", req.Name)
+	defer func() {
+		switch {
+		case err != nil && iso.ID != "":
+			m.log.Printf("isolation %s: created (%s), but: %v", req.Name, iso.Container, err)
+		case err != nil:
+			m.log.Printf("isolation %s: not created: %v", req.Name, err)
+		default:
+			m.log.Printf("isolation %s: created (%s)", req.Name, iso.Container)
+		}
+	}()
 	id, err := m.newIsolationID(ctx)
 	if err != nil {
 		return store.Isolation{}, err
@@ -446,7 +459,7 @@ func (m *Manager) CreateIsolation(ctx context.Context, req api.CreateIsolation, 
 	if err != nil {
 		return store.Isolation{}, err
 	}
-	iso := store.Isolation{ID: id, Name: req.Name, Container: isolation.ContainerName(id), Image: image, CPUs: req.CPUs,
+	iso = store.Isolation{ID: id, Name: req.Name, Container: isolation.ContainerName(id), Image: image, CPUs: req.CPUs,
 		Memory: req.Memory, Network: isolation.NetworkName(id), Fence: fence, Env: map[string]string{}, CreatedAt: time.Now().UTC()}
 	if err := m.cli.Create(ctx, id, image, req.CPUs, req.Memory, iso.Network); err != nil {
 		return store.Isolation{}, err

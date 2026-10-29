@@ -1,6 +1,7 @@
 package daemon
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -32,12 +33,16 @@ func (m *Manager) Handler() http.Handler {
 		v, err := m.Isolation(r.Context(), r.PathValue("name"))
 		reply(w, v, err)
 	})
+	// Creating, resizing and upgrading an isolation run to the end once
+	// asked, whoever asked going away: a reload of the web page or a CLI
+	// interrupted would otherwise kill the image build halfway, or leave
+	// an isolation whose container was removed and never replaced.
 	mux.HandleFunc("POST /v1/isolations", func(w http.ResponseWriter, r *http.Request) {
 		var req api.CreateIsolation
 		if !decode(w, r, &req) {
 			return
 		}
-		v, err := m.CreateIsolation(r.Context(), req, nil)
+		v, err := m.CreateIsolation(context.WithoutCancel(r.Context()), req, nil)
 		reply(w, v, err)
 	})
 	mux.HandleFunc("PATCH /v1/isolations/{name}", func(w http.ResponseWriter, r *http.Request) {
@@ -45,11 +50,11 @@ func (m *Manager) Handler() http.Handler {
 		if !decode(w, r, &req) {
 			return
 		}
-		v, err := m.UpdateIsolation(r.Context(), r.PathValue("name"), req)
+		v, err := m.UpdateIsolation(context.WithoutCancel(r.Context()), r.PathValue("name"), req)
 		reply(w, v, err)
 	})
 	mux.HandleFunc("POST /v1/isolations/{name}/upgrade", func(w http.ResponseWriter, r *http.Request) {
-		v, err := m.UpgradeIsolation(r.Context(), r.PathValue("name"), nil)
+		v, err := m.UpgradeIsolation(context.WithoutCancel(r.Context()), r.PathValue("name"), nil)
 		reply(w, v, err)
 	})
 	mux.HandleFunc("POST /v1/isolations/{name}/verify", func(w http.ResponseWriter, r *http.Request) {

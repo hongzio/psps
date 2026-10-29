@@ -6,9 +6,11 @@ go = "1.27.3"
 # no C toolchain, and the darwin binary has no libc surprises under launchd.
 CGO_ENABLED = "0"
 
+# The image is named for the shim's bytes, so they leave out the commit
+# (-buildvcs=false): a change elsewhere in gero builds no new image.
 [tasks.shim]
 description = "Cross-compile gero-shim for the isolation image (linux/arm64)"
-run = "GOOS=linux GOARCH=arm64 go build -trimpath -o internal/isolation/assets/gero-shim ./cmd/gero-shim"
+run = "GOOS=linux GOARCH=arm64 go build -trimpath -buildvcs=false -o internal/isolation/assets/gero-shim ./cmd/gero-shim"
 
 [tasks.build]
 description = "Build bin/gero with the linux shim embedded"
