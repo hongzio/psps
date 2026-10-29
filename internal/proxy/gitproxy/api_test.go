@@ -34,7 +34,7 @@ func TestARepoPathYieldsOwnerRepoAndTail(t *testing.T) {
 }
 
 func TestEverythingElseIsNotModeled(t *testing.T) {
-	for _, p := range []string{"/graphql", "/search/issues", "/orgs/acme-to", "/user/repos", "/notifications"} {
+	for _, p := range []string{"/graphql", "/search/issues", "/orgs/acme-to", "/orgs/acme-to/members", "/notifications"} {
 		_, _, _, err := ParseAPITarget(p)
 		if code, _ := apiStatus(t, err); code != 404 {
 			t.Errorf("%s: %d", p, code)

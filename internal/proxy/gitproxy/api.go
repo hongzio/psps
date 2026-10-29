@@ -2,6 +2,7 @@ package gitproxy
 
 import (
 	"bytes"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -132,7 +133,7 @@ func ParseAPITarget(rawPath string) (owner, repo, tail string, err error) {
 	if len(parts) == 1 && globalReads[parts[0]] {
 		return "", "", parts[0], nil
 	}
-	return "", "", "", apiDeny(404, "only /repos/{owner}/{repo}/... plus /user and /rate_limit are proxied; /graphql and the rest of the API are not modeled")
+	return "", "", "", apiDeny(404, "only /repos/{owner}/{repo}/..., the listings /user/repos and /orgs/{org}/repos (the allowlist), /user and /rate_limit are proxied; /graphql and the rest of the API are not modeled")
 }
 
 // ResolveRepo is the env whose allowlist carries owner/repo.
@@ -153,7 +154,7 @@ func ResolveRepo(envs map[string]Env, owner, repo string) (string, error) {
 			full, strings.Join(holders, ", "))
 	}
 	if len(holders) == 0 {
-		return "", apiDeny(404, "%s is not in any exposed git environment; ask the operator to run `gero env edit git <env> --allow-repo %s`. A public repository's reads need no proxy: api.github.com answers the isolation's own egress anonymously.", full, full)
+		return "", apiDeny(404, "%s is not in any exposed git environment; GET /user/repos lists those that are. If it is none of them, ask the operator to run `gero env edit git <env> --allow-repo %s`. A public repository's reads need no proxy: api.github.com answers the isolation's own egress anonymously.", full, full)
 	}
 	return holders[0], nil
 }
@@ -209,6 +210,58 @@ func GuardQuery(rawQuery string) string {
 	return strings.Join(kept, "&")
 }
 
+// listingOwner reads a repository listing: /user/repos (every one, owner
+// "") or /orgs/{owner}/repos and /users/{owner}/repos.
+func listingOwner(rawPath string) (owner string, ok bool) {
+	parts := strings.Split(strings.Trim(rawPath, "/"), "/")
+	switch {
+	case len(parts) == 2 && parts[0] == "user" && parts[1] == "repos":
+		return "", true
+	case len(parts) == 3 && (parts[0] == "orgs" || parts[0] == "users") && parts[2] == "repos" && Segment.MatchString(parts[1]):
+		return parts[1], true
+	}
+	return "", false
+}
+
+// ListedRepo is one repository of a listing, in GitHub's shape as far as
+// gero knows it: the name, the owner, and whether its env takes a push.
+type ListedRepo struct {
+	Name        string `json:"name"`
+	FullName    string `json:"full_name"`
+	Owner       Login  `json:"owner"`
+	Permissions struct {
+		Pull bool `json:"pull"`
+		Push bool `json:"push"`
+	} `json:"permissions"`
+	Env string `json:"gero_env"`
+}
+
+type Login struct {
+	Login string `json:"login"`
+}
+
+// ListRepos is what the exposed envs list, owner's alone unless owner is
+// "", sorted: an agent told only "webapp" finds which owner holds it. It
+// is the allowlist, not GitHub's view of the account, so a repository the
+// token reaches but no env lists is not in it.
+func ListRepos(envs map[string]Env, owner string) []ListedRepo {
+	out := []ListedRepo{}
+	for name, env := range envs {
+		for _, r := range env.Repos {
+			full := strings.TrimSuffix(r, ".git")
+			o, n, ok := strings.Cut(full, "/")
+			if !ok || owner != "" && !strings.EqualFold(o, owner) {
+				continue
+			}
+			l := ListedRepo{Name: n, FullName: full, Owner: Login{o}, Env: name}
+			l.Permissions.Pull, l.Permissions.Push = true, !env.ReadOnly
+			out = append(out, l)
+		}
+	}
+	sort.Slice(out, func(i, j int) bool { return strings.ToLower(out[i].FullName) < strings.ToLower(out[j].FullName) })
+	return out
+}
+
 // DefaultEnvName answers a global read, which has no repository to route
 // by: the first exposed env, sorted, speaks for the account.
 func DefaultEnvName(envs map[string]Env) (string, error) {
@@ -249,6 +302,25 @@ func (a apiHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	if !cfg.settings.API {
 		refuse(apiDeny(503, "the GitHub API side is off for this isolation; opening the pull request is the operator's step"))
+		return
+	}
+	// A listing is answered here, from the allowlist: GitHub's would name
+	// what the token reaches, not what this isolation may.
+	if owner, ok := listingOwner(rawPath); ok {
+		if r.Method != "GET" && r.Method != "HEAD" {
+			refuse(apiDeny(403, "a repository listing only answers reads"))
+			return
+		}
+		list := ListRepos(cfg.envs, owner)
+		// All of it is the first page: a client paging on to the next
+		// finds the end.
+		if p := r.URL.Query().Get("page"); p != "" && p != "1" {
+			list = []ListedRepo{}
+		}
+		b, _ := json.Marshal(list)
+		w.Header().Set("Content-Type", "application/json; charset=utf-8")
+		w.Write(b)
+		in.logf("%s %s -> %d repositories from the allowlist", r.Method, rawPath, len(list))
 		return
 	}
 	owner, repo, tail, err := ParseAPITarget(rawPath)

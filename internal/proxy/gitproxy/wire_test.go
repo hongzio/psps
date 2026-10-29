@@ -377,3 +377,60 @@ func TestAStoredTokenIsTheCredentialAndTheCommandNeverRuns(t *testing.T) {
 		t.Fatalf("the token command ran %d time(s)", n)
 	}
 }
+
+// An agent told only a repository's name finds its owner in the listing,
+// which is the allowlist, answered here: GitHub is never asked.
+func TestTheListingIsTheAllowlist(t *testing.T) {
+	h := newHarness(t, map[string]Env{
+		"acme": {Repos: []string{"acme-corp/webapp", "acme-corp/backend.git", "octo-user/sqls"}},
+		"ro":   {Repos: []string{"octo/docs"}, ReadOnly: true},
+	})
+	list := func(path string) []ListedRepo {
+		t.Helper()
+		code, body, hdr := h.do("GET", h.api+path, nil, nil)
+		if code != 200 || !strings.HasPrefix(hdr.Get("Content-Type"), "application/json") {
+			t.Fatalf("%s: %d %s", path, code, body)
+		}
+		var out []ListedRepo
+		if err := json.Unmarshal([]byte(body), &out); err != nil {
+			t.Fatalf("%s: %v: %s", path, err, body)
+		}
+		return out
+	}
+	all := list("/user/repos?per_page=100")
+	var names []string
+	for _, r := range all {
+		names = append(names, r.FullName+"@"+r.Env)
+	}
+	if want := "acme-corp/backend@acme acme-corp/webapp@acme octo-user/sqls@acme octo/docs@ro"; strings.Join(names, " ") != want {
+		t.Fatalf("listed %v", names)
+	}
+	if r := all[1]; r.Name != "webapp" || r.Owner.Login != "acme-corp" || !r.Permissions.Push {
+		t.Fatalf("%+v", r)
+	}
+	if r := all[3]; r.Permissions.Push || !r.Permissions.Pull {
+		t.Fatalf("a read-only env's repository takes a push: %+v", r)
+	}
+	if got := list("/orgs/acme-corp/repos"); len(got) != 2 {
+		t.Fatalf("one owner's: %+v", got)
+	}
+	if got := list("/users/octo-user/repos"); len(got) != 1 || got[0].FullName != "octo-user/sqls" {
+		t.Fatalf("one user's: %+v", got)
+	}
+	if got := list("/orgs/acme/repos"); len(got) != 0 {
+		t.Fatalf("an owner listing nothing: %+v", got)
+	}
+	if got := list("/user/repos?page=2"); len(got) != 0 {
+		t.Fatalf("the second page: %+v", got)
+	}
+	if code, _, _ := h.do("POST", h.api+"/user/repos", nil, []byte(`{"name":"x"}`)); code != 403 {
+		t.Fatalf("a write to the listing: %d", code)
+	}
+	if len(h.tap.all()) != 0 || h.credentialRuns() != 0 {
+		t.Fatal("the listing asked GitHub")
+	}
+	// A refusal of a repository no env lists says where to look.
+	if _, body, _ := h.do("GET", h.api+"/repos/acme/webapp", nil, nil); !strings.Contains(body, "GET /user/repos lists those that are") {
+		t.Fatal(body)
+	}
+}

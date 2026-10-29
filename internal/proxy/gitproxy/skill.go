@@ -78,12 +78,19 @@ no Authorization header:
     curl -sS -X POST "$GITHUB_API_URL/repos/owner/repo/issues/7/comments" \
       -d '{"body": "..."}'
 
-Reads (GET) are open for every repository an exposed environment lists.
+Reads (GET) are open for every repository an exposed environment lists, and
+the proxy itself answers which those are, from the allowlist rather than
+GitHub: name, full_name, owner.login, permissions.push and the env each is in.
+Told only a repository's name, look its owner up here instead of guessing one:
+
+    curl -sS "$GITHUB_API_URL/user/repos"                # every listed repository
+    curl -sS "$GITHUB_API_URL/orgs/owner/repos"          # one owner's
+
 Writes are matched verb by verb against the env's families (each line above
 says which); a refusal names the family and the operator command that would
 open it — a decision, not a fault to retry around. Only
-/repos/{owner}/{repo}/... plus /user and /rate_limit exist here; /graphql does
-not. For a *public* repository outside the allowlist, query
+/repos/{owner}/{repo}/..., those listings, /user and /rate_limit exist here;
+/graphql does not. For a *public* repository outside the allowlist, query
 https://api.github.com directly — anonymous reads work over the isolation's
 own egress.
 `
@@ -98,7 +105,8 @@ API.
 
 func skillBody(v proxy.View, envs map[string]Env, s Settings) string {
 	// Name repositories only while the list is short: fifty names would sit
-	// in every session's context to say what one failed clone says better.
+	// in every session's context to say what one failed clone says better,
+	// and the API side lists them on request.
 	var lines []string
 	for _, name := range v.Exposure.Envs {
 		env, ok := envs[name]
@@ -111,6 +119,8 @@ func skillBody(v proxy.View, envs map[string]Env, s Settings) string {
 			summary = "(no repositories)"
 		case len(env.Repos) <= 10:
 			summary = strings.Join(env.Repos, ", ")
+		case s.API:
+			summary = fmt.Sprintf("%d repositories; `GET $GITHUB_API_URL/user/repos` lists them", len(env.Repos))
 		default:
 			summary = fmt.Sprintf("%d repositories; try the clone and read the refusal if there is one", len(env.Repos))
 		}

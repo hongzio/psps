@@ -304,7 +304,10 @@ gero env help git                        # every flag
 ```
 
 git with no env (`gero iso expose dev git`) forwards public repositories with
-no credential and refuses the rest. What a service puts in the isolation — its
+no credential and refuses the rest. Inside, `GET $GITHUB_API_URL/user/repos`
+(or `/orgs/OWNER/repos`) lists the repositories the exposed envs allow,
+answered by the proxy from the allowlist, so an agent told only "webapp"
+finds the owner instead of guessing it. What a service puts in the isolation — its
 variables in `/etc/gero/env.sh` (and in every agent's environment), git's URL
 rewrite in `/etc/gero/gitconfig`, a skill under `~/.claude/skills/gero-*` and
 `~/.codex/skills/gero-*` explaining that a refusal is a decision — is written
