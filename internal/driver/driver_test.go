@@ -401,6 +401,76 @@ func TestClaudeAuthErrorIsAnError(t *testing.T) {
 	}
 }
 
+// A stopped turn, as Claude Code 2.1.312 ends one (2.1.311 the same): the
+// interrupt is followed by "[Request interrupted by user]" and a result
+// that is an error during execution; a turn stopped by a decision ends in
+// the same error, its terminal_reason another.
+const (
+	clInterrupted = `{"type":"user","message":{"role":"user","content":[{"type":"text","text":"[Request interrupted by user]"}]},"parent_tool_use_id":null,"session_id":"s","uuid":"u-stop"}`
+	clStopped     = `{"type":"result","subtype":"error_during_execution","is_error":true,"terminal_reason":"aborted_streaming","errors":["[ede_diagnostic] result_type=user last_content_type=n/a stop_reason=null"],"num_turns":2,"session_id":"s"}`
+	clCancelled   = `{"type":"result","subtype":"error_during_execution","is_error":true,"terminal_reason":"aborted_tools","stop_reason":"tool_use","session_id":"s"}`
+)
+
+func TestClaudeStoppedTurnIsInterruptedNotFailed(t *testing.T) {
+	tp := &tape{}
+	d := newClaude("a1", "", Options{Approvals: ApprovalsAsk})
+	d.Observe(tp.started())
+	write := func() (lines []string) {
+		for _, l := range d.Next() {
+			d.Observe(tp.in(string(l)))
+			lines = append(lines, string(l))
+		}
+		return lines
+	}
+	stopped := func(evs []event.Event) {
+		t.Helper()
+		var end string
+		for _, e := range evs {
+			if e.Kind == event.KindError {
+				t.Fatalf("a stop reported as an error: %q", e.Text)
+			}
+			if e.Kind == event.KindTurnEnd {
+				end = e.Text
+			}
+		}
+		if st := d.State(); end != "interrupted" || st.Status != event.StatusIdle || st.Busy || st.Error != "" {
+			t.Fatalf("turn end %q, state %+v", end, st)
+		}
+	}
+
+	d.Send("write a long story")
+	write()
+	d.Interrupt()
+	if lines := write(); len(lines) != 1 || !strings.Contains(lines[0], `"subtype":"interrupt"`) {
+		t.Fatalf("interrupt = %q", lines)
+	}
+	d.Observe(tp.out(clInterrupted))
+	stopped(d.Observe(tp.out(clStopped)))
+
+	// Declining what a turn waits on and stopping it ends it the same way.
+	d.Send("touch a file")
+	write()
+	evs := d.Observe(tp.out(`{"type":"control_request","request_id":"r1","request":{"subtype":"can_use_tool","tool_name":"Bash","input":{"command":"touch f"}}}`))
+	if err := d.Approve(evs[0].Approval.ID, Cancel, nil); err != nil {
+		t.Fatal(err)
+	}
+	write()
+	stopped(d.Observe(tp.out(clCancelled)))
+
+	// An interrupt that reaches claude after its turn ended stops nothing,
+	// and an error during execution in a turn not stopped is a failure.
+	d.Send("again")
+	write()
+	d.Observe(tp.out(`{"type":"result","subtype":"success","is_error":false}`))
+	d.Observe(tp.in(`{"type":"control_request","request_id":"late","request":{"subtype":"interrupt"}}`))
+	d.Send("and again")
+	write()
+	d.Observe(tp.out(clStopped))
+	if st := d.State(); st.Status != event.StatusError || !strings.Contains(st.Error, "error_during_execution") {
+		t.Fatalf("state = %+v", st)
+	}
+}
+
 func TestProcessDeathMidTurnIsInterrupted(t *testing.T) {
 	tp := &tape{}
 	d := newClaude("a1", "", Options{})

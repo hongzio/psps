@@ -45,8 +45,12 @@ type claude struct {
 	queue        []string
 	pending      []*clPending
 	stop         bool
-	ctlSeq       int
-	streamMsg    string
+	// stopping: the turn running was told to stop, by an interrupt or a
+	// decision that stops it. Claude ends such a turn in an error during
+	// execution, which is the stop, not a failure.
+	stopping  bool
+	ctlSeq    int
+	streamMsg string
 	// prompts are the conversation's user messages; lastEntry is the uuid
 	// of the newest transcript entry claude printed, which is where the
 	// next message attaches.
@@ -417,7 +421,7 @@ func (c *claude) Observe(rec shimproto.Record) []event.Event {
 		case shimproto.SysStarted:
 			c.gen++
 			c.alive, c.restart, c.errText, c.asked = true, false, "", false
-			c.busy, c.blocked, c.pendingTurns, c.pending = false, false, 0, nil
+			c.busy, c.blocked, c.pendingTurns, c.pending, c.stopping = false, false, 0, nil, false
 			evs = append(evs, c.text(rec, event.KindNotice, "", fmt.Sprintf("claude started (pid %d)", rec.Sys.PID)))
 			if rw := c.rewindIn(rec.Sys.Argv); rw != nil {
 				rw.start, rw.before = rec.Seq, c.lastEntry
@@ -475,20 +479,28 @@ func (c *claude) observeIn(rec shimproto.Record, m clMessage) []event.Event {
 			Subtype string `json:"subtype"`
 		}
 		json.Unmarshal(m.Request, &r)
-		if r.Subtype == "initialize" {
+		switch r.Subtype {
+		case "initialize":
 			c.asked = true
+		case "interrupt":
+			// One that reaches claude after its turn ended stops nothing.
+			c.stopping = c.busy
 		}
 	case "control_response":
 		var r struct {
 			RequestID string `json:"request_id"`
 			Response  struct {
 				Behavior     string `json:"behavior"`
+				Interrupt    bool   `json:"interrupt"`
 				UpdatedInput struct {
 					Answers map[string]string `json:"answers"`
 				} `json:"updatedInput"`
 			} `json:"response"`
 		}
 		json.Unmarshal(m.Response, &r)
+		if r.Response.Interrupt {
+			c.stopping = c.busy
+		}
 		for i, p := range c.pending {
 			if p.requestID != r.RequestID {
 				continue
@@ -609,10 +621,15 @@ func (c *claude) observeOut(rec shimproto.Record, m clMessage) []event.Event {
 		if c.pendingTurns == 0 {
 			c.busy = false
 		}
+		stopped := c.stopping && m.IsError && m.Subtype == "error_during_execution"
+		c.stopping = false
 		e := c.ev(rec, event.KindTurnEnd)
 		e.Text = m.Subtype
+		if stopped {
+			e.Text = "interrupted"
+		}
 		evs := []event.Event{e}
-		if m.IsError {
+		if m.IsError && !stopped {
 			msg := m.Result
 			if msg == "" {
 				msg = "claude turn failed (" + m.Subtype + ")"
