@@ -106,6 +106,21 @@ func Ensure(exe string, p paths.Paths) error {
 	return nil
 }
 
+// Runs reports whether the loaded job is the one Ensure would register for
+// exe: the daemon launchd keeps alive is that binary.
+func Runs(exe string, p paths.Paths) bool {
+	have, err := os.ReadFile(PlistPath())
+	return err == nil && bytes.Equal(have, render(exe, p)) && Loaded()
+}
+
+// Restart stops the running daemon and starts the job's binary again.
+func Restart() error {
+	if out, err := launchctl("kickstart", "-k", domain()+"/"+Label); err != nil {
+		return fmt.Errorf("launchctl kickstart: %v: %s", err, out)
+	}
+	return nil
+}
+
 // Stop unloads the job; KeepAlive would otherwise restart a killed daemon.
 func Stop() error {
 	if !Loaded() {

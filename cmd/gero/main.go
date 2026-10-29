@@ -15,6 +15,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/hongzio/gero/internal/api"
 	"github.com/hongzio/gero/internal/client"
 	"github.com/hongzio/gero/internal/daemon"
 	"github.com/hongzio/gero/internal/launchd"
@@ -25,6 +26,7 @@ const usage = `gero — run coding agents in isolated containers
 
   gero                          start the daemon if it is not running
   gero daemon run|status|stop|uninstall
+  gero version
 
   sudo gero pf install           install the network fence helper (keeps isolations off the Mac and LAN)
   sudo gero pf uninstall
@@ -103,6 +105,9 @@ func run(args []string) error {
 	case "-h", "--help", "help":
 		fmt.Print(usage)
 		return nil
+	case "version", "--version":
+		fmt.Println("gero", api.Version)
+		return nil
 	case "daemon":
 		return daemonCmd(p, args[1:])
 	case "iso", "isolation":
@@ -147,20 +152,34 @@ func signalContext() (context.Context, context.CancelFunc) {
 // means registering the LaunchAgent, so the daemon also comes back after a
 // crash or a reboot. With GERO_HOME set (development) it forks a plain
 // background daemon instead, leaving the user's launchd alone.
+//
+// A daemon launchd runs from this very binary but on another version is one
+// the binary was replaced under (`brew upgrade gero`): it is restarted onto
+// the new one. Its agents carry on, as they do across any daemon restart.
 func ensureDaemon(p paths.Paths, verbose bool) error {
 	c := client.New(p.Socket())
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	h, err := c.Health(ctx)
 	cancel()
+	exe, exeErr := os.Executable()
 	if err == nil {
-		if verbose {
-			fmt.Printf("gero daemon is running (pid %d)\n", h.PID)
+		if h.Version == api.Version || exeErr != nil || os.Getenv("GERO_HOME") != "" || !launchd.Runs(exe, p) {
+			if verbose {
+				fmt.Printf("gero daemon is running (pid %d)\n", h.PID)
+			}
+			return nil
 		}
-		return nil
+		if err := launchd.Restart(); err != nil {
+			return err
+		}
+		return waitDaemon(c, p, func(h api.Health) bool { return h.Version == api.Version }, func(h api.Health) {
+			if verbose {
+				fmt.Printf("gero daemon restarted on %s (pid %d)\n", api.Version, h.PID)
+			}
+		})
 	}
-	exe, err := os.Executable()
-	if err != nil {
-		return err
+	if exeErr != nil {
+		return exeErr
 	}
 	if os.Getenv("GERO_HOME") != "" {
 		if err := p.Ensure(); err != nil {
@@ -180,15 +199,22 @@ func ensureDaemon(p paths.Paths, verbose bool) error {
 	} else if err := launchd.Ensure(exe, p); err != nil {
 		return err
 	}
+	return waitDaemon(c, p, func(api.Health) bool { return true }, func(h api.Health) {
+		if verbose {
+			fmt.Printf("gero daemon started (pid %d)\n", h.PID)
+		}
+	})
+}
+
+// waitDaemon waits for a daemon to answer as want, then hands it to up.
+func waitDaemon(c *client.Client, p paths.Paths, want func(api.Health) bool, up func(api.Health)) error {
 	deadline := time.Now().Add(15 * time.Second)
 	for time.Now().Before(deadline) {
 		ctx, cancel := context.WithTimeout(context.Background(), time.Second)
 		h, err := c.Health(ctx)
 		cancel()
-		if err == nil {
-			if verbose {
-				fmt.Printf("gero daemon started (pid %d)\n", h.PID)
-			}
+		if err == nil && want(h) {
+			up(h)
 			return nil
 		}
 		time.Sleep(200 * time.Millisecond)

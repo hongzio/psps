@@ -10,7 +10,10 @@ import (
 	"github.com/hongzio/gero/internal/store"
 )
 
-const Version = "0.1.0"
+// Version is the release this gero was built as, set by the build with
+// -ldflags "-X github.com/hongzio/gero/internal/api.Version=0.1.0" (the
+// Homebrew formula does); any other build is "dev".
+var Version = "dev"
 
 type Health struct {
 	OK      bool   `json:"ok"`

@@ -4,6 +4,25 @@ Runs Claude Code and Codex agents inside Apple `container` isolations, and
 shows what they do in its own format. See [.docs/PRD.md](.docs/PRD.md) and
 [.docs/FEASIBILITY.md](.docs/FEASIBILITY.md).
 
+## Install
+
+On an Apple silicon Mac:
+
+```sh
+brew trust hongzio/tap   # Homebrew 7 loads no third-party tap it does not trust
+brew tap hongzio/tap
+brew install gero        # builds it from the release's source; brings Apple's container
+```
+
+`brew upgrade gero` is all an upgrade takes: the next gero command moves the
+daemon onto the new version, its agents carrying on. Run `sudo gero pf install`
+again after one, since the fence helper is a copy of gero. Before
+`brew uninstall gero`, run `gero daemon uninstall` and `sudo gero pf uninstall`.
+
+A release is `sh scripts/release.sh 1.2.3`: it tags main, makes the GitHub
+release and points the tap's formula (from [packaging/gero.rb](packaging/gero.rb))
+at it.
+
 ## Build
 
 ```sh
@@ -11,6 +30,8 @@ mise install
 mise run build        # cross-compiles the linux shim, embeds it, writes bin/gero
 mise run test
 ```
+
+A build of your own says it is version `dev`; the formula stamps the release's.
 
 ## Use
 
