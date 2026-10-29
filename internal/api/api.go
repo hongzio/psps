@@ -128,6 +128,13 @@ type Message struct {
 	Text string `json:"text"`
 }
 
+// Rewind replaces a message the agent got: Event is that message's event
+// ID; the agent goes back to before it and gets Text instead.
+type Rewind struct {
+	Event int64  `json:"event"`
+	Text  string `json:"text"`
+}
+
 type Decision struct {
 	Decision driver.Decision `json:"decision"`
 }

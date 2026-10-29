@@ -748,6 +748,23 @@ func TestMailShowsAsMailAndWhatWaitsIsCounted(t *testing.T) {
 	}
 }
 
+// What an agent went back over shows as one line where it was, and what
+// came after the rewind reads on as usual.
+func TestARewindFoldsTheEarlierVersion(t *testing.T) {
+	c := newConvo()
+	c.apply(event.Event{ID: 1, Src: 2, Kind: event.KindUser, Text: "one"})
+	c.apply(event.Event{ID: 2, Src: 5, Kind: event.KindAssistant, Item: "m1", Text: "echo one"})
+	c.apply(event.Event{ID: 3, Src: 8, Kind: event.KindUser, Text: "two"})
+	c.apply(event.Event{ID: 4, Src: 11, Kind: event.KindAssistant, Item: "m2", Text: "echo two"})
+	c.apply(event.Event{ID: 5, Src: 14, Kind: event.KindRewind, Rewind: &event.Rewind{From: 8, To: 14}})
+	c.apply(event.Event{ID: 6, Src: 16, Kind: event.KindUser, Text: "deux"})
+	out := c.render(80, "Codex", newTheme())
+	if strings.Contains(out, "two") || !strings.Contains(out, "earlier version (2 messages)") ||
+		strings.Index(out, "echo one") > strings.Index(out, "earlier version") || strings.Index(out, "earlier version") > strings.Index(out, "deux") {
+		t.Fatalf("%s", out)
+	}
+}
+
 func TestKeymapOverrides(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "keys.toml")
 	os.WriteFile(path, []byte("[keys]\nnew_agent = \"ctrl+t\"\nsend = [\"ctrl+enter\", \"enter\"]\nbogus = \"x\"\n"), 0o600)

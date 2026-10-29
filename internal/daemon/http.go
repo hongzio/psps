@@ -241,6 +241,13 @@ func (m *Manager) Handler() http.Handler {
 		}
 		reply(w, nil, m.Send(r.PathValue("id"), req.Text))
 	})
+	mux.HandleFunc("POST /v1/agents/{id}/rewind", func(w http.ResponseWriter, r *http.Request) {
+		var req api.Rewind
+		if !decode(w, r, &req) {
+			return
+		}
+		reply(w, nil, m.Rewind(r.PathValue("id"), req.Event, req.Text))
+	})
 	mux.HandleFunc("POST /v1/agents/{id}/approvals/{approval}", func(w http.ResponseWriter, r *http.Request) {
 		var req api.Decision
 		if !decode(w, r, &req) {

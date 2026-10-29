@@ -160,6 +160,7 @@ var added = []struct{ table, column, def string }{
 	{"agents", "mail_token", "TEXT"},
 	{"mail", "delivered_at", "TEXT"},
 	{"mail", "discarded_at", "TEXT"},
+	{"outbox", "rewind", "INTEGER NOT NULL DEFAULT 0"},
 }
 
 func hasColumn(db interface {
@@ -594,6 +595,20 @@ func (s *Store) Commit(agentID string, src int64, evs []event.Event) ([]event.Ev
 	return out, tx.Commit()
 }
 
+// Event returns one stored event.
+func (s *Store) Event(agentID string, id int64) (event.Event, error) {
+	var body string
+	err := s.db.QueryRow(`SELECT body FROM events WHERE agent = ? AND id = ?`, agentID, id).Scan(&body)
+	if errors.Is(err, sql.ErrNoRows) {
+		return event.Event{}, fmt.Errorf("event %d: %w", id, ErrNotFound)
+	}
+	if err != nil {
+		return event.Event{}, err
+	}
+	var e event.Event
+	return e, json.Unmarshal([]byte(body), &e)
+}
+
 // Events returns stored events with ID > after, oldest first.
 func (s *Store) Events(agentID string, after int64, limit int) ([]event.Event, error) {
 	if limit <= 0 {
@@ -621,18 +636,25 @@ func (s *Store) Events(agentID string, after int64, limit int) ([]event.Event, e
 
 // Pending is a user message the daemon accepted and the agent's log does not
 // show yet. After is the newest log Seq known when it was accepted; only a
-// later delivery can be this one.
+// later delivery can be this one. Rewind, when set, is the log Seq of the
+// user message it replaces: the agent goes back to before that one first.
 type Pending struct {
-	ID    int64
-	Text  string
-	After int64
+	ID     int64
+	Text   string
+	After  int64
+	Rewind int64
 }
 
 // AddPending records a message before anything tries to deliver it, so a
 // daemon that dies in between still delivers it after restart.
 func (s *Store) AddPending(agentID, text string, after int64) (int64, error) {
-	res, err := s.db.Exec(`INSERT INTO outbox (agent, text, after, created_at) VALUES (?, ?, ?, ?)`,
-		agentID, text, after, ts(time.Now()))
+	return s.AddRewind(agentID, text, after, 0)
+}
+
+// AddRewind records a message that replaces the one at log Seq rewind.
+func (s *Store) AddRewind(agentID, text string, after, rewind int64) (int64, error) {
+	res, err := s.db.Exec(`INSERT INTO outbox (agent, text, after, rewind, created_at) VALUES (?, ?, ?, ?, ?)`,
+		agentID, text, after, rewind, ts(time.Now()))
 	if err != nil {
 		return 0, err
 	}
@@ -640,7 +662,7 @@ func (s *Store) AddPending(agentID, text string, after int64) (int64, error) {
 }
 
 func (s *Store) Pending(agentID string) ([]Pending, error) {
-	rows, err := s.db.Query(`SELECT id, text, after FROM outbox WHERE agent = ? ORDER BY id`, agentID)
+	rows, err := s.db.Query(`SELECT id, text, after, rewind FROM outbox WHERE agent = ? ORDER BY id`, agentID)
 	if err != nil {
 		return nil, err
 	}
@@ -648,7 +670,7 @@ func (s *Store) Pending(agentID string) ([]Pending, error) {
 	var out []Pending
 	for rows.Next() {
 		var p Pending
-		if err := rows.Scan(&p.ID, &p.Text, &p.After); err != nil {
+		if err := rows.Scan(&p.ID, &p.Text, &p.After, &p.Rewind); err != nil {
 			return nil, err
 		}
 		out = append(out, p)

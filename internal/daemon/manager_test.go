@@ -44,7 +44,8 @@ func TestMain(m *testing.M) {
 
 // fakeCodex answers just enough of the app-server protocol: one thread whose
 // id survives restarts, and turns that echo. A turn whose text is "hang", or
-// a mail that says only that, starts and never finishes.
+// a mail that says only that, starts and never finishes; "recall" answers
+// with the thread's earlier messages, which thread/revert cuts.
 func fakeCodex() {
 	in := bufio.NewScanner(os.Stdin)
 	in.Buffer(make([]byte, 1<<20), 1<<20)
@@ -53,6 +54,8 @@ func fakeCodex() {
 	notify := func(method string, params any) { enc.Encode(map[string]any{"method": method, "params": params}) }
 	const thread = "th-fake"
 	turns := 0
+	type turn struct{ id, text string }
+	var history []turn
 	for in.Scan() {
 		var m struct {
 			ID     any            `json:"id"`
@@ -67,12 +70,26 @@ func fakeCodex() {
 			reply(m.ID, map[string]any{"account": map[string]any{"type": "apiKey"}, "requiresOpenaiAuth": true})
 		case "thread/start", "thread/resume":
 			reply(m.ID, map[string]any{"thread": map[string]any{"id": thread}})
+		case "thread/revert":
+			i := slices.IndexFunc(history, func(t turn) bool { return t.id == m.Params["beforeTurnId"] })
+			if i < 0 {
+				enc.Encode(map[string]any{"id": m.ID, "error": map[string]any{"code": -32600, "message": "no such turn"}})
+				continue
+			}
+			history = history[:i]
+			notify("thread/reverted", map[string]any{"threadId": thread})
+			reply(m.ID, map[string]any{"thread": map[string]any{"id": thread}})
 		case "turn/start":
 			turns++
 			tid := fmt.Sprintf("turn-%d", turns)
 			reply(m.ID, map[string]any{"turn": map[string]any{"id": tid, "status": "inProgress"}})
 			notify("turn/started", map[string]any{"threadId": thread, "turn": map[string]any{"id": tid}})
 			text := m.Params["input"].([]any)[0].(map[string]any)["text"].(string)
+			var earlier []string
+			for _, t := range history {
+				earlier = append(earlier, t.text)
+			}
+			history = append(history, turn{tid, text})
 			// A mail ends with its body, after the line saying who wrote it.
 			if text == "hang" || strings.HasSuffix(text, "\n\nhang") {
 				continue
@@ -82,6 +99,8 @@ func fakeCodex() {
 				text = "env=" + os.Getenv("GERO_TEST_VAR")
 			case "mail address":
 				text = "mail=" + os.Getenv("GERO_MAIL_URL")
+			case "recall":
+				text = "recall=" + strings.Join(earlier, ",")
 			}
 			notify("item/agentMessage/delta", map[string]any{"itemId": "m-" + tid, "delta": "echo", "turnId": tid})
 			notify("item/completed", map[string]any{"turnId": tid,

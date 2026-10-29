@@ -73,6 +73,10 @@ const S = {
   cliBusy: null, // `${iso}/${tool}`
   accounts: null, // agent CLI accounts, shared by isolations
   accountKinds: [],
+  // edit is the user message being rewritten in place: { agent, id, text,
+  // sending }. openRewound holds the earlier versions shown unfolded.
+  edit: null,
+  openRewound: new Set(),
 }
 
 const coarse = matchMedia('(pointer: coarse)').matches
@@ -337,9 +341,11 @@ function apply(c, e) {
     if (e.id <= c.lastID) return
     c.lastID = e.id
   }
-  const add = (en) => { c.entries.push(en); if (en.item) c.byItem.set(en.item, en); return en }
+  // src is the shim log record an entry came from: a rewind names what it
+  // took back by those.
+  const add = (en) => { en.src = e.src; c.entries.push(en); if (en.item) c.byItem.set(en.item, en); return en }
   switch (e.kind) {
-    case 'user': add({ kind: 'user', text: e.text || '' }); break
+    case 'user': add({ kind: 'user', id: e.id, text: e.text || '' }); break
     case 'delta': {
       let en = c.byItem.get(e.item)
       if (!en || en.kind !== 'assistant' || !en.live) en = add({ kind: 'assistant', item: e.item, live: true, text: '' })
@@ -391,7 +397,45 @@ function apply(c, e) {
     case 'notice':
       if (!(e.text || '').startsWith('thread/')) add({ kind: 'notice', text: e.text })
       break
+    case 'rewind': {
+      // What the agent went back over stays where it was, folded.
+      const { from, to } = e.rewind || {}
+      const gone = (en) => en.src >= from && en.src < to
+      const at = c.entries.findIndex(gone)
+      if (at < 0) break
+      const entries = c.entries.filter(gone)
+      c.entries = c.entries.filter((en) => !gone(en))
+      c.entries.splice(at, 0, { kind: 'rewound', src: from, entries })
+      break
+    }
   }
+}
+
+// rewindable: the agent has nothing in flight, so it can go back to an
+// earlier message of its own (the daemon has the last word).
+const rewindable = (a) => !a.archived_at && ['idle', 'interrupted', 'error'].includes(a.state?.status || 'idle') && !a.state?.queued
+
+function startEdit(a, en) {
+  S.edit = { agent: a.id, id: en.id, text: en.text }
+  renderConvo()
+  const ta = document.querySelector('#convo-inner .edit-box')
+  if (ta) { ta.focus(); ta.setSelectionRange(ta.value.length, ta.value.length) }
+}
+
+function cancelEdit() {
+  S.edit = null
+  renderConvo()
+}
+
+async function resend(a, en) {
+  const ed = S.edit
+  const text = ed?.text.trim()
+  if (!text || ed.sending) return
+  ed.sending = true
+  renderConvo()
+  const ok = await guarded(async () => { await api('POST', `/v1/agents/${encodeURIComponent(a.id)}/rewind`, { event: en.id, text }); return true })
+  if (S.edit === ed) S.edit = ok ? null : { ...ed, sending: false }
+  renderConvo(ok)
 }
 
 const pending = (c) => c.entries.filter((en) => en.kind === 'approval' && !en.decision)
@@ -571,6 +615,7 @@ function setHash(hash) {
 
 function select(id, closeDrawer = true) {
   if (S.sel && S.sel !== id) S.drafts.set(S.sel, document.querySelector('.composer textarea')?.value || '')
+  if (S.sel !== id) S.edit = null
   S.sel = id
   S.view = 'agent'
   S.settingsOpen = false
@@ -817,18 +862,41 @@ function renderConvo(forceBottom) {
   if (!box || !inner || !a) return
   const atBottom = forceBottom || box.scrollHeight - box.scrollTop - box.clientHeight < 80
   const c = convo(a.id)
+  // The page is redrawn as events arrive; a message being edited keeps its
+  // caret through that.
+  const typing = document.activeElement?.classList.contains('edit-box') ? document.activeElement : null
+  const sel = typing && [typing.selectionStart, typing.selectionEnd]
   const items = c.entries.map((en) => entryView(en, a)).filter(Boolean)
   const none = c.ready ? 'Nothing yet: the first message you send starts it.' : 'Loading…'
   inner.replaceChildren(...(items.length ? items : [h('div', { class: 'empty' }, none)]))
+  const ta = typing && inner.querySelector('.edit-box')
+  if (ta) { ta.focus({ preventScroll: true }); ta.setSelectionRange(...sel) }
   if (atBottom) box.scrollTop = box.scrollHeight
 }
 
-function entryView(en, a) {
+// entryView draws one entry; frozen ones are an earlier version, there to
+// read only.
+function entryView(en, a, frozen) {
   switch (en.kind) {
     case 'user': {
       const l = letter(en.text)
-      if (!l) return h('div', { class: 'msg-user text' }, richText(en.text))
-      return h('div', { class: 'msg-mail' }, h('div', { class: 'who' }, `✉ Mail #${l.id} from ${l.from} · ${l.iso}`), h('div', { class: 'text' }, richText(l.body)))
+      if (l) return h('div', { class: 'msg-mail' }, h('div', { class: 'who' }, `✉ Mail #${l.id} from ${l.from} · ${l.iso}`), h('div', { class: 'text' }, richText(l.body)))
+      if (!frozen && S.edit?.agent === a.id && S.edit.id === en.id) return editView(en, a)
+      const bubble = h('div', { class: 'msg-user text' }, richText(en.text))
+      if (frozen || !en.id || !rewindable(a)) return bubble
+      return h('div', { class: 'msg-user-row' },
+        h('button', { class: 'edit-msg', title: 'Edit and resend: the agent goes back to here', 'aria-label': 'Edit message', onclick: () => startEdit(a, en) }, '✎'),
+        bubble)
+    }
+    case 'rewound': {
+      const key = `${a.id}:${en.src}`
+      const n = en.entries.filter((x) => x.kind === 'user' || x.kind === 'assistant').length
+      return h('details', {
+        class: 'rewound', open: S.openRewound.has(key),
+        ontoggle: (e) => { if (e.target.open) S.openRewound.add(key); else S.openRewound.delete(key) },
+      },
+        h('summary', null, `↺ Edited · the earlier version (${n} message${n === 1 ? '' : 's'}) is gone from the agent's memory`),
+        h('div', { class: 'rewound-body' }, en.entries.map((x) => entryView(x, a, true)).filter(Boolean)))
     }
     case 'assistant':
       return h('div', { class: 'msg-agent' + (en.live ? ' live' : '') }, h('div', { class: 'who' }, label(a)), h('div', { class: 'text' }, richText(en.text)))
@@ -853,6 +921,29 @@ function entryView(en, a) {
     case 'notice': return h('div', { class: 'notice' }, en.text)
   }
   return null
+}
+
+function editView(en, a) {
+  const ed = S.edit
+  const ta = h('textarea', { class: 'edit-box', rows: 1, value: ed.text, 'aria-label': 'Edited message' })
+  const grow = () => { ta.style.height = 'auto'; ta.style.height = Math.min(ta.scrollHeight, 320) + 'px' }
+  ta.addEventListener('input', () => { ed.text = ta.value; grow() })
+  ta.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape') { e.preventDefault(); cancelEdit() }
+    if (e.key === 'Enter' && !e.shiftKey && !coarse && !e.isComposing) { e.preventDefault(); resend(a, en) }
+  })
+  queueMicrotask(grow)
+  const c = convo(a.id)
+  const mails = c.entries.slice(c.entries.indexOf(en) + 1).filter((x) => x.kind === 'user' && letter(x.text)).length
+  const ok = rewindable(a)
+  const note = !ok ? 'The agent is busy; resend once it is idle, or stop it.'
+    : 'The agent forgets this message and everything after it; files stay as they are.' +
+      (mails ? ` That includes ${mails} mail${mails === 1 ? '' : 's'}, not delivered again.` : '')
+  return h('div', { class: 'msg-edit' }, ta,
+    h('div', { class: 'note' }, note),
+    h('div', { class: 'actions' },
+      h('button', { class: 'btn small', onclick: cancelEdit }, 'Cancel'),
+      h('button', { class: 'btn small primary', disabled: !ok || ed.sending || !ed.text.trim(), onclick: () => resend(a, en) }, ed.sending ? 'Sending…' : 'Resend')))
 }
 
 function renderApprovals() {

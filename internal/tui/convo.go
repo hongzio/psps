@@ -25,6 +25,7 @@ const (
 	eNotice
 	eError
 	eInterrupted
+	eRewound // an earlier version the agent went back over: text says how much
 )
 
 type toolState int
@@ -37,6 +38,9 @@ const (
 
 type entry struct {
 	kind entryKind
+	// src is the shim log record the entry came from; a rewind names what
+	// it took back by those.
+	src  int64
 	item string
 	text string
 	// from says who wrote a user entry that is mail from another agent;
@@ -72,6 +76,7 @@ func (c *convo) apply(e event.Event) {
 		c.lastID = e.ID
 	}
 	add := func(en *entry) *entry {
+		en.src = e.Src
 		c.entries = append(c.entries, en)
 		if en.item != "" {
 			c.byItem[en.item] = en
@@ -163,7 +168,33 @@ func (c *convo) apply(e event.Event) {
 			return
 		}
 		add(&entry{kind: eNotice, text: e.Text})
+	case event.KindRewind:
+		c.rewind(*e.Rewind)
 	}
+}
+
+// rewind folds what the agent went back over into one line where it was.
+// The web shows it unfolded on request; here it is only counted.
+func (c *convo) rewind(r event.Rewind) {
+	at, n := -1, 0
+	kept := c.entries[:0:0]
+	for _, en := range c.entries {
+		if en.src < r.From || en.src >= r.To {
+			kept = append(kept, en)
+			continue
+		}
+		if at < 0 {
+			at = len(kept)
+		}
+		if en.kind == eUser || en.kind == eAssistant {
+			n++
+		}
+	}
+	if at < 0 {
+		return
+	}
+	note := &entry{kind: eRewound, src: r.From, text: fmt.Sprintf("↺ edited: the earlier version (%d messages) is gone from the agent's memory", n)}
+	c.entries = append(kept[:at], append([]*entry{note}, kept[at:]...)...)
 }
 
 // pending returns approvals still waiting for a decision, oldest first.
@@ -253,6 +284,8 @@ func (c *convo) render(width int, agentLabel string, th theme) string {
 			b.WriteString(th.err.Width(width-2).PaddingLeft(2).Render("✗ "+en.text) + "\n")
 		case eInterrupted:
 			b.WriteString(th.warn.Width(width-2).PaddingLeft(2).Render("⏸ this turn was interrupted; send a message to continue") + "\n")
+		case eRewound:
+			b.WriteString(th.dim.Width(width-2).PaddingLeft(2).Render(en.text) + "\n")
 		}
 	}
 	return strings.TrimRight(b.String(), "\n")

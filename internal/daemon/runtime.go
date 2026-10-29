@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net/http"
 	"sort"
 	"strings"
 	"sync"
@@ -198,7 +199,11 @@ func (r *runtime) observe(rec shimproto.Record, liveAfter int64) {
 func (r *runtime) catchUpLocked() {
 	r.caughtUp = true
 	for _, m := range r.outbox {
-		r.drv.Send(m.Text)
+		// A rewind the log already shows (or one no longer possible)
+		// leaves the message to go as it is.
+		if m.Rewind == 0 || r.drv.Rewind(m.Rewind, m.Text) != nil {
+			r.drv.Send(m.Text)
+		}
 	}
 	for id, d := range r.decisions {
 		if r.drv.Approve(id, d) != nil {
@@ -305,6 +310,34 @@ func (r *runtime) send(text string) error {
 		r.drv.Send(text)
 		r.kickLocked()
 	}
+	return nil
+}
+
+// rewind takes the agent back to before the user message at log Seq src and
+// sends text in its place, through the outbox like any message, so a daemon
+// that dies on the way still delivers it after the rewind.
+func (r *runtime) rewind(src int64, text string) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if !r.caughtUp {
+		return errors.New("agent is not connected; try again shortly")
+	}
+	if len(r.outbox) > 0 || r.drv.State().Queued > 0 || r.starting {
+		return httpError{http.StatusConflict, errors.New("a message is still on its way to the agent; edit once it has arrived")}
+	}
+	after := max(r.lastSeen, r.agent.LastSrc)
+	id, err := r.m.store.AddRewind(r.agent.ID, text, after, src)
+	if err != nil {
+		return err
+	}
+	if err := r.drv.Rewind(src, text); err != nil {
+		if derr := r.m.store.DeletePending(id); derr != nil {
+			r.m.log.Printf("agent %s: outbox: %v", r.agent.ID, derr)
+		}
+		return httpError{http.StatusConflict, err}
+	}
+	r.outbox = append(r.outbox, store.Pending{ID: id, Text: text, After: after, Rewind: src})
+	r.kickLocked()
 	return nil
 }
 

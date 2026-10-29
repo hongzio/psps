@@ -3,6 +3,7 @@ package driver
 import (
 	"crypto/rand"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strings"
 
@@ -42,6 +43,26 @@ type claude struct {
 	stop         bool
 	ctlSeq       int
 	streamMsg    string
+	// prompts are the conversation's user messages; lastEntry is the uuid
+	// of the newest transcript entry claude printed, which is where the
+	// next message attaches.
+	prompts   []prompt
+	lastEntry string
+	// rewind is asked for and not started yet; going is the generation
+	// started with it, until claude's init shows the resume took.
+	rewind *clRewind
+	going  *clRewind
+}
+
+// clRewind is a generation that takes the conversation back: resumed up to
+// a transcript entry, or, when the point is the session's start, a session
+// of its own. Its command line is all the log keeps of it.
+type clRewind struct {
+	at      string // --resume-session-at; "" for a new session
+	session string // that new session
+	from    int64  // the first message it drops
+	start   int64  // the generation's started record
+	before  string // lastEntry before it, back if it fails
 }
 
 func newClaude(agentID, sessionID string, opts Options) *claude {
@@ -63,9 +84,16 @@ func (c *claude) Command() []string {
 	argv := []string{"claude", "-p",
 		"--input-format", "stream-json", "--output-format", "stream-json",
 		"--verbose", "--include-partial-messages"}
-	if c.sessionUsed {
+	switch {
+	case c.rewind != nil && c.rewind.at == "":
+		argv = append(argv, "--session-id", c.rewind.session)
+	case c.rewind != nil:
+		// The session itself, not a fork: its transcript entries keep
+		// their uuids, so an earlier message stays reachable.
+		argv = append(argv, "--resume", c.sessionID, "--resume-session-at", c.rewind.at)
+	case c.sessionUsed:
 		argv = append(argv, "--resume", c.sessionID)
-	} else {
+	default:
 		argv = append(argv, "--session-id", c.sessionID)
 	}
 	switch c.opts.approvals() {
@@ -98,6 +126,82 @@ func (c *claude) State() State {
 func (c *claude) Send(text string) { c.queue = append(c.queue, text) }
 
 func (c *claude) Interrupt() { c.stop = true }
+
+// Rewind starts the next generation from the transcript entry the message
+// followed. That needs a new process, so a live one is replaced first, and
+// the message waits for the new one.
+func (c *claude) Rewind(src int64, text string) error {
+	if c.rewind != nil || c.going != nil {
+		return errors.New("the agent is already going back to a message")
+	}
+	i, err := c.canRewind(c.prompts, src)
+	if err != nil {
+		return err
+	}
+	p := c.prompts[i]
+	if !p.ok {
+		return errors.New("that message reached claude while it was working, so there is no point before it to go back to")
+	}
+	rw := &clRewind{at: p.at}
+	if p.at == "" {
+		rw.session = newUUID()
+	}
+	c.rewind = rw
+	c.queue = append(c.queue, text)
+	if c.alive {
+		c.restart = true
+	}
+	return nil
+}
+
+// rewindIn reads a generation's command line for a rewind: a resume up to
+// an entry, or a session other than this one started afresh.
+func (c *claude) rewindIn(argv []string) *clRewind {
+	flag := func(name string) (string, bool) {
+		for i, a := range argv {
+			if a == name && i+1 < len(argv) {
+				return argv[i+1], true
+			}
+		}
+		return "", false
+	}
+	var rw *clRewind
+	if at, ok := flag("--resume-session-at"); ok {
+		rw = &clRewind{at: at}
+	} else if sid, ok := flag("--session-id"); ok && sid != c.sessionID && len(c.prompts) > 0 {
+		if _, resumed := flag("--resume"); !resumed {
+			rw = &clRewind{session: sid}
+		}
+	}
+	if rw == nil {
+		return nil
+	}
+	for _, p := range c.prompts {
+		if p.ok && p.at == rw.at {
+			rw.from = p.src
+			break
+		}
+	}
+	return rw
+}
+
+// wentBack drops the messages a rewind took out, now that claude resumed
+// without them.
+func (c *claude) wentBack(rec shimproto.Record, rw *clRewind) []event.Event {
+	if rw.from == 0 {
+		return nil
+	}
+	kept := c.prompts[:0]
+	for _, p := range c.prompts {
+		if p.src < rw.from || p.src > rw.start {
+			kept = append(kept, p)
+		}
+	}
+	c.prompts = kept
+	e := c.ev(rec, event.KindRewind)
+	e.Rewind = &event.Rewind{From: rw.from, To: rw.start}
+	return []event.Event{e}
+}
 
 func (c *claude) SetOptions(o Options) {
 	c.opts = o
@@ -154,7 +258,8 @@ func (c *claude) Next() [][]byte {
 				"request":    map[string]any{"subtype": "interrupt"}}))
 		}
 	}
-	if c.held {
+	// A message for a rewind is for the process that starts with it.
+	if c.held || c.rewind != nil {
 		return out
 	}
 	// Claude queues user messages itself, so there is no need to hold one
@@ -171,6 +276,7 @@ type clMessage struct {
 	Type      string          `json:"type"`
 	Subtype   string          `json:"subtype"`
 	SessionID string          `json:"session_id"`
+	UUID      string          `json:"uuid"`
 	Message   json.RawMessage `json:"message"`
 	Event     json.RawMessage `json:"event"`
 	RequestID string          `json:"request_id"`
@@ -178,6 +284,9 @@ type clMessage struct {
 	Response  json.RawMessage `json:"response"`
 	Result    string          `json:"result"`
 	IsError   bool            `json:"is_error"`
+	// ParentToolUseID is set on a subagent's messages, which are in a
+	// transcript of their own.
+	ParentToolUseID *string `json:"parent_tool_use_id"`
 }
 
 type clBlock struct {
@@ -232,9 +341,29 @@ func (c *claude) Observe(rec shimproto.Record) []event.Event {
 			c.alive, c.restart, c.errText = true, false, ""
 			c.busy, c.blocked, c.pendingTurns, c.pending = false, false, 0, nil
 			evs = append(evs, c.text(rec, event.KindNotice, "", fmt.Sprintf("claude started (pid %d)", rec.Sys.PID)))
+			if rw := c.rewindIn(rec.Sys.Argv); rw != nil {
+				rw.start, rw.before = rec.Seq, c.lastEntry
+				c.rewind, c.going, c.lastEntry = nil, rw, rw.at
+			}
 		case shimproto.SysExited, shimproto.SysLost:
 			c.pending, c.pendingTurns = nil, 0
 			evs = c.processEnded(rec, "claude")
+			if rw := c.going; rw != nil {
+				// It never resumed: the conversation is the one before, and
+				// what was sent to it went nowhere to go back to.
+				c.going, c.lastEntry = nil, rw.before
+				for i := range c.prompts {
+					if c.prompts[i].src > rw.start {
+						c.prompts[i].ok = false
+					}
+				}
+				msg := "claude could not go back to the edited message, so the conversation is as it was"
+				if c.lastStderr != "" {
+					msg += ": " + c.lastStderr
+				}
+				c.errText = msg
+				evs = append(evs, c.text(rec, event.KindError, "", msg))
+			}
 		}
 	case shimproto.DirErr:
 		c.lastStderr = rec.Line
@@ -257,6 +386,9 @@ func (c *claude) observeIn(rec shimproto.Record, m clMessage) []event.Event {
 	case "user":
 		var msg clContent
 		json.Unmarshal(m.Message, &msg)
+		// One written while a turn runs joins claude's queue, and where it
+		// lands in the transcript is claude's to decide.
+		c.prompts = append(c.prompts, prompt{src: rec.Seq, at: c.lastEntry, ok: c.pendingTurns == 0})
 		c.pendingTurns++
 		c.userTurn()
 		return []event.Event{c.text(rec, event.KindUser, "", blockText(msg.Content))}
@@ -299,12 +431,19 @@ func (c *claude) hasOpenApprovals() bool {
 }
 
 func (c *claude) observeOut(rec shimproto.Record, m clMessage) []event.Event {
+	if (m.Type == "assistant" || m.Type == "user") && m.UUID != "" && m.ParentToolUseID == nil {
+		c.lastEntry = m.UUID
+	}
 	switch m.Type {
 	case "system":
 		if m.Subtype == "init" {
 			c.sessionUsed = true
 			if m.SessionID != "" {
 				c.sessionID = m.SessionID
+			}
+			if rw := c.going; rw != nil {
+				c.going = nil
+				return c.wentBack(rec, rw)
 			}
 		}
 

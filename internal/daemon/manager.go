@@ -20,6 +20,7 @@ import (
 	"github.com/hongzio/gero/internal/api"
 	"github.com/hongzio/gero/internal/creds"
 	"github.com/hongzio/gero/internal/driver"
+	"github.com/hongzio/gero/internal/event"
 	"github.com/hongzio/gero/internal/isolation"
 	"github.com/hongzio/gero/internal/pf"
 	"github.com/hongzio/gero/internal/proxy"
@@ -852,6 +853,29 @@ func (m *Manager) Send(id, text string) error {
 		return err
 	}
 	return r.send(text)
+}
+
+// Rewind takes the agent back to before one of its user messages, the
+// event eventID, and sends text in its place.
+func (m *Manager) Rewind(id string, eventID int64, text string) error {
+	if strings.TrimSpace(text) == "" {
+		return badRequest(errors.New("empty message"))
+	}
+	r, err := m.runtime(id)
+	if err != nil {
+		return err
+	}
+	e, err := m.store.Event(r.agent.ID, eventID)
+	if errors.Is(err, store.ErrNotFound) {
+		return badRequest(err)
+	}
+	if err != nil {
+		return err
+	}
+	if e.Kind != event.KindUser {
+		return badRequest(fmt.Errorf("event %d is not a message to the agent", eventID))
+	}
+	return r.rewind(e.Src, text)
 }
 
 func (m *Manager) Approve(id, approvalID string, d driver.Decision) error {

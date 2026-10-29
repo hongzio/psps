@@ -25,6 +25,9 @@ const (
 	KindTurnEnd      Kind = "turn_end"
 	KindError        Kind = "error"
 	KindNotice       Kind = "notice" // lifecycle and diagnostics worth showing
+	// KindRewind: the agent went back to before a user message and has
+	// forgotten everything from it on; Rewind says which events that was.
+	KindRewind Kind = "rewind"
 )
 
 type Status string
@@ -56,6 +59,7 @@ type Event struct {
 	Status   Status    `json:"status,omitempty"`
 	Tool     *Tool     `json:"tool,omitempty"`
 	Approval *Approval `json:"approval,omitempty"`
+	Rewind   *Rewind   `json:"rewind,omitempty"`
 	// Ephemeral events are delivered live but never stored: the complete
 	// message or tool result that follows them carries the same content.
 	Ephemeral bool `json:"ephemeral,omitempty"`
@@ -76,4 +80,12 @@ type Approval struct {
 	Reason   string `json:"reason,omitempty"`   // why the agent wants it
 	Detail   string `json:"detail,omitempty"`   // full input, if any
 	Decision string `json:"decision,omitempty"` // on approval_done
+}
+
+// Rewind names the events a rewind took out of the conversation: those
+// derived from shim records From <= Src < To, From being the user message
+// gone back to. The store keeps them; the agent no longer knows them.
+type Rewind struct {
+	From int64 `json:"from"`
+	To   int64 `json:"to"`
 }

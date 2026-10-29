@@ -2,6 +2,7 @@ package driver
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strconv"
 	"strings"
@@ -73,6 +74,18 @@ type codex struct {
 	reading  bool
 	stop     bool // interrupt requested
 	itemSum  map[string]string
+	// prompts are the thread's user messages, each with its turn. revert
+	// is a rewind asked for: the first turn to drop. reverting is the
+	// thread/revert written, until codex answers it.
+	prompts   []prompt
+	revert    string
+	reverting *cxRevert
+}
+
+type cxRevert struct {
+	turn string
+	from int64 // the first message it drops
+	req  int64 // the thread/revert record
 }
 
 func newCodex(agentID, threadID string, opts Options) *codex {
@@ -95,6 +108,27 @@ func (c *codex) Send(text string) {
 }
 
 func (c *codex) Interrupt() { c.stop = true }
+
+// Rewind drops the message's turn and every later one from the thread with
+// thread/revert; the process stays, and the message waits for the answer.
+func (c *codex) Rewind(src int64, text string) error {
+	if c.revert != "" || c.reverting != nil {
+		return errors.New("the agent is already going back to a message")
+	}
+	if c.sending {
+		return errors.New("the agent is working; stop it before editing a message")
+	}
+	i, err := c.canRewind(c.prompts, src)
+	if err != nil {
+		return err
+	}
+	if !c.prompts[i].ok {
+		return errors.New("that message never started a codex turn, so there is nothing to go back from")
+	}
+	c.revert = c.prompts[i].at
+	c.queue = append(c.queue, text)
+	return nil
+}
 
 // SetOptions applies from the next turn: Codex takes model, effort and the
 // approval mode per turn/start, so the process never needs replacing.
@@ -274,6 +308,14 @@ func (c *codex) Next() [][]byte {
 		}
 	}
 
+	if c.phase == cxReady && !c.busy && !c.sending && c.revert != "" && c.reverting == nil {
+		out = append(out, c.call("thread/revert", map[string]any{"threadId": c.threadID, "beforeTurnId": c.revert}))
+		c.reverting, c.revert = &cxRevert{turn: c.revert}, ""
+	}
+	// A message waits for a rewind before it to be answered.
+	if c.revert != "" || c.reverting != nil {
+		return out
+	}
 	if c.phase == cxReady && !c.busy && !c.sending && !c.held && len(c.queue) > 0 && c.needDefaults() {
 		out = append(out, c.readConfig()...)
 	} else if c.phase == cxReady && !c.busy && !c.sending && !c.held && len(c.queue) > 0 {
@@ -328,7 +370,13 @@ func (c *codex) observeSys(rec shimproto.Record) []event.Event {
 		return []event.Event{c.text(rec, event.KindNotice, "", fmt.Sprintf("codex started (pid %d)", rec.Sys.PID))}
 	case shimproto.SysExited, shimproto.SysLost:
 		c.phase, c.pending, c.turnID, c.sending = cxDown, nil, "", false
-		return c.processEnded(rec, "codex")
+		evs := c.processEnded(rec, "codex")
+		if c.reverting != nil {
+			c.reverting = nil
+			evs = append(evs, c.text(rec, event.KindError, "",
+				"codex stopped before it answered going back to the edited message; the message goes on top of the conversation"))
+		}
+		return evs
 	}
 	return nil
 }
@@ -355,6 +403,19 @@ func (c *codex) observeIn(rec shimproto.Record, m rpcMsg) []event.Event {
 			c.reading = true
 		case "thread/start", "thread/resume":
 			c.phase = cxOpening
+		case "thread/revert":
+			var p struct {
+				BeforeTurnID string `json:"beforeTurnId"`
+			}
+			json.Unmarshal(m.Params, &p)
+			rv := &cxRevert{turn: p.BeforeTurnID, req: rec.Seq}
+			for _, pr := range c.prompts {
+				if pr.ok && pr.at == p.BeforeTurnID {
+					rv.from = pr.src
+					break
+				}
+			}
+			c.reverting, c.revert = rv, ""
 		case "turn/start":
 			var p struct {
 				Input []struct {
@@ -370,6 +431,7 @@ func (c *codex) observeIn(rec shimproto.Record, m rpcMsg) []event.Event {
 				}
 			}
 			c.sending = false
+			c.prompts = append(c.prompts, prompt{src: rec.Seq})
 			c.userTurn()
 			return []event.Event{c.text(rec, event.KindUser, "", strings.Join(parts, "\n"))}
 		}
@@ -433,11 +495,15 @@ func (c *codex) response(rec shimproto.Record, method string, m rpcMsg) []event.
 			// The thread is gone (deleted, or a different CODEX_HOME). Carry
 			// on in a new one, and say so: the agent has lost its context.
 			old := c.threadID
-			c.threadID, c.phase = "", cxNeedThread
+			c.threadID, c.phase, c.prompts = "", cxNeedThread, nil
 			return []event.Event{c.text(rec, event.KindError, "",
 				fmt.Sprintf("could not resume codex thread %s (%s); starting a new thread without the earlier context", old, m.Error.Message))}
 		case "turn/start":
 			c.busy = false
+		case "thread/revert":
+			c.reverting = nil
+			return []event.Event{c.text(rec, event.KindError, "",
+				fmt.Sprintf("codex could not go back to the edited message (%s); the message goes on top of the conversation", m.Error.Message))}
 		case "config/read":
 			c.reading = false
 			d := codexBuiltin()
@@ -488,6 +554,24 @@ func (c *codex) response(rec shimproto.Record, method string, m rpcMsg) []event.
 		}
 		json.Unmarshal(m.Result, &r)
 		c.turnID = r.Turn.ID
+		// Turns start one at a time: the newest message is this turn's.
+		if n := len(c.prompts); n > 0 && !c.prompts[n-1].ok {
+			c.prompts[n-1].at, c.prompts[n-1].ok = r.Turn.ID, r.Turn.ID != ""
+		}
+	case "thread/revert":
+		rv := c.reverting
+		c.reverting = nil
+		i := -1
+		if rv != nil {
+			i = findPrompt(c.prompts, rv.from)
+		}
+		if i < 0 {
+			return nil
+		}
+		c.prompts = c.prompts[:i]
+		e := c.ev(rec, event.KindRewind)
+		e.Rewind = &event.Rewind{From: rv.from, To: rv.req}
+		return []event.Event{e}
 	}
 	return nil
 }

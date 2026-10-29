@@ -10,6 +10,7 @@ package driver
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 
 	"github.com/hongzio/gero/internal/event"
@@ -127,6 +128,12 @@ type Driver interface {
 	// up with the log; it never returns the same line twice.
 	Next() [][]byte
 	Send(text string)
+	// Rewind takes the conversation back to just before the user message
+	// the log carries at src and sends text in its place: the agent forgets
+	// that message and everything after it. Files stay as they are. Only an
+	// agent with nothing in flight goes back, and the log says when it did
+	// (a rewind event).
+	Rewind(src int64, text string) error
 	Approve(id string, d Decision) error
 	Interrupt()
 	SetOptions(o Options)
@@ -167,6 +174,38 @@ type base struct {
 }
 
 func (b *base) Hold(on bool) { b.held = on }
+
+// prompt is a user message in the agent's current conversation, with what
+// a rewind to it needs: where the conversation stood before it.
+type prompt struct {
+	src int64 // the log record that carried it
+	// at is the agent's own name for the point: Claude's last transcript
+	// entry before the message ("" when the session starts with it),
+	// Codex's turn for it. ok: at is known.
+	at string
+	ok bool
+}
+
+func findPrompt(ps []prompt, src int64) int {
+	for i, p := range ps {
+		if p.src == src {
+			return i
+		}
+	}
+	return -1
+}
+
+// canRewind refuses a rewind while anything is in flight.
+func (b *base) canRewind(ps []prompt, src int64) (int, error) {
+	if b.busy || b.blocked || b.starting {
+		return 0, errors.New("the agent is working; stop it before editing a message")
+	}
+	i := findPrompt(ps, src)
+	if i < 0 {
+		return 0, errors.New("that message is not in the agent's current conversation")
+	}
+	return i, nil
+}
 
 func (b *base) ev(rec shimproto.Record, kind event.Kind) event.Event {
 	return event.Event{Agent: b.agent, Src: rec.Seq, Time: rec.Time, Kind: kind}
