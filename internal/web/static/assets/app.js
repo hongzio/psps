@@ -706,11 +706,11 @@ function renderSidebar() {
   const row = (a) => {
     const st = a.archived_at ? 'idle' : a.state?.status || 'idle'
     const meta = a.problem ? h('span', { class: 'problem' }, '⚠ ' + a.problem)
-      : `${a.kind} · ${a.isolation} · ${st}` + (a.inbox ? ` · ✉ ${a.inbox}` : '')
+      : `${shownID(a)} · ${a.isolation}` + (a.inbox ? ` · ✉ ${a.inbox}` : '')
     return h('button', {
       class: 'agent' + (a.id === S.sel && S.view === 'agent' ? ' selected' : '') + (a.archived_at ? ' archived' : ''),
       onclick: () => select(a.id),
-    }, h('span', { class: 'dot ' + st }), h('span', { class: 'name' }, agentTitle(a)), h('span', { class: 'meta' }, meta))
+    }, h('span', { class: 'dot ' + st, title: st, 'aria-label': st, role: 'img' }), h('span', { class: 'name' }, agentTitle(a)), h('span', { class: 'meta' }, meta))
   }
   el.replaceChildren(
     h('div', { class: 'brand' }, 'gero', h('span', { class: 'count' }, `${live.length} agent${live.length === 1 ? '' : 's'}`)),

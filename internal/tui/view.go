@@ -58,7 +58,7 @@ func (m *Model) renderSidebar(w int) string {
 			archived++
 			continue
 		}
-		meta := fmt.Sprintf("  %s · %s · %s", a.Kind, a.Isolation, a.State.Status)
+		meta := fmt.Sprintf("  %s · %s", shownID(a), a.Isolation)
 		if a.Inbox > 0 {
 			meta += fmt.Sprintf(" · ✉ %d", a.Inbox)
 		}
