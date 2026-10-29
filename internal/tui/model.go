@@ -7,6 +7,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strconv"
 	"strings"
 	"time"
 
@@ -29,7 +30,7 @@ type Backend interface {
 	Isolations(ctx context.Context) ([]api.Isolation, error)
 	CreateAgent(ctx context.Context, req api.CreateAgent) (api.Agent, error)
 	Send(ctx context.Context, id, text string) (api.Sent, error)
-	Approve(ctx context.Context, id, approval string, d driver.Decision) error
+	Approve(ctx context.Context, id, approval string, d driver.Decision, answers map[string]string) error
 	Interrupt(ctx context.Context, id string) error
 	SetOptions(ctx context.Context, id string, o driver.Options) error
 	Archive(ctx context.Context, id string) error
@@ -110,6 +111,7 @@ type Model struct {
 	focus         focus
 	view          view
 	approving     bool
+	answering     *answering
 	help          bool
 	confirm       *confirmation
 	prompt        *prompt
@@ -947,6 +949,9 @@ func (m *Model) handleApprovalKey(msg tea.KeyMsg) tea.Cmd {
 		return nil
 	}
 	var d driver.Decision
+	if pending[0].Questions != nil && !k.Is(msg, "decline") && !k.Is(msg, "cancel_turn") && !k.Is(msg, "back") {
+		return m.handleAnswerKey(msg, pending[0])
+	}
 	switch {
 	case k.Is(msg, "accept"):
 		d = driver.Accept
@@ -960,9 +965,64 @@ func (m *Model) handleApprovalKey(msg tea.KeyMsg) tea.Cmd {
 	default:
 		return nil
 	}
-	m.approving = false
+	m.approving, m.answering = false, nil
 	be, id, ap := m.be, m.openID, pending[0].ID
-	return m.do("", false, func(ctx context.Context) error { return be.Approve(ctx, id, ap, d) })
+	return m.do("", false, func(ctx context.Context) error { return be.Approve(ctx, id, ap, d, nil) })
+}
+
+// answering is a question being answered, one of its questions at a time:
+// a number picks that option, or toggles it where several may be picked
+// and enter goes on. An answer in words of one's own is a decline and a
+// message instead.
+type answering struct {
+	id      string
+	q       int
+	picked  map[int]bool
+	answers map[string]string
+}
+
+// answeringFor is the answering of ap, begun afresh when it is another one.
+func (m *Model) answeringFor(ap *event.Approval) *answering {
+	if m.answering == nil || m.answering.id != ap.ID {
+		m.answering = &answering{id: ap.ID, picked: map[int]bool{}, answers: map[string]string{}}
+	}
+	return m.answering
+}
+
+func (m *Model) handleAnswerKey(msg tea.KeyMsg, ap *event.Approval) tea.Cmd {
+	an := m.answeringFor(ap)
+	q := ap.Questions[an.q]
+	s := msg.String()
+	switch n, err := strconv.Atoi(s); {
+	case err == nil && n >= 1 && n <= len(q.Options):
+		if !q.MultiSelect {
+			an.answers[q.Question] = q.Options[n-1].Label
+			break
+		}
+		an.picked[n-1] = !an.picked[n-1]
+		return nil
+	case s == "enter" && q.MultiSelect:
+		var labels []string
+		for i, o := range q.Options {
+			if an.picked[i] {
+				labels = append(labels, o.Label)
+			}
+		}
+		if labels == nil {
+			m.setFlash("pick at least one by its number", false)
+			return nil
+		}
+		an.answers[q.Question] = strings.Join(labels, ", ")
+	default:
+		return nil
+	}
+	an.q, an.picked = an.q+1, map[int]bool{}
+	if an.q < len(ap.Questions) {
+		return nil
+	}
+	m.approving, m.answering = false, nil
+	be, id, answers := m.be, m.openID, an.answers
+	return m.do("", false, func(ctx context.Context) error { return be.Approve(ctx, id, ap.ID, driver.Accept, answers) })
 }
 
 // layout sizes the conversation to whatever the input and bars leave.

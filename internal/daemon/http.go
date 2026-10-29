@@ -272,7 +272,7 @@ func (m *Manager) Handler() http.Handler {
 			reply(w, nil, badRequest(err))
 			return
 		}
-		reply(w, nil, m.Approve(r.PathValue("id"), r.PathValue("approval"), d))
+		reply(w, nil, m.Approve(r.PathValue("id"), r.PathValue("approval"), d, req.Answers))
 	})
 	mux.HandleFunc("POST /v1/agents/{id}/interrupt", func(w http.ResponseWriter, r *http.Request) {
 		reply(w, nil, m.Interrupt(r.PathValue("id")))

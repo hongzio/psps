@@ -29,6 +29,9 @@ type clPending struct {
 	approval  bool // false: a control request gero answers with an error
 	decision  Decision
 	sent      bool
+	// questions: an AskUserQuestion, which accepting answers.
+	questions []event.Question
+	answers   map[string]string
 }
 
 type claude struct {
@@ -235,17 +238,47 @@ func (c *claude) SetOptions(o Options) {
 	}
 }
 
-func (c *claude) Approve(id string, d Decision) error {
+func (c *claude) Approve(id string, d Decision, answers map[string]string) error {
 	for _, p := range c.pending {
 		if p.publicID == id && p.approval {
 			if p.decision != "" {
 				return fmt.Errorf("approval %s already decided", id)
 			}
-			p.decision = d
+			if err := checkAnswers(p.questions, d, answers); err != nil {
+				return fmt.Errorf("approval %s: %w", id, err)
+			}
+			p.decision, p.answers = d, answers
 			return nil
 		}
 	}
 	return fmt.Errorf("no pending approval %s", id)
+}
+
+// checkAnswers takes answers to every question asked, and only to those,
+// when a question is accepted; declining one needs none.
+func checkAnswers(qs []event.Question, d Decision, answers map[string]string) error {
+	if qs == nil {
+		if answers != nil {
+			return errors.New("it asks no question")
+		}
+		return nil
+	}
+	if d != Accept {
+		return nil
+	}
+	asked := map[string]bool{}
+	for _, q := range qs {
+		asked[q.Question] = true
+		if strings.TrimSpace(answers[q.Question]) == "" {
+			return fmt.Errorf("no answer to %q", q.Question)
+		}
+	}
+	for q := range answers {
+		if !asked[q] {
+			return fmt.Errorf("%q is not asked", q)
+		}
+	}
+	return nil
 }
 
 func (c *claude) Next() [][]byte {
@@ -271,6 +304,15 @@ func (c *claude) Next() [][]byte {
 		case !p.approval:
 			resp = map[string]any{"subtype": "error", "request_id": p.requestID,
 				"error": "gero does not support control request " + p.subtype}
+		case p.decision == Accept && p.questions != nil:
+			// Claude reads the answers from the input it is handed back.
+			var in map[string]any
+			json.Unmarshal(p.input, &in)
+			if in == nil {
+				in = map[string]any{}
+			}
+			in["answers"] = p.answers
+			resp["response"] = map[string]any{"behavior": "allow", "updatedInput": in}
 		case p.decision == Accept:
 			resp["response"] = map[string]any{"behavior": "allow", "updatedInput": p.input}
 		case p.decision == Decline:
@@ -440,7 +482,10 @@ func (c *claude) observeIn(rec shimproto.Record, m clMessage) []event.Event {
 		var r struct {
 			RequestID string `json:"request_id"`
 			Response  struct {
-				Behavior string `json:"behavior"`
+				Behavior     string `json:"behavior"`
+				UpdatedInput struct {
+					Answers map[string]string `json:"answers"`
+				} `json:"updatedInput"`
 			} `json:"response"`
 		}
 		json.Unmarshal(m.Response, &r)
@@ -459,6 +504,9 @@ func (c *claude) observeIn(rec shimproto.Record, m clMessage) []event.Event {
 			}
 			e := c.ev(rec, event.KindApprovalDone)
 			e.Approval = &event.Approval{ID: p.publicID, Decision: decision}
+			if decision == "accept" {
+				e.Approval.Answers = r.Response.UpdatedInput.Answers
+			}
 			return []event.Event{e}
 		}
 	}
@@ -598,6 +646,15 @@ func (c *claude) observeOut(rec shimproto.Record, m clMessage) []event.Event {
 		c.blocked = true
 		e := c.ev(rec, event.KindApproval)
 		e.Item = r.ToolUseID
+		if qs := askedQuestions(r.ToolName, r.Input); qs != nil {
+			p.questions = qs
+			var texts []string
+			for _, q := range qs {
+				texts = append(texts, q.Question)
+			}
+			e.Approval = &event.Approval{ID: p.publicID, Kind: "question", Summary: strings.Join(texts, " / "), Questions: qs}
+			return []event.Event{e}
+		}
 		e.Approval = &event.Approval{ID: p.publicID, Kind: "tool", Summary: r.ToolName + ": " + toolSummary(r.ToolName, r.Input),
 			Detail: string(r.Input)}
 		return []event.Event{e}
@@ -638,6 +695,31 @@ func (c *claude) answered(raw json.RawMessage) {
 			c.models = append(c.models, Choice{Value: md.Value, Description: joinDesc(md.DisplayName, md.Description)})
 		}
 	}
+}
+
+// askedQuestions are an AskUserQuestion's, which Claude asks the person
+// through the prompt tool and reads the answers to from the input it gets
+// back; nil for any other tool, or one that asks nothing.
+func askedQuestions(tool string, input json.RawMessage) []event.Question {
+	if tool != "AskUserQuestion" {
+		return nil
+	}
+	var in struct {
+		Questions []struct {
+			Question    string         `json:"question"`
+			Header      string         `json:"header"`
+			Options     []event.Option `json:"options"`
+			MultiSelect bool           `json:"multiSelect"`
+		} `json:"questions"`
+	}
+	json.Unmarshal(input, &in)
+	var qs []event.Question
+	for _, q := range in.Questions {
+		if q.Question != "" {
+			qs = append(qs, event.Question{Question: q.Question, Header: q.Header, Options: q.Options, MultiSelect: q.MultiSelect})
+		}
+	}
+	return qs
 }
 
 // toolSummary picks the one input field a person scans a tool call for.

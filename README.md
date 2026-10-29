@@ -187,6 +187,13 @@ TUI and on the web), changed at any time:
   running agent picks the change up when its mode is set again or it
   restarts.
 
+In auto, ask and default, Claude can also ask you something it needs to
+know (its AskUserQuestion): the question and its options come to you, and
+you answer by picking options, or in words of your own on the web (the TUI
+takes picks by number; `gero agent answer ID APPROVAL ANSWER...` one per
+question). Declining tells Claude you would not say. In never Claude has no
+one to ask, so it does not.
+
 ## How it holds together
 
 - **gero-shim** is each isolation container's main process. It owns the agent

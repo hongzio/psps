@@ -208,8 +208,8 @@ func (c *Client) Files(ctx context.Context, id string) (api.Files, error) {
 	return v, c.do(ctx, "GET", "/v1/agents/"+url.PathEscape(id)+"/files", nil, &v)
 }
 
-func (c *Client) Approve(ctx context.Context, id, approval string, d driver.Decision) error {
-	return c.do(ctx, "POST", "/v1/agents/"+url.PathEscape(id)+"/approvals/"+url.PathEscape(approval), api.Decision{Decision: d}, nil)
+func (c *Client) Approve(ctx context.Context, id, approval string, d driver.Decision, answers map[string]string) error {
+	return c.do(ctx, "POST", "/v1/agents/"+url.PathEscape(id)+"/approvals/"+url.PathEscape(approval), api.Decision{Decision: d, Answers: answers}, nil)
 }
 
 func (c *Client) Interrupt(ctx context.Context, id string) error {

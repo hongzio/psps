@@ -137,7 +137,38 @@ func agentCmd(p paths.Paths, args []string) error {
 		if err != nil {
 			return err
 		}
-		return c.Approve(ctx, pos[0], pos[1], d)
+		return c.Approve(ctx, pos[0], pos[1], d, nil)
+
+	case "answer":
+		pos := parse(fs, args[1:])
+		if len(pos) < 3 {
+			return errors.New("usage: gero agent answer ID APPROVAL ANSWER... (one per question, in order)")
+		}
+		a, err := c.Agent(ctx, pos[0])
+		if err != nil {
+			return err
+		}
+		evs, err := c.Events(ctx, a.ID, 0)
+		if err != nil {
+			return err
+		}
+		var qs []event.Question
+		for _, e := range evs {
+			if e.Kind == event.KindApproval && e.Approval.ID == pos[1] {
+				qs = e.Approval.Questions
+			}
+		}
+		if qs == nil {
+			return fmt.Errorf("approval %s asks no question", pos[1])
+		}
+		if len(pos)-2 != len(qs) {
+			return fmt.Errorf("it asks %d question(s); give one answer each, in order", len(qs))
+		}
+		answers := map[string]string{}
+		for i, q := range qs {
+			answers[q.Question] = pos[2+i]
+		}
+		return c.Approve(ctx, a.ID, pos[1], driver.Accept, answers)
 
 	case "interrupt":
 		pos := parse(fs, args[1:])
@@ -461,9 +492,30 @@ func (p *printer) print(e event.Event) {
 		if a.Reason != "" {
 			p.line("", "reason: "+a.Reason)
 		}
-		p.line("", fmt.Sprintf("gero agent approve %s %s accept|decline|cancel", e.Agent, a.ID))
+		for i, q := range a.Questions {
+			p.line("", fmt.Sprintf("%d. %s", i+1, q.Question))
+			var labels []string
+			for _, o := range q.Options {
+				labels = append(labels, o.Label)
+			}
+			if len(labels) > 0 {
+				how := "one of"
+				if q.MultiSelect {
+					how = "any of, joined with \", \":"
+				}
+				p.line("", fmt.Sprintf("   %s %s (or your own words)", how, strings.Join(labels, " · ")))
+			}
+		}
+		if a.Questions != nil {
+			p.line("", fmt.Sprintf("gero agent answer %s %s ANSWER... · gero agent approve %s %s decline|cancel", e.Agent, a.ID, e.Agent, a.ID))
+		} else {
+			p.line("", fmt.Sprintf("gero agent approve %s %s accept|decline|cancel", e.Agent, a.ID))
+		}
 	case event.KindApprovalDone:
 		p.line("approval", e.Approval.ID+" "+e.Approval.Decision)
+		for q, ans := range e.Approval.Answers {
+			p.line("", q+" → "+ans)
+		}
 	case event.KindStatus:
 		s := string(e.Status)
 		if e.Text != "" {

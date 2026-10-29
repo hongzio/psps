@@ -439,7 +439,9 @@ function apply(c, e) {
     // entry's: it is kept as akind.
     case 'approval': add({ ...e.approval, akind: e.approval.kind, kind: 'approval' }); break
     case 'approval_done':
-      for (const en of c.entries) if (en.kind === 'approval' && en.id === e.approval.id) en.decision = e.approval.decision
+      for (const en of c.entries) {
+        if (en.kind === 'approval' && en.id === e.approval.id) Object.assign(en, { decision: e.approval.decision, answers: e.approval.answers })
+      }
       break
     case 'status':
       // Drivers report blocked after every approval and leave it only when
@@ -497,7 +499,7 @@ async function resend(a, en) {
 
 const pending = (c) => c.entries.filter((en) => en.kind === 'approval' && !en.decision)
 const decisionText = (d) => ({ accept: 'accepted', decline: 'declined', cancel: 'declined, turn stopped', void: 'the process ended' })[d] || d
-const askText = (kind) => ({ command: 'run a command', file_change: 'change files', tool: 'use a tool' })[kind] || kind
+const askText = (kind) => ({ command: 'run a command', file_change: 'change files', tool: 'use a tool', question: 'know' })[kind] || kind
 
 // markdown draws what an agent writes, which is GitHub markdown, from
 // marked's tokens. Raw HTML in it is shown as written. Only a web address
@@ -811,8 +813,8 @@ async function send(text) {
   })
 }
 
-async function decide(approvalID, decision) {
-  await guarded(() => api('POST', `/v1/agents/${S.sel}/approvals/${encodeURIComponent(approvalID)}`, { decision }))
+async function decide(approvalID, decision, answers) {
+  await guarded(() => api('POST', `/v1/agents/${S.sel}/approvals/${encodeURIComponent(approvalID)}`, { decision, answers }))
 }
 
 // ---- Rendering
@@ -1221,7 +1223,9 @@ function entryView(en, a, frozen) {
       return h('div', { class: 'approval' + (d ? ' decided' : '') },
         h('div', { class: 'head' }, `Approval: ${en.akind}${outcome}`),
         h('div', { class: 'what' }, en.summary),
-        en.reason && !d ? h('div', { class: 'why' }, en.reason) : null)
+        en.reason && !d ? h('div', { class: 'why' }, en.reason) : null,
+        (en.questions || []).filter((q) => en.answers && q.question in en.answers)
+          .map((q) => h('div', { class: 'why' }, `${q.question} → ${en.answers[q.question]}`)))
     }
     case 'interrupted': return h('div', { class: 'interrupted' }, '⏸ This turn was interrupted. Send a message to continue.')
     case 'error': return h('div', { class: 'error-line' }, '✗ ' + en.text)
@@ -1264,6 +1268,7 @@ function renderApprovals() {
   const p = pending(convo(a.id))
   if (!p.length) { box.replaceChildren(); return }
   const ap = p[0]
+  if (ap.questions) { renderQuestion(box, a, ap, p.length); return }
   box.replaceChildren(h('div', { class: 'composer pending-approval' },
     h('div', { class: 'composer-row' }, h('div', { class: 'approval grow' },
       h('div', { class: 'head' }, `${label(a)} asks to ${askText(ap.akind)}` + (p.length > 1 ? ` (+${p.length - 1} more)` : '')),
@@ -1273,6 +1278,63 @@ function renderApprovals() {
         h('button', { class: 'btn primary', onclick: () => decide(ap.id, 'accept') }, 'Accept'),
         h('button', { class: 'btn', onclick: () => decide(ap.id, 'decline') }, 'Decline'),
         h('button', { class: 'btn danger', onclick: () => decide(ap.id, 'cancel') }, 'Decline & stop'))))))
+}
+
+// renderQuestion is a question the agent asks (Claude's AskUserQuestion):
+// each of its questions with its options to pick, one or several, and a
+// box for an answer of one's own. What is picked lives in S, since the page
+// is redrawn as events arrive; a box being typed in keeps its caret.
+function renderQuestion(box, a, ap, n) {
+  if (S.answering?.id !== ap.id) S.answering = { id: ap.id, picked: {}, own: {} }
+  const st = S.answering
+  const typing = document.activeElement?.dataset?.q != null ? document.activeElement : null
+  const sel = typing && [typing.dataset.q, typing.selectionStart, typing.selectionEnd]
+  const answerTo = (q) => {
+    const own = (st.own[q.question] || '').trim()
+    if (!q.multi_select) return own || st.picked[q.question] || ''
+    return [...(st.picked[q.question] || []), ...(own ? [own] : [])].join(', ')
+  }
+  const answer = h('button', { class: 'btn primary' }, 'Answer')
+  const ready = () => { answer.disabled = !ap.questions.every((q) => answerTo(q)) }
+  answer.addEventListener('click', () => {
+    const answers = Object.fromEntries(ap.questions.map((q) => [q.question, answerTo(q)]))
+    decide(ap.id, 'accept', answers)
+  })
+  const question = (q, i) => {
+    const picked = st.picked[q.question]
+    const opts = (q.options || []).map((o) => {
+      const on = q.multi_select ? (picked || []).includes(o.label) : picked === o.label && !(st.own[q.question] || '').trim()
+      return h('button', {
+        class: 'btn small opt' + (on ? ' on' : ''), title: o.description || '', 'aria-pressed': String(on),
+        onclick: () => {
+          if (!q.multi_select) { st.picked[q.question] = o.label; st.own[q.question] = '' }
+          else st.picked[q.question] = on ? picked.filter((l) => l !== o.label) : [...(picked || []), o.label]
+          renderApprovals()
+        },
+      }, o.label)
+    })
+    const own = h('input', { class: 'own', value: st.own[q.question] || '', placeholder: q.multi_select ? 'And in your own words…' : 'Or in your own words…', autocomplete: 'off' })
+    own.dataset.q = String(i)
+    own.addEventListener('input', () => { st.own[q.question] = own.value; ready() })
+    own.addEventListener('keydown', (e) => { if (e.key === 'Enter' && !e.isComposing && !answer.disabled) answer.click() })
+    return h('div', { class: 'q' },
+      h('div', { class: 'q-head' }, q.header ? h('span', { class: 'chip' }, q.header) : null, q.question,
+        q.multi_select ? h('span', { class: 'hint' }, ' (any of them)') : null),
+      opts.length ? h('div', { class: 'opts' }, opts) : null, own)
+  }
+  box.replaceChildren(h('div', { class: 'composer pending-approval' },
+    h('div', { class: 'composer-row' }, h('div', { class: 'approval grow' },
+      h('div', { class: 'head' }, `${label(a)} asks you` + (n > 1 ? ` (+${n - 1} more)` : '')),
+      ap.questions.map(question),
+      h('div', { class: 'actions' },
+        answer,
+        h('button', { class: 'btn', onclick: () => decide(ap.id, 'decline') }, 'Decline'),
+        h('button', { class: 'btn danger', onclick: () => decide(ap.id, 'cancel') }, 'Decline & stop'))))))
+  ready()
+  if (sel) {
+    const el = box.querySelector(`input[data-q="${sel[0]}"]`)
+    if (el) { el.focus({ preventScroll: true }); el.setSelectionRange(sel[1], sel[2]) }
+  }
 }
 
 // ---- Completion in the message box: commands typed at the start of a

@@ -143,6 +143,7 @@ func (c *convo) apply(e event.Event) {
 		for _, en := range c.entries {
 			if en.kind == eApproval && en.approval.ID == e.Approval.ID {
 				en.approval.Decision = e.Approval.Decision
+				en.approval.Answers = e.Approval.Answers
 			}
 		}
 	case event.KindTurnEnd:
@@ -277,6 +278,11 @@ func (c *convo) render(width int, agentLabel string, th theme) string {
 			b.WriteString(lipgloss.NewStyle().Width(width).PaddingLeft(2).Render(line) + "\n")
 			if a.Reason != "" && a.Decision == "" {
 				b.WriteString(th.dim.Width(width-4).PaddingLeft(4).Render(a.Reason) + "\n")
+			}
+			for _, q := range a.Questions {
+				if ans, ok := a.Answers[q.Question]; ok {
+					b.WriteString(th.dim.Width(width-4).PaddingLeft(4).Render(q.Question+" → "+ans) + "\n")
+				}
 			}
 		case eNotice:
 			b.WriteString(th.dim.Width(width-2).PaddingLeft(2).Render("· "+en.text) + "\n")

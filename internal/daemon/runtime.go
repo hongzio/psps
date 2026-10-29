@@ -46,8 +46,10 @@ type runtime struct {
 	// changed isolation environment reaches it.
 	restartWhenIdle bool
 
-	outbox    []store.Pending
-	decisions map[string]driver.Decision
+	outbox []store.Pending
+	// decisions are made but not yet in the log, re-applied to a driver
+	// that attaches again.
+	decisions map[string]decision
 	// inbox is how many mails wait for the agent: read one per turn,
 	// oldest first, whenever it is idle. crons is how many of its crons
 	// have a run waiting for it, sent the same way after the mail.
@@ -73,7 +75,7 @@ func (m *Manager) newRuntime(a store.Agent) (*runtime, error) {
 	}
 	ctx, cancel := context.WithCancel(m.ctx)
 	return &runtime{m: m, ctx: ctx, cancel: cancel, agent: a, drv: drv, outbox: outbox,
-		decisions: map[string]driver.Decision{}, inbox: inbox, crons: crons}, nil
+		decisions: map[string]decision{}, inbox: inbox, crons: crons}, nil
 }
 
 func (r *runtime) loop() {
@@ -211,7 +213,7 @@ func (r *runtime) catchUpLocked() {
 		}
 	}
 	for id, d := range r.decisions {
-		if r.drv.Approve(id, d) != nil {
+		if r.drv.Approve(id, d.d, d.answers) != nil {
 			delete(r.decisions, id) // void: its process is gone
 		}
 	}
@@ -437,16 +439,21 @@ func (r *runtime) envChanged() {
 	r.kickLocked()
 }
 
-func (r *runtime) approve(id string, d driver.Decision) error {
+type decision struct {
+	d       driver.Decision
+	answers map[string]string
+}
+
+func (r *runtime) approve(id string, d driver.Decision, answers map[string]string) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	if !r.caughtUp {
 		return errors.New("agent is not connected; try again shortly")
 	}
-	if err := r.drv.Approve(id, d); err != nil {
-		return err
+	if err := r.drv.Approve(id, d, answers); err != nil {
+		return badRequest(err)
 	}
-	r.decisions[id] = d
+	r.decisions[id] = decision{d, answers}
 	r.kickLocked()
 	return nil
 }

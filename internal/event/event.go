@@ -80,6 +80,26 @@ type Approval struct {
 	Reason   string `json:"reason,omitempty"`   // why the agent wants it
 	Detail   string `json:"detail,omitempty"`   // full input, if any
 	Decision string `json:"decision,omitempty"` // on approval_done
+	// Questions are what a question (kind "question") asks the person:
+	// accepting it is answering every one.
+	Questions []Question `json:"questions,omitempty"`
+	// Answers, on a question's approval_done, are each question's text to
+	// what the person answered.
+	Answers map[string]string `json:"answers,omitempty"`
+}
+
+// Question is one of Claude's AskUserQuestion: options to pick from, or
+// to pick several of, and an answer of the person's own is taken too.
+type Question struct {
+	Question    string   `json:"question"`
+	Header      string   `json:"header,omitempty"`
+	Options     []Option `json:"options,omitempty"`
+	MultiSelect bool     `json:"multi_select,omitempty"`
+}
+
+type Option struct {
+	Label       string `json:"label"`
+	Description string `json:"description,omitempty"`
 }
 
 // Rewind names the events a rewind took out of the conversation: those

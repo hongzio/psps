@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"reflect"
 	"sort"
 	"strings"
 	"sync"
@@ -29,6 +30,7 @@ type fakeBackend struct {
 	events   map[string][]event.Event
 	sent     []string
 	approved []string
+	answers  []map[string]string
 	created  []api.CreateAgent
 	options  []driver.Options
 
@@ -77,10 +79,11 @@ func (f *fakeBackend) Send(_ context.Context, id, text string) (api.Sent, error)
 	f.sent = append(f.sent, id+":"+text)
 	return api.Sent{}, nil
 }
-func (f *fakeBackend) Approve(_ context.Context, id, ap string, d driver.Decision) error {
+func (f *fakeBackend) Approve(_ context.Context, id, ap string, d driver.Decision, answers map[string]string) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.approved = append(f.approved, id+":"+ap+":"+string(d))
+	f.answers = append(f.answers, answers)
 	return nil
 }
 func (f *fakeBackend) Interrupt(context.Context, string) error { return nil }
@@ -736,6 +739,48 @@ func TestApprovalFlow(t *testing.T) {
 	defer h.be.mu.Unlock()
 	if len(h.be.approved) != 1 || h.be.approved[0] != "bbbb:1.7:accept" {
 		t.Fatalf("approved = %v", h.be.approved)
+	}
+}
+
+// A question is answered one question at a time: a number picks, or
+// toggles where several may be picked and enter goes on; y does not
+// accept it unanswered.
+func TestQuestionIsAnswered(t *testing.T) {
+	h := newHarness(t)
+	h.be.mu.Lock()
+	h.be.events["bbbb"] = append(h.be.events["bbbb"],
+		event.Event{ID: 2, Agent: "bbbb", Kind: event.KindApproval, Approval: &event.Approval{ID: "1.8", Kind: "question",
+			Summary: "Which fruit? / Which colors?", Questions: []event.Question{
+				{Question: "Which fruit?", Header: "Fruit", Options: []event.Option{{Label: "Apple"}, {Label: "Banana"}}},
+				{Question: "Which colors?", MultiSelect: true, Options: []event.Option{{Label: "Red"}, {Label: "Green"}, {Label: "Blue"}}},
+			}}},
+		event.Event{ID: 3, Agent: "bbbb", Kind: event.KindStatus, Status: event.StatusBlocked})
+	h.be.mu.Unlock()
+	h.m.openID = ""
+	h.m.selectItem("bbbb")
+	h.drainFeed()
+	h.key("ctrl+a")
+	if v := h.m.View(); !strings.Contains(v, "(1/2) Fruit: Which fruit?") || !strings.Contains(v, "2 Banana") {
+		t.Fatalf("first question not shown:\n%s", v)
+	}
+	h.key("y")
+	h.key("2")
+	if v := h.m.View(); !strings.Contains(v, "(2/2) Which colors?") || !strings.Contains(v, "1 [ ] Red") {
+		t.Fatalf("second question not shown:\n%s", v)
+	}
+	h.key("1")
+	h.key("3")
+	h.key("2")
+	h.key("2")
+	if !strings.Contains(h.m.View(), "3 [x] Blue") {
+		t.Fatalf("picks not shown:\n%s", h.m.View())
+	}
+	h.key("enter")
+	h.be.mu.Lock()
+	defer h.be.mu.Unlock()
+	want := map[string]string{"Which fruit?": "Banana", "Which colors?": "Red, Blue"}
+	if len(h.be.approved) != 1 || h.be.approved[0] != "bbbb:1.8:accept" || !reflect.DeepEqual(h.be.answers[0], want) {
+		t.Fatalf("approved = %v %v", h.be.approved, h.be.answers)
 	}
 }
 

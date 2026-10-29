@@ -143,7 +143,10 @@ type Driver interface {
 	// agent with nothing in flight goes back, and the log says when it did
 	// (a rewind event).
 	Rewind(src int64, text string) error
-	Approve(id string, d Decision) error
+	// Approve decides a pending approval. answers are a question's (each
+	// question's text to its answer), required to accept one and refused
+	// for anything else.
+	Approve(id string, d Decision, answers map[string]string) error
 	Interrupt()
 	SetOptions(o Options)
 	// Hold keeps queued messages from starting turns while on. Everything

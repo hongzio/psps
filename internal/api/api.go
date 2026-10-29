@@ -186,6 +186,11 @@ type PutCron struct {
 
 type Decision struct {
 	Decision driver.Decision `json:"decision"`
+	// Answers answer a question (an approval of kind "question"): each
+	// question's text to an option's label, labels joined with ", " where
+	// several may be picked, or an answer of the person's own. Accepting
+	// one needs every question answered.
+	Answers map[string]string `json:"answers,omitempty"`
 }
 
 type Error struct {

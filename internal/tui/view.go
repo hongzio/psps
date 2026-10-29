@@ -181,11 +181,41 @@ func (m *Model) renderAgent(w int) string {
 		}
 		line1 := th.warn.Render("⚠ "+ap.Kind+more+": ") + truncate(ap.Summary, w-lipgloss.Width(ap.Kind)-12)
 		line2 := th.dim.Render(fmt.Sprintf("  %s to answer", k.Label("approvals")))
-		if m.approving {
+		switch {
+		case m.approving && ap.Questions != nil:
+			an := m.answeringFor(ap)
+			q := ap.Questions[an.q]
+			head := q.Question
+			if q.Header != "" {
+				head = q.Header + ": " + head
+			}
+			line1 = th.warn.Render(fmt.Sprintf("? (%d/%d) ", an.q+1, len(ap.Questions))) + truncate(head, w-10)
+			var opts []string
+			for i, o := range q.Options {
+				mark := ""
+				if q.MultiSelect {
+					mark = "[ ] "
+					if an.picked[i] {
+						mark = "[x] "
+					}
+				}
+				opts = append(opts, fmt.Sprintf("%d %s%s", i+1, mark, o.Label))
+			}
+			parts = append(parts, line1, "  "+truncate(strings.Join(opts, "  "), w-2))
+			pick := "number picks"
+			if q.MultiSelect {
+				pick = "numbers pick · enter next"
+			}
+			line2 = th.selected.Render(fmt.Sprintf(" %s · %s decline (then say it in a message) · %s decline and stop · %s later ",
+				pick, k.Label("decline"), k.Label("cancel_turn"), k.Label("back")))
+			parts = append(parts, line2)
+		case m.approving:
 			line2 = th.selected.Render(fmt.Sprintf(" %s accept · %s decline · %s decline and stop · %s later ",
 				k.Label("accept"), k.Label("decline"), k.Label("cancel_turn"), k.Label("back")))
+			parts = append(parts, line1, line2)
+		default:
+			parts = append(parts, line1, line2)
 		}
-		parts = append(parts, line1, line2)
 	}
 	if m.settings != nil {
 		parts = append(parts, th.title.Render("Agent settings"), strings.TrimRight(m.settings.render(th, w), "\n"))

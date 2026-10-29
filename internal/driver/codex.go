@@ -156,7 +156,10 @@ func (c *codex) Rewind(src int64, text string) error {
 // changed.
 func (c *codex) SetOptions(o Options) { c.opts, c.defaults = o, nil }
 
-func (c *codex) Approve(id string, d Decision) error {
+func (c *codex) Approve(id string, d Decision, answers map[string]string) error {
+	if answers != nil {
+		return fmt.Errorf("approval %s asks no question", id)
+	}
 	for _, p := range c.pending {
 		if p.publicID == id && p.approval {
 			if p.decision != "" {

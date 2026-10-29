@@ -939,12 +939,12 @@ func (m *Manager) Rewind(id string, eventID int64, text string) error {
 	return r.rewind(e.Src, text)
 }
 
-func (m *Manager) Approve(id, approvalID string, d driver.Decision) error {
+func (m *Manager) Approve(id, approvalID string, d driver.Decision, answers map[string]string) error {
 	r, err := m.runtime(id)
 	if err != nil {
 		return err
 	}
-	return r.approve(approvalID, d)
+	return r.approve(approvalID, d, answers)
 }
 
 func (m *Manager) Interrupt(id string) error {

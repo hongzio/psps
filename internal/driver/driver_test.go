@@ -203,7 +203,7 @@ func TestCodexLiveHandshake(t *testing.T) {
 	if ap == nil || ap.Summary != "rm -rf build" {
 		t.Fatalf("approval event = %+v", ap)
 	}
-	if err := d.Approve(ap.ID, Accept); err != nil {
+	if err := d.Approve(ap.ID, Accept, nil); err != nil {
 		t.Fatal(err)
 	}
 	lines := d.Next()
@@ -266,7 +266,7 @@ func TestClaudeTurnWithApproval(t *testing.T) {
 		t.Fatalf("status = %s, want blocked", d.State().Status)
 	}
 	id := evs[0].Approval.ID
-	if err := d.Approve(id, Accept); err != nil {
+	if err := d.Approve(id, Accept, nil); err != nil {
 		t.Fatal(err)
 	}
 	reply := d.Next()
@@ -304,6 +304,82 @@ func TestClaudeTurnWithApproval(t *testing.T) {
 	d.Observe(tp.exited(0))
 	if argv := strings.Join(d.Command(), " "); !strings.Contains(argv, "--resume "+d.State().SessionID) {
 		t.Fatalf("second command = %s", argv)
+	}
+}
+
+// AskUserQuestion, as Claude Code 2.1.311 asks it through the prompt tool:
+// accepting it is answering, and Claude reads the answers from the input
+// it is handed back.
+const askInput = `{"questions":[{"header":"Fruit","multiSelect":false,"options":[{"description":"Apple","label":"Apple"},{"description":"Banana","label":"Banana"}],"question":"Which fruit do you like?"},{"header":"Colors","multiSelect":true,"options":[{"description":"Red","label":"Red"},{"description":"Green","label":"Green"},{"description":"Blue","label":"Blue"}],"question":"Which colors do you like?"}]}`
+
+func TestClaudeQuestionIsAnswered(t *testing.T) {
+	tp := &tape{}
+	d := newClaude("a1", "", Options{Approvals: ApprovalsAsk})
+	d.Observe(tp.started())
+	d.Send("ask me")
+	for _, l := range d.Next() {
+		d.Observe(tp.in(string(l)))
+	}
+	evs := d.Observe(tp.out(`{"type":"control_request","request_id":"r1","request":{"subtype":"can_use_tool","tool_name":"AskUserQuestion","input":` + askInput + `,"tool_use_id":"tu_1"}}`))
+	ap := evs[0].Approval
+	want := []event.Question{
+		{Question: "Which fruit do you like?", Header: "Fruit", Options: []event.Option{{Label: "Apple", Description: "Apple"}, {Label: "Banana", Description: "Banana"}}},
+		{Question: "Which colors do you like?", Header: "Colors", MultiSelect: true,
+			Options: []event.Option{{Label: "Red", Description: "Red"}, {Label: "Green", Description: "Green"}, {Label: "Blue", Description: "Blue"}}},
+	}
+	if ap.Kind != "question" || ap.Summary != "Which fruit do you like? / Which colors do you like?" || !reflect.DeepEqual(ap.Questions, want) {
+		t.Fatalf("approval = %+v", ap)
+	}
+
+	// Accepting is answering every question, and nothing else.
+	for _, bad := range []map[string]string{nil, {"Which fruit do you like?": "Banana"},
+		{"Which fruit do you like?": "Banana", "Which colors do you like?": " "},
+		{"Which fruit do you like?": "Banana", "Which colors do you like?": "Red", "Why?": "no"}} {
+		if err := d.Approve(ap.ID, Accept, bad); err == nil {
+			t.Fatalf("accepted with %v", bad)
+		}
+	}
+	answers := map[string]string{"Which fruit do you like?": "Banana", "Which colors do you like?": "Red, Blue"}
+	if err := d.Approve(ap.ID, Accept, answers); err != nil {
+		t.Fatal(err)
+	}
+	reply := d.Next()
+	var cr struct {
+		Response struct {
+			Response struct {
+				Behavior     string `json:"behavior"`
+				UpdatedInput struct {
+					Questions []any             `json:"questions"`
+					Answers   map[string]string `json:"answers"`
+				} `json:"updatedInput"`
+			} `json:"response"`
+		} `json:"response"`
+	}
+	if len(reply) != 1 || json.Unmarshal(reply[0], &cr) != nil {
+		t.Fatalf("reply = %s", reply)
+	}
+	if r := cr.Response.Response; r.Behavior != "allow" || len(r.UpdatedInput.Questions) != 2 || !reflect.DeepEqual(r.UpdatedInput.Answers, answers) {
+		t.Fatalf("control_response = %s", reply[0])
+	}
+	// The log shows what was answered, for whoever reads it later.
+	done := d.Observe(tp.in(string(reply[0])))
+	if len(done) == 0 || done[0].Kind != event.KindApprovalDone || done[0].Approval.Decision != "accept" ||
+		!reflect.DeepEqual(done[0].Approval.Answers, answers) {
+		t.Fatalf("done = %+v", done)
+	}
+}
+
+func TestClaudeQuestionDeclinedNeedsNoAnswers(t *testing.T) {
+	tp := &tape{}
+	d := newClaude("a1", "", Options{Approvals: ApprovalsAsk})
+	d.Observe(tp.started())
+	evs := d.Observe(tp.out(`{"type":"control_request","request_id":"r1","request":{"subtype":"can_use_tool","tool_name":"AskUserQuestion","input":` + askInput + `}}`))
+	if err := d.Approve(evs[0].Approval.ID, Decline, nil); err != nil {
+		t.Fatal(err)
+	}
+	evs = d.Observe(tp.out(`{"type":"control_request","request_id":"r2","request":{"subtype":"can_use_tool","tool_name":"Bash","input":{"command":"ls"}}}`))
+	if err := d.Approve(evs[0].Approval.ID, Accept, map[string]string{"x": "y"}); err == nil {
+		t.Fatal("answers taken for a tool")
 	}
 }
 
