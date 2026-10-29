@@ -158,6 +158,16 @@ func (r *runtime) observe(rec shimproto.Record, liveAfter int64) {
 			}
 		case event.KindApprovalDone:
 			delete(r.decisions, e.Approval.ID)
+		case event.KindStatus:
+			// Something new (a turn, an approval, a failure) wants a look
+			// again. A record replayed from before does not.
+			if r.agent.Parked && rec.Seq > r.agent.LastSrc && e.Status != event.StatusIdle && e.Status != event.StatusStarting {
+				if err := r.m.store.SetParked(r.agent.ID, false); err != nil {
+					r.m.log.Printf("agent %s: unpark: %v", r.agent.ID, err)
+				} else {
+					r.agent.Parked = false
+				}
+			}
 		}
 	}
 
@@ -492,6 +502,20 @@ func (r *runtime) relabel(name, handle *string) error {
 	if handle != nil {
 		r.agent.Handle = *handle
 	}
+	return nil
+}
+
+// park parks the agent while it is idle, or takes it out of being parked.
+func (r *runtime) park(on bool) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if st := r.drv.State().Status; on && st != event.StatusIdle {
+		return httpError{http.StatusConflict, fmt.Errorf("agent %s is %s; only an idle agent is parked", r.agent.ID, st)}
+	}
+	if err := r.m.store.SetParked(r.agent.ID, on); err != nil {
+		return err
+	}
+	r.agent.Parked = on
 	return nil
 }
 

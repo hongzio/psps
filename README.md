@@ -88,7 +88,9 @@ bin/gero web          # opens http://127.0.0.1:4376 signed in
 The same agents, conversations, approvals, isolation settings, accounts
 (what Claude and Codex log in with) and credential proxies (the Services page, and each isolation's
 services), laid out for a
-desktop browser or a phone. The daemon serves it on loopback only, and
+desktop browser or a phone. In the sidebar an idle agent's grey dot means it
+wants a look; tapping it parks the agent (a dimmer grey: it needs none), and
+tapping again undoes that. Its next turn takes it out of being parked. The daemon serves it on loopback only, and
 every API call needs the token `gero web` signs you in with (`--rotate`
 issues a new one and signs every browser out). To use it from a phone,
 expose it to your tailnet yourself — `gero web` prints the exact

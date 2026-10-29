@@ -3,6 +3,7 @@ package tui
 import (
 	"github.com/charmbracelet/lipgloss"
 
+	"github.com/hongzio/gero/internal/api"
 	"github.com/hongzio/gero/internal/event"
 )
 
@@ -51,5 +52,14 @@ func (th theme) statusIcon(s event.Status, frame int) string {
 	case event.StatusError:
 		return th.err.Render("✗")
 	}
-	return th.dim.Render("○")
+	return "○"
+}
+
+// agentIcon is statusIcon, but a parked agent's idle is dim: it needs no
+// look.
+func (th theme) agentIcon(a api.Agent, frame int) string {
+	if a.Parked && a.State.Status == event.StatusIdle {
+		return th.dim.Render("○")
+	}
+	return th.statusIcon(a.State.Status, frame)
 }

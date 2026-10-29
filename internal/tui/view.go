@@ -7,6 +7,8 @@ import (
 
 	"github.com/charmbracelet/lipgloss"
 	"github.com/charmbracelet/x/ansi"
+
+	"github.com/hongzio/gero/internal/event"
 )
 
 func (m *Model) View() string {
@@ -65,7 +67,7 @@ func (m *Model) renderSidebar(w int) string {
 		if a.Problem != "" {
 			meta = "  " + th.err.Render("! ") + truncate(a.Problem, w-6)
 		}
-		row(a.ID, th.statusIcon(a.State.Status, m.frame)+" "+title(a), th.dim.Render(meta))
+		row(a.ID, th.agentIcon(a, m.frame)+" "+title(a), th.dim.Render(meta))
 	}
 	b.WriteString("\n")
 	arrow := "▸"
@@ -151,7 +153,10 @@ func (m *Model) renderAgent(w int) string {
 	a, _ := m.agent(m.openID)
 	c := m.convo(a.ID)
 
-	status := th.statusIcon(a.State.Status, m.frame) + " " + string(a.State.Status)
+	status := th.agentIcon(a, m.frame) + " " + string(a.State.Status)
+	if a.Parked && a.State.Status == event.StatusIdle {
+		status = th.agentIcon(a, m.frame) + " parked"
+	}
 	if a.ArchivedAt != nil {
 		status = th.dim.Render("archived")
 	}

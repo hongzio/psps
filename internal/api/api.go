@@ -115,6 +115,9 @@ type UpdateAgent struct {
 	// Handle is the agent's own ID, unique among all agents; "" takes it
 	// away, leaving the key gero gave it.
 	Handle *string `json:"handle,omitempty"`
+	// Parked parks an idle agent: it needs no look until it does something
+	// again, which takes it out of being parked.
+	Parked *bool `json:"parked,omitempty"`
 }
 
 type CreateAgent struct {

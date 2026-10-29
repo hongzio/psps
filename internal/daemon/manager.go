@@ -1019,6 +1019,17 @@ func (m *Manager) UpdateAgent(idOrPrefix string, req api.UpdateAgent) (api.Agent
 	if handle != nil {
 		a.Handle = *handle
 	}
+	if req.Parked != nil {
+		// Only a live agent is idle or not; an archived one waits for
+		// nothing.
+		if r == nil {
+			return api.Agent{}, httpError{http.StatusConflict, fmt.Errorf("agent %s is archived; only an idle agent is parked", a.ID)}
+		}
+		if err := r.park(*req.Parked); err != nil {
+			return api.Agent{}, err
+		}
+		a.Parked = *req.Parked
+	}
 	return m.viewOf(a)
 }
 

@@ -1783,3 +1783,49 @@ func TestDirsCompleteWhatIsTyped(t *testing.T) {
 		t.Fatal("a relative path listed")
 	}
 }
+
+// An idle agent is parked on the operator's word and stays so across a
+// restart; its next turn wants a look again. A busy or archived one is
+// not parked.
+func TestAParkedAgentWantsALookOnceItWorksAgain(t *testing.T) {
+	e := newTestEnv(t)
+	ctx := context.Background()
+	m, stop := e.daemon()
+	a, err := m.CreateAgent(ctx, api.CreateAgent{Isolation: "dev", Kind: driver.Codex, Prompt: "one"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	e.waitFor("first answer", func() bool { return e.hasAssistant(a.ID, "echo: one") })
+	idle := func() bool { v, _ := m.Agent(a.ID); return v.State.Status == event.StatusIdle }
+	e.waitFor("idle", idle)
+	park := true
+	if v, err := m.UpdateAgent(a.ID, api.UpdateAgent{Parked: &park}); err != nil || !v.Parked {
+		t.Fatalf("park: %+v, %v", v.Agent, err)
+	}
+	stop()
+
+	// A daemon that starts again replays the log, which is not news.
+	m, stop = e.daemon()
+	defer stop()
+	e.waitFor("idle again", func() bool { v, _ := m.Agent(a.ID); return v.State.Status == event.StatusIdle })
+	if v, _ := m.Agent(a.ID); !v.Parked {
+		t.Fatal("a restart took it out of being parked")
+	}
+	if err := m.Send(a.ID, "two"); err != nil {
+		t.Fatal(err)
+	}
+	e.waitFor("second answer", func() bool { return e.hasAssistant(a.ID, "echo: two") })
+	if v, _ := m.Agent(a.ID); v.Parked {
+		t.Fatal("still parked after a turn")
+	}
+	if st, _ := e.st.Agent(a.ID); st.Parked {
+		t.Fatal("still parked in the store")
+	}
+
+	if err := m.Archive(ctx, a.ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := m.UpdateAgent(a.ID, api.UpdateAgent{Parked: &park}); err == nil {
+		t.Fatal("an archived agent parked")
+	}
+}

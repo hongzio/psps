@@ -856,13 +856,38 @@ function renderSidebar() {
   const live = S.agents.filter((a) => !a.archived_at)
   const archived = S.agents.filter((a) => a.archived_at)
   const row = (a) => {
-    const st = a.archived_at ? 'idle' : a.state?.status || 'idle'
+    const live = a.archived_at ? 'idle' : a.state?.status || 'idle'
+    const st = live === 'idle' && a.parked ? 'parked' : live
+    // An idle agent's dot parks it, a parked one's takes it back: it is
+    // idle and wants a look again, as it does once it next does anything.
+    const togglable = !a.archived_at && live === 'idle'
+    const dot = h('span', {
+      class: 'dot ' + st + (togglable ? ' toggle' : ''), role: togglable ? 'button' : 'img', 'aria-label': st,
+      title: !togglable ? st : st === 'parked' ? 'parked: needs no look; tap to make it idle' : 'idle: wants a look; tap to park it',
+    })
+    if (togglable) {
+      dot.addEventListener('click', async (e) => {
+        e.stopPropagation()
+        const want = !a.parked
+        a.parked = want
+        renderSidebar()
+        await guarded(async () => {
+          try {
+            await api('PATCH', `/v1/agents/${a.id}`, { parked: want })
+          } catch (x) {
+            a.parked = !want
+            renderSidebar()
+            throw x
+          }
+        })
+      })
+    }
     const meta = a.problem ? h('span', { class: 'problem' }, '⚠ ' + a.problem)
       : `${shownID(a)} · ${a.isolation}` + (a.inbox ? ` · ✉ ${a.inbox}` : '')
     return h('button', {
       class: 'agent' + (a.id === S.sel && S.view === 'agent' ? ' selected' : '') + (a.archived_at ? ' archived' : ''),
       onclick: () => select(a.id),
-    }, h('span', { class: 'dot ' + st, title: st, 'aria-label': st, role: 'img' }), h('span', { class: 'name' }, agentTitle(a)), h('span', { class: 'meta' }, meta))
+    }, dot, h('span', { class: 'name' }, agentTitle(a)), h('span', { class: 'meta' }, meta))
   }
   el.replaceChildren(
     h('div', { class: 'brand' }, 'gero', h('span', { class: 'count' }, `${live.length} agent${live.length === 1 ? '' : 's'}`)),

@@ -64,6 +64,9 @@ type Agent struct {
 	SessionID   string         `json:"session_id,omitempty"`
 	CreatedAt   time.Time      `json:"created_at"`
 	ArchivedAt  *time.Time     `json:"archived_at,omitempty"`
+	// Parked: idle, and the operator has said it needs no look until it
+	// does something again.
+	Parked bool `json:"parked,omitempty"`
 	// LastSrc is the newest shim log Seq whose events are committed.
 	LastSrc int64 `json:"-"`
 }
@@ -96,7 +99,8 @@ CREATE TABLE IF NOT EXISTS agents (
 	session_id  TEXT NOT NULL DEFAULT '',
 	last_src    INTEGER NOT NULL DEFAULT 0,
 	created_at  TEXT NOT NULL,
-	archived_at TEXT
+	archived_at TEXT,
+	parked      INTEGER NOT NULL DEFAULT 0
 );
 CREATE TABLE IF NOT EXISTS outbox (
 	id         INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -161,6 +165,7 @@ var added = []struct{ table, column, def string }{
 	{"mail", "delivered_at", "TEXT"},
 	{"mail", "discarded_at", "TEXT"},
 	{"outbox", "rewind", "INTEGER NOT NULL DEFAULT 0"},
+	{"agents", "parked", "INTEGER NOT NULL DEFAULT 0"},
 }
 
 func hasColumn(db interface {
@@ -441,14 +446,14 @@ func (s *Store) AgentByHandle(handle string) (Agent, error) {
 	return scanAgent(s.db.QueryRow(`SELECT `+agentCols+` FROM agents WHERE handle = ?`, handle))
 }
 
-const agentCols = `id, COALESCE(handle, ''), name, kind, isolation, workdir, repo, options, session_id, last_src, created_at, archived_at`
+const agentCols = `id, COALESCE(handle, ''), name, kind, isolation, workdir, repo, options, session_id, last_src, created_at, archived_at, parked`
 
 func scanAgent(row interface{ Scan(...any) error }) (Agent, error) {
 	var a Agent
 	var kind, opts, created string
 	var archived sql.NullString
 	err := row.Scan(&a.ID, &a.Handle, &a.Name, &kind, &a.IsolationID, &a.Workdir, &a.Repo, &opts, &a.SessionID,
-		&a.LastSrc, &created, &archived)
+		&a.LastSrc, &created, &archived, &a.Parked)
 	if errors.Is(err, sql.ErrNoRows) {
 		return a, ErrNotFound
 	}
@@ -499,6 +504,12 @@ func (s *Store) DeleteAgent(id string) error {
 		}
 	}
 	return tx.Commit()
+}
+
+// SetParked parks an agent or takes it out of being parked.
+func (s *Store) SetParked(id string, parked bool) error {
+	_, err := s.db.Exec(`UPDATE agents SET parked = ? WHERE id = ?`, parked, id)
+	return err
 }
 
 func (s *Store) SetOptions(id string, o driver.Options) error {
