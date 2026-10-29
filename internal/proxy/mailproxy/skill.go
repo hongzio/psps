@@ -6,7 +6,7 @@ package mailproxy
 const skill = `---
 name: gero-mail
 description: How to write to another gero agent from this isolation (mail), and
-  what a message starting "[gero mail #" is. Use when asked to mail, message,
+  what a message that starts with "[gero mail" is. Use when asked to mail, message,
   tell or ask another agent something (gero agents have ids like brave-otter),
   when work needs another agent, or to answer a mail. Claude Code's own
   SendMessage and ListAgents never reach gero agents.
