@@ -155,10 +155,23 @@ func envCmd(p paths.Paths, args []string) error {
 		return nil
 
 	case "choices":
-		if len(args) != 4 {
-			return errors.New("usage: gero env choices SERVICE NAME FIELD  (e.g. gero env choices git work repos)")
+		const usage = "usage: gero env choices SERVICE NAME FIELD [flags]  (e.g. gero env choices git work repos; flags stand in for the env's own: gero env choices aws dev role_arn --aws-profile admin)"
+		if len(args) < 2 {
+			return errors.New(usage)
 		}
-		cs, err := c.Choices(ctx, args[1], args[3], api.ChoicesRequest{Env: args[2]})
+		svc, err := reg.Get(args[1])
+		if err != nil {
+			return err
+		}
+		patch, pos, err := parsePatch("env choices "+svc.Name(), svc.Fields(), args[2:])
+		if err != nil {
+			return err
+		}
+		if len(pos) != 2 {
+			return errors.New(usage)
+		}
+		name, field := pos[0], pos[1]
+		cs, err := c.Choices(ctx, svc.Name(), field, api.ChoicesRequest{Env: name, Set: patch.Set})
 		if err != nil {
 			return err
 		}
@@ -169,7 +182,19 @@ func envCmd(p paths.Paths, args []string) error {
 		if err := tw.Flush(); err != nil {
 			return err
 		}
-		fmt.Fprintf(os.Stderr, "%d; list them with --%s, e.g. gero env edit %s %s --%s VALUE\n", len(cs), flagOf(args[1], args[3]), args[1], args[2], flagOf(args[1], args[3]))
+		f := fieldOf(svc.Fields(), field)
+		switch {
+		case f.Kind == proxy.List && len(f.Caps) > 0:
+			var names []string
+			for _, c := range f.Caps {
+				names = append(names, c.Name)
+			}
+			fmt.Fprintf(os.Stderr, "%d; list them with --%s, e.g. gero env edit %s %s --%s VALUE  (VALUE=%s narrows one)\n", len(cs), f.Flag, svc.Name(), name, f.Flag, strings.Join(names, ","))
+		case f.Kind == proxy.List:
+			fmt.Fprintf(os.Stderr, "%d; list them with --%s, e.g. gero env edit %s %s --%s VALUE\n", len(cs), f.Flag, svc.Name(), name, f.Flag)
+		default:
+			fmt.Fprintf(os.Stderr, "%d; pick one with --%s, e.g. gero env edit %s %s --%s VALUE\n", len(cs), f.Flag, svc.Name(), name, f.Flag)
+		}
 		return nil
 
 	case "check":
@@ -413,14 +438,13 @@ func orStr(s, def string) string {
 	return s
 }
 
-// flagOf is the CLI flag of a service's field.
-func flagOf(service, field string) string {
-	if svc, err := services.Registry().Get(service); err == nil {
-		for _, f := range svc.Fields() {
-			if f.Key == field {
-				return f.Flag
-			}
+// fieldOf is a service's field by key; one it does not have is spelled as
+// its own flag.
+func fieldOf(fields []proxy.Field, key string) proxy.Field {
+	for _, f := range fields {
+		if f.Key == key {
+			return f
 		}
 	}
-	return field
+	return proxy.Field{Key: key, Flag: key}
 }

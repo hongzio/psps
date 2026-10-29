@@ -1270,8 +1270,8 @@ function fieldControls(fields, cur, adding, lookup, self) {
     const v = cur[f.key]
     let ctl
     let read
-    if (f.lookup && lookup) {
-      const lc = lookup(f, Array.isArray(v) ? v : [])
+    if (f.lookup && lookup && (f.kind === 'list' || (f.kind === 'string' && !f.choices?.length))) {
+      const lc = lookup(f, v)
       ctl = lc.el
       read = lc.read
     } else if (f.kind === 'bool') {
@@ -1326,42 +1326,83 @@ function fieldControls(fields, cur, adding, lookup, self) {
   return { rows, patch: (skip) => { const p = { set: {}, clear: [] }; readers.forEach((r) => { if (r.key !== skip) r.read(p) }); return p } }
 }
 
-// lookupControl is a Lookup field: the choices the service finds with the
-// env's credential (the repositories a token opens), to tick. Until there
-// is a credential to look with, the box is disabled and says why.
-// lookupRequest() is the request for the credential the form has right now.
+// lookupControl is a List lookup field: the choices the service finds
+// (the repositories a token opens, an account's instances), to tick. An
+// entry of a field with caps narrows itself in place, spelled
+// NAME=CAP,CAP. What the service cannot list is typed instead, and why is
+// said. lookupRequest() is the request for what the form has right now.
 function lookupControl(s, f, have, lookupRequest) {
+  have = Array.isArray(have) ? have : []
   const box = h('div', { class: 'lookup' })
-  const chosen = new Set(have)
+  const caps = (f.caps || []).map((c) => c.name)
+  // name → the capabilities it keeps; null keeps them all.
+  const chosen = new Map()
+  const parse = (v) => {
+    const i = caps.length ? v.indexOf('=') : -1
+    if (i < 0) return [v, null]
+    const keep = v.slice(i + 1).split(',').map((x) => x.trim()).filter(Boolean)
+    // A capability the field does not have stays part of the name, for
+    // the service to refuse, rather than read as all of them.
+    if (!keep.length || keep.some((c) => !caps.includes(c))) return [v, null]
+    return [v.slice(0, i), caps.filter((c) => keep.includes(c))]
+  }
+  const spell = ([name, keep]) => keep && keep.length < caps.length ? `${name}=${keep.join(',')}` : name
+  const setFrom = (list) => { chosen.clear(); for (const v of list) { const [n, k] = parse(v); chosen.set(n, k) } }
+  const split = (t) => t.split(',').map((x) => x.trim()).filter(Boolean)
+  setFrom(have)
   let choices = null
   let asked = null
   const manual = h('input', { placeholder: `${f.metavar || 'value'}, … not listed above`, autocomplete: 'off' })
-  const disabled = (why) => box.replaceChildren(
-    h('input', { disabled: true, placeholder: 'Enter a token first', value: [...chosen].join(', ') }),
-    h('span', { class: 'hint' }, why))
-  const draw = () => {
-    const extra = [...chosen].filter((v) => !choices.some((c) => c.value === v)).map((v) => ({ value: v, note: 'not among what it opens' }))
-    const rows = [...extra, ...choices].map((c) => {
-      const cb = h('input', { type: 'checkbox', checked: chosen.has(c.value) })
-      cb.addEventListener('change', () => { if (cb.checked) chosen.add(c.value); else chosen.delete(c.value) })
-      return { c, el: h('label', { class: 'check' }, cb, h('span', null, c.value), c.note ? h('span', { class: 'hint' }, c.note) : null) }
+  const typed = (why) => {
+    const input = h('input', { value: [...chosen].map(spell).join(', '), placeholder: `${f.metavar || 'value'}, …`, autocomplete: 'off' })
+    input.addEventListener('input', () => setFrom(split(input.value)))
+    box.replaceChildren(input, h('span', { class: 'hint warn' }, `${why} · typed instead, comma-separated`))
+  }
+  const row = (c) => {
+    const cb = h('input', { type: 'checkbox', checked: chosen.has(c.value) })
+    const boxes = (f.caps || []).map((cap) => {
+      const el = h('input', { type: 'checkbox' })
+      return { name: cap.name, el, label: h('label', { class: 'cap', title: cap.help || null }, el, cap.name) }
     })
+    const capRow = boxes.length ? h('div', { class: 'caps' }, boxes.map((b) => b.label)) : null
+    const sync = () => {
+      if (!capRow) return
+      const keep = chosen.get(c.value)
+      for (const b of boxes) b.el.checked = !keep || keep.includes(b.name)
+      capRow.hidden = !chosen.has(c.value)
+    }
+    cb.addEventListener('change', () => { if (cb.checked) chosen.set(c.value, null); else chosen.delete(c.value); sync() })
+    for (const b of boxes) {
+      b.el.addEventListener('change', () => {
+        const on = boxes.filter((x) => x.el.checked).map((x) => x.name)
+        // The last one stays: an entry with none is an entry unticked.
+        if (!on.length) { b.el.checked = true; return }
+        chosen.set(c.value, on.length === caps.length ? null : on)
+      })
+    }
+    sync()
+    return { c, el: h('div', { class: 'choice' },
+      h('label', { class: 'check' }, cb, h('span', null, c.value), c.note ? h('span', { class: 'hint' }, c.note) : null), capRow) }
+  }
+  const draw = () => {
+    const extra = [...chosen.keys()].filter((v) => !choices.some((c) => c.value === v)).map((v) => ({ value: v, note: 'not in the listing' }))
+    const rows = [...extra, ...choices].map(row)
     const filter = h('input', { type: 'search', placeholder: `Filter ${choices.length} ${f.key}`, autocomplete: 'off' })
     filter.addEventListener('input', () => {
       const q = filter.value.trim().toLowerCase()
-      for (const r of rows) r.el.hidden = !!q && !r.c.value.toLowerCase().includes(q)
+      for (const r of rows) r.el.hidden = !!q && !`${r.c.value} ${r.c.note || ''}`.toLowerCase().includes(q)
     })
-    box.replaceChildren(
+    box.replaceChildren(...[
       choices.length > 8 ? filter : null,
-      rows.length ? h('div', { class: 'choices' }, rows.map((r) => r.el)) : h('span', { class: 'hint' }, 'It opens nothing to list.'),
-      manual)
+      rows.length ? h('div', { class: 'choices' }, rows.map((r) => r.el)) : h('span', { class: 'hint' }, 'Nothing to list.'),
+      manual].filter(Boolean))
   }
   const load = async () => {
     const req = lookupRequest()
     const key = JSON.stringify(req)
     if (key === asked) return
     asked = key
-    box.replaceChildren(h('span', { class: 'hint' }, `Looking up the ${f.key} it opens…`))
+    box.replaceChildren(h('span', { class: 'hint' }, `Looking up ${f.key}…`))
     try {
       const got = await api('POST', `/v1/services/${enc(s.name)}/choices/${enc(f.key)}`, req)
       if (key !== asked) return
@@ -1371,20 +1412,68 @@ function lookupControl(s, f, have, lookupRequest) {
       if (x instanceof Unauthorized) { S.authed = false; render(); return }
       if (key !== asked) return
       choices = null
-      disabled(x.message)
+      typed(x.message)
     }
   }
-  disabled('')
+  box.replaceChildren(h('span', { class: 'hint' }, `Looking up ${f.key}…`))
   return {
     el: box,
     load,
     read: (p) => {
-      const typed = choices ? manual.value.split(',').map((x) => x.trim()).filter(Boolean) : []
-      const got = [...new Set([...chosen, ...typed])].sort()
+      const more = choices ? split(manual.value) : []
+      const got = [...new Set([...[...chosen].map(spell), ...more])].sort()
       if (got.length) p.set[f.key] = got
       else if (have.length) p.clear.push(f.key)
     },
   }
+}
+
+// lookupPick is a String lookup field: one of what the service finds (the
+// Mac's AWS profiles, the roles one sees), or typed; what is typed narrows
+// the list.
+function lookupPick(s, f, v, lookupRequest) {
+  const input = h('input', { value: typeof v === 'string' ? v : '', placeholder: f.metavar || '', autocomplete: 'off' })
+  const list = h('div', { class: 'choices' })
+  const hint = h('span', { class: 'hint' })
+  const box = h('div', { class: 'lookup' }, input, list, hint)
+  let choices = []
+  let asked = null
+  const draw = () => {
+    const t = input.value.trim()
+    const q = t.toLowerCase()
+    const shown = !q || choices.some((c) => c.value === t) ? choices
+      : choices.filter((c) => `${c.value} ${c.note || ''}`.toLowerCase().includes(q))
+    list.hidden = !shown.length
+    list.replaceChildren(...shown.map((c) => h('button', {
+      type: 'button', class: 'pick' + (c.value === t ? ' on' : ''),
+      // Picking is typing it: the rest of the form looks up again with it.
+      onclick: () => { input.value = c.value; draw(); input.dispatchEvent(new Event('change', { bubbles: true })) },
+    }, h('span', null, c.value), c.note ? h('span', { class: 'hint' }, c.note) : null)))
+  }
+  input.addEventListener('input', draw)
+  const load = async () => {
+    const req = lookupRequest()
+    const key = JSON.stringify(req)
+    if (key === asked) return
+    asked = key
+    hint.className = 'hint'
+    hint.textContent = `Looking up ${f.key}…`
+    try {
+      const got = await api('POST', `/v1/services/${enc(s.name)}/choices/${enc(f.key)}`, req)
+      if (key !== asked) return
+      choices = got
+      hint.textContent = choices.length ? `${choices.length} listed: pick one, or type it` : 'Nothing listed: type it.'
+    } catch (x) {
+      if (x instanceof Unauthorized) { S.authed = false; render(); return }
+      if (key !== asked) return
+      choices = []
+      hint.className = 'hint warn'
+      hint.textContent = `${x.message} · type it instead`
+    }
+    draw()
+  }
+  draw()
+  return { el: box, load, read: (p) => { const t = input.value.trim(); if (t) p.set[f.key] = t } }
 }
 
 function compactConfig(cfg) {
@@ -1468,13 +1557,18 @@ function envForm(s, e) {
     }))
     : []
   let ctl = null
-  const lookupRequest = (skip) => ({
-    env: e ? e.name : undefined,
-    set: ctl ? ctl.patch(skip).set : {},
-    secret: Object.fromEntries(secrets.map(({ f, el }) => [f, el.value.trim()]).filter(([, v]) => v)),
-  })
-  ctl = fieldControls(s.fields, e ? e.config : {}, !e, (f, have) => {
-    const lc = lookupControl(s, f, have, () => lookupRequest(f.key))
+  // A lookup asks with the fields it reads (lookup_with) as the form has
+  // them, so it asks again when one of those changes, and only then.
+  const lookupRequest = (f) => {
+    const set = ctl ? ctl.patch(f.key).set : {}
+    return {
+      env: e ? e.name : undefined,
+      set: Object.fromEntries((f.lookup_with || []).filter((k) => k in set).map((k) => [k, set[k]])),
+      secret: Object.fromEntries(secrets.map(({ f, el }) => [f, el.value.trim()]).filter(([, v]) => v)),
+    }
+  }
+  ctl = fieldControls(s.fields, e ? e.config : {}, !e, (f, v) => {
+    const lc = (f.kind === 'list' ? lookupControl : lookupPick)(s, f, v, () => lookupRequest(f))
     lookups.push(lc)
     return lc
   })
@@ -1506,9 +1600,9 @@ function envForm(s, e) {
       h('span', { class: 'hint' }, 'Stored in the Mac’s credentials file (0600), never shown again. The proxy uses it; the isolation never sees it.'))),
     ctl.rows, err,
     h('div', { class: 'actions' }, save, h('button', { class: 'btn', onclick: closeForm }, 'Cancel')))
-  // The rest of the form can change what the lookup uses (git's token
-  // command).
-  form.addEventListener('change', (ev) => { if (!ev.target.closest('.lookup')) relook() })
+  // The rest of the form can change what a lookup reads (git's token
+  // command, aws's profile); one whose request is the same does not ask.
+  form.addEventListener('change', relook)
   if (lookups.length) queueMicrotask(() => lookups.forEach((l) => l.load()))
   return form
 }

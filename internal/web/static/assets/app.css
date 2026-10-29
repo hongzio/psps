@@ -448,6 +448,17 @@ code, pre { font-family: var(--mono); font-size: 13px; }
 .lookup .choices [hidden] { display: none; }
 .lookup .choices .check span:first-of-type { font-family: var(--mono); font-size: 13px; overflow-wrap: anywhere; }
 .lookup input[disabled] { opacity: .6; }
+.lookup .hint.warn { color: var(--warn); }
+.lookup .choices[hidden] { display: none; }
+.lookup .choice { display: grid; gap: 2px; }
+.lookup .caps { display: flex; flex-wrap: wrap; gap: 4px 14px; padding: 0 0 4px 26px; font-size: 13px; color: var(--muted); }
+.lookup .caps[hidden] { display: none; }
+.lookup .caps .cap { display: inline-flex; align-items: center; gap: 6px; min-height: 28px; cursor: pointer; }
+.lookup .caps .cap input { width: auto; padding: 0; margin: 0; flex: none; }
+.lookup .pick { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 8px; width: 100%; text-align: left; padding: 6px 8px; border: 0; border-radius: 6px; background: transparent; color: var(--text); cursor: pointer; font: inherit; }
+.lookup .pick:hover { background: var(--accent-soft); }
+.lookup .pick.on { background: var(--accent-soft); box-shadow: inset 2px 0 0 var(--accent); }
+.lookup .pick span:first-child { font-family: var(--mono); font-size: 13px; overflow-wrap: anywhere; }
 
 /* Dialogs: the page's own confirm(), a modal <dialog> */
 .dialog {

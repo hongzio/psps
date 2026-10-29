@@ -172,8 +172,8 @@ func TestAGitEnvAsksForItsTokenThenOffersTheRepositoriesItOpens(t *testing.T) {
 	h.be.services = []api.Service{{Name: "git", Summary: "git and the GitHub API", Secrets: []string{"token"}, Fields: lookupFields}}
 	h.key("ctrl+r")
 	h.key("n")
-	// Nothing to look with yet: the repos field is shut and says why.
-	h.viewHas("token", "enter a token first")
+	// Nothing to look with yet: the repos field says why, and is typed.
+	h.viewHas("token", "enter a token first", "typed instead")
 	h.typeText("work")
 	h.key("tab")
 	h.typeText("ghp_secret")
@@ -207,7 +207,7 @@ func TestAGitEnvWithACredentialLooksUpAsItOpens(t *testing.T) {
 	h.key("e")
 	// The repository already listed stays ticked, though the credential
 	// does not list it.
-	h.viewHas("1 of 3 ticked", "hongzio/old", "not among what it opens", "hongzio/isolate")
+	h.viewHas("1 of 3 ticked", "hongzio/old", "not in the listing", "hongzio/isolate")
 	if asks := h.be.choiceAsks; len(asks) != 1 || !strings.Contains(asks[0], "env=work") {
 		t.Fatalf("asks %v", asks)
 	}
@@ -240,5 +240,89 @@ func TestMailIsTurnedOnWithTheIsolationsItReaches(t *testing.T) {
 	h.key("n")
 	if h.m.view != viewServices || h.m.svcPage.form != nil || !strings.Contains(h.m.View(), "nothing to define") {
 		t.Fatalf("an env form for mail:\n%s", h.m.View())
+	}
+}
+
+var awsFields = []proxy.Field{
+	{Key: "aws_profile", Kind: proxy.String, Flag: "aws-profile", Lookup: true, LookupWith: []string{"aws_cli"}},
+	{Key: "role_arn", Kind: proxy.String, Flag: "role-arn", Lookup: true, LookupWith: []string{"aws_profile", "aws_cli"}},
+	{Key: "instances", Kind: proxy.List, Flag: "allow-instance", Clear: "clear-instances", Metavar: "I-ID[=CAPS]",
+		Lookup: true, LookupWith: []string{"aws_profile", "aws_cli"}, Caps: []proxy.Cap{{Name: "session"}, {Name: "command"}}},
+	{Key: "buckets", Kind: proxy.List, Flag: "allow-bucket", Clear: "clear-buckets", Metavar: "BUCKET[=CAPS]",
+		Lookup: true, LookupWith: []string{"aws_profile", "aws_cli"}, Caps: []proxy.Cap{{Name: "read"}, {Name: "write"}, {Name: "delete"}}},
+	{Key: "aws_cli", Kind: proxy.String, Flag: "aws-cli"},
+}
+
+// An aws env is picked from what the Mac's AWS CLI lists: the profile, then
+// with it the role and the instances, each instance narrowed in place. What
+// it cannot list is typed.
+func TestAnAwsEnvIsPickedFromWhatItsProfileLists(t *testing.T) {
+	h := newHarness(t)
+	h.be.services = []api.Service{{Name: "aws", Summary: "AWS", Fields: awsFields}}
+	h.key("ctrl+r")
+	h.key("n")
+	h.typeText("dev")
+	h.key("tab") // onto aws_profile: the Mac's profiles
+	h.viewHas("2 listed", "prod")
+	h.key("down")
+	h.key("down")
+	h.key("up")  // dev
+	h.key("tab") // onto role_arn, looked up with the profile picked
+	h.viewHas("2 listed", "role/ci", "trusts account 111122223333")
+	h.typeText("work") // narrows to the one holding it
+	if v := h.m.View(); !strings.Contains(v, "1 listed") || strings.Contains(v, "role/ci ") {
+		t.Fatalf("typing did not narrow the roles:\n%s", v)
+	}
+	h.key("down") // fills the input with it
+	h.key("tab")  // onto instances
+	h.viewHas("0 of 2 ticked", "1 session 2 command", "web · ap-northeast-2")
+	h.key(" ") // ticks i-0aaa…, with both capabilities
+	h.key("1") // drops session
+	h.key("2") // the last one stays
+	h.viewHas("command  web")
+	h.key("/")
+	h.typeText("bastion")
+	h.viewHas("/ bastion", "1 match")
+	h.key("space") // ticks the one filtered to
+	h.key("esc")   // clears the filter, and does not leave the form
+	if h.m.svcPage.form == nil {
+		t.Fatal("esc in the filter closed the form")
+	}
+	h.viewHas("2 of 2 ticked")
+	h.key("tab") // onto buckets: refused, so typed
+	h.viewHas("AccessDenied", "typed instead")
+	h.typeText("transfer=read")
+	h.key("ctrl+s")
+	want := "add aws/dev aws_profile=dev buckets=[transfer=read] instances=[i-0aaaaaaaaaaaaaaaa=command i-0bbbbbbbbbbbbbbbb] role_arn=arn:aws:iam::111122223333:role/workspace"
+	if len(h.be.patches) != 1 || h.be.patches[0] != want {
+		t.Fatalf("patches %v", h.be.patches)
+	}
+	// Each lookup asked with the profile once it was picked, and only
+	// asked again when it changed.
+	asks := strings.Join(h.be.choiceAsks, "\n")
+	if strings.Count(asks, "instances env= token= set=map[aws_profile:dev]") != 1 || strings.Count(asks, "aws_profile env=") != 1 {
+		t.Fatalf("asks:\n%s", asks)
+	}
+}
+
+// A stored narrowing reads back as ticked and narrowed; an entry the
+// listing no longer has stays ticked.
+func TestAStoredAwsAllowlistReadsBackNarrowed(t *testing.T) {
+	h := newHarness(t)
+	h.be.services = []api.Service{{Name: "aws", Fields: awsFields}}
+	h.be.envs = []api.Env{{Env: store.Env{Service: "aws", Name: "dev",
+		Config: json.RawMessage(`{"aws_profile":"dev","role_arn":"arn:aws:iam::111122223333:role/ci","instances":["i-0aaaaaaaaaaaaaaaa=session","i-0cccccccccccccccc"],"buckets":["transfer"]}`)}}}
+	h.key("ctrl+r")
+	h.key("down")
+	h.key("e")
+	h.key("tab")
+	h.key("tab") // onto instances
+	h.viewHas("2 of 3 ticked", "i-0cccccccccccccccc  session+command  not in the listing", "i-0aaaaaaaaaaaaaaaa  session  web")
+	h.key("tab") // buckets: refused, typed as stored
+	h.viewHas("AccessDenied")
+	h.key("ctrl+s")
+	want := "edit aws/dev aws_profile=dev buckets=[transfer] instances=[i-0cccccccccccccccc i-0aaaaaaaaaaaaaaaa=session] role_arn=arn:aws:iam::111122223333:role/ci"
+	if len(h.be.patches) != 1 || h.be.patches[0] != want {
+		t.Fatalf("patches %v", h.be.patches)
 	}
 }

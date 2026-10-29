@@ -122,14 +122,27 @@ type Field struct {
 	Metavar string   `json:"metavar,omitempty"`
 	Help    string   `json:"help"`
 	Choices []string `json:"choices,omitempty"`
-	// Lookup is a List whose choices the service finds itself (a
-	// ChoiceLister) once the env's credential is known: the repositories a
-	// token opens. Forms ask for the credential first.
-	Lookup bool `json:"lookup,omitempty"`
+	// Lookup is a field whose choices the service finds itself (a
+	// ChoiceLister) with the env's credential: the repositories a token
+	// opens, the roles an AWS profile sees. A List is ticked from them; a
+	// String picks one or is still typed. Forms of a service with a secret
+	// ask for it first. LookupWith names the other fields the lookup reads,
+	// so a form asks again when one of those changes, and only then.
+	Lookup     bool     `json:"lookup,omitempty"`
+	LookupWith []string `json:"lookup_with,omitempty"`
+	// Caps is what an entry of a List may narrow itself to, spelled
+	// NAME=CAP,CAP; a bare NAME has them all.
+	Caps []Cap `json:"caps,omitempty"`
 	// Isolations is a List of isolations: typed and shown by name, kept by
 	// ID, so a rename keeps what it grants and a name used again later
 	// grants nothing.
 	Isolations bool `json:"isolations,omitempty"`
+}
+
+// Cap is one capability a List entry may keep, and what it allows.
+type Cap struct {
+	Name string `json:"name"`
+	Help string `json:"help"`
 }
 
 // Patch changes an env definition or an exposure's settings the way the CLI

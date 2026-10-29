@@ -141,6 +141,10 @@ func (m *Model) handleSvcKey(msg tea.KeyMsg) tea.Cmd {
 		return nil
 	}
 	if p.mode != svcList {
+		if p.form != nil && p.form.capturing() {
+			cmd, _ := p.form.handle(k, msg)
+			return cmd
+		}
 		if k.Is(msg, "back") {
 			m.closeSvcMode()
 			return nil
@@ -197,9 +201,9 @@ func (m *Model) closeSvcMode() {
 	p.mode, p.form, p.login, p.output = svcList, nil, nil, nil
 }
 
-// hasLookup is whether the service looks some field's choices up with the
-// env's credential, which its env form then asks for first.
-func hasLookup(svc api.Service) bool {
+// asksSecretFirst is whether the service looks some field's choices up
+// with the env's secret, which its env form then asks for first.
+func asksSecretFirst(svc api.Service) bool {
 	for _, f := range svc.Fields {
 		if f.Lookup {
 			return len(svc.Secrets) > 0
@@ -221,7 +225,7 @@ func (m *Model) openEnvForm(svc api.Service, env *api.Env) tea.Cmd {
 		cur = decodeMap(env.Config)
 	}
 	p.formSecrets = 0
-	if hasLookup(svc) {
+	if asksSecretFirst(svc) {
 		for _, s := range svc.Secrets {
 			hint := "stored on the Mac only, never shown again"
 			if env != nil && len(env.MissingSecrets) == 0 && !env.CredentialElsewhere {
@@ -234,11 +238,12 @@ func (m *Model) openEnvForm(svc api.Service, env *api.Env) tea.Cmd {
 	}
 	fields = append(fields, genFields(svc.Fields, cur, env == nil)...)
 	for i, f := range svc.Fields {
-		if f.Lookup && p.formSecrets > 0 {
-			have := proxy.Strings(cur, f.Key)
-			fd := checkField(f.Key, have, have, "")
-			fd.lookup, fd.disabled, fd.hint = true, true, "enter a token first"
-			fields[p.formHead+i] = fd
+		switch {
+		case f.Lookup && f.Kind == proxy.List:
+			fields[p.formHead+i] = lookupList(f, proxy.Strings(cur, f.Key))
+		case f.Lookup && f.Kind == proxy.String && len(f.Choices) == 0:
+			fd := fields[p.formHead+i]
+			fd.lookup, fd.single, fd.pick, fd.typed = true, true, -1, fd.text.Value()
 		}
 	}
 	p.mode, p.form, p.formSvc = svcEnvForm, &form{fields: fields}, svc
@@ -254,12 +259,12 @@ func (m *Model) openEnvForm(svc api.Service, env *api.Env) tea.Cmd {
 // form has now, when that differs from what the field last asked with.
 func (m *Model) lookUp() tea.Cmd {
 	p := m.svcPage
-	if p == nil || p.form == nil || p.mode != svcEnvForm || p.formSecrets == 0 {
+	if p == nil || p.form == nil || p.mode != svcEnvForm {
 		return nil
 	}
 	svc, be, form := p.formSvc, m.be, p.form
 	secret := map[string]string{}
-	for i, s := range svc.Secrets {
+	for i, s := range svc.Secrets[:p.formSecrets] {
 		if v := form.fields[p.formHead-p.formSecrets+i].text.Value(); strings.TrimSpace(v) != "" {
 			secret[s] = strings.TrimSpace(v)
 		}
@@ -271,10 +276,12 @@ func (m *Model) lookUp() tea.Cmd {
 			continue
 		}
 		set := map[string]any{}
-		for j, g := range svc.Fields {
-			if g.Kind == proxy.String {
-				if v := form.fields[p.formHead+j].value(); v != "" && v != optDefault && j != i {
-					set[g.Key] = v
+		for _, key := range f.LookupWith {
+			for j, g := range svc.Fields {
+				if g.Key == key && g.Kind == proxy.String {
+					if v := form.fields[p.formHead+j].value(); v != "" && v != optDefault {
+						set[key] = v
+					}
 				}
 			}
 		}
@@ -283,7 +290,12 @@ func (m *Model) lookUp() tea.Cmd {
 		if string(b) == fd.looked {
 			continue
 		}
-		fd.looked, fd.disabled, fd.hint = string(b), true, "looking up…"
+		fd.looked = string(b)
+		if fd.single {
+			fd.status = "looking up…"
+		} else {
+			fd.disabled, fd.hint = true, "looking up…"
+		}
 		key, looked := f.Key, string(b)
 		cmds = append(cmds, func() tea.Msg {
 			ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
@@ -296,18 +308,46 @@ func (m *Model) lookUp() tea.Cmd {
 }
 
 // onChoices fills a lookup field with what the service found, keeping
-// every value already ticked.
+// every value already ticked. A checklist the service could not fill is
+// typed by hand instead, until it can.
 func (m *Model) onChoices(msg choicesMsg) {
 	p := m.svcPage
 	if p == nil || p.form != msg.form || msg.field.looked != msg.looked {
 		return
 	}
 	fd := msg.field
-	if msg.err != nil {
-		fd.disabled, fd.hint = true, msg.err.Error()
+	focused := p.form.fields[p.form.cur] == fd
+	if fd.single {
+		fd.options, fd.notes, fd.pick, fd.status = nil, map[string]string{}, -1, ""
+		if msg.err != nil {
+			fd.status = msg.err.Error()
+			return
+		}
+		for _, c := range msg.choices {
+			fd.options = append(fd.options, c.Value)
+			fd.notes[c.Value] = c.Note
+		}
+		if fd.options == nil {
+			fd.status = "nothing to list; type one"
+		}
 		return
 	}
-	ticked := fd.values()
+	if msg.err != nil {
+		if fd.kind == fCheck {
+			fd.toText(focused)
+		}
+		fd.disabled, fd.hint = false, msg.err.Error()+" · typed instead, comma-separated"
+		return
+	}
+	if fd.kind == fText {
+		fd.fromText()
+	}
+	var ticked []string
+	for _, o := range fd.options {
+		if fd.checked[o] {
+			ticked = append(ticked, o)
+		}
+	}
 	fd.options, fd.notes = nil, map[string]string{}
 	listed := map[string]bool{}
 	for _, c := range msg.choices {
@@ -316,14 +356,14 @@ func (m *Model) onChoices(msg choicesMsg) {
 	for _, v := range ticked {
 		if !listed[v] {
 			fd.options = append(fd.options, v)
-			fd.notes[v] = "not among what it opens"
+			fd.notes[v] = "not in the listing"
 		}
 	}
 	for _, c := range msg.choices {
 		fd.options = append(fd.options, c.Value)
 		fd.notes[c.Value] = c.Note
 	}
-	fd.disabled, fd.hint, fd.idx = false, "", 0
+	fd.disabled, fd.hint, fd.idx, fd.filter = false, "", 0, ""
 }
 
 func (m *Model) openSecret(svc api.Service, env string) tea.Cmd {

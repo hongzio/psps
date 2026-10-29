@@ -291,11 +291,27 @@ func (f *fakeBackend) CancelCLILogin(_ context.Context, iso, tool string) error 
 }
 
 // Choices answers like git's: nothing without a token or a token command,
-// otherwise two repositories.
+// otherwise two repositories. aws's are its profiles, and with one, two
+// roles and two instances; its buckets are refused.
 func (f *fakeBackend) Choices(_ context.Context, svc, field string, req api.ChoicesRequest) ([]proxy.Choice, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.choiceAsks = append(f.choiceAsks, fmt.Sprintf("%s env=%s token=%s set=%v", field, req.Env, req.Secret["token"], req.Set))
+	if svc == "aws" {
+		switch {
+		case field == "aws_profile":
+			return []proxy.Choice{{Value: "dev"}, {Value: "prod"}}, nil
+		case req.Set["aws_profile"] == nil && req.Env == "":
+			return nil, fmt.Errorf("pick an aws_profile first: what is listed is what its login sees")
+		case field == "role_arn":
+			return []proxy.Choice{{Value: "arn:aws:iam::111122223333:role/ci", Note: "trusts role/deployer"},
+				{Value: "arn:aws:iam::111122223333:role/workspace", Note: "trusts account 111122223333"}}, nil
+		case field == "instances":
+			return []proxy.Choice{{Value: "i-0aaaaaaaaaaaaaaaa", Note: "web · ap-northeast-2"},
+				{Value: "i-0bbbbbbbbbbbbbbbb", Note: "bastion · us-east-1"}}, nil
+		}
+		return nil, fmt.Errorf("s3api list-buckets failed: AccessDenied")
+	}
 	if req.Secret["token"] == "" && req.Set["token_command"] == nil && req.Env == "" {
 		return nil, fmt.Errorf("enter a token first: the repositories listed are the ones it opens")
 	}
@@ -462,6 +478,10 @@ func (h *harness) key(s string) {
 		msg = tea.KeyMsg{Type: tea.KeySpace, Runes: []rune{' '}}
 	case "down":
 		msg = tea.KeyMsg{Type: tea.KeyDown}
+	case "up":
+		msg = tea.KeyMsg{Type: tea.KeyUp}
+	case "backspace":
+		msg = tea.KeyMsg{Type: tea.KeyBackspace}
 	case "right":
 		msg = tea.KeyMsg{Type: tea.KeyRight}
 	default:

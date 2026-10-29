@@ -50,15 +50,38 @@ func (Service) Summary() string {
 	return "scoped, short-lived AWS credentials from an assumed role, for SSM and S3"
 }
 
+// capHelp is what each capability allows, as the session policy grants it.
+var capHelp = map[string]string{
+	"session": "ssm:StartSession: an interactive shell on the instance",
+	"command": "ssm:SendCommand: run a script, no shell",
+	"read":    "s3:GetObject and s3:ListBucket: fetch and list objects",
+	"write":   "s3:PutObject: upload, and overwrite what is there",
+	"delete":  "s3:DeleteObject: remove objects",
+}
+
+func caps(kind Kind) []proxy.Cap {
+	var out []proxy.Cap
+	for _, c := range Caps[kind] {
+		out = append(out, proxy.Cap{Name: c, Help: capHelp[c]})
+	}
+	return out
+}
+
+// Every lookup is the Mac's AWS CLI with the env's profile (aws_profile
+// lists the profiles themselves).
+var withProfile = []string{"aws_profile", "aws_cli"}
+
 func (Service) Fields() []proxy.Field {
 	return []proxy.Field{
-		{Key: "role_arn", Kind: proxy.String, Flag: "role-arn", Metavar: "ARN",
-			Help: "the IAM role the broker assumes (required)"},
-		{Key: "aws_profile", Kind: proxy.String, Flag: "aws-profile", Metavar: "NAME",
+		{Key: "aws_profile", Kind: proxy.String, Flag: "aws-profile", Metavar: "NAME", Lookup: true, LookupWith: []string{"aws_cli"},
 			Help: "the Mac's AWS CLI profile whose login may assume the role (required)"},
+		{Key: "role_arn", Kind: proxy.String, Flag: "role-arn", Metavar: "ARN", Lookup: true, LookupWith: withProfile,
+			Help: "the IAM role the broker assumes (required)"},
 		{Key: "instances", Kind: proxy.List, Flag: "allow-instance", Clear: "clear-instances", Metavar: "I-ID[=CAPS]",
+			Lookup: true, LookupWith: withProfile, Caps: caps(Instance),
 			Help: "an EC2 instance SSM may reach; =session or =command narrows it (repeat; replaces the list)"},
 		{Key: "buckets", Kind: proxy.List, Flag: "allow-bucket", Clear: "clear-buckets", Metavar: "BUCKET[=CAPS]",
+			Lookup: true, LookupWith: withProfile, Caps: caps(Bucket),
 			Help: "an S3 bucket objects may move through; =read, =write, =delete narrow it (repeat; replaces the list)"},
 		{Key: "aws_cli", Kind: proxy.String, Flag: "aws-cli", Metavar: "BIN",
 			Help: "the Mac's aws binary (default aws on PATH, pinned to its full path)"},

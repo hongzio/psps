@@ -62,7 +62,7 @@ func (Service) Summary() string {
 
 func (Service) Fields() []proxy.Field {
 	return []proxy.Field{
-		{Key: "repos", Kind: proxy.List, Flag: "allow-repo", Clear: "clear-repos", Metavar: "OWNER/REPO", Lookup: true,
+		{Key: "repos", Kind: proxy.List, Flag: "allow-repo", Clear: "clear-repos", Metavar: "OWNER/REPO", Lookup: true, LookupWith: []string{"token_command"},
 			Help: "a repository this env's credential opens (repeat; replaces the list)"},
 		{Key: "read_only", Kind: proxy.Bool, Flag: "read-only", Neg: "read-write",
 			Help: "refuse push and API writes for these repositories"},

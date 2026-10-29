@@ -89,14 +89,7 @@ func (s *Source) assume(ctx context.Context) (Credentials, error) {
 		return Credentials{}, proxy.Deny("aws CLI %q is not runnable: %v", s.AWS, err)
 	}
 	if err != nil {
-		msg := strings.TrimSpace(stderr.String())
-		if low := strings.ToLower(msg); strings.Contains(low, "expired") || strings.Contains(low, "sso") {
-			return Credentials{}, proxy.Deny("the host's AWS login session is expired or missing; the operator must run `aws login --profile %s` on the host", s.Profile)
-		}
-		if len(msg) > 300 {
-			msg = msg[:300]
-		}
-		return Credentials{}, proxy.Deny("sts assume-role failed: %s", msg)
+		return Credentials{}, refusal("sts assume-role", s.Profile, stderr.String())
 	}
 	var out struct {
 		Credentials *struct {
@@ -108,4 +101,25 @@ func (s *Source) assume(ctx context.Context) (Credentials, error) {
 	}
 	c := out.Credentials
 	return Credentials{AccessKeyId: c.AccessKeyId, SecretAccessKey: c.SecretAccessKey, Token: c.SessionToken, Expiration: c.Expiration}, nil
+}
+
+// refusal is what a failed aws command tells the operator. A refusal by
+// AWS is passed on as AWS spelled it, and is told apart first: an SSO
+// session's own ARN (assumed-role/AWSReservedSSO_...) is in that message,
+// and would otherwise read as a login problem. A login that expired or
+// never happened is the failure with a fix to name.
+func refusal(what, profile, stderr string) error {
+	msg := strings.TrimSpace(stderr)
+	if len(msg) > 300 {
+		msg = msg[:300]
+	}
+	low := strings.ToLower(msg)
+	switch {
+	case strings.Contains(low, "accessdenied"), strings.Contains(low, "unauthorizedoperation"), strings.Contains(low, "not authorized"):
+	case strings.Contains(low, "profile") && strings.Contains(low, "could not be found"):
+		return proxy.Deny("the Mac's AWS CLI has no profile %q", profile)
+	case strings.Contains(low, "expired"), strings.Contains(low, "sso"), strings.Contains(low, "unable to locate credentials"):
+		return proxy.Deny("the host's AWS login session is expired or missing; the operator must run `aws login --profile %s` on the host", profile)
+	}
+	return proxy.Deny("%s failed: %s", what, msg)
 }

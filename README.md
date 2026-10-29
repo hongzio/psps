@@ -275,7 +275,8 @@ from stdin). git's is a GitHub token; an env may instead name a
 gh-compatible command (`--token-command gh`, which runs `gh auth token`), and
 a stored token wins over it. The web and TUI env forms for git ask for the
 token first and then list the repositories it opens to tick; until there is a
-token (or a command) the repository box stays disabled.
+token (or a command) to list with, the repositories are typed, and the form
+says why.
 
 AWS is a credential broker rather than a proxy: it assumes an IAM role with
 the Mac's AWS CLI (`aws sts assume-role --profile ...`) under a session policy
@@ -290,7 +291,21 @@ gero env add aws dev --role-arn arn:aws:iam::123456789012:role/agent --aws-profi
   --allow-instance i-0123456789abcdef0=session --allow-bucket transfer-bucket=read
 gero env check aws dev                   # assume the role now, ask STS who it is
 gero iso expose dev aws dev
+gero env choices aws dev role_arn --aws-profile dev   # what that profile's login lists
 ```
+
+The web and TUI forms pick all of it from what the Mac's AWS CLI lists: the
+profile (`aws configure list-profiles`), then with it the role, the instances
+and the buckets, looked up again when the profile changes. Roles are the
+account's that an AWS principal may assume, each with whom it trusts; a role
+in another account, which `iam list-roles` cannot see, is typed. Instances
+are swept from every enabled region, with their Name tag; a region the
+account is kept out of is left out. A ticked instance or bucket narrows
+itself in place (session or command; read, write or delete), which lands in
+the session policy as `NAME=CAP`. Whatever the profile may not list
+(`iam:ListRoles`, `s3:ListAllMyBuckets` refused) is typed instead, with AWS's
+refusal shown; the TUI filters a long list with `/` and narrows the ticked
+entry under the cursor with 1, 2, 3.
 
 PostgreSQL is terminated on both sides, the way pgbouncer does it: the
 isolation signs in with its workspace token (from PGPASSFILE), the env name
