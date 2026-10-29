@@ -94,7 +94,8 @@ func TestAPortOfTheIsolationsIsReachedFromTheMac(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(x.Forwards) != 1 || x.Forwards[0].HostPort != host || x.Forwards[0].Port != port || !x.Forwards[0].HTTP || x.Forwards[0].Error != "" {
+	if len(x.Forwards) != 1 || x.Forwards[0].HostPort != host || x.Forwards[0].Port != port || !x.Forwards[0].HTTP || x.Forwards[0].Error != "" ||
+		x.Forwards[0].URL != fmt.Sprintf("http://web.localhost:%d", host) {
 		t.Fatalf("%+v", x.Forwards)
 	}
 	if e.creates() != 0 {
@@ -117,7 +118,7 @@ func TestAPortOfTheIsolationsIsReachedFromTheMac(t *testing.T) {
 			skill = f.Content
 		}
 	}
-	if !strings.Contains(skill, fmt.Sprintf("port %d here is http://127.0.0.1:%d on the Mac", port, host)) {
+	if !strings.Contains(skill, fmt.Sprintf("port %d here is http://web.localhost:%d on the Mac", port, host)) {
 		t.Fatalf("skill:\n%s", skill)
 	}
 

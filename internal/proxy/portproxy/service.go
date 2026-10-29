@@ -22,6 +22,11 @@
 //     isolation never sees them and cannot replace them. tcp mode passes
 //     bytes unchanged, for what is not HTTP; a browser pointed at a tcp
 //     port hands the isolation the session.
+//   - an http port is given out under a name of its own (Hostname), where
+//     a browser keeps its cookies apart from every other program's on the
+//     Mac, both ways; a cookie it sets loses any Domain, so it stays there.
+//     127.0.0.1 and localhost still work (a login whose callback is
+//     registered there), with only gero's cookies kept from it.
 //   - what an agent serves runs in the Mac's browser, as a page from
 //     127.0.0.1, which browsers trust more than one from the internet. The
 //     skill tells agents so; gero's own API refuses such a page (it needs a
@@ -40,6 +45,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net"
+	"strings"
 
 	"github.com/hongzio/gero/internal/creds"
 	"github.com/hongzio/gero/internal/proxy"
@@ -168,11 +174,32 @@ func (Service) Check(_ context.Context, name string, cfg json.RawMessage, _ *cre
 
 // Describe is a forward as people read it.
 func Describe(f proxy.Forward) string {
-	mode := "tcp"
 	if f.HTTP {
-		mode = "http"
+		return fmt.Sprintf("%s on the Mac → %d in the isolation (http; 127.0.0.1:%d too)", URL(f), f.Port, f.HostPort)
 	}
-	return fmt.Sprintf("127.0.0.1:%d on the Mac → %d in the isolation (%s)", f.HostPort, f.Port, mode)
+	return fmt.Sprintf("127.0.0.1:%d on the Mac → %d in the isolation (tcp)", f.HostPort, f.Port)
+}
+
+// Hostname is an http forward's own name on the Mac. A browser keeps
+// cookies by name, not port: under a name of its own, what the isolation
+// serves gets none of 127.0.0.1's or localhost's (other programs' on the
+// Mac, gero's, other forwards'), and what it sets reaches none of them.
+// Browsers and macOS resolve every name under localhost to the loopback.
+func Hostname(env string) string {
+	l := strings.Trim(strings.ReplaceAll(strings.ToLower(env), "_", "-"), "-")
+	if l == "" {
+		l = "port"
+	}
+	return l + ".localhost"
+}
+
+// URL is where a forward is opened on the Mac: an http one under its own
+// name, a tcp one at 127.0.0.1.
+func URL(f proxy.Forward) string {
+	if f.HTTP {
+		return fmt.Sprintf("http://%s:%d", Hostname(f.Env), f.HostPort)
+	}
+	return fmt.Sprintf("127.0.0.1:%d", f.HostPort)
 }
 
 // Refusals: none it makes itself; `gero iso verify` measures the listeners.

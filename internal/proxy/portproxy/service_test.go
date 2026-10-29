@@ -62,7 +62,7 @@ func TestTwoEnvsOnOneMacPortAreRefused(t *testing.T) {
 	}
 	fws, _ := Service{}.Forwards(v)
 	files, _ := Service{}.Workspace(v)
-	if len(fws) != 2 || !strings.Contains(files.Files[0].Content, "port 8080 here is http://127.0.0.1:3000 on the Mac") {
+	if len(fws) != 2 || !strings.Contains(files.Files[0].Content, "port 8080 here is http://api.localhost:3000 on the Mac") {
 		t.Fatalf("%+v\n%s", fws, files.Files[0].Content)
 	}
 }
@@ -85,6 +85,7 @@ func TestGerosCookiesAreKeptFromTheIsolation(t *testing.T) {
 		got, host = r.Header.Clone(), r.Host
 		w.Header().Add("Set-Cookie", "gero_session=planted; Path=/")
 		w.Header().Add("Set-Cookie", "app=1; Path=/")
+		w.Header().Add("Set-Cookie", "wide=1; Domain=localhost; Path=/; HttpOnly")
 		io.WriteString(w, "hello")
 	}))
 	mac := httptest.NewServer(Handler(dial, []string{"gero_session"}))
@@ -108,7 +109,7 @@ func TestGerosCookiesAreKeptFromTheIsolation(t *testing.T) {
 	if host != "localhost:5173" {
 		t.Fatalf("Host %q", host)
 	}
-	if sc := resp.Header.Values("Set-Cookie"); len(sc) != 1 || sc[0] != "app=1; Path=/" {
+	if sc := resp.Header.Values("Set-Cookie"); len(sc) != 2 || sc[0] != "app=1; Path=/" || sc[1] != "wide=1; Path=/; HttpOnly" {
 		t.Fatalf("Set-Cookie %q", sc)
 	}
 
@@ -196,5 +197,19 @@ func TestOnlyALoopbackNameIsServed(t *testing.T) {
 		if resp.StatusCode != want {
 			t.Errorf("Host %s: %d, want %d", host, resp.StatusCode, want)
 		}
+	}
+}
+
+func TestAnHTTPPortHasANameOfItsOwn(t *testing.T) {
+	for env, want := range map[string]string{"web": "web.localhost", "My_App": "my-app.localhost", "_x_": "x.localhost", "--": "port.localhost"} {
+		if got := Hostname(env); got != want {
+			t.Errorf("%s: %s, want %s", env, got, want)
+		}
+	}
+	if u := URL(proxy.Forward{Env: "web", Port: 3000, HostPort: 8080, HTTP: true}); u != "http://web.localhost:8080" {
+		t.Fatal(u)
+	}
+	if u := URL(proxy.Forward{Env: "db", Port: 5432, HostPort: 5432}); u != "127.0.0.1:5432" {
+		t.Fatal(u)
 	}
 }

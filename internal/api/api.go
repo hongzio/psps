@@ -196,6 +196,8 @@ type Exposure struct {
 
 type Forward struct {
 	proxy.Forward
+	// URL is where it is opened on the Mac.
+	URL   string `json:"url"`
 	Error string `json:"error,omitempty"`
 }
 

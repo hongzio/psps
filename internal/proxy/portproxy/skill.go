@@ -27,7 +27,10 @@ const skillTail = `
   both are reached. Another port is not reached from the Mac: ask the operator
   to forward it (gero's port service) rather than looking for a way around.
 - Give the operator the Mac's address, not this isolation's: the URL to open is
-  the one listed above.
+  the one listed above, under its own .localhost name, where the operator's
+  browser keeps its cookies apart from everything else on the Mac. A server
+  that checks the Host header must allow that name (Vite, Django and Rails
+  allow any name under .localhost already).
 - What you serve runs in the operator's browser on their Mac, as a page from
   127.0.0.1, which browsers trust more than one from the internet. Do not serve
   pages that send requests to other addresses on the Mac or their network, or
@@ -44,7 +47,7 @@ func skillBody(fws []proxy.Forward) string {
 	}
 	for _, f := range fws {
 		if f.HTTP {
-			fmt.Fprintf(&b, "- port %d here is http://127.0.0.1:%d on the Mac (HTTP; WebSockets pass)\n", f.Port, f.HostPort)
+			fmt.Fprintf(&b, "- port %d here is %s on the Mac (HTTP; WebSockets pass; http://127.0.0.1:%d works too)\n", f.Port, URL(f), f.HostPort)
 		} else {
 			fmt.Fprintf(&b, "- port %d here is 127.0.0.1:%d on the Mac (TCP, bytes unchanged)\n", f.Port, f.HostPort)
 		}

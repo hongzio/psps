@@ -389,7 +389,7 @@ func (m *Manager) forwardsOf(id string, svc proxy.Service, v proxy.View) []api.F
 	fws, _ := f.Forwards(v)
 	out := make([]api.Forward, 0, len(fws))
 	for _, fw := range fws {
-		out = append(out, api.Forward{Forward: fw, Error: errs[forwardKey{id, svc.Name(), fw.Env}]})
+		out = append(out, api.Forward{Forward: fw, URL: portproxy.URL(fw), Error: errs[forwardKey{id, svc.Name(), fw.Env}]})
 	}
 	return out
 }

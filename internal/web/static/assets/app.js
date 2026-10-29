@@ -1776,8 +1776,7 @@ function exposuresView(i) {
 // browser opens it. noopener: the isolation's page gets no hold on this tab.
 function forwardLinks(fs) {
   return fs.map((f, n) => [n ? ', ' : '',
-    f.http ? h('a', { href: `http://127.0.0.1:${f.host_port}/`, target: '_blank', rel: 'noopener noreferrer' }, `127.0.0.1:${f.host_port}`)
-      : `127.0.0.1:${f.host_port}`,
+    f.http ? h('a', { href: f.url + '/', target: '_blank', rel: 'noopener noreferrer' }, f.url.replace(/^http:\/\//, '')) : f.url,
     ` → ${f.port}` + (f.http ? '' : ' tcp')])
 }
 
@@ -1803,11 +1802,11 @@ function exposeForm(i, s, x) {
     apply.disabled = true
     if (s.replaces && changed) apply.textContent = 'Restarting…'
     try {
-      await api('PUT', `/v1/isolations/${enc(i.name)}/services/${enc(s.name)}`,
+      const got = await api('PUT', `/v1/isolations/${enc(i.name)}/services/${enc(s.name)}`,
         { envs, default_env: def.value === DEFAULT ? undefined : def.value, settings: ctl.patch() })
       S.openForm = null
       toast(s.replaces ? `${i.name} has ${envs.map((n) => '/shared/' + n).join(', ') || 'no shared folder'}`
-        : s.forwards ? `${i.name} on the Mac: ${envs.map((n) => forwardText(n)).join(', ') || 'no port'}`
+        : s.forwards ? `${i.name} on the Mac: ${(got.forwards || []).map((f) => f.url).join(', ') || 'no port'}`
           : `${s.name} is on for ${i.name}; agents pick it up at their next idle moment`)
       await refreshIsolations()
       renderIsolations()
@@ -1821,9 +1820,11 @@ function exposeForm(i, s, x) {
   // A share says which folder of the Mac's each env is, a port where it is
   // on the Mac.
   const config = (n) => S.envs.find((e) => e.service === s.name && e.name === n)?.config || {}
+  // An http port's own name, as portproxy.Hostname makes it.
   const forwardText = (n) => {
     const c = config(n)
-    return `127.0.0.1:${c.host_port || c.port} → ${c.port}`
+    const name = c.mode === 'tcp' ? '127.0.0.1' : (n.toLowerCase().replaceAll('_', '-').replace(/^-+|-+$/g, '') || 'port') + '.localhost'
+    return `${name}:${c.host_port || c.port} → ${c.port}`
   }
   const envNote = (n) => {
     if (s.forwards) return h('span', { class: 'hint' }, `${forwardText(n)} · `, h('span', { class: 'mode' }, config(n).mode || 'http'))

@@ -432,7 +432,7 @@ A port of the isolation's — a dev server, a WAS an agent runs — can be put o
 the Mac's `127.0.0.1`:
 
 ```sh
-gero env add port web --port 5173                          # http://127.0.0.1:5173 on the Mac
+gero env add port web --port 5173                          # http://web.localhost:5173 on the Mac
 gero env add port api --port 8080 --host-port 18080        # ...or another port of the Mac's
 gero env add port db --port 5432 --mode tcp                # bytes unchanged, for what is not HTTP
 gero iso expose dev port web,api
@@ -451,11 +451,18 @@ It opens the isolation toward the Mac, kept small:
 - **The Mac's loopback only**, never the LAN. The isolation still cannot
   connect to the Mac (the fence is measured as before): a connection only
   ever starts on the Mac.
-- **Your gero session is kept from it.** A browser sends 127.0.0.1's
-  cookies to every port of it, gero's web session (the web token) among
-  them. In `http` mode, the default, the daemon is an HTTP proxy that takes
-  gero's cookie out of every request and out of every answer; WebSockets
-  (a dev server's live reload) pass. `tcp` mode passes bytes unchanged: a
+- **Its cookies are its own.** A browser keeps cookies by name, not port:
+  127.0.0.1's go to every port of it, gero's web session (the web token)
+  among them. So an http port is given out under a name of its own,
+  `http://<env>.localhost:<port>` (browsers and macOS resolve any name under
+  localhost to the loopback; Vite, Django and Rails accept it as it is),
+  where the browser sends it no other program's cookies and keeps what it
+  sets from them; a cookie it sets loses any `Domain`. `127.0.0.1` and
+  `localhost` still work, for a login whose callback is registered there;
+  there the other cookies of that name reach it, all but gero's own. In
+  `http` mode, the default, the daemon is an HTTP proxy that takes gero's
+  cookie out of every request and out of every answer; WebSockets (a dev
+  server's live reload) pass. `tcp` mode passes bytes unchanged: a
   browser pointed at a tcp port hands the isolation your session, and gero
   warns when one is defined. An http port answers only to `127.0.0.1`,
   `localhost` and `*.localhost`, so a web page elsewhere that points a name

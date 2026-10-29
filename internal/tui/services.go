@@ -899,7 +899,7 @@ func (m *Model) renderExpose(width int) string {
 func forwardsText(fs []api.Forward) string {
 	var out []string
 	for _, f := range fs {
-		t := fmt.Sprintf("127.0.0.1:%d→%d", f.HostPort, f.Port)
+		t := fmt.Sprintf("%s→%d", strings.TrimPrefix(f.URL, "http://"), f.Port)
 		if !f.HTTP {
 			t += " tcp"
 		}

@@ -95,9 +95,10 @@ func withholdCookies(h http.Header, held map[string]bool) {
 	}
 }
 
-// withholdSetCookies drops an answer's attempts to set a held cookie: a
+// withholdSetCookies drops an answer's attempts to set a held cookie (a
 // server in the isolation that replaced gero's session would sign the
-// browser out of gero.
+// browser out of gero), and keeps every other cookie host-only: one with a
+// Domain would reach other names under it, other programs' on the Mac.
 func withholdSetCookies(h http.Header, held map[string]bool) {
 	lines := h.Values("Set-Cookie")
 	if len(lines) == 0 {
@@ -107,7 +108,19 @@ func withholdSetCookies(h http.Header, held map[string]bool) {
 	for _, l := range lines {
 		name, _, _ := strings.Cut(l, "=")
 		if !held[strings.TrimSpace(name)] {
-			h.Add("Set-Cookie", l)
+			h.Add("Set-Cookie", hostOnly(l))
 		}
 	}
+}
+
+func hostOnly(setCookie string) string {
+	parts := strings.Split(setCookie, ";")
+	kept := parts[:1]
+	for _, p := range parts[1:] {
+		k, _, _ := strings.Cut(p, "=")
+		if !strings.EqualFold(strings.TrimSpace(k), "domain") {
+			kept = append(kept, p)
+		}
+	}
+	return strings.Join(kept, ";")
 }
