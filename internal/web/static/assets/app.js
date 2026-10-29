@@ -1498,6 +1498,7 @@ function renderIsolations() {
     } catch (x) {
       if (x instanceof Unauthorized) { S.authed = false; render(); return }
       S.isoCreateError = x.message
+      if (NO_KERNEL.test(x.message)) noKernel()
     } finally {
       S.isoCreating = null
     }
@@ -1516,6 +1517,19 @@ function renderIsolations() {
       h('label', { class: 'check' }, fence, 'Network fence (agents start only behind a verified fence)'),
       S.isoCreateError ? h('p', { class: 'form-error' }, S.isoCreateError) : null,
       h('div', { class: 'actions' }, create))))
+}
+
+// NO_KERNEL is container refusing to start a VM before a Linux kernel is
+// set up, which a fresh install of container is: nothing in gero fixes it,
+// so noKernel tells the operator the command that does.
+const NO_KERNEL = /default kernel not configured/
+function noKernel() {
+  ask({
+    title: 'container has no Linux kernel yet',
+    body: 'Isolations run in a VM that needs one. Install the recommended kernel in a terminal on the Mac, then Create again:',
+    extra: h('pre', { class: 'code dialog-cmd' }, h('code', null, 'container system kernel set --recommended')),
+    cancel: 'Close',
+  })
 }
 
 // isoSize is a VM's CPUs and memory; none set is container's default.

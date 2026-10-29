@@ -523,6 +523,7 @@ code, pre { font-family: var(--mono); font-size: 13px; }
   font-weight: 400;
 }
 .dialog .dialog-error { margin: 12px 0 0; color: var(--err); }
+.dialog-cmd { margin: 12px 0 0; padding: 10px 12px; border-radius: 8px; background: var(--code); overflow-x: auto; user-select: all; }
 .inbox { display: grid; gap: 10px; margin-top: 14px; max-height: 50vh; overflow-y: auto; }
 .inbox .mail { border: 1px solid var(--border); border-radius: 8px; padding: 8px 10px; }
 .inbox .mail-head { display: flex; align-items: center; gap: 4px; font-size: 13px; }
