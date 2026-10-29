@@ -22,8 +22,8 @@ var assets embed.FS
 // Agent CLI versions are pinned: their protocols are what the drivers parse,
 // so an upgrade is a decision, made here, with the driver tests rerun.
 const (
-	claudeCodeVersion = "2.1.311"
-	codexVersion      = "0.164.0"
+	claudeCodeVersion = "2.1.312"
+	codexVersion      = "0.165.0"
 	// session-manager-plugin is the one binary ansible's aws_ssm needs that
 	// no package manager carries; it needs no credentials of its own.
 	ssmPluginVersion = "1.2.896.0"

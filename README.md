@@ -33,6 +33,34 @@ mise run test
 
 A build of your own says it is version `dev`; the formula stamps the release's.
 
+### Claude Code and Codex in the image
+
+The isolations' image pins both CLIs ([internal/isolation/image.go](internal/isolation/image.go)):
+the drivers parse what they print, so newer ones are a change of gero's,
+checked before an agent runs on them.
+
+1. `sh scripts/cli-check.sh` (npm's latest; or `sh scripts/cli-check.sh 2.1.320 0.170.0`)
+   names any method or flag the drivers use that the new versions no longer
+   have, and shows Codex's protocol schema diff, Claude Code's `--help` diff
+   and both changelogs in between. It spends no tokens and touches no login.
+2. Change the two versions in image.go, `mise run build` and restart the
+   daemon. Isolations keep the image they have; a new one gets the new image.
+3. The live check, in a new isolation (`gero iso create canary`, its CLIs
+   logged in), one agent of each kind on its cheapest model, approvals `ask`:
+   - a short answer streams in and it ends idle;
+   - a shell command asks first: allow one, deny one;
+   - Claude, asked to put a question with choices to you first, does, and
+     your answer reaches it;
+   - a long task (`sleep 300`) stops on `/stop`;
+   - after the daemon restarts, it still knows the conversation;
+   - rewound to an earlier message, it forgets what came after;
+   - `/` lists its commands and models; Codex's `/compact` compacts and `$`
+     lists its skills.
+4. `gero iso upgrade` each isolation, then `gero iso rm canary --purge`.
+   Going back is the old versions in image.go and another upgrade: the old
+   image is still there, so nothing is built. Keep it until the new versions
+   have proven themselves.
+
 ## Use
 
 ```sh
