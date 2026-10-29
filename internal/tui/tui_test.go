@@ -71,11 +71,11 @@ func (f *fakeBackend) CreateAgent(_ context.Context, req api.CreateAgent) (api.A
 	f.agents = append(f.agents, a)
 	return a, nil
 }
-func (f *fakeBackend) Send(_ context.Context, id, text string) error {
+func (f *fakeBackend) Send(_ context.Context, id, text string) (api.Sent, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.sent = append(f.sent, id+":"+text)
-	return nil
+	return api.Sent{}, nil
 }
 func (f *fakeBackend) Approve(_ context.Context, id, ap string, d driver.Decision) error {
 	f.mu.Lock()

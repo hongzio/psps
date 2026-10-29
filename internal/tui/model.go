@@ -28,7 +28,7 @@ type Backend interface {
 	Agents(ctx context.Context) ([]api.Agent, error)
 	Isolations(ctx context.Context) ([]api.Isolation, error)
 	CreateAgent(ctx context.Context, req api.CreateAgent) (api.Agent, error)
-	Send(ctx context.Context, id, text string) error
+	Send(ctx context.Context, id, text string) (api.Sent, error)
 	Approve(ctx context.Context, id, approval string, d driver.Decision) error
 	Interrupt(ctx context.Context, id string) error
 	SetOptions(ctx context.Context, id string, o driver.Options) error
@@ -925,7 +925,13 @@ func (m *Model) handleInputKey(msg tea.KeyMsg) tea.Cmd {
 		m.drafts[a.ID] = ""
 		m.layout()
 		be, id := m.be, a.ID
-		return m.do("", false, func(ctx context.Context) error { return be.Send(ctx, id, text) })
+		// One of gero's commands says what gero did instead of sending it.
+		return func() tea.Msg {
+			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
+			defer cancel()
+			sent, err := be.Send(ctx, id, text)
+			return doneMsg{flash: sent.Done, err: err}
+		}
 	}
 	var cmd tea.Cmd
 	m.input, cmd = m.input.Update(msg)

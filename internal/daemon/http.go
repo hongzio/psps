@@ -244,7 +244,16 @@ func (m *Manager) Handler() http.Handler {
 		if !decode(w, r, &req) {
 			return
 		}
-		reply(w, nil, m.Send(r.PathValue("id"), req.Text))
+		v, err := m.Message(r.PathValue("id"), req.Text)
+		reply(w, v, err)
+	})
+	mux.HandleFunc("GET /v1/agents/{id}/commands", func(w http.ResponseWriter, r *http.Request) {
+		v, err := m.Commands(r.PathValue("id"))
+		reply(w, v, err)
+	})
+	mux.HandleFunc("GET /v1/agents/{id}/files", func(w http.ResponseWriter, r *http.Request) {
+		v, err := m.Files(r.Context(), r.PathValue("id"))
+		reply(w, v, err)
 	})
 	mux.HandleFunc("POST /v1/agents/{id}/rewind", func(w http.ResponseWriter, r *http.Request) {
 		var req api.Rewind

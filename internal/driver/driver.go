@@ -12,6 +12,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 
 	"github.com/hongzio/gero/internal/event"
 	"github.com/hongzio/gero/internal/shimproto"
@@ -62,6 +63,14 @@ func (a Approvals) Valid() bool {
 		}
 	}
 	return false
+}
+
+// Efforts are the effort levels kind's CLI takes.
+func Efforts(kind Kind) []string {
+	if kind == Codex {
+		return []string{"low", "medium", "high", "xhigh"}
+	}
+	return []string{"low", "medium", "high", "xhigh", "max"}
 }
 
 type Options struct {
@@ -141,6 +150,42 @@ type Driver interface {
 	// else — handshakes, approvals, interrupts, the turn in flight — goes on.
 	Hold(on bool)
 	State() State
+	// Commands are what the agent's CLI offers to be typed in a message to
+	// it, and Models the models it runs, as its process last said; nil
+	// until one has.
+	Commands() []Command
+	Models() []Choice
+}
+
+// A Command is one a person types in a message: Prefix and Name, then what
+// Hint says it takes. Claude's are its slash commands and skills, which it
+// runs itself at the start of a message; Codex's are its skills, which it
+// picks out of a message by name anywhere in it, and /compact, which the
+// driver runs.
+type Command struct {
+	Prefix      string `json:"prefix"`
+	Name        string `json:"name"`
+	Description string `json:"description,omitempty"`
+	Hint        string `json:"hint,omitempty"`
+	// Args are the values it takes, when they are few and known.
+	Args []Choice `json:"args,omitempty"`
+}
+
+// A Choice is one value a command takes.
+type Choice struct {
+	Value       string `json:"value"`
+	Description string `json:"description,omitempty"`
+}
+
+// joinDesc is the parts of a description there are, in a line.
+func joinDesc(parts ...string) string {
+	var out []string
+	for _, p := range parts {
+		if p = strings.TrimSpace(p); p != "" {
+			out = append(out, p)
+		}
+	}
+	return strings.Join(out, " · ")
 }
 
 // Rooted is a driver whose own sandbox is told which folders besides the

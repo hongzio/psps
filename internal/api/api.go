@@ -133,6 +133,32 @@ type Message struct {
 	Text string `json:"text"`
 }
 
+// Sent is what came of a message. Done, for a message that was one of
+// gero's commands, is what gero did instead of sending it.
+type Sent struct {
+	Done string `json:"done,omitempty"`
+}
+
+// Commands are what may be typed in a message to an agent, for a message
+// box to offer: gero's own first, then its CLI's.
+type Commands struct {
+	Commands []Command `json:"commands"`
+}
+
+type Command struct {
+	driver.Command
+	// Gero: gero does it itself, and the agent is not sent it.
+	Gero bool `json:"gero,omitempty"`
+}
+
+// Files are the files in an agent's workspace, by their paths in it, for
+// a message to name one.
+type Files struct {
+	Files []string `json:"files"`
+	// Truncated: there are more than these.
+	Truncated bool `json:"truncated,omitempty"`
+}
+
 // Rewind replaces a message the agent got: Event is that message's event
 // ID; the agent goes back to before it and gets Text instead.
 type Rewind struct {

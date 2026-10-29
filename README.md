@@ -98,6 +98,26 @@ HTTPS certificate and decides which devices can reach it.
 For development, `GERO_HOME=$PWD/.dev` keeps all state under `.dev/` and runs
 the daemon as a plain background process instead of touching launchd.
 
+### Commands and files in a message
+
+In the web UI, `/` at the start of a message offers commands as you type
+(↑↓ picks, Tab completes, Enter completes and sends a whole command, Esc
+closes), `@` anywhere offers the agent's workspace files (git's list in a
+repository, so what it ignores is left out; a folder opens as you pick it),
+and with Codex `$` offers its skills. The TUI does not offer them yet, but
+what is typed there works the same.
+
+- gero's own, which gero does instead of sending them, wherever a message is
+  typed (`gero agent send` too): `/model <model>`, `/effort <level>`,
+  `/approvals <mode>` (alone, each says what it is now) and `/stop`, which
+  stops the turn.
+- Claude's: its slash commands and skills, as the running `claude` lists
+  them (asked once a process, which costs no turn). Its `/model` and
+  `/effort` are left out for gero's, which last beyond the process, and
+  `/clear` because it starts a session gero does not follow.
+- Codex's: its skills, `$name` anywhere in a message, and `/compact`, which
+  gero has Codex do; its app-server takes any other slash command for text.
+
 ### Claude & Codex: accounts and logins
 
 An agent CLI in an isolation gets its credential one of two ways.

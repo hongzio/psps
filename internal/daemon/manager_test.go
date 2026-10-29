@@ -44,8 +44,9 @@ func TestMain(m *testing.M) {
 
 // fakeCodex answers just enough of the app-server protocol: one thread whose
 // id survives restarts, and turns that echo. A turn whose text is "hang", or
-// a mail that says only that, starts and never finishes; "recall" answers
-// with the thread's earlier messages, which thread/revert cuts.
+// a mail that says only that, starts and ends only when interrupted;
+// "recall" answers with the thread's earlier messages, which thread/revert
+// cuts.
 func fakeCodex() {
 	in := bufio.NewScanner(os.Stdin)
 	in.Buffer(make([]byte, 1<<20), 1<<20)
@@ -70,6 +71,21 @@ func fakeCodex() {
 			reply(m.ID, map[string]any{"account": map[string]any{"type": "apiKey"}, "requiresOpenaiAuth": true})
 		case "thread/start", "thread/resume":
 			reply(m.ID, map[string]any{"thread": map[string]any{"id": thread}})
+		case "skills/list":
+			reply(m.ID, map[string]any{"data": []any{map[string]any{"cwd": ".", "errors": []any{}, "skills": []any{
+				map[string]any{"name": "tidy", "description": "Tidy the workspace", "enabled": true, "path": "/s/tidy", "scope": "user"}}}}})
+		case "model/list":
+			reply(m.ID, map[string]any{"data": []any{map[string]any{"model": "gpt-fake", "displayName": "Fake", "description": "A fake", "hidden": false}}})
+		case "turn/interrupt":
+			reply(m.ID, map[string]any{})
+			notify("turn/completed", map[string]any{"threadId": thread, "turn": map[string]any{"id": m.Params["turnId"], "status": "interrupted"}})
+		case "thread/compact/start":
+			turns++
+			tid := fmt.Sprintf("turn-%d", turns)
+			reply(m.ID, map[string]any{})
+			notify("turn/started", map[string]any{"threadId": thread, "turn": map[string]any{"id": tid}})
+			notify("item/completed", map[string]any{"turnId": tid, "item": map[string]any{"type": "contextCompaction", "id": "c-" + tid}})
+			notify("turn/completed", map[string]any{"threadId": thread, "turn": map[string]any{"id": tid, "status": "completed"}})
 		case "thread/revert":
 			i := slices.IndexFunc(history, func(t turn) bool { return t.id == m.Params["beforeTurnId"] })
 			if i < 0 {

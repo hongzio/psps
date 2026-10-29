@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"slices"
 	"strconv"
 	"strings"
 
@@ -83,7 +84,15 @@ type codex struct {
 	// roots are folders outside the workspace that auto's sandbox lets it
 	// write to as well: the isolation's writable shares.
 	roots []string
+	// listed: this generation was asked for its skills and models.
+	listed bool
+	skills []Command
+	models []Choice
 }
+
+// cxCompact is the command the driver runs itself, with thread/compact/start:
+// codex's app-server takes a slash command for text to the model.
+var cxCompact = Command{Prefix: "/", Name: "compact", Description: "Summarize the conversation so far, to free up context"}
 
 // SetWritableRoots is the folders besides the workspace an agent may write
 // to, for the process about to start.
@@ -115,6 +124,10 @@ func (c *codex) Send(text string) {
 }
 
 func (c *codex) Interrupt() { c.stop = true }
+
+func (c *codex) Commands() []Command { return append([]Command{cxCompact}, c.skills...) }
+
+func (c *codex) Models() []Choice { return c.models }
 
 // Rewind drops the message's turn and every later one from the thread with
 // thread/revert; the process stays, and the message waits for the answer.
@@ -319,6 +332,12 @@ func (c *codex) Next() [][]byte {
 		}
 	}
 
+	// Asked once a process, when no message waits to go first.
+	if c.phase == cxReady && !c.listed && len(c.queue) == 0 {
+		c.listed = true
+		out = append(out, c.call("skills/list", map[string]any{}), c.call("model/list", map[string]any{}))
+	}
+
 	if c.phase == cxReady && !c.busy && !c.sending && c.revert != "" && c.reverting == nil {
 		out = append(out, c.call("thread/revert", map[string]any{"threadId": c.threadID, "beforeTurnId": c.revert}))
 		c.reverting, c.revert = &cxRevert{turn: c.revert}, ""
@@ -329,6 +348,10 @@ func (c *codex) Next() [][]byte {
 	}
 	if c.phase == cxReady && !c.busy && !c.sending && !c.held && len(c.queue) > 0 && c.needDefaults() {
 		out = append(out, c.readConfig()...)
+	} else if c.phase == cxReady && !c.busy && !c.sending && !c.held && len(c.queue) > 0 && isCompact(c.queue[0]) {
+		c.queue = c.queue[1:]
+		out = append(out, c.call("thread/compact/start", map[string]any{"threadId": c.threadID}))
+		c.sending = true
 	} else if c.phase == cxReady && !c.busy && !c.sending && !c.held && len(c.queue) > 0 {
 		text := c.queue[0]
 		c.queue = c.queue[1:]
@@ -377,7 +400,7 @@ func (c *codex) observeSys(rec shimproto.Record) []event.Event {
 		c.phase, c.nextID, c.calls = cxStarted, 1, map[int64]string{}
 		c.turnID, c.pending, c.itemSum = "", nil, map[string]string{}
 		c.busy, c.blocked = false, false
-		c.defaults, c.reading = nil, false
+		c.defaults, c.reading, c.listed = nil, false, false
 		return []event.Event{c.text(rec, event.KindNotice, "", fmt.Sprintf("codex started (pid %d)", rec.Sys.PID))}
 	case shimproto.SysExited, shimproto.SysLost:
 		c.phase, c.pending, c.turnID, c.sending = cxDown, nil, "", false
@@ -412,8 +435,15 @@ func (c *codex) observeIn(rec shimproto.Record, m rpcMsg) []event.Event {
 			c.phase = cxCheckingAuth
 		case "config/read":
 			c.reading = true
+		case "skills/list":
+			c.listed = true
 		case "thread/start", "thread/resume":
 			c.phase = cxOpening
+		case "thread/compact/start":
+			// A turn of codex's own, which a rewind does not go back to.
+			c.sending = false
+			c.userTurn()
+			return []event.Event{c.text(rec, event.KindUser, "", "/"+cxCompact.Name)}
 		case "thread/revert":
 			var p struct {
 				BeforeTurnID string `json:"beforeTurnId"`
@@ -509,8 +539,11 @@ func (c *codex) response(rec shimproto.Record, method string, m rpcMsg) []event.
 			c.threadID, c.phase, c.prompts = "", cxNeedThread, nil
 			return []event.Event{c.text(rec, event.KindError, "",
 				fmt.Sprintf("could not resume codex thread %s (%s); starting a new thread without the earlier context", old, m.Error.Message))}
-		case "turn/start":
+		case "turn/start", "thread/compact/start":
 			c.busy = false
+		case "skills/list", "model/list":
+			// Nothing to offer; nothing else is the worse for it.
+			return nil
 		case "thread/revert":
 			c.reverting = nil
 			return []event.Event{c.text(rec, event.KindError, "",
@@ -545,6 +578,10 @@ func (c *codex) response(rec shimproto.Record, method string, m rpcMsg) []event.
 	case "config/read":
 		c.reading = false
 		c.defaults = codexDefaults(m.Result)
+	case "skills/list":
+		c.skills = codexSkills(m.Result)
+	case "model/list":
+		c.models = codexModels(m.Result)
 	case "thread/start", "thread/resume":
 		var r struct {
 			Thread struct {
@@ -585,6 +622,66 @@ func (c *codex) response(rec shimproto.Record, method string, m rpcMsg) []event.
 		return []event.Event{e}
 	}
 	return nil
+}
+
+// isCompact is whether a message is /compact, which codex is not sent as
+// text but told to do.
+func isCompact(text string) bool { return strings.TrimSpace(text) == "/"+cxCompact.Name }
+
+// codexSkills are skills/list's answer: the skills on in the thread's
+// working directory, named with a $ in a message.
+func codexSkills(result json.RawMessage) []Command {
+	var r struct {
+		Data []struct {
+			Skills []struct {
+				Name             string `json:"name"`
+				Description      string `json:"description"`
+				ShortDescription string `json:"shortDescription"`
+				Enabled          bool   `json:"enabled"`
+			} `json:"skills"`
+		} `json:"data"`
+	}
+	json.Unmarshal(result, &r)
+	var out []Command
+	for _, d := range r.Data {
+		for _, s := range d.Skills {
+			if !s.Enabled || s.Name == "" || slices.ContainsFunc(out, func(c Command) bool { return c.Name == s.Name }) {
+				continue
+			}
+			desc := s.ShortDescription
+			if desc == "" {
+				desc = s.Description
+			}
+			out = append(out, Command{Prefix: "$", Name: s.Name, Description: desc})
+		}
+	}
+	return out
+}
+
+// codexModels are model/list's answer, without the ones its own picker
+// hides.
+func codexModels(result json.RawMessage) []Choice {
+	var r struct {
+		Data []struct {
+			Model       string `json:"model"`
+			DisplayName string `json:"displayName"`
+			Description string `json:"description"`
+			Hidden      bool   `json:"hidden"`
+		} `json:"data"`
+	}
+	json.Unmarshal(result, &r)
+	var out []Choice
+	for _, m := range r.Data {
+		if m.Hidden || m.Model == "" {
+			continue
+		}
+		name := m.DisplayName
+		if name == m.Model {
+			name = ""
+		}
+		out = append(out, Choice{Value: m.Model, Description: joinDesc(name, m.Description)})
+	}
+	return out
 }
 
 func (c *codex) serverRequest(rec shimproto.Record, m rpcMsg) []event.Event {

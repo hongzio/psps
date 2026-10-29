@@ -801,7 +801,14 @@ window.addEventListener('popstate', route)
 
 async function send(text) {
   const id = S.sel
-  await guarded(() => api('POST', `/v1/agents/${id}/messages`, { text }))
+  await guarded(async () => {
+    // One of gero's own commands is done, not sent, and says what it did.
+    const r = await api('POST', `/v1/agents/${id}/messages`, { text })
+    if (r.done) {
+      toast(r.done)
+      await refreshAgents()
+    }
+  })
 }
 
 async function decide(approvalID, decision) {
@@ -1268,11 +1275,205 @@ function renderApprovals() {
         h('button', { class: 'btn danger', onclick: () => decide(ap.id, 'cancel') }, 'Decline & stop'))))))
 }
 
+// ---- Completion in the message box: commands typed at the start of a
+// message (/; gero's own, then the agent CLI's), Codex's skills anywhere in
+// one ($), and files of the agent's workspace (@).
+
+// fuzzy scores how well q matches s, its letters in order: higher is
+// better, -1 not at all. Runs of letters and the starts of words count.
+function fuzzy(q, s) {
+  if (!q) return 0
+  const t = s.toLowerCase()
+  q = q.toLowerCase()
+  let score = 0, j = 0, run = 0, prev = -2
+  for (let i = 0; i < t.length && j < q.length; i++) {
+    if (t[i] !== q[j]) continue
+    run = i === prev + 1 ? run + 1 : 0
+    score += 1 + run * 2 + (i === 0 || '/._- '.includes(t[i - 1]) ? 3 : 0)
+    prev = i
+    j++
+  }
+  return j < q.length ? -1 : score - t.length / 100
+}
+
+// The agent's commands and files, fetched as they are wanted and kept a
+// while.
+const completions = { commands: new Map(), files: new Map() }
+function fetched(kind, id, ttl) {
+  const cache = completions[kind]
+  const c = cache.get(id)
+  if (c && Date.now() - c.at < ttl) return c
+  // A failure is kept as long, so a stopped isolation is not asked again
+  // at each key.
+  const entry = { at: Date.now(), data: null, error: null }
+  entry.ready = api('GET', `/v1/agents/${id}/${kind}`)
+    .then((d) => { entry.data = d }, (e) => { entry.error = e })
+  cache.set(id, entry)
+  return entry
+}
+
+// triggered is what the text before the caret asks to complete, if
+// anything: the token from from to the caret, q being what is typed of it.
+function triggered(a, before) {
+  let m = /^\/(\S*)$/.exec(before)
+  if (m) return { kind: 'command', prefix: '/', q: m[1], from: 0 }
+  m = /^\/(\S+) (\S*)$/.exec(before)
+  if (m) return { kind: 'arg', name: m[1], q: m[2], from: before.length - m[2].length }
+  m = /(^|\s)([@$])(\S*)$/.exec(before)
+  if (m && m[2] === '@') return { kind: 'file', q: m[3], from: before.length - m[3].length - 1 }
+  if (m && a.kind === 'codex') return { kind: 'command', prefix: '$', q: m[3], from: before.length - m[3].length - 1 }
+  return null
+}
+
+// fileItems are the files and folders that match q: a folder's own
+// entries while q is one (or nothing), else the best matches anywhere.
+function fileItems(files, q) {
+  const dirs = new Set()
+  for (const f of files) {
+    for (let i = f.indexOf('/'); i >= 0; i = f.indexOf('/', i + 1)) dirs.add(f.slice(0, i + 1))
+  }
+  const all = [...dirs, ...files]
+  if (q === '' || q.endsWith('/')) {
+    return all.filter((p) => p.startsWith(q) && p !== q && !p.slice(q.length, -1).includes('/'))
+      .sort((x, y) => (y.endsWith('/') - x.endsWith('/')) || x.localeCompare(y)).slice(0, 50)
+  }
+  const scored = []
+  for (const p of all) {
+    const base = p.slice(p.lastIndexOf('/', p.length - 2) + 1)
+    // Its own name matching counts for more.
+    const b = q.includes('/') ? -1 : fuzzy(q, base)
+    const s = Math.max(fuzzy(q, p), b < 0 ? -1 : b + 4)
+    if (s >= 0) scored.push([s, p])
+  }
+  return scored.sort((x, y) => y[0] - x[0] || x[1].length - y[1].length).slice(0, 50).map(([, p]) => p)
+}
+
+// completer drives the box of choices over ta. accept(send) is called with
+// send true when a choice made the message a whole command, to send it.
+function completer(a, ta, submit) {
+  const box = h('div', { class: 'complete', role: 'listbox', hidden: true })
+  let items = [], note = null, active = 0, at = null, dismissed = null
+
+  const close = () => { box.hidden = true; items = []; at = null }
+  const show = (rows, why) => {
+    items = rows
+    note = why
+    active = Math.min(active, Math.max(rows.length - 1, 0))
+    // replaceChildren turns null into the text "null"; keep only nodes.
+    box.replaceChildren(...[
+      ...rows.map((it, i) => h('div', {
+        class: 'complete-item' + (i === active ? ' active' : '') + (it.file ? ' file' : '') + (it.dir ? ' dir' : ''),
+        role: 'option', 'aria-selected': i === active ? 'true' : 'false',
+        onmousedown: (e) => { e.preventDefault(); active = i; accept(false) },
+      },
+        h('span', { class: 'ci-name' }, it.label, it.hint ? h('span', { class: 'ci-hint' }, ' ' + it.hint) : null),
+        it.desc ? h('span', { class: 'ci-desc' }, it.desc) : null,
+        it.gero ? h('span', { class: 'ci-tag', title: 'gero does this itself; the agent is not sent it' }, 'gero') : null)),
+      note ? h('div', { class: 'complete-note' }, note) : null,
+    ].filter(Boolean))
+    box.hidden = !rows.length && !note
+    box.querySelector('.active')?.scrollIntoView({ block: 'nearest' })
+  }
+
+  const update = () => {
+    if (ta.selectionStart !== ta.selectionEnd || a.archived_at) return close()
+    const t = triggered(a, ta.value.slice(0, ta.selectionStart))
+    if (!t || (dismissed && dismissed.from === t.from && dismissed.kind === t.kind)) return close()
+    dismissed = null
+    if (!at || at.from !== t.from || at.kind !== t.kind) active = 0
+    at = t
+    const c = fetched(t.kind === 'file' ? 'files' : 'commands', a.id, t.kind === 'file' ? 30000 : 15000)
+    if (c.error) return show([], t.kind === 'file' ? `Can't list its files: ${c.error.message}` : null)
+    if (!c.data) {
+      show([], t.kind === 'file' ? 'Listing files…' : null)
+      c.ready.then(() => { if (at === t) update() })
+      return
+    }
+    if (t.kind === 'file') {
+      const rows = fileItems(c.data.files, t.q).map((p) => ({ label: p, value: '@' + p, dir: p.endsWith('/'), file: true }))
+      return show(rows, c.data.truncated ? `Only the first ${c.data.files.length} files are searched.` : rows.length ? null : 'No such file.')
+    }
+    const cmds = c.data.commands || []
+    if (t.kind === 'arg') {
+      const cmd = cmds.find((x) => x.prefix === '/' && x.name === t.name)
+      const rows = (cmd?.args || [])
+        .map((v) => [fuzzy(t.q, v.value), v]).filter(([s]) => s >= 0)
+        .sort((x, y) => (t.q ? y[0] - x[0] : 0))
+        .map(([, v]) => ({ label: v.value, value: v.value, desc: v.description, whole: true }))
+      return show(rows)
+    }
+    const rows = cmds.filter((x) => x.prefix === t.prefix)
+      .map((x) => [fuzzy(t.q, x.name), x]).filter(([s]) => s >= 0)
+      // Typed: the best match first; not yet: gero's own, then the agent's.
+      .sort((x, y) => (t.q ? y[0] - x[0] : 0))
+      .map(([, x]) => ({ label: x.prefix + x.name, value: x.prefix + x.name, hint: x.hint, desc: x.description, gero: x.gero,
+        whole: x.prefix === '/' && !x.hint && !x.args, typed: x.name === t.q }))
+    show(rows)
+  }
+
+  // accept puts the active choice in place of what is typed of it. send:
+  // Enter, which sends a message the choice made a whole command.
+  const accept = (send) => {
+    const it = items[active]
+    if (!it || !at) return false
+    const caret = ta.selectionStart
+    let end = caret
+    while (end < ta.value.length && !/\s/.test(ta.value[end])) end++
+    const after = ta.value.slice(end)
+    const fill = it.value + (it.dir ? '' : ' ')
+    ta.value = ta.value.slice(0, at.from) + fill + after.replace(/^ /, '')
+    const pos = at.from + fill.length
+    ta.setSelectionRange(pos, pos)
+    // Which also completes what comes next: a command's argument, a folder's
+    // files.
+    ta.dispatchEvent(new Event('input'))
+    if (send && (it.whole || it.typed) && /^\/\S+( \S+)?\s*$/.test(ta.value)) {
+      close()
+      submit()
+    }
+    return true
+  }
+
+  // key handles a key the box takes; true: it did.
+  const key = (e) => {
+    if (box.hidden || e.isComposing) return false
+    switch (e.key) {
+      case 'ArrowDown': case 'ArrowUp': {
+        if (!items.length) return false
+        e.preventDefault()
+        active = (active + (e.key === 'ArrowDown' ? 1 : items.length - 1)) % items.length
+        show(items, note)
+        return true
+      }
+      case 'Tab':
+        if (!items.length || e.shiftKey) return false
+        e.preventDefault()
+        return accept(false)
+      case 'Enter':
+        if (!items.length || e.shiftKey) return false
+        e.preventDefault()
+        return accept(!coarse)
+      case 'Escape':
+        e.preventDefault()
+        dismissed = at
+        close()
+        return true
+    }
+    return false
+  }
+
+  ta.addEventListener('input', update)
+  ta.addEventListener('click', update)
+  ta.addEventListener('keyup', (e) => { if (['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(e.key)) update() })
+  ta.addEventListener('blur', close)
+  return { box, key }
+}
+
 function composer(a) {
   const ta = h('textarea', {
     rows: 1,
-    placeholder: a.archived_at ? 'This agent is archived.' : a.name ? 'Message the agent…' : 'What should the agent do?',
-    title: coarse ? null : 'Enter sends · Shift+Enter adds a line',
+    placeholder: a.archived_at ? 'This agent is archived.' : a.name ? 'Message the agent… / for commands, @ for files' : 'What should the agent do?',
+    title: coarse ? null : 'Enter sends · Shift+Enter adds a line · / commands · @ files' + (a.kind === 'codex' ? ' · $ skills' : ''),
     disabled: !!a.archived_at,
     value: S.drafts.get(a.id) || '',
   })
@@ -1288,7 +1489,9 @@ function composer(a) {
     if (!agentById(a.id)?.name) await guarded(refreshAgents)
   }
   ta.addEventListener('input', grow)
+  const done = completer(a, ta, submit)
   ta.addEventListener('keydown', (e) => {
+    if (done.key(e)) return
     if (e.key === 'Enter' && !e.shiftKey && !coarse && !e.isComposing) { e.preventDefault(); submit() }
     if (e.key === 'Escape') { S.settingsOpen = false; renderSettings(a) }
   })
@@ -1296,6 +1499,7 @@ function composer(a) {
   const wrap = h('div', { class: 'composer' },
     h('div', { id: 'settings-slot' }),
     h('div', { class: 'composer-row' },
+      done.box,
       ta,
       h('button', {
         class: 'icon-btn' + (S.settingsOpen ? ' on' : ''), 'aria-label': 'Agent settings', title: 'Agent settings',

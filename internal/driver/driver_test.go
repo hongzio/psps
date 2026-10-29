@@ -176,6 +176,14 @@ func TestCodexLiveHandshake(t *testing.T) {
 	if params["threadId"] != "th-1" || params["effort"] != "low" {
 		t.Fatalf("turn/start params = %v", params)
 	}
+	// With no message waiting, it asks for its skills and models, once.
+	if got := d.Next(); len(got) != 2 || !strings.Contains(string(got[0]), `"skills/list"`) || !strings.Contains(string(got[1]), `"model/list"`) {
+		t.Fatalf("Next = %s, want the lists", got)
+	} else {
+		for _, l := range got {
+			d.Observe(tp.in(string(l)))
+		}
+	}
 	if got := d.Next(); len(got) != 0 {
 		t.Fatalf("Next repeated itself: %s", got)
 	}
@@ -385,6 +393,10 @@ func TestHoldKeepsQueuedTurnsBack(t *testing.T) {
 	tp := &tape{}
 	d := newClaude("a1", "", Options{})
 	d.Observe(tp.started())
+	// Its initialize request goes whether or not messages are held.
+	if lines := d.Next(); len(lines) != 1 || !strings.Contains(string(lines[0]), `"initialize"`) {
+		t.Fatalf("first lines %s", lines)
+	}
 	d.Hold(true)
 	d.Send("hello")
 	if lines := d.Next(); len(lines) != 0 {

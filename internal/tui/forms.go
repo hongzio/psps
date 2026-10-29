@@ -257,10 +257,7 @@ func textField(label, placeholder, hint string) *field {
 }
 
 func efforts(kind string) []string {
-	if kind == string(driver.Codex) {
-		return []string{"default", "low", "medium", "high", "xhigh"}
-	}
-	return []string{"default", "low", "medium", "high", "xhigh", "max"}
+	return append([]string{"default"}, driver.Efforts(driver.Kind(kind))...)
 }
 
 func indexOf(options []string, v string) int {

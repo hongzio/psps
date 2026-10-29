@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"slices"
 	"strings"
 
 	"github.com/hongzio/gero/internal/event"
@@ -52,7 +53,19 @@ type claude struct {
 	// started with it, until claude's init shows the resume took.
 	rewind *clRewind
 	going  *clRewind
+	// asked: this generation was sent the initialize request, which
+	// claude answers with its commands and models, whenever it is sent.
+	// terminal are the commands it says need its terminal.
+	asked    bool
+	commands []Command
+	models   []Choice
+	terminal []string
 }
+
+// clHidden are claude's commands gero keeps out of its list: /model and
+// /effort are gero's to set, on the command line of each process, and
+// /clear starts a session gero does not follow.
+var clHidden = []string{"clear", "model", "effort"}
 
 // clRewind is a generation that takes the conversation back: resumed up to
 // a transcript entry, or, when the point is the session's start, a session
@@ -124,6 +137,18 @@ func (c *claude) State() State {
 }
 
 func (c *claude) Send(text string) { c.queue = append(c.queue, text) }
+
+func (c *claude) Commands() []Command {
+	var out []Command
+	for _, cm := range c.commands {
+		if !slices.Contains(clHidden, cm.Name) && !slices.Contains(c.terminal, cm.Name) && !strings.HasPrefix(cm.Name, "_") {
+			out = append(out, cm)
+		}
+	}
+	return out
+}
+
+func (c *claude) Models() []Choice { return c.models }
 
 func (c *claude) Interrupt() { c.stop = true }
 
@@ -228,6 +253,15 @@ func (c *claude) Next() [][]byte {
 		return nil
 	}
 	var out [][]byte
+	if !c.asked {
+		// Asked once a process: it costs no turn, and claude answers it
+		// even mid-conversation, so one started before gero asked is asked
+		// when gero next attaches.
+		c.asked = true
+		out = append(out, line(map[string]any{"type": "control_request",
+			"request_id": fmt.Sprintf("gero-init-%d", c.gen),
+			"request":    map[string]any{"subtype": "initialize"}}))
+	}
 	for _, p := range c.pending {
 		if p.sent {
 			continue
@@ -284,6 +318,8 @@ type clMessage struct {
 	Response  json.RawMessage `json:"response"`
 	Result    string          `json:"result"`
 	IsError   bool            `json:"is_error"`
+	// Terminal are, in init, the commands that need claude's terminal.
+	Terminal []string `json:"terminal_slash_commands"`
 	// ParentToolUseID is set on a subagent's messages, which are in a
 	// transcript of their own.
 	ParentToolUseID *string `json:"parent_tool_use_id"`
@@ -338,7 +374,7 @@ func (c *claude) Observe(rec shimproto.Record) []event.Event {
 		switch rec.Sys.Kind {
 		case shimproto.SysStarted:
 			c.gen++
-			c.alive, c.restart, c.errText = true, false, ""
+			c.alive, c.restart, c.errText, c.asked = true, false, "", false
 			c.busy, c.blocked, c.pendingTurns, c.pending = false, false, 0, nil
 			evs = append(evs, c.text(rec, event.KindNotice, "", fmt.Sprintf("claude started (pid %d)", rec.Sys.PID)))
 			if rw := c.rewindIn(rec.Sys.Argv); rw != nil {
@@ -392,6 +428,14 @@ func (c *claude) observeIn(rec shimproto.Record, m clMessage) []event.Event {
 		c.pendingTurns++
 		c.userTurn()
 		return []event.Event{c.text(rec, event.KindUser, "", blockText(msg.Content))}
+	case "control_request":
+		var r struct {
+			Subtype string `json:"subtype"`
+		}
+		json.Unmarshal(m.Request, &r)
+		if r.Subtype == "initialize" {
+			c.asked = true
+		}
 	case "control_response":
 		var r struct {
 			RequestID string `json:"request_id"`
@@ -438,6 +482,7 @@ func (c *claude) observeOut(rec shimproto.Record, m clMessage) []event.Event {
 	case "system":
 		if m.Subtype == "init" {
 			c.sessionUsed = true
+			c.terminal = m.Terminal
 			if m.SessionID != "" {
 				c.sessionID = m.SessionID
 			}
@@ -532,6 +577,9 @@ func (c *claude) observeOut(rec shimproto.Record, m clMessage) []event.Event {
 		}
 		return evs
 
+	case "control_response":
+		c.answered(m.Response)
+
 	case "control_request":
 		var r struct {
 			Subtype   string          `json:"subtype"`
@@ -555,6 +603,41 @@ func (c *claude) observeOut(rec shimproto.Record, m clMessage) []event.Event {
 		return []event.Event{e}
 	}
 	return nil
+}
+
+// answered takes claude's commands and models from its answer to gero's
+// initialize request.
+func (c *claude) answered(raw json.RawMessage) {
+	var r struct {
+		Subtype   string `json:"subtype"`
+		RequestID string `json:"request_id"`
+		Response  struct {
+			Commands []struct {
+				Name         string `json:"name"`
+				Description  string `json:"description"`
+				ArgumentHint string `json:"argumentHint"`
+			} `json:"commands"`
+			Models []struct {
+				Value       string `json:"value"`
+				DisplayName string `json:"displayName"`
+				Description string `json:"description"`
+			} `json:"models"`
+		} `json:"response"`
+	}
+	if json.Unmarshal(raw, &r) != nil || r.Subtype != "success" || !strings.HasPrefix(r.RequestID, "gero-init-") {
+		return
+	}
+	c.commands, c.models = nil, nil
+	for _, cm := range r.Response.Commands {
+		if cm.Name != "" {
+			c.commands = append(c.commands, Command{Prefix: "/", Name: cm.Name, Description: cm.Description, Hint: cm.ArgumentHint})
+		}
+	}
+	for _, md := range r.Response.Models {
+		if md.Value != "" {
+			c.models = append(c.models, Choice{Value: md.Value, Description: joinDesc(md.DisplayName, md.Description)})
+		}
+	}
 }
 
 // toolSummary picks the one input field a person scans a tool call for.

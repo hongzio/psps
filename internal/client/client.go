@@ -191,8 +191,21 @@ func (c *Client) CreateAgent(ctx context.Context, req api.CreateAgent) (api.Agen
 	return v, c.do(ctx, "POST", "/v1/agents", req, &v)
 }
 
-func (c *Client) Send(ctx context.Context, id, text string) error {
-	return c.do(ctx, "POST", "/v1/agents/"+url.PathEscape(id)+"/messages", api.Message{Text: text}, nil)
+// Send sends text to the agent, or, when it is one of gero's commands, has
+// gero do it: Done says what it did.
+func (c *Client) Send(ctx context.Context, id, text string) (api.Sent, error) {
+	var v api.Sent
+	return v, c.do(ctx, "POST", "/v1/agents/"+url.PathEscape(id)+"/messages", api.Message{Text: text}, &v)
+}
+
+func (c *Client) Commands(ctx context.Context, id string) (api.Commands, error) {
+	var v api.Commands
+	return v, c.do(ctx, "GET", "/v1/agents/"+url.PathEscape(id)+"/commands", nil, &v)
+}
+
+func (c *Client) Files(ctx context.Context, id string) (api.Files, error) {
+	var v api.Files
+	return v, c.do(ctx, "GET", "/v1/agents/"+url.PathEscape(id)+"/files", nil, &v)
 }
 
 func (c *Client) Approve(ctx context.Context, id, approval string, d driver.Decision) error {

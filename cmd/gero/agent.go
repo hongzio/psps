@@ -122,7 +122,11 @@ func agentCmd(p paths.Paths, args []string) error {
 		if len(pos) < 2 {
 			return errors.New("usage: gero agent send ID TEXT...")
 		}
-		return c.Send(ctx, pos[0], strings.Join(pos[1:], " "))
+		sent, err := c.Send(ctx, pos[0], strings.Join(pos[1:], " "))
+		if sent.Done != "" {
+			fmt.Println(sent.Done)
+		}
+		return err
 
 	case "approve":
 		pos := parse(fs, args[1:])
