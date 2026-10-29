@@ -1810,7 +1810,7 @@ function exposeForm(i, s, x) {
   const envNote = (n) => {
     if (!s.replaces) return null
     const c = S.envs.find((e) => e.service === s.name && e.name === n)?.config || {}
-    return h('span', { class: 'hint' }, `${c.path || '?'} · ${c.read_write ? 'read-write' : 'read-only'}`)
+    return h('span', { class: 'hint' }, `${c.path || '?'} · `, h('span', { class: 'mode' }, c.read_write ? 'read-write' : 'read-only'))
   }
   return h('div', { class: 'subform' },
     noEnvs ? null : h('div', { class: 'field' }, h('label', null, 'Environments'),

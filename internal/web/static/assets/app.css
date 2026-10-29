@@ -317,6 +317,11 @@ code, pre { font-family: var(--mono); font-size: 13px; }
   background: var(--bg);
 }
 .field textarea { min-height: 140px; resize: vertical; }
+/* A checkbox in a field is its own size: width 100% made each one wide
+   enough to squeeze the text beside it into a narrow column. */
+.field input[type="checkbox"] { width: auto; padding: 0; margin: 0; flex: none; }
+.ticks .check .hint { overflow-wrap: anywhere; font-weight: 400; }
+.ticks .check .hint .mode { white-space: nowrap; }
 .row { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
 .segmented { display: inline-flex; border: 1px solid var(--border); border-radius: 8px; overflow: hidden; }
 .segmented button { border: 0; background: transparent; padding: 7px 16px; }
