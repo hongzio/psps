@@ -50,6 +50,9 @@ func (p Paths) DB() string     { return filepath.Join(p.Data, "gero.db") }
 // from: an INI of [<service> <env>] sections, 0600.
 func (p Paths) Credentials() string { return filepath.Join(p.Config, "credentials") }
 
+// Settings is the daemon's own settings file, read when it starts.
+func (p Paths) Settings() string { return filepath.Join(p.Config, "config.toml") }
+
 // WebToken signs browsers in to the web UI. Anyone holding it controls the
 // agents, so it lives with the socket, readable by the user only.
 func (p Paths) WebToken() string { return filepath.Join(p.State, "web-token") }

@@ -369,7 +369,8 @@ func (m *Manager) measureFence(ctx context.Context, iso store.Isolation, bridge 
 		// and not a pass either. The next round measures again.
 		r.why = "waiting to measure the fence: " + strings.Join(unmeasured, ", ")
 	case res.Resolve != "ok":
-		r.ok, r.why = true, "verified, but DNS through the gateway failed: "+res.Resolve
+		r.ok, r.why = true, "verified, but DNS failed: "+res.Resolve+
+			" (behind a local DNS proxy on the Mac, like Cloudflare WARP, set dns in ~/.config/gero/config.toml)"
 	default:
 		r.ok, r.why = true, "verified"
 	}

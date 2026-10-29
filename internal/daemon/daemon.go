@@ -41,10 +41,15 @@ func Run(ctx context.Context, p paths.Paths, logger *log.Logger) error {
 	lock.Truncate(0)
 	fmt.Fprintf(lock, "%d\n", os.Getpid())
 
+	settings, err := LoadSettings(p.Settings())
+	if err != nil {
+		return err
+	}
 	cli, err := isolation.FindCLI()
 	if err != nil {
 		return err
 	}
+	cli.DNS = settings.DNS
 	st, err := store.Open(p.DB())
 	if err != nil {
 		return err

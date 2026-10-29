@@ -223,6 +223,19 @@ pass or a leak. `gero iso create NAME --fence off` opts an
 isolation out. `gero pf status -v` shows the loaded rules;
 `sudo gero pf uninstall` removes everything the helper installed.
 
+Isolations resolve names through their network's gateway, which forwards to
+the Mac's resolver. A local DNS proxy on the Mac (Cloudflare WARP answers on
+127.0.2.2) never answers it: the image build fails at `apt-get update` and
+nothing resolves inside. Name nameservers on the internet instead, in
+`~/.config/gero/config.toml`, and restart the daemon:
+
+```toml
+dns = ["1.1.1.1", "8.8.8.8"]
+```
+
+The image build and containers made from then on use them; an existing
+isolation takes them on `gero iso upgrade`.
+
 ## Credential proxies
 
 An agent can **use** a credential without being able to **read** it: the

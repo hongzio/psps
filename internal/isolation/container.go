@@ -43,6 +43,17 @@ func AgentStateDir(id string) string { return StateRoot + "/agents/" + id }
 
 type CLI struct {
 	Bin string
+	// DNS are the nameservers containers and image builds resolve through;
+	// none is container's own, the network's gateway.
+	DNS []string
+}
+
+func (c CLI) dnsArgs() []string {
+	var args []string
+	for _, ip := range c.DNS {
+		args = append(args, "--dns", ip)
+	}
+	return args
 }
 
 // FindCLI locates `container`. launchd starts the daemon with a PATH that has
@@ -185,7 +196,8 @@ func (c CLI) VolumeRemove(ctx context.Context, name string) error {
 }
 
 func (c CLI) Build(ctx context.Context, tag, dir string, progress io.Writer) error {
-	cmd := exec.CommandContext(ctx, c.Bin, "build", "--progress", "plain", "-t", tag, dir)
+	args := append([]string{"build", "--progress", "plain"}, c.dnsArgs()...)
+	cmd := exec.CommandContext(ctx, c.Bin, append(args, "-t", tag, dir)...)
 	var tail bytes.Buffer
 	w := io.Writer(&tail)
 	if progress != nil {
@@ -317,6 +329,7 @@ func (c CLI) Run(ctx context.Context, s RunSpec) error {
 	if s.Network != "" {
 		args = append(args, "--network", s.Network)
 	}
+	args = append(args, c.dnsArgs()...)
 	for _, v := range s.Volumes {
 		args = append(args, "-v", v[0]+":"+v[1])
 	}

@@ -129,6 +129,15 @@ func Rules(networks []Network, host []HostAddr, bridgeOf func(gateway4 string) s
 	return b.String(), nil
 }
 
+// Fenced is whether the fence keeps isolations from a whatever the Mac's
+// own addresses are: the ranges above.
+func Fenced(a netip.Addr) bool {
+	if a = a.Unmap(); a.Is4() {
+		return isPrivate4(a)
+	}
+	return !a.IsGlobalUnicast() || a.IsPrivate()
+}
+
 func isPrivate4(a netip.Addr) bool {
 	for _, p := range private4 {
 		if netip.MustParsePrefix(p).Contains(a) {
