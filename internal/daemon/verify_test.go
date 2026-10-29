@@ -74,6 +74,17 @@ func checkNamed(v api.Verify, prefix string) []api.VerifyCheck {
 }
 
 func TestVerifyMeasuresEveryProxyFromInsideTheIsolation(t *testing.T) {
+	// A psql that is there but does not run (a mise shim with no version
+	// set here) is no psql: its directory leaves PATH.
+	if p, err := exec.LookPath("psql"); err == nil && exec.Command(p, "--version").Run() != nil {
+		var keep []string
+		for _, d := range filepath.SplitList(os.Getenv("PATH")) {
+			if d != filepath.Dir(p) {
+				keep = append(keep, d)
+			}
+		}
+		t.Setenv("PATH", strings.Join(keep, string(filepath.ListSeparator)))
+	}
 	reg := services.Registry()
 	_, m, c := verifyEnv(t, reg)
 	// A credentials file, holding nothing the exposed envs use.
