@@ -1296,20 +1296,20 @@ function fuzzy(q, s) {
   return j < q.length ? -1 : score - t.length / 100
 }
 
-// The agent's commands and files, fetched as they are wanted and kept a
-// while.
+// The agent's commands and files as last fetched: fetched again when
+// older than ttl, once at a time, while the last ones are shown. ready is
+// the fetch under way.
 const completions = { commands: new Map(), files: new Map() }
 function fetched(kind, id, ttl) {
   const cache = completions[kind]
-  const c = cache.get(id)
-  if (c && Date.now() - c.at < ttl) return c
-  // A failure is kept as long, so a stopped isolation is not asked again
-  // at each key.
-  const entry = { at: Date.now(), data: null, error: null }
-  entry.ready = api('GET', `/v1/agents/${id}/${kind}`)
-    .then((d) => { entry.data = d }, (e) => { entry.error = e })
-  cache.set(id, entry)
-  return entry
+  let c = cache.get(id)
+  if (!c) cache.set(id, (c = { at: 0, data: null, error: null, ready: null }))
+  if (!c.ready && Date.now() - c.at >= ttl) {
+    c.ready = api('GET', `/v1/agents/${id}/${kind}`)
+      .then((d) => { c.data = d; c.error = null }, (e) => { c.error = e })
+      .finally(() => { c.at = Date.now(); c.ready = null })
+  }
+  return c
 }
 
 // triggered is what the text before the caret asks to complete, if
@@ -1380,18 +1380,22 @@ function completer(a, ta, submit) {
     const t = triggered(a, ta.value.slice(0, ta.selectionStart))
     if (!t || (dismissed && dismissed.from === t.from && dismissed.kind === t.kind)) return close()
     dismissed = null
-    if (!at || at.from !== t.from || at.kind !== t.kind) active = 0
+    // A word just begun asks again: the files may have changed since. Typing
+    // on in it does not.
+    const fresh = !at || at.from !== t.from || at.kind !== t.kind
+    if (fresh) active = 0
     at = t
-    const c = fetched(t.kind === 'file' ? 'files' : 'commands', a.id, t.kind === 'file' ? 30000 : 15000)
-    if (c.error) return show([], t.kind === 'file' ? `Can't list its files: ${c.error.message}` : null)
+    const c = fetched(t.kind === 'file' ? 'files' : 'commands', a.id, !fresh ? Infinity : t.kind === 'file' ? 0 : 15000)
+    // What comes back is shown as it comes, in place of what was.
+    c.ready?.then(() => { if (at === t) update() })
     if (!c.data) {
-      show([], t.kind === 'file' ? 'Listing files…' : null)
-      c.ready.then(() => { if (at === t) update() })
-      return
+      if (c.error) return show([], t.kind === 'file' ? `Can't list its files: ${c.error.message}` : null)
+      return show([], t.kind === 'file' ? 'Listing files…' : null)
     }
     if (t.kind === 'file') {
       const rows = fileItems(c.data.files, t.q).map((p) => ({ label: p, value: '@' + p, dir: p.endsWith('/'), file: true }))
-      return show(rows, c.data.truncated ? `Only the first ${c.data.files.length} files are searched.` : rows.length ? null : 'No such file.')
+      return show(rows, c.data.truncated ? `Only the first ${c.data.files.length} files are searched.`
+        : rows.length ? null : c.ready ? 'Listing files…' : 'No such file.')
     }
     const cmds = c.data.commands || []
     if (t.kind === 'arg') {
