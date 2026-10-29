@@ -130,6 +130,9 @@ func Restart() error {
 }
 
 // Stop unloads the job; KeepAlive would otherwise restart a killed daemon.
+// It returns once the job is gone: bootout returns before that, and a
+// `gero` right after would find the job still loaded, kick it, and watch
+// it go.
 func Stop() error {
 	if !Loaded() {
 		return nil
@@ -137,7 +140,13 @@ func Stop() error {
 	if out, err := launchctl("bootout", domain()+"/"+Label); err != nil {
 		return fmt.Errorf("launchctl bootout: %v: %s", err, out)
 	}
-	return nil
+	for range 50 {
+		if !Loaded() {
+			return nil
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+	return fmt.Errorf("launchctl bootout: %s is still loaded after 5s", Label)
 }
 
 func Uninstall() error {
