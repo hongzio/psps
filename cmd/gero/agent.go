@@ -12,11 +12,12 @@ import (
 	"github.com/hongzio/gero/internal/driver"
 	"github.com/hongzio/gero/internal/event"
 	"github.com/hongzio/gero/internal/paths"
+	"github.com/hongzio/gero/internal/store"
 )
 
 func agentCmd(p paths.Paths, args []string) error {
 	if len(args) == 0 {
-		return errors.New("usage: gero agent new|ls|log|send|inbox|mail|approve|interrupt|set|rename|id|archive|rm")
+		return errors.New("usage: gero agent new|ls|log|send|inbox|mail|cron|approve|interrupt|set|rename|id|archive|rm")
 	}
 	c, err := connect(p)
 	if err != nil {
@@ -260,6 +261,104 @@ func agentCmd(p paths.Paths, args []string) error {
 		}
 		return tw.Flush()
 
+	case "cron":
+		add := fs.String("add", "", "add a cron on `SCHEDULE`: a cron expression in the Mac's time (quoted), @every 45m, @daily...; its message follows")
+		set := fs.Int64("set", 0, "change cron `N`: --schedule, --wait or --skip, and its message if one follows")
+		schedule := fs.String("schedule", "", "with --set: its new `SCHEDULE`")
+		wait := fs.Bool("wait", false, "a run that finds the agent busy waits until it is idle")
+		skip := fs.Bool("skip", false, "a run that finds the agent busy is skipped (a new cron's default)")
+		on := fs.Int64("on", 0, "turn cron `N` on")
+		off := fs.Int64("off", 0, "turn cron `N` off")
+		rm := fs.Int64("rm", 0, "delete cron `N`")
+		pos := parse(fs, args[1:])
+		usage := errors.New(`usage: gero agent cron AGENT                                   its crons
+       gero agent cron AGENT --add SCHEDULE [--wait] MESSAGE...
+       gero agent cron AGENT --set N [--schedule SCHEDULE] [--wait|--skip] [MESSAGE...]
+       gero agent cron AGENT --on N | --off N | --rm N`)
+		acts := 0
+		for _, x := range []bool{*add != "", *set != 0, *on != 0, *off != 0, *rm != 0} {
+			if x {
+				acts++
+			}
+		}
+		if len(pos) < 1 || acts > 1 || (*wait && *skip) || (*schedule != "" && *set == 0) {
+			return usage
+		}
+		agent, msg := pos[0], strings.Join(pos[1:], " ")
+		var busy *string
+		if *wait {
+			busy = new(store.CronWait)
+		} else if *skip {
+			busy = new(store.CronSkip)
+		}
+		var req api.PutCron
+		var n int64
+		switch {
+		case *add != "":
+			if msg == "" {
+				return usage
+			}
+			cr, err := c.AddCron(ctx, agent, api.PutCron{Schedule: add, Prompt: &msg, IfBusy: busy})
+			if err != nil {
+				return err
+			}
+			fmt.Printf("cron #%d of %s: %s\n", cr.ID, agent, cronLine(cr))
+			return nil
+		case *set != 0:
+			n, req.IfBusy = *set, busy
+			if *schedule != "" {
+				req.Schedule = schedule
+			}
+			if msg != "" {
+				req.Prompt = &msg
+			}
+		case *on != 0 || *off != 0:
+			n, req.Enabled = max(*on, *off), new(*on != 0)
+		case *rm != 0:
+			if err := c.DeleteCron(ctx, agent, *rm); err != nil {
+				return err
+			}
+			fmt.Printf("deleted cron #%d of %s\n", *rm, agent)
+			return nil
+		}
+		if n != 0 {
+			if len(pos) > 1 && *set == 0 {
+				return usage
+			}
+			cr, err := c.UpdateCron(ctx, agent, n, req)
+			if err != nil {
+				return err
+			}
+			fmt.Printf("cron #%d of %s: %s\n", cr.ID, agent, cronLine(cr))
+			return nil
+		}
+		if len(pos) != 1 {
+			return usage
+		}
+		v, err := c.Crons(ctx, agent)
+		if err != nil {
+			return err
+		}
+		if len(v.Crons) == 0 {
+			fmt.Printf("%s has no cron\n", agent)
+			return nil
+		}
+		fmt.Printf("times are the Mac's: %s\n", v.Zone)
+		tw := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
+		fmt.Fprintln(tw, "#\tSCHEDULE\tIF BUSY\tNEXT\tLAST\tMESSAGE")
+		for _, cr := range v.Crons {
+			next := "off"
+			if cr.Enabled && cr.NextAt != nil {
+				next = cr.NextAt.Local().Format("Jan 2 15:04")
+			}
+			last := "—"
+			if cr.LastAt != nil {
+				last = cr.LastAt.Local().Format("Jan 2 15:04") + " " + cr.LastResult
+			}
+			fmt.Fprintf(tw, "%d\t%s\t%s\t%s\t%s\t%s\n", cr.ID, cr.Schedule, cr.IfBusy, next, last, mailLine(cr.Prompt))
+		}
+		return tw.Flush()
+
 	case "archive":
 		pos := parse(fs, args[1:])
 		if len(pos) != 1 {
@@ -292,6 +391,19 @@ func agentCmd(p paths.Paths, args []string) error {
 }
 
 // mailLine is a mail's first line, short enough for a table.
+// cronLine is a cron that was just set: when it comes next, and what a run
+// that finds the agent busy does.
+func cronLine(c store.Cron) string {
+	if !c.Enabled || c.NextAt == nil {
+		return c.Schedule + ", off"
+	}
+	busy := "skipped"
+	if c.IfBusy == store.CronWait {
+		busy = "waits"
+	}
+	return fmt.Sprintf("%s, next %s; a run that finds it busy %s", c.Schedule, c.NextAt.Local().Format("Mon Jan 2 15:04"), busy)
+}
+
 func mailLine(text string) string {
 	first, _, _ := strings.Cut(strings.TrimSpace(text), "\n")
 	if r := []rune(first); len(r) > 60 {

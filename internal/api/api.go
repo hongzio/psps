@@ -71,6 +71,8 @@ type Agent struct {
 	Problem string `json:"problem,omitempty"`
 	// Inbox is how many mails from other agents wait for it.
 	Inbox int `json:"inbox,omitempty"`
+	// Crons is how many of its crons are on.
+	Crons int `json:"crons,omitempty"`
 }
 
 // Mail is one agent's mail to another. From and To are the two agents as
@@ -136,6 +138,24 @@ type Message struct {
 type Rewind struct {
 	Event int64  `json:"event"`
 	Text  string `json:"text"`
+}
+
+// Crons are an agent's crons, with the time zone their schedules are read
+// in: the Mac's.
+type Crons struct {
+	Zone  string       `json:"zone"`
+	Crons []store.Cron `json:"crons"`
+}
+
+// PutCron sets a cron of an agent's: a cron expression or "@every 30m" for
+// Schedule, the message, and store.CronSkip or store.CronWait for what a
+// run that finds the agent busy does. What is left out stays as it is; a
+// new cron is on, and skips.
+type PutCron struct {
+	Schedule *string `json:"schedule,omitempty"`
+	Prompt   *string `json:"prompt,omitempty"`
+	IfBusy   *string `json:"if_busy,omitempty"`
+	Enabled  *bool   `json:"enabled,omitempty"`
 }
 
 type Decision struct {

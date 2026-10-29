@@ -295,6 +295,32 @@ func (m *Manager) Handler() http.Handler {
 		}
 		reply(w, nil, m.DiscardMail(r.PathValue("id"), id))
 	})
+	mux.HandleFunc("GET /v1/agents/{id}/crons", func(w http.ResponseWriter, r *http.Request) {
+		v, err := m.Crons(r.PathValue("id"))
+		reply(w, v, err)
+	})
+	mux.HandleFunc("POST /v1/agents/{id}/crons", func(w http.ResponseWriter, r *http.Request) {
+		var req api.PutCron
+		if !decode(w, r, &req) {
+			return
+		}
+		v, err := m.AddCron(r.PathValue("id"), req)
+		reply(w, v, err)
+	})
+	mux.HandleFunc("PATCH /v1/agents/{id}/crons/{cron}", func(w http.ResponseWriter, r *http.Request) {
+		id, ok := cronID(w, r)
+		var req api.PutCron
+		if !ok || !decode(w, r, &req) {
+			return
+		}
+		v, err := m.UpdateCron(r.PathValue("id"), id, req)
+		reply(w, v, err)
+	})
+	mux.HandleFunc("DELETE /v1/agents/{id}/crons/{cron}", func(w http.ResponseWriter, r *http.Request) {
+		if id, ok := cronID(w, r); ok {
+			reply(w, nil, m.DeleteCron(r.PathValue("id"), id))
+		}
+	})
 	mux.HandleFunc("POST /v1/agents/{id}/archive", func(w http.ResponseWriter, r *http.Request) {
 		reply(w, nil, m.Archive(r.Context(), r.PathValue("id")))
 	})
@@ -312,6 +338,15 @@ type httpError struct {
 func (e httpError) Error() string { return e.err.Error() }
 
 func badRequest(err error) error { return httpError{http.StatusBadRequest, err} }
+
+func cronID(w http.ResponseWriter, r *http.Request) (int64, bool) {
+	id, err := strconv.ParseInt(r.PathValue("cron"), 10, 64)
+	if err != nil {
+		reply(w, nil, badRequest(fmt.Errorf("%q is not a cron number", r.PathValue("cron"))))
+		return 0, false
+	}
+	return id, true
+}
 
 func decode(w http.ResponseWriter, r *http.Request, v any) bool {
 	if err := json.NewDecoder(r.Body).Decode(v); err != nil {

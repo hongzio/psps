@@ -49,8 +49,9 @@ type runtime struct {
 	outbox    []store.Pending
 	decisions map[string]driver.Decision
 	// inbox is how many mails wait for the agent: read one per turn,
-	// oldest first, whenever it is idle.
-	inbox int
+	// oldest first, whenever it is idle. crons is how many of its crons
+	// have a run waiting for it, sent the same way after the mail.
+	inbox, crons int
 }
 
 func (m *Manager) newRuntime(a store.Agent) (*runtime, error) {
@@ -66,9 +67,13 @@ func (m *Manager) newRuntime(a store.Agent) (*runtime, error) {
 	if err != nil {
 		return nil, err
 	}
+	crons, err := m.store.WaitingCrons(a.ID)
+	if err != nil {
+		return nil, err
+	}
 	ctx, cancel := context.WithCancel(m.ctx)
 	return &runtime{m: m, ctx: ctx, cancel: cancel, agent: a, drv: drv, outbox: outbox,
-		decisions: map[string]driver.Decision{}, inbox: inbox}, nil
+		decisions: map[string]driver.Decision{}, inbox: inbox, crons: crons}, nil
 }
 
 func (r *runtime) loop() {
@@ -211,6 +216,8 @@ func (r *runtime) catchUpLocked() {
 		}
 	}
 	r.kickLocked()
+	// A cron that came due while the agent was not connected is its now.
+	r.m.wakeCrons()
 }
 
 // kickLocked moves the agent toward what the driver wants: lines written, a
@@ -240,6 +247,10 @@ func (r *runtime) kickLocked() {
 	st = r.drv.State()
 	if fenced && r.mailDueLocked(st) {
 		r.deliverMailLocked()
+		st = r.drv.State()
+	}
+	if fenced && r.crons > 0 && r.freeLocked(st) {
+		r.sendWaitingCronLocked()
 		st = r.drv.State()
 	}
 	if st.Alive {
@@ -366,13 +377,18 @@ func (r *runtime) nameLocked(text string) {
 	}
 }
 
-// mailDueLocked is whether the agent is free for its next mail: idle, with
-// nothing of the operator's still on its way to it, and no process about
-// to be replaced. An agent in error or interrupted keeps its mail until
-// the operator's next message: one that cannot work would otherwise spend
-// its inbox failing.
+// mailDueLocked is whether the agent is free for its next mail.
 func (r *runtime) mailDueLocked(st driver.State) bool {
-	return r.inbox > 0 && len(r.outbox) == 0 && st.Queued == 0 && st.Status == event.StatusIdle &&
+	return r.inbox > 0 && r.freeLocked(st)
+}
+
+// freeLocked is whether the agent is free for a message that is not the
+// operator's (mail, a cron): idle, with nothing of the operator's still on
+// its way to it, and no process about to be replaced. An agent in error or
+// interrupted is not free until the operator's next message: one that
+// cannot work would otherwise spend its inbox failing.
+func (r *runtime) freeLocked(st driver.State) bool {
+	return len(r.outbox) == 0 && st.Queued == 0 && st.Status == event.StatusIdle &&
 		!r.starting && !r.stopping && !(st.Alive && (st.Restart || r.restartWhenIdle))
 }
 

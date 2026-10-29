@@ -109,6 +109,10 @@ type Manager struct {
 	mailBuckets map[string]*proxy.TokenBucket
 	// fwd is the Mac's side of the forwarded ports.
 	fwd forwards
+	// cronMu keeps a cron being set from crossing it coming due;
+	// cronWake tells RunCrons one may be due sooner.
+	cronMu   sync.Mutex
+	cronWake chan struct{}
 }
 
 // fenceState is whether an isolation's network fence was measured to hold.
@@ -137,7 +141,7 @@ func NewManager(ctx context.Context, st *store.Store, cli Containers, fence Fenc
 		runtimes: map[string]*runtime{}, isos: map[string]*isoState{}, fences: map[string]*fenceState{},
 		tunnelPort: func(p int) int { return p }, instances: map[string]map[string]proxy.Instance{},
 		tunnels: map[string]*tunnelState{}, synced: map[string]string{}, versions: map[string]string{}, lastEnv: map[string]string{},
-		mailBuckets: map[string]*proxy.TokenBucket{}}
+		mailBuckets: map[string]*proxy.TokenBucket{}, cronWake: make(chan struct{}, 1)}
 	m.loops.Add(1)
 	go func() {
 		defer m.loops.Done()
@@ -848,24 +852,41 @@ func (m *Manager) Agents() ([]api.Agent, error) {
 	if err != nil {
 		return nil, err
 	}
+	crons, err := m.store.CronCounts()
+	if err != nil {
+		return nil, err
+	}
 	out := make([]api.Agent, 0, len(all))
 	for _, a := range all {
-		out = append(out, m.view(a, counts[a.ID]))
+		out = append(out, m.view(a, counts[a.ID], crons[a.ID]))
 	}
 	sortAgents(out)
 	return out, nil
 }
 
-// view is a, live if it is, with inbox mails waiting.
-func (m *Manager) view(a store.Agent, inbox int) api.Agent {
+// view is a, live if it is, with inbox mails waiting and crons on.
+func (m *Manager) view(a store.Agent, inbox, crons int) api.Agent {
 	m.mu.Lock()
 	r, ok := m.runtimes[a.ID]
 	m.mu.Unlock()
 	if !ok {
-		return api.Agent{Agent: a, Isolation: m.isoName(a.IsolationID), Inbox: inbox}
+		return api.Agent{Agent: a, Isolation: m.isoName(a.IsolationID), Inbox: inbox, Crons: crons}
 	}
 	live, st, problem := r.view()
-	return api.Agent{Agent: live, Isolation: m.isoName(live.IsolationID), State: st, Problem: problem, Inbox: inbox}
+	return api.Agent{Agent: live, Isolation: m.isoName(live.IsolationID), State: st, Problem: problem, Inbox: inbox, Crons: crons}
+}
+
+// viewOf is a as view has it, counting what it shows of a alone.
+func (m *Manager) viewOf(a store.Agent) (api.Agent, error) {
+	inbox, err := m.store.InboxCount(a.ID)
+	if err != nil {
+		return api.Agent{}, err
+	}
+	crons, err := m.store.CronCount(a.ID)
+	if err != nil {
+		return api.Agent{}, err
+	}
+	return m.view(a, inbox, crons), nil
 }
 
 func (m *Manager) Agent(idOrPrefix string) (api.Agent, error) {
@@ -875,11 +896,7 @@ func (m *Manager) Agent(idOrPrefix string) (api.Agent, error) {
 	} else if a, err = m.storedAgent(idOrPrefix); err != nil {
 		return api.Agent{}, err
 	}
-	inbox, err := m.store.InboxCount(a.ID)
-	if err != nil {
-		return api.Agent{}, err
-	}
-	return m.view(a, inbox), nil
+	return m.viewOf(a)
 }
 
 func (m *Manager) Send(id, text string) error {
@@ -987,11 +1004,7 @@ func (m *Manager) UpdateAgent(idOrPrefix string, req api.UpdateAgent) (api.Agent
 	if handle != nil {
 		a.Handle = *handle
 	}
-	inbox, err := m.store.InboxCount(a.ID)
-	if err != nil {
-		return api.Agent{}, err
-	}
-	return m.view(a, inbox), nil
+	return m.viewOf(a)
 }
 
 // Archive stops the agent and keeps its history. Its session and workspace

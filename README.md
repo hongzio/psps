@@ -51,6 +51,7 @@ bin/gero agent ls
 bin/gero agent log <id> -f
 bin/gero agent send <id> "also update the changelog"
 bin/gero agent inbox <id> [--rm N|--clear] # mail other agents sent it (see Mail)
+bin/gero agent cron <id> --add "0 9 * * 1-5" "check CI"  # a message on a schedule (see Cron)
 bin/gero agent rename <id> login bug      # only the name changes; a turn carries on
 bin/gero agent id <id> login              # an ID of your own (--clear gives it back)
 bin/gero agent archive <id>               # stops it; its history is kept
@@ -387,6 +388,31 @@ token names the sender rather than proving it. A mail is at most 32 KiB, an
 inbox holds 50, and an isolation's agents send 20 a minute at most. Agents
 answering each other can go on forever: the skill tells them not to answer
 what needs no answer, and `gero agent inbox <id> --clear` stops a loop.
+
+## Cron
+
+An agent can be sent a message of yours on a schedule: a cron expression in
+the Mac's time, `@daily` and the like, or `@every 45m`. A run is sent when it
+finds the agent idle. One that finds it busy is skipped, or with `--wait`
+waits and goes the moment the agent is idle; runs that come due while one
+waits are folded into it. As with mail, an agent that is in error or was
+interrupted is not idle until your next message, which goes first.
+
+```sh
+gero agent cron <id> --add "*/30 9-18 * * 1-5" "check CI; fix what is red"
+gero agent cron <id> --add "@every 2h" --wait "write down where you are"
+gero agent cron <id>                       # its crons: when next, what came of the last run
+gero agent cron <id> --set 1 --schedule @hourly   # or --wait / --skip, or a new message
+gero agent cron <id> --off 1               # --on 1, --rm 1
+```
+
+In the web, ◷ Cron on an agent's top bar sets the same: every N minutes or
+hours, a time on some days of the week, or an expression. The agent reads,
+ahead of the message, that it comes on a schedule and that you may not be
+watching; the conversation shows it as the cron's. A time missed while the
+Mac slept or gero was down comes due once, as soon as it can, not once for
+each time missed. An archived agent's crons do not run; deleting it deletes
+them.
 
 ## Shared folders
 

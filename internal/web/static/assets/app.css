@@ -217,6 +217,8 @@ code, pre { font-family: var(--mono); font-size: 13px; }
 .rewound-body { display: flex; flex-direction: column; gap: 10px; margin-top: 10px; opacity: .65; }
 .msg-mail { align-self: flex-end; max-width: min(85%, 640px); border: 1px solid var(--border); background: var(--panel); padding: 10px 14px; border-radius: 14px 14px 4px 14px; }
 .msg-mail .who { font-size: 12.5px; font-weight: 600; color: var(--accent); margin-bottom: 4px; }
+.msg-cron { align-self: flex-end; max-width: min(85%, 640px); background: var(--accent-soft); padding: 10px 14px; border-radius: 14px 14px 4px 14px; }
+.msg-cron .who { font-size: 12.5px; font-weight: 600; color: var(--accent); margin-bottom: 4px; }
 .msg-agent { max-width: 100%; }
 .msg-agent .who { font-size: 12.5px; font-weight: 600; color: var(--ok); margin-bottom: 2px; }
 .msg-agent.live .text::after { content: "▍"; color: var(--accent); animation: pulse 1s infinite; }
@@ -503,11 +505,13 @@ code, pre { font-family: var(--mono); font-size: 13px; }
   color: var(--text);
   box-shadow: var(--shadow);
 }
+.dialog.wide { width: min(560px, calc(100vw - 32px)); }
 .dialog::backdrop { background: rgb(10 10 20 / 45%); }
 .dialog form { padding: 20px 20px 16px; }
 .dialog h3 { margin: 0 0 6px; font-size: 16px; line-height: 1.35; overflow-wrap: anywhere; }
 .dialog p { margin: 0; color: var(--muted); font-size: 14px; overflow-wrap: anywhere; }
 .dialog-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 20px; }
+.dialog-actions[hidden] { display: none; }
 .dialog-field { display: grid; gap: 4px; margin-top: 14px; font-size: 13px; font-weight: 600; }
 .dialog-input {
   width: 100%;
@@ -533,6 +537,32 @@ code, pre { font-family: var(--mono); font-size: 13px; }
 .btn .badge { margin-left: 6px; min-width: 18px; padding: 0 5px; border-radius: 9px; background: var(--accent); color: var(--accent-text); font-size: 11px; line-height: 18px; text-align: center; }
 .inbox .mail-text { white-space: pre-wrap; overflow-wrap: anywhere; font-size: 13px; margin-top: 4px; color: var(--text); }
 .btn.primary.danger { background: var(--err); color: var(--on-err); }
+/* Cron: an agent's messages on a schedule, in a wide dialog */
+.crons { display: grid; gap: 10px; margin-top: 14px; }
+.cron-list { display: grid; gap: 10px; max-height: 50vh; overflow-y: auto; }
+.cron { border: 1px solid var(--border); border-radius: 8px; padding: 8px 10px; }
+.cron.off { background: var(--bg); }
+.cron.off .cron-head strong, .cron.off .cron-text { color: var(--muted); }
+.cron-head { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 6px; font-size: 14px; }
+.cron-head .chip { font-size: 11px; }
+.cron-meta { font-size: 12px; color: var(--muted); margin-top: 2px; overflow-wrap: anywhere; }
+.cron-text { white-space: pre-wrap; overflow-wrap: anywhere; font-size: 13px; margin-top: 6px; }
+.cron-actions { display: flex; justify-content: flex-end; gap: 6px; margin-top: 8px; }
+.cron-form .dialog-field { margin-top: 0; margin-bottom: 14px; }
+.cron-form .dialog-field > .segmented { justify-self: start; }
+.cron-form .when { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-top: 6px; font-weight: 400; font-size: 14px; }
+.cron-form .when[hidden] { display: none; }
+.cron-form .when .dialog-input { width: auto; }
+.cron-form .when input[type="number"].dialog-input { width: 5.5em; flex: none; }
+.cron-form .cron-expr .dialog-input { flex: 1 1 100%; font-family: var(--mono); }
+.cron-form .segmented.days { flex-wrap: wrap; }
+.cron-form .segmented.days button { padding: 7px 9px; }
+.cron-form .hint { color: var(--muted); font-size: 12.5px; font-weight: 400; }
+.cron-form textarea.dialog-input { min-height: 96px; resize: vertical; font: inherit; font-size: 14px; font-weight: 400; }
+.cron-form .busy { display: grid; gap: 8px; margin-top: 4px; font-weight: 400; font-size: 13.5px; }
+.cron-form .busy .check { align-items: baseline; }
+.cron-form .busy input { flex: none; margin: 0; }
+.cron-form .dialog-actions { margin-top: 6px; }
 .dialog[open] { animation: dialog-in .14s ease-out; }
 .dialog[open]::backdrop { animation: backdrop-in .14s ease-out; }
 @keyframes dialog-in { from { opacity: 0; transform: translateY(6px) scale(.98); } }

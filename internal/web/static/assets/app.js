@@ -102,6 +102,53 @@ function letter(text) {
   const m = LETTER.exec(text)
   return m && { id: m[1], from: m[2], iso: m[3], body: text.slice(m[0].length) }
 }
+// A cron's message as its agent got it (internal/daemon/crons.go).
+const CRON = /^\[gero cron #(\d+), on schedule "([^"\n]*)"\. [^\n]*\]\n\n/
+function cronMsg(text) {
+  const m = CRON.exec(text)
+  return m && { id: m[1], schedule: m[2], body: text.slice(m[0].length) }
+}
+
+// A schedule as the cron form has it: every N minutes or hours, a time on
+// some days, or a cron expression as written. Days are cron's: 0 is Sunday.
+const DAYS = [[1, 'Mon'], [2, 'Tue'], [3, 'Wed'], [4, 'Thu'], [5, 'Fri'], [6, 'Sat'], [0, 'Sun']]
+const EVERY = /^@every (\d+)([mh])$/
+const AT = /^(\d{1,2}) (\d{1,2}) \* \* (\*|[0-7](?:,[0-7])*)$/
+function scheduleParts(spec) {
+  let m = EVERY.exec(spec)
+  if (m && +m[1] > 0) return { kind: 'every', n: +m[1], unit: m[2] }
+  m = AT.exec(spec)
+  if (m && +m[1] < 60 && +m[2] < 24) {
+    const days = m[3] === '*' ? DAYS.map(([d]) => d) : [...new Set(m[3].split(',').map((d) => +d % 7))]
+    return { kind: 'at', hour: +m[2], minute: +m[1], days }
+  }
+  return { kind: 'cron', expr: spec }
+}
+function scheduleSpec(p) {
+  if (p.kind === 'every') return `@every ${p.n}${p.unit}`
+  if (p.kind === 'at') return `${p.minute} ${p.hour} * * ${p.days.length === 7 ? '*' : [...p.days].sort().join(',')}`
+  return p.expr.trim()
+}
+const pad2 = (n) => String(n).padStart(2, '0')
+const NAMED_SCHEDULES = {
+  '@hourly': 'Every hour, on the hour', '@daily': 'Every day at 00:00', '@midnight': 'Every day at 00:00',
+  '@weekly': 'Sundays at 00:00', '@monthly': 'The 1st of every month at 00:00', '@yearly': 'January 1 at 00:00', '@annually': 'January 1 at 00:00',
+}
+function describeSchedule(spec) {
+  const p = scheduleParts(spec)
+  if (p.kind === 'every') {
+    const unit = p.unit === 'm' ? 'minute' : 'hour'
+    return p.n === 1 ? `Every ${unit}` : `Every ${p.n} ${unit}s`
+  }
+  if (p.kind === 'at') {
+    const only = (ds) => ds.length === p.days.length && ds.every((d) => p.days.includes(d))
+    const on = p.days.length === 7 ? 'Every day' : only([1, 2, 3, 4, 5]) ? 'Weekdays' : only([0, 6]) ? 'Weekends'
+      : DAYS.filter(([d]) => p.days.includes(d)).map(([, n]) => n).join(', ')
+    return `${on} at ${pad2(p.hour)}:${pad2(p.minute)}`
+  }
+  return NAMED_SCHEDULES[spec.toLowerCase()] || `cron ${spec}`
+}
+
 const label = (a) => (a.kind === 'codex' ? 'Codex' : 'Claude')
 const effortOptions = (kind) =>
   (kind === 'codex' ? ['', 'low', 'medium', 'high', 'xhigh'] : ['', 'low', 'medium', 'high', 'xhigh', 'max'])
@@ -129,16 +176,17 @@ async function guarded(fn) {
 // operator takes the action; Esc, Cancel or a click outside leave it be.
 // A destructive one starts on Cancel, so a stray Enter does nothing. extra
 // is shown under the body: a choice the caller reads once it resolves.
-// fields hold text inputs for the answer instead: the first starts
+// wide is for one that holds a form of its own. fields hold text inputs
+// for the answer instead: the first starts
 // focused, and Enter in any takes the action. onOk, if given, does the
 // action: what it throws is shown in the dialog, which stays open. Without
 // ok it is only something to look at, closed with cancel ("Close").
-function ask({ title, body, ok, cancel: cancelLabel = 'Cancel', danger, extra, fields, onOk }) {
+function ask({ title, body, ok, cancel: cancelLabel = 'Cancel', danger, extra, fields, onOk, wide }) {
   return new Promise((resolve) => {
     const cancel = h('button', { class: 'btn', value: 'cancel' }, cancelLabel)
     const go = ok ? h('button', { class: 'btn primary' + (danger ? ' danger' : ''), value: 'ok' }, ok) : null
     const err = h('p', { class: 'form-error dialog-error', role: 'alert', hidden: true })
-    const d = h('dialog', { class: 'dialog', 'aria-labelledby': 'dialog-title', 'aria-describedby': body ? 'dialog-body' : null },
+    const d = h('dialog', { class: 'dialog' + (wide ? ' wide' : ''), 'aria-labelledby': 'dialog-title', 'aria-describedby': body ? 'dialog-body' : null },
       h('form', { method: 'dialog' },
         h('h3', { id: 'dialog-title' }, title),
         body ? h('p', { id: 'dialog-body' }, body) : null,
@@ -858,6 +906,8 @@ function renderTopbar() {
         working ? h('button', { class: 'btn', onclick: () => guarded(() => api('POST', `/v1/agents/${a.id}/interrupt`)) }, '■', h('span', { class: 'label' }, ' Stop')) : null,
         h('button', { class: 'btn ghost', title: 'Its mail: what it was sent and what it wrote', onclick: () => openMail(a) },
           '✉', h('span', { class: 'label' }, ' Mail'), a.inbox ? h('span', { class: 'badge' }, String(a.inbox)) : null),
+        a.archived_at ? null : h('button', { class: 'btn ghost', title: 'Cron: messages sent to it on a schedule', onclick: () => openCrons(a) },
+          '◷', h('span', { class: 'label' }, ' Cron'), a.crons ? h('span', { class: 'badge' }, String(a.crons)) : null),
         h('button', { class: 'btn ghost', title: 'Name and ID', onclick: () => editAgent(a) }, '✎', h('span', { class: 'label' }, ' Name & ID')),
         a.archived_at ? h('button', {
           class: 'btn ghost danger', title: 'Delete', onclick: async () => {
@@ -955,6 +1005,154 @@ async function editAgent(a) {
   await guarded(refreshAgents)
 }
 
+// openCrons shows an agent's crons, messages sent to it on a schedule, and
+// sets them: each in a form of its own, in place of the list. A run goes
+// when the agent is idle; one that finds it busy is skipped or waits, as
+// the cron says. The list follows the daemon while it is open.
+async function openCrons(a) {
+  const box = h('div', { class: 'crons' })
+  let zone = ''
+  let crons = []
+  let editing = null // the cron in the form; {} for a new one
+  const when = (t) => new Date(t).toLocaleString([], { weekday: 'short', month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })
+  const load = async () => {
+    const v = await guarded(() => api('GET', `/v1/agents/${enc(a.id)}/crons`))
+    if (v) { zone = v.zone; crons = v.crons }
+  }
+  const changed = async () => { editing = null; await load(); draw(); guarded(refreshAgents) }
+  const set = (c, body) => guarded(async () => { await api('PATCH', `/v1/agents/${enc(a.id)}/crons/${c.id}`, body); await changed() })
+  const remove = async (c) => {
+    if (!await ask({ title: 'Delete this cron?', body: `${describeSchedule(c.schedule)}: its message is not sent again.`, ok: 'Delete', danger: true })) return
+    await guarded(async () => { await api('DELETE', `/v1/agents/${enc(a.id)}/crons/${c.id}`); await changed() })
+  }
+  const row = (c) => h('div', { class: 'cron' + (c.enabled ? '' : ' off') },
+    h('div', { class: 'cron-head' },
+      h('strong', null, describeSchedule(c.schedule)),
+      h('span', { class: 'chip ' + (c.enabled ? 'ok' : '') }, c.enabled ? 'on' : 'off'),
+      c.waiting_since ? h('span', { class: 'chip waiting', title: `since ${when(c.waiting_since)}` }, 'waiting for idle') : null),
+    h('div', { class: 'cron-meta' },
+      [c.enabled && c.next_at ? `next ${when(c.next_at)}` : null, c.if_busy === 'wait' ? 'waits if busy' : 'skipped if busy'].filter(Boolean).join(' · ')),
+    c.last_at ? h('div', { class: 'cron-meta' }, `${when(c.last_at)}: ${c.last_result}` +
+      (c.sent_at && c.last_result !== 'sent' ? ` · last sent ${when(c.sent_at)}` : '')) : null,
+    h('div', { class: 'cron-text' }, clip(c.prompt, 4)),
+    h('div', { class: 'cron-actions' },
+      h('button', { type: 'button', class: 'btn small', onclick: () => { editing = c; draw() } }, 'Edit'),
+      h('button', { type: 'button', class: 'btn small', onclick: () => set(c, { enabled: !c.enabled }) }, c.enabled ? 'Turn off' : 'Turn on'),
+      h('button', { type: 'button', class: 'btn small ghost danger', onclick: () => remove(c) }, 'Delete')))
+  const draw = () => {
+    // The form has its own Back; the dialog's Close waits for the list.
+    box.closest('dialog')?.querySelector(':scope > form > .dialog-actions')?.toggleAttribute('hidden', !!editing)
+    if (editing) {
+      box.replaceChildren(cronForm(a, editing, zone, changed, () => { editing = null; draw() }))
+      return
+    }
+    box.replaceChildren(
+      h('p', { class: 'mail-lead' }, `Times are the Mac's: ${zone}.`),
+      crons.length ? h('div', { class: 'cron-list' }, crons.map(row)) : h('p', { class: 'mail-lead' }, 'It has no cron yet.'),
+      h('div', null, h('button', { type: 'button', class: 'btn', onclick: () => { editing = {}; draw() } }, '+ New cron')))
+  }
+  await load()
+  draw()
+  const ticker = setInterval(async () => { if (!editing) { await load(); if (!editing) draw() } }, 15000)
+  await ask({
+    title: `Cron of "${agentTitle(a)}"`,
+    body: 'Messages sent to it on a schedule, as if you wrote them. A run is sent when the agent is idle; one that finds it busy is skipped, or waits until it is idle, as you choose.',
+    extra: box, cancel: 'Close', wide: true,
+  })
+  clearInterval(ticker)
+}
+
+// cronForm sets one cron: when, its message, and what a run that finds the
+// agent busy does. It lives in the cron dialog's own form, so every button
+// is type=button and Enter in a field saves rather than closing it.
+function cronForm(a, c, zone, saved, cancel) {
+  const p = c.schedule ? scheduleParts(c.schedule) : { kind: 'every', n: 30, unit: 'm' }
+  let kind = p.kind
+  const n = h('input', { type: 'number', class: 'dialog-input', min: '1', step: '1', value: String(p.kind === 'every' ? p.n : 30), 'aria-label': 'How many' })
+  let unit = p.kind === 'every' ? p.unit : 'm'
+  const units = h('div', { class: 'segmented' })
+  const drawUnits = () => units.replaceChildren(...[['m', 'minutes'], ['h', 'hours']].map(([u, l]) =>
+    h('button', { type: 'button', class: u === unit ? 'on' : '', onclick: () => { unit = u; drawUnits() } }, l)))
+  drawUnits()
+  const time = h('input', { type: 'time', class: 'dialog-input', value: p.kind === 'at' ? `${pad2(p.hour)}:${pad2(p.minute)}` : '09:00', 'aria-label': 'Time' })
+  const days = new Set(p.kind === 'at' ? p.days : [1, 2, 3, 4, 5])
+  const dayRow = h('div', { class: 'segmented days', role: 'group', 'aria-label': 'Days' })
+  const drawDays = () => dayRow.replaceChildren(...DAYS.map(([d, l]) => h('button', {
+    type: 'button', class: days.has(d) ? 'on' : '', 'aria-pressed': String(days.has(d)),
+    onclick: () => { if (days.has(d)) days.delete(d); else days.add(d); drawDays() },
+  }, l)))
+  drawDays()
+  const expr = h('input', {
+    class: 'dialog-input', value: p.kind === 'cron' ? p.expr : '', placeholder: '*/30 9-18 * * 1-5',
+    autocomplete: 'off', autocapitalize: 'off', spellcheck: 'false', 'aria-label': 'Cron expression',
+  })
+  const panes = {
+    every: h('div', { class: 'when' }, 'Every', n, units),
+    at: h('div', { class: 'when' }, 'At', time, 'on', dayRow),
+    cron: h('div', { class: 'when cron-expr' }, expr,
+      h('span', { class: 'hint' }, 'minute hour day-of-month month day-of-week, as in crontab: */30 9-18 * * 1-5 is every half hour from 9:00 to 18:30 on weekdays.')),
+  }
+  const seg = h('div', { class: 'segmented' })
+  const drawKind = () => {
+    seg.replaceChildren(...[['every', 'Every'], ['at', 'At a time'], ['cron', 'Cron expression']].map(([k, l]) =>
+      h('button', { type: 'button', class: k === kind ? 'on' : '', onclick: () => { kind = k; drawKind() } }, l)))
+    for (const [k, el] of Object.entries(panes)) el.hidden = k !== kind
+  }
+  drawKind()
+  const prompt = h('textarea', { class: 'dialog-input', value: c.prompt || '', placeholder: 'What to tell it each time', 'aria-label': 'Message' })
+  const busy = c.if_busy || 'skip'
+  const radio = (value, title, what) => h('label', { class: 'check' },
+    h('input', { type: 'radio', name: 'cron-if-busy', value, checked: busy === value }),
+    h('span', null, h('strong', null, title), ' — ', what))
+  const skip = radio('skip', 'Skip that run', 'it is sent only when it finds the agent idle; the next run tries again.')
+  const wait = radio('wait', 'Wait for idle', 'it is sent as soon as the agent is idle; runs that come meanwhile are folded into it.')
+  const err = h('p', { class: 'form-error dialog-error', role: 'alert', hidden: true })
+  const fail = (msg) => { err.textContent = msg; err.hidden = false }
+  const save = h('button', { type: 'button', class: 'btn primary' }, c.id ? 'Save' : 'Add cron')
+  const go = async () => {
+    err.hidden = true
+    let spec
+    if (kind === 'every') {
+      const k = Number(n.value)
+      if (!Number.isInteger(k) || k < 1) return fail('Every how many? A whole number, from 1.')
+      spec = scheduleSpec({ kind, n: k, unit })
+    } else if (kind === 'at') {
+      const [hh, mm] = time.value.split(':').map(Number)
+      if (!time.value || Number.isNaN(hh) || Number.isNaN(mm)) return fail('At what time?')
+      if (!days.size) return fail('Pick a day, at least one.')
+      spec = scheduleSpec({ kind, hour: hh, minute: mm, days: [...days] })
+    } else {
+      spec = expr.value.trim()
+      if (!spec) return fail('Write the cron expression.')
+    }
+    if (!prompt.value.trim()) return fail('Write the message to send.')
+    const body = { schedule: spec, prompt: prompt.value, if_busy: wait.querySelector('input').checked ? 'wait' : 'skip' }
+    save.disabled = true
+    try {
+      if (c.id) await api('PATCH', `/v1/agents/${enc(a.id)}/crons/${c.id}`, body)
+      else await api('POST', `/v1/agents/${enc(a.id)}/crons`, body)
+      await saved()
+    } catch (e) {
+      if (e instanceof Unauthorized) { S.authed = false; render(); return }
+      fail(e.message)
+      save.disabled = false
+    }
+  }
+  save.addEventListener('click', go)
+  const form = h('div', { class: 'cron-form' },
+    h('div', { class: 'dialog-field' }, 'When', seg, panes.every, panes.at, panes.cron,
+      h('span', { class: 'hint' }, `The Mac's time: ${zone}. Runs missed while the Mac slept or gero was down come due once, as soon as they can.`)),
+    h('label', { class: 'dialog-field' }, 'Message', prompt),
+    h('div', { class: 'dialog-field' }, 'If the agent is busy when it comes', h('div', { class: 'busy' }, skip, wait)),
+    err,
+    h('div', { class: 'dialog-actions' }, h('button', { type: 'button', class: 'btn', onclick: cancel }, 'Back'), save))
+  form.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter' && e.target.matches('input') && !e.isComposing) { e.preventDefault(); if (!save.disabled) go() }
+  })
+  queueMicrotask(() => (c.id ? prompt : kind === 'cron' ? expr : n).focus())
+  return form
+}
+
 function renderConvo(forceBottom) {
   const box = document.getElementById('convo')
   const inner = document.getElementById('convo-inner')
@@ -981,6 +1179,8 @@ function entryView(en, a, frozen) {
     case 'user': {
       const l = letter(en.text)
       if (l) return h('div', { class: 'msg-mail' }, h('div', { class: 'who' }, `✉ Mail #${l.id} from ${l.from} · ${l.iso}`), h('div', { class: 'text' }, markdown(l.body)))
+      const cm = cronMsg(en.text)
+      if (cm) return h('div', { class: 'msg-cron' }, h('div', { class: 'who' }, `◷ Cron #${cm.id} · ${describeSchedule(cm.schedule)}`), h('div', { class: 'text' }, richText(cm.body)))
       if (!frozen && S.edit?.agent === a.id && S.edit.id === en.id) return editView(en, a)
       const bubble = h('div', { class: 'msg-user text' }, richText(en.text))
       if (frozen || !en.id || !rewindable(a)) return bubble
@@ -1034,11 +1234,15 @@ function editView(en, a) {
   })
   queueMicrotask(grow)
   const c = convo(a.id)
-  const mails = c.entries.slice(c.entries.indexOf(en) + 1).filter((x) => x.kind === 'user' && letter(x.text)).length
+  const later = c.entries.slice(c.entries.indexOf(en) + 1).filter((x) => x.kind === 'user')
+  const mails = later.filter((x) => letter(x.text)).length
+  const crons = later.filter((x) => cronMsg(x.text)).length
+  const plural = (n, what) => `${n} ${what}${n === 1 ? '' : 's'}`
+  const gone = [mails && plural(mails, 'mail'), crons && plural(crons, 'cron message')].filter(Boolean).join(' and ')
   const ok = rewindable(a)
   const note = !ok ? 'The agent is busy; resend once it is idle, or stop it.'
     : 'The agent forgets this message and everything after it; files stay as they are.' +
-      (mails ? ` That includes ${mails} mail${mails === 1 ? '' : 's'}, not delivered again.` : '')
+      (gone ? ` That includes ${gone}, not sent again.` : '')
   return h('div', { class: 'msg-edit' }, ta,
     h('div', { class: 'note' }, note),
     h('div', { class: 'actions' },

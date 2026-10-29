@@ -18,6 +18,7 @@ import (
 	"github.com/hongzio/gero/internal/driver"
 	"github.com/hongzio/gero/internal/event"
 	"github.com/hongzio/gero/internal/proxy"
+	"github.com/hongzio/gero/internal/store"
 )
 
 type Client struct {
@@ -247,6 +248,26 @@ func (c *Client) DiscardMail(ctx context.Context, id string, mail int64) error {
 func (c *Client) ClearInbox(ctx context.Context, id string) (int, error) {
 	var v api.Cleared
 	return v.Removed, c.do(ctx, "DELETE", "/v1/agents/"+url.PathEscape(id)+"/inbox", nil, &v)
+}
+
+// Crons are an agent's crons, oldest first.
+func (c *Client) Crons(ctx context.Context, id string) (api.Crons, error) {
+	var v api.Crons
+	return v, c.do(ctx, "GET", "/v1/agents/"+url.PathEscape(id)+"/crons", nil, &v)
+}
+
+func (c *Client) AddCron(ctx context.Context, id string, req api.PutCron) (store.Cron, error) {
+	var v store.Cron
+	return v, c.do(ctx, "POST", "/v1/agents/"+url.PathEscape(id)+"/crons", req, &v)
+}
+
+func (c *Client) UpdateCron(ctx context.Context, id string, cron int64, req api.PutCron) (store.Cron, error) {
+	var v store.Cron
+	return v, c.do(ctx, "PATCH", fmt.Sprintf("/v1/agents/%s/crons/%d", url.PathEscape(id), cron), req, &v)
+}
+
+func (c *Client) DeleteCron(ctx context.Context, id string, cron int64) error {
+	return c.do(ctx, "DELETE", fmt.Sprintf("/v1/agents/%s/crons/%d", url.PathEscape(id), cron), nil, nil)
 }
 
 func (c *Client) Events(ctx context.Context, id string, after int64) ([]event.Event, error) {

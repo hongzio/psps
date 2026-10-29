@@ -73,6 +73,11 @@ func Run(ctx context.Context, p paths.Paths, logger *log.Logger) error {
 			logger.Printf("reconcile: %v", err)
 		}
 	}()
+	m.loops.Add(1)
+	go func() {
+		defer m.loops.Done()
+		m.RunCrons()
+	}()
 
 	srv := &http.Server{Handler: m.Handler(), ReadHeaderTimeout: 10 * time.Second}
 	webSrv, err := startWeb(p, m, logger)
