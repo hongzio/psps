@@ -107,6 +107,8 @@ type Manager struct {
 	cliLogins map[string]*cliLogin    // agent CLI logins, by isolation/tool
 	// mailBuckets are each isolation's budget for sending mail.
 	mailBuckets map[string]*proxy.TokenBucket
+	// fwd is the Mac's side of the forwarded ports.
+	fwd forwards
 }
 
 // fenceState is whether an isolation's network fence was measured to hold.
@@ -130,12 +132,19 @@ type isoState struct {
 type agentView = api.Agent
 
 func NewManager(ctx context.Context, st *store.Store, cli Containers, fence Fence, logger *log.Logger) *Manager {
-	return &Manager{ctx: ctx, store: st, cli: cli, fence: fence, hostAddrs: pf.SystemAddrs, bridgeOf: pf.SystemBridge,
+	m := &Manager{ctx: ctx, store: st, cli: cli, fence: fence, hostAddrs: pf.SystemAddrs, bridgeOf: pf.SystemBridge,
 		log: logger, hub: newHub(), workRoot: isolation.WorkRoot, home: isolation.AgentHome,
 		runtimes: map[string]*runtime{}, isos: map[string]*isoState{}, fences: map[string]*fenceState{},
 		tunnelPort: func(p int) int { return p }, instances: map[string]map[string]proxy.Instance{},
 		tunnels: map[string]*tunnelState{}, synced: map[string]string{}, versions: map[string]string{}, lastEnv: map[string]string{},
 		mailBuckets: map[string]*proxy.TokenBucket{}}
+	m.loops.Add(1)
+	go func() {
+		defer m.loops.Done()
+		<-ctx.Done()
+		m.closeForwards()
+	}()
+	return m
 }
 
 // Reconcile is what the daemon does on every start, whatever the previous
@@ -648,6 +657,7 @@ func (m *Manager) DeleteIsolation(ctx context.Context, name string, purge bool) 
 		}
 	}
 	m.stopTunnel(iso.ID)
+	m.reforward()
 	m.mu.Lock()
 	delete(m.fences, iso.ID)
 	delete(m.synced, iso.ID)

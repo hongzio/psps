@@ -236,7 +236,8 @@ func tunnelCmd(args []string) error {
 		return err
 	}
 	logf := func(format string, a ...any) { fmt.Fprintf(os.Stderr, "gero-shim tunnel: "+format+"\n", a...) }
-	err := tunnel.Serve(stdio{}, tunnel.LoopbackPorts(shimproto.TunnelPortLo, shimproto.TunnelPortHi), logf)
+	err := tunnel.Serve(stdio{}, tunnel.LoopbackPorts(shimproto.TunnelPortLo, shimproto.TunnelPortHi),
+		tunnel.LoopbackExcept(shimproto.TunnelPortLo, shimproto.TunnelPortHi), logf)
 	if b, rerr := os.ReadFile(*pidfile); rerr == nil && strings.TrimSpace(string(b)) == fmt.Sprint(os.Getpid()) {
 		os.Remove(*pidfile)
 	}

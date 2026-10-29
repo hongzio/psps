@@ -331,6 +331,24 @@ type Mounter interface {
 	Mounts(v View) (mounts []isolation.Mount, missing []string)
 }
 
+// Forwarder is a service that makes ports of the isolation's reachable from
+// the Mac (port): the daemon listens on the Mac's 127.0.0.1 and connects
+// what it accepts, through the tunnel, to the isolation's own loopback.
+// Missing names the exposed envs that are left out, and why.
+type Forwarder interface {
+	Forwards(v View) (forwards []Forward, missing []string)
+}
+
+// Forward is one port of the isolation's, on the Mac's 127.0.0.1:HostPort.
+// An HTTP one goes through an HTTP proxy that keeps gero's own cookies from
+// the isolation; otherwise bytes pass unchanged.
+type Forward struct {
+	Env      string `json:"env"`
+	Port     int    `json:"port"`
+	HostPort int    `json:"host_port"`
+	HTTP     bool   `json:"http"`
+}
+
 // Refusal is a request a proxy must refuse, which `gero iso verify` makes
 // from inside the isolation, as the agent, through the tunnel: what the
 // boundary does is measured, not read off the code. Want is text only this

@@ -15,8 +15,17 @@ import "time"
 
 // Version is reported by ping so the daemon can tell an outdated shim apart.
 // 2 added `gero-shim tunnel` and `gero-shim sync`, which the credential
-// proxies need.
-const Version = "2"
+// proxies need; 3 lets the tunnel connect the daemon to the isolation's own
+// loopback, which forwarded ports need.
+const Version = "3"
+
+// ProxiesVersion and ForwardsVersion are the first shims that serve the
+// credential proxies and forwarded ports: an isolation whose image predates
+// one goes without it until `gero iso upgrade`.
+const (
+	ProxiesVersion  = "2"
+	ForwardsVersion = "3"
+)
 
 // Dir says which stream a Record came from.
 type Dir string

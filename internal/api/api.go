@@ -162,6 +162,9 @@ type Service struct {
 	// one of its envs, replaces the isolation's container (share): running
 	// agents end and start again on their next message.
 	Replaces bool `json:"replaces,omitempty"`
+	// Forwards means its envs are ports of the isolation's on the Mac's
+	// 127.0.0.1 (port), which an Exposure lists with what listens.
+	Forwards bool `json:"forwards,omitempty"`
 }
 
 // Env is an env definition as clients see it: never the secret, only
@@ -186,6 +189,14 @@ type Exposure struct {
 	store.Exposure
 	// Missing names exposed envs the registry no longer has.
 	Missing []string `json:"missing,omitempty"`
+	// Forwards are a forwarding service's ports; Error says why one is not
+	// listening on the Mac.
+	Forwards []Forward `json:"forwards,omitempty"`
+}
+
+type Forward struct {
+	proxy.Forward
+	Error string `json:"error,omitempty"`
 }
 
 // Expose turns a service on for an isolation, or changes what it serves.

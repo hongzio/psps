@@ -1759,15 +1759,26 @@ function exposuresView(i) {
       const detail = !x.enabled ? 'off'
         : !s.fields?.length ? compactConfig(x.settings) || 'on'
           : s.replaces ? (x.envs || []).map((n) => '/shared/' + n).join(', ') || 'no folder'
-            : [(x.envs || []).join(', ') || 'no env', x.default_env ? `(default ${x.default_env})` : '', compactConfig(x.settings)].filter(Boolean).join(' ')
+            : s.forwards ? (x.forwards?.length ? forwardLinks(x.forwards) : 'no port')
+              : [(x.envs || []).join(', ') || 'no env', x.default_env ? `(default ${x.default_env})` : '', compactConfig(x.settings)].filter(Boolean).join(' ')
       return h('div', { class: 'svc-row' },
         h('div', { class: 'svc-line' },
           h('span', { class: 'dot' + (x.enabled ? ' on' : '') }),
           h('strong', null, s.name), h('span', { class: 'facts' }, detail),
           x.missing?.length ? h('span', { class: 'chip error' }, 'missing ' + x.missing.join(',')) : null,
+          (x.forwards || []).filter((f) => f.error).map((f) => h('span', { class: 'chip error', title: f.error }, `${f.env} not listening`)),
           S.openForm === key ? null : h('button', { class: 'btn small', onclick: () => openForm(key) }, x.enabled ? 'Change' : 'Turn on')),
         S.openForm === key ? exposeForm(i, s, x) : null)
     }))
+}
+
+// forwardLinks is where a forwarded port is on the Mac, as a link where a
+// browser opens it. noopener: the isolation's page gets no hold on this tab.
+function forwardLinks(fs) {
+  return fs.map((f, n) => [n ? ', ' : '',
+    f.http ? h('a', { href: `http://127.0.0.1:${f.host_port}/`, target: '_blank', rel: 'noopener noreferrer' }, `127.0.0.1:${f.host_port}`)
+      : `127.0.0.1:${f.host_port}`,
+    ` → ${f.port}` + (f.http ? '' : ' tcp')])
 }
 
 function exposeForm(i, s, x) {
@@ -1796,7 +1807,8 @@ function exposeForm(i, s, x) {
         { envs, default_env: def.value === DEFAULT ? undefined : def.value, settings: ctl.patch() })
       S.openForm = null
       toast(s.replaces ? `${i.name} has ${envs.map((n) => '/shared/' + n).join(', ') || 'no shared folder'}`
-        : `${s.name} is on for ${i.name}; agents pick it up at their next idle moment`)
+        : s.forwards ? `${i.name} on the Mac: ${envs.map((n) => forwardText(n)).join(', ') || 'no port'}`
+          : `${s.name} is on for ${i.name}; agents pick it up at their next idle moment`)
       await refreshIsolations()
       renderIsolations()
     } catch (e) {
@@ -1806,10 +1818,17 @@ function exposeForm(i, s, x) {
       apply.textContent = x.enabled ? 'Apply' : 'Turn on'
     }
   })
-  // A share says which folder of the Mac's each env is.
+  // A share says which folder of the Mac's each env is, a port where it is
+  // on the Mac.
+  const config = (n) => S.envs.find((e) => e.service === s.name && e.name === n)?.config || {}
+  const forwardText = (n) => {
+    const c = config(n)
+    return `127.0.0.1:${c.host_port || c.port} → ${c.port}`
+  }
   const envNote = (n) => {
+    if (s.forwards) return h('span', { class: 'hint' }, `${forwardText(n)} · `, h('span', { class: 'mode' }, config(n).mode || 'http'))
     if (!s.replaces) return null
-    const c = S.envs.find((e) => e.service === s.name && e.name === n)?.config || {}
+    const c = config(n)
     return h('span', { class: 'hint' }, `${c.path || '?'} · `, h('span', { class: 'mode' }, c.read_write ? 'read-write' : 'read-only'))
   }
   return h('div', { class: 'subform' },
@@ -1817,8 +1836,9 @@ function exposeForm(i, s, x) {
       names.length ? h('div', { class: 'ticks' }, boxes.map(({ n, el }) => h('label', { class: 'check' }, el, n, envNote(n))))
         : h('span', { class: 'hint' }, 'none defined yet — ', h('a', { href: '#/services', onclick: (ev) => { ev.preventDefault(); show('services') } }, 'define one')),
       h('span', { class: 'hint' }, s.replaces ? 'Each ticked folder is at /shared/NAME in the isolation.'
-        : 'None ticked: the service with no credential (git: public repositories only).')),
-    !noEnvs && !s.replaces && names.length > 1 ? h('div', { class: 'field' }, h('label', null, 'Default'), def, h('span', { class: 'hint' }, 'what the plain variables point at')) : null,
+        : s.forwards ? "Each ticked port is on the Mac's 127.0.0.1, never the LAN. The container stays."
+          : 'None ticked: the service with no credential (git: public repositories only).')),
+    !noEnvs && !s.replaces && !s.forwards && names.length > 1 ? h('div', { class: 'field' }, h('label', null, 'Default'), def, h('span', { class: 'hint' }, 'what the plain variables point at')) : null,
     ctl.rows, err,
     h('div', { class: 'actions' }, apply,
       x.enabled ? h('button', {
@@ -1826,7 +1846,8 @@ function exposeForm(i, s, x) {
           if (!await ask({
             title: `Turn ${s.name} off for ${i.name}?`,
             body: s.replaces ? 'Its container is replaced without the shared folders: running agents end and start again on their next message.'
-              : 'Its files and variables are removed there.',
+              : s.forwards ? 'The Mac stops listening for its ports, and connections through them end.'
+                : 'Its files and variables are removed there.',
             ok: 'Turn off', danger: true,
           })) return
           await guarded(async () => {

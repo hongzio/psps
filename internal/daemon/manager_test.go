@@ -142,6 +142,9 @@ type fakeContainers struct {
 	// makes container fail.
 	shares      map[string][]isolation.Mount
 	refuseShare string
+	// dial is what the tunnel connects the daemon to inside: the isolation's
+	// loopback, as the shim allows; nil is a shim from before forwards.
+	dial tunnel.Allow
 }
 
 type fakeCtr struct {
@@ -386,9 +389,10 @@ func (f *fakeContainers) DialTunnel(_ context.Context, name string) (isolation.T
 		f.tunnels = map[string][]pipeRW{}
 	}
 	f.tunnels[name] = append(f.tunnels[name], pipeRW{ir, iw})
+	dial := f.dial
 	f.mu.Unlock()
 	go func() {
-		tunnel.Serve(pipeRW{ir, iw}, func(host string, _ int) bool { return host == "127.0.0.1" }, func(string, ...any) {})
+		tunnel.Serve(pipeRW{ir, iw}, func(host string, _ int) bool { return host == "127.0.0.1" }, dial, func(string, ...any) {})
 		ir.Close()
 		iw.Close()
 	}()
@@ -529,7 +533,8 @@ func newTestEnv(t *testing.T) *testEnv {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { st.Close() })
-	fc := &fakeContainers{t: t, base: base, ctrs: map[string]*fakeCtr{}, held: map[string]bool{}}
+	fc := &fakeContainers{t: t, base: base, ctrs: map[string]*fakeCtr{}, held: map[string]bool{},
+		dial: tunnel.LoopbackExcept(shimproto.TunnelPortLo, shimproto.TunnelPortHi)}
 	t.Cleanup(fc.shutdown)
 	if err := st.PutIsolation(store.Isolation{ID: testIsoID, Name: "dev", Container: testCtr, Image: "fake:1", Network: "gero-" + testIsoID + "-net",
 		CreatedAt: time.Now()}); err != nil {

@@ -24,7 +24,10 @@ import (
 var static embed.FS
 
 const (
-	cookieName = "gero_session"
+	// SessionCookie holds the web token. A browser sends it to every port
+	// of the host it was set for, so a forwarded port's HTTP proxy keeps
+	// it from the isolation.
+	SessionCookie = "gero_session"
 	// csrfHeader must accompany every request that changes something. A
 	// cross-site page cannot set a custom header without a CORS preflight,
 	// which this server never approves.
@@ -143,7 +146,7 @@ func (s *Server) authorized(r *http.Request) (ok, bearer bool) {
 	if h := r.Header.Get("Authorization"); strings.HasPrefix(h, "Bearer ") {
 		return s.valid(strings.TrimPrefix(h, "Bearer ")), true
 	}
-	c, err := r.Cookie(cookieName)
+	c, err := r.Cookie(SessionCookie)
 	return err == nil && s.valid(c.Value), false
 }
 
@@ -166,7 +169,7 @@ func (s *Server) requireAuth(next http.Handler) http.Handler {
 
 func (s *Server) setCookie(w http.ResponseWriter, r *http.Request, value string, maxAge int) {
 	http.SetCookie(w, &http.Cookie{
-		Name: cookieName, Value: value, Path: "/", MaxAge: maxAge,
+		Name: SessionCookie, Value: value, Path: "/", MaxAge: maxAge,
 		HttpOnly: true, SameSite: http.SameSiteStrictMode,
 		Secure: r.TLS != nil || r.Header.Get("X-Forwarded-Proto") == "https",
 	})

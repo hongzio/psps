@@ -43,6 +43,7 @@ func (m *Manager) Verify(ctx context.Context, name string) (api.Verify, error) {
 	add(m.verifyFenceChecks(ctx, rec)...)
 	add(m.verifyMounts(ctx, rec)...)
 	add(m.verifyServices(ctx, rec)...)
+	add(m.verifyForwards(ctx, rec)...)
 	if c, ok := m.verifyCredsFile(); ok {
 		add(c)
 	}
@@ -291,6 +292,56 @@ func (m *Manager) verifyServices(ctx context.Context, iso store.Isolation) []api
 	wg.Wait()
 	for _, r := range results {
 		out = append(out, r...)
+	}
+	return out
+}
+
+// verifyForwards covers each forwarded port: that the Mac listens for it,
+// on its loopback and nowhere else, and that the tunnel takes it in. A port
+// nothing in the isolation answers on yet is not a failure: the server is
+// the agents' to run.
+func (m *Manager) verifyForwards(ctx context.Context, iso store.Isolation) []api.VerifyCheck {
+	var out []api.VerifyCheck
+	for _, svc := range m.registry().All() {
+		f, ok := svc.(proxy.Forwarder)
+		if !ok {
+			continue
+		}
+		v, err := m.viewFor(iso.ID, svc)
+		if err != nil || !v.Enabled {
+			continue
+		}
+		fws, _ := f.Forwards(v)
+		for _, fw := range fws {
+			check := fmt.Sprintf("the Mac's 127.0.0.1:%d reaches %d in the isolation", fw.HostPort, fw.Port)
+			addr, why := m.listening(forwardKey{iso.ID, svc.Name(), fw.Env}, fw)
+			if why != "" {
+				out = append(out, fail(check, api.SevConfig, "listening", "not listening", why))
+				continue
+			}
+			if !addr.IP.IsLoopback() {
+				out = append(out, fail(check, api.SevIsolation, "127.0.0.1 only", addr.String(),
+					"the Mac's side of a forwarded port is open past its loopback, to the network"))
+				continue
+			}
+			t, err := m.forwardTunnel(ctx, iso.ID)
+			if err != nil {
+				out = append(out, fail(check, api.SevConfig, "connected", "listening only", err.Error()))
+				continue
+			}
+			dctx, cancel := context.WithTimeout(ctx, 10*time.Second)
+			c, err := t.Dial(dctx, fw.Port)
+			cancel()
+			switch {
+			case err == nil:
+				c.Close()
+				out = append(out, pass(check, api.SevConfig, "listening; a server answers"))
+			case nothingAnswers(err):
+				out = append(out, pass(check, api.SevConfig, fmt.Sprintf("listening; nothing answers on %d now", fw.Port)))
+			default:
+				out = append(out, fail(check, api.SevConfig, "connected", "listening only", err.Error()))
+			}
+		}
 	}
 	return out
 }

@@ -57,7 +57,7 @@ func TestLoginLinkSetsAStrictCookie(t *testing.T) {
 	if !c.HttpOnly || c.SameSite != http.SameSiteStrictMode || c.Value != tok {
 		t.Fatalf("cookie = %+v", c)
 	}
-	withCookie := func(r *http.Request) { r.AddCookie(&http.Cookie{Name: cookieName, Value: tok}) }
+	withCookie := func(r *http.Request) { r.AddCookie(&http.Cookie{Name: SessionCookie, Value: tok}) }
 	if w := do(h, "GET", "/v1/agents", withCookie); w.Body.String() != "api GET" {
 		t.Fatalf("cookie GET: %d", w.Code)
 	}

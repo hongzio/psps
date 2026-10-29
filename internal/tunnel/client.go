@@ -1,6 +1,7 @@
 package tunnel
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"io"
@@ -51,6 +52,12 @@ func (t *Tunnel) Listen(port int) (net.Listener, error) {
 		return nil, fmt.Errorf("tunnel: listen on %d in the isolation: %w", port, err)
 	}
 	return l, nil
+}
+
+// Dial connects to port on the isolation's own loopback, as a process
+// there would: a port of the isolation's forwarded to the Mac.
+func (t *Tunnel) Dial(ctx context.Context, port int) (net.Conn, error) {
+	return t.client.DialContext(ctx, "tcp", net.JoinHostPort("localhost", strconv.Itoa(port)))
 }
 
 func (t *Tunnel) Close() error { return t.client.Close() }

@@ -15,9 +15,10 @@ import (
 	"golang.org/x/crypto/ssh"
 )
 
-// Allow decides which forwards the server opens. The daemon is trusted, but
-// a listener is the one thing this process creates inside the isolation, so
-// what it may be is spelled out rather than implied.
+// Allow decides which forwards the server opens, and which addresses the
+// daemon may connect to. The daemon is trusted, but a listener and a
+// connection are the only things this process creates inside the
+// isolation, so what they may be is spelled out rather than implied.
 type Allow func(host string, port int) bool
 
 // LoopbackPorts allows 127.0.0.1 on the given ports only.
@@ -27,11 +28,21 @@ func LoopbackPorts(lo, hi int) Allow {
 	}
 }
 
+// LoopbackExcept allows the isolation's own loopback on any port but
+// lo..hi, the tunnel's own listeners: a server an agent runs there,
+// reached from the Mac as a forwarded port.
+func LoopbackExcept(lo, hi int) Allow {
+	return func(host string, port int) bool {
+		return (host == "127.0.0.1" || host == "::1" || host == "localhost") && port > 0 && port <= 65535 && (port < lo || port > hi)
+	}
+}
+
 // Serve runs the isolation side of a tunnel over rw until the daemon goes
-// away. It accepts no sessions and no direct connections: the only thing it
-// does is listen where it is asked to, within allow, and hand connections
-// back.
-func Serve(rw io.ReadWriteCloser, allow Allow, logf func(string, ...any)) error {
+// away. It accepts no sessions: it listens where it is asked to, within
+// listen, and hands connections back; and it connects the daemon to the
+// isolation's own addresses within dial (none when nil). Nothing it does
+// reaches past the isolation's loopback.
+func Serve(rw io.ReadWriteCloser, listen, dial Allow, logf func(string, ...any)) error {
 	_, priv, err := ed25519.GenerateKey(rand.Reader)
 	if err != nil {
 		return err
@@ -46,9 +57,13 @@ func Serve(rw io.ReadWriteCloser, allow Allow, logf func(string, ...any)) error 
 	if err != nil {
 		return fmt.Errorf("tunnel handshake: %w", err)
 	}
-	s := &server{conn: conn, allow: allow, logf: logf, listeners: map[string]net.Listener{}}
+	s := &server{conn: conn, allow: listen, dial: dial, logf: logf, listeners: map[string]net.Listener{}}
 	go func() {
 		for nc := range chans {
+			if nc.ChannelType() == "direct-tcpip" && dial != nil {
+				go s.direct(nc)
+				continue
+			}
 			nc.Reject(ssh.Prohibited, "this tunnel only forwards out of the isolation")
 		}
 	}()
@@ -63,6 +78,7 @@ func Serve(rw io.ReadWriteCloser, allow Allow, logf func(string, ...any)) error 
 type server struct {
 	conn  *ssh.ServerConn
 	allow Allow
+	dial  Allow
 	logf  func(string, ...any)
 
 	mu        sync.Mutex
@@ -80,7 +96,8 @@ type forwardReply struct {
 	Port uint32
 }
 
-// RFC 4254 7.2.
+// RFC 4254 7.2; a direct-tcpip channel's payload has the same shape, the
+// address to connect to first.
 type forwardedChannel struct {
 	Host       string
 	Port       uint32
@@ -166,6 +183,50 @@ func (s *server) forward(c net.Conn, fr forwardRequest) {
 	go ssh.DiscardRequests(reqs)
 	splice(c, ch)
 }
+
+// direct connects the daemon to a port on the isolation's loopback, as a
+// process there would. "localhost" is tried as 127.0.0.1 and then ::1: a
+// server told to listen on localhost takes either.
+func (s *server) direct(nc ssh.NewChannel) {
+	var d forwardedChannel
+	if err := ssh.Unmarshal(nc.ExtraData(), &d); err != nil {
+		nc.Reject(ssh.ConnectionFailed, "malformed request")
+		return
+	}
+	if d.Port == 0 || d.Port > 65535 || !s.dial(d.Host, int(d.Port)) {
+		s.logf("refused a connection to %s:%d", d.Host, d.Port)
+		nc.Reject(ssh.Prohibited, fmt.Sprintf("%s:%d is not the isolation's to connect to", d.Host, d.Port))
+		return
+	}
+	hosts := []string{d.Host}
+	if d.Host == "localhost" {
+		hosts = []string{"127.0.0.1", "::1"}
+	}
+	var c net.Conn
+	var first error
+	for _, h := range hosts {
+		var err error
+		if c, err = net.DialTimeout("tcp", net.JoinHostPort(h, strconv.Itoa(int(d.Port))), dialTimeout); err == nil {
+			break
+		}
+		if first == nil {
+			first = err
+		}
+	}
+	if c == nil {
+		nc.Reject(ssh.ConnectionFailed, first.Error())
+		return
+	}
+	defer c.Close()
+	ch, reqs, err := nc.Accept()
+	if err != nil {
+		return
+	}
+	go ssh.DiscardRequests(reqs)
+	splice(c, ch)
+}
+
+var dialTimeout = 5 * time.Second
 
 // splice copies both ways and half-closes each direction as it ends, so a
 // client that finishes sending (git's request body) still reads the whole

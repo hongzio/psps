@@ -243,7 +243,7 @@ tests included. Inside the isolation they are fixed loopback addresses:
 127.0.0.1:3029   mail       GERO_MAIL_URL, each agent's own (see Mail)
 ```
 
-The proxies run inside the daemon; nothing listens on the Mac. Each isolation
+The proxies run inside the daemon; nothing of theirs listens on the Mac. Each isolation
 has one tunnel — SSH over its `container exec` channel, from `gero-shim
 tunnel` — and a connection on it reaches that isolation's proxies only, so the
 tunnel is who is asking. Edits take effect on the next request.
@@ -426,6 +426,47 @@ folder that has gone starts without it. Inside, the `gero-share` skill says
 which folder of the Mac's each one is, and how to treat it; Claude gets each
 one as `--add-dir`, and Codex's auto sandbox may write to the writable ones.
 
+## Forwarded ports
+
+A port of the isolation's — a dev server, a WAS an agent runs — can be put on
+the Mac's `127.0.0.1`:
+
+```sh
+gero env add port web --port 5173                          # http://127.0.0.1:5173 on the Mac
+gero env add port api --port 8080 --host-port 18080        # ...or another port of the Mac's
+gero env add port db --port 5432 --mode tcp                # bytes unchanged, for what is not HTTP
+gero iso expose dev port web,api
+```
+
+The daemon listens on the Mac and takes each connection through the
+isolation's tunnel to its own loopback, so a server there that listens on
+localhost only is reached too. Turning a port on or off changes only the
+Mac's listener; the container stays. A port another isolation already has,
+or something on the Mac already listens on (on any address), is refused
+rather than shared. Isolations made before forwarded ports need `gero iso
+upgrade NAME` once; the browser is told so.
+
+It opens the isolation toward the Mac, kept small:
+
+- **The Mac's loopback only**, never the LAN. The isolation still cannot
+  connect to the Mac (the fence is measured as before): a connection only
+  ever starts on the Mac.
+- **Your gero session is kept from it.** A browser sends 127.0.0.1's
+  cookies to every port of it, gero's web session (the web token) among
+  them. In `http` mode, the default, the daemon is an HTTP proxy that takes
+  gero's cookie out of every request and out of every answer; WebSockets
+  (a dev server's live reload) pass. `tcp` mode passes bytes unchanged: a
+  browser pointed at a tcp port hands the isolation your session, and gero
+  warns when one is defined. An http port answers only to `127.0.0.1`,
+  `localhost` and `*.localhost`, so a web page elsewhere that points a name
+  of its own at 127.0.0.1 (DNS rebinding) cannot read it through your
+  browser.
+- **What an agent serves runs in your browser**, as a page from 127.0.0.1.
+  gero's own API refuses it (it needs a header a cross-origin page cannot
+  send), but other things on the Mac may not; the `gero-port` skill tells
+  agents which ports the Mac reaches and what not to serve. The web links
+  each http port, opened with no hold on the gero tab.
+
 ## Verify
 
 ```sh
@@ -437,8 +478,9 @@ gero iso verify dev --json
 Measures what an isolation can do, now, instead of trusting the
 configuration: the fence afresh (every address the Mac holds, from inside),
 that no Mac directory is mounted but its shares, each the folder it was
-shared as and a read-only one read-only, and for each exposed proxy that the tunnel
-carries its ports, that it refuses a request it must refuse — a wrong
+shared as and a read-only one read-only, that the Mac listens for each forwarded
+port on its loopback alone and the tunnel takes it in, and for each exposed
+proxy that the tunnel carries its ports, that it refuses a request it must refuse — a wrong
 workspace token, an unlisted repository — made from inside the isolation as
 the agent, with curl or psql, and that each env still answers from the Mac
 (`gero env check`). Then that the credentials file is owner-only and the

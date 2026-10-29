@@ -101,8 +101,11 @@ func envCmd(p paths.Paths, args []string) error {
 		if args[0] == "add" && len(e.MissingSecrets) > 0 {
 			fmt.Printf("store its secret with: gero env secret %s %s\n", e.Service, e.Name)
 		}
+		_, forwards := svc.(proxy.Forwarder)
 		if _, ok := svc.(proxy.Mounter); ok && len(e.ExposedTo) > 0 {
 			fmt.Printf("exposed to %s; their containers were replaced if the folder changed, so running agents ended and start again on their next message\n", strings.Join(e.ExposedTo, ", "))
+		} else if forwards && len(e.ExposedTo) > 0 {
+			fmt.Printf("exposed to %s; the Mac listens for it as defined now\n", strings.Join(e.ExposedTo, ", "))
 		} else if len(e.ExposedTo) > 0 {
 			fmt.Printf("exposed to %s; their proxies use the new definition now\n", strings.Join(e.ExposedTo, ", "))
 		}

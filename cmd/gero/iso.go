@@ -16,6 +16,7 @@ import (
 	"github.com/hongzio/gero/internal/isolation"
 	"github.com/hongzio/gero/internal/paths"
 	"github.com/hongzio/gero/internal/proxy"
+	"github.com/hongzio/gero/internal/proxy/portproxy"
 	"github.com/hongzio/gero/internal/services"
 )
 
@@ -218,6 +219,9 @@ func isoCmd(p paths.Paths, args []string) error {
 						addrs = append(addrs, isolation.SharedRoot+"/"+n)
 					}
 				}
+				for _, f := range x.Forwards {
+					addrs = append(addrs, fmt.Sprintf("%d (Mac 127.0.0.1:%d)", f.Port, f.HostPort))
+				}
 				where = strings.Join(addrs, ",")
 			}
 			if !x.Enabled {
@@ -232,6 +236,13 @@ func isoCmd(p paths.Paths, args []string) error {
 		}
 		if err := tw.Flush(); err != nil {
 			return err
+		}
+		for _, x := range xs {
+			for _, f := range x.Forwards {
+				if f.Error != "" {
+					fmt.Printf("%s %s is not forwarded: %s\n", x.Service, f.Env, f.Error)
+				}
+			}
 		}
 		if iso, err := c.Isolation(ctx, pos[0]); err == nil && iso.Proxies != "" && iso.Proxies != "up" {
 			fmt.Println("proxy tunnel:", iso.Proxies)
@@ -279,6 +290,15 @@ func isoCmd(p paths.Paths, args []string) error {
 			fmt.Printf("inside the isolation: %s; its container was replaced to mount them if they changed, so running agents ended and start again on their next message\n", orStr(strings.Join(at, ", "), "nothing"))
 			return nil
 		}
+		if _, ok := svc.(proxy.Forwarder); ok {
+			for _, f := range x.Forwards {
+				fmt.Println(portproxy.Describe(f.Forward))
+			}
+			if len(x.Forwards) == 0 {
+				fmt.Println("no port of the isolation's is on the Mac")
+			}
+			return nil
+		}
 		var addrs []string
 		for _, port := range svc.Ports() {
 			addrs = append(addrs, fmt.Sprintf("127.0.0.1:%d", port))
@@ -297,6 +317,10 @@ func isoCmd(p paths.Paths, args []string) error {
 		if svc, err := services.Registry().Get(pos[1]); err == nil {
 			if _, ok := svc.(proxy.Mounter); ok {
 				fmt.Printf("%s is off for %s; its container was replaced without the shared folders, so running agents ended and start again on their next message\n", pos[1], pos[0])
+				return nil
+			}
+			if _, ok := svc.(proxy.Forwarder); ok {
+				fmt.Printf("%s is off for %s; the Mac no longer listens for its ports\n", pos[1], pos[0])
 				return nil
 			}
 		}

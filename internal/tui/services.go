@@ -746,6 +746,8 @@ func (m *Model) handleExposeKey(msg tea.KeyMsg) tea.Cmd {
 			switch {
 			case err == nil && svc.Replaces:
 				flash = fmt.Sprintf("%s has %s", iso, orDash(sharedPaths(x.Envs)))
+			case err == nil && svc.Forwards:
+				flash = fmt.Sprintf("%s on the Mac: %s", iso, orDash(forwardsText(x.Forwards)))
 			case err == nil && len(x.Envs) > 0:
 				flash += ": " + strings.Join(x.Envs, ", ") + " (default " + x.Default + "); agents pick it up at their next idle moment"
 			case err == nil:
@@ -823,6 +825,9 @@ func (m *Model) openExposeForm(svc api.Service) {
 		if svc.Replaces {
 			hint = "space ticks; each ticked folder is at /shared/NAME in the isolation"
 		}
+		if svc.Forwards {
+			hint = "space ticks; each ticked port is on the Mac's 127.0.0.1, never the LAN"
+		}
 		envs := checkField("envs", names, x.Envs, hint)
 		def := selectField("default", append([]string{optDefault}, names...), "the env plain variables point at; default: the first ticked")
 		def.idx = indexOf(def.options, x.Default)
@@ -850,8 +855,16 @@ func (m *Model) renderExpose(width int) string {
 				envs = "no env"
 			}
 			detail = envs
-			if x.Default != "" {
+			if x.Default != "" && !s.Replaces && !s.Forwards {
 				detail += " (default " + x.Default + ")"
+			}
+			if len(x.Forwards) > 0 {
+				detail = forwardsText(x.Forwards)
+			}
+			for _, f := range x.Forwards {
+				if f.Error != "" {
+					detail += "  " + th.err.Render(f.Env+": "+f.Error)
+				}
 			}
 			if st := compact(x.Settings); st != "" {
 				detail += "  " + th.dim.Render(st)
@@ -880,6 +893,19 @@ func (m *Model) renderExpose(width int) string {
 			k.Label("open"), k.Label("svc_off"), k.Label("back"))) + "\n")
 	}
 	return b.String()
+}
+
+// forwardsText is where a forwarding service's ports are on the Mac.
+func forwardsText(fs []api.Forward) string {
+	var out []string
+	for _, f := range fs {
+		t := fmt.Sprintf("127.0.0.1:%d→%d", f.HostPort, f.Port)
+		if !f.HTTP {
+			t += " tcp"
+		}
+		out = append(out, t)
+	}
+	return strings.Join(out, ", ")
 }
 
 // sharedPaths is where share envs are in the isolation.

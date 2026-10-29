@@ -42,12 +42,15 @@ type tunnelState struct {
 	stop    chan struct{}
 	status  string
 	stopped bool
+	// live is the tunnel while it is up, which forwarded ports dial into.
+	live *tunnel.Tunnel
 }
 
 // Proxies configures the manager's credential proxies. Without it the
 // manager runs none.
 func (m *Manager) SetProxies(reg *proxy.Registry, c *creds.Store) {
 	m.services, m.creds = reg, c
+	defer m.reforward()
 }
 
 func (m *Manager) registry() *proxy.Registry {
@@ -143,6 +146,16 @@ func (m *Manager) tunnelStatus(iso string) string {
 	return ""
 }
 
+// liveTunnel is an isolation's tunnel while it is up.
+func (m *Manager) liveTunnel(iso string) *tunnel.Tunnel {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if ts, ok := m.tunnels[iso]; ok {
+		return ts.live
+	}
+	return nil
+}
+
 func (m *Manager) setTunnelStatus(ts *tunnelState, s string) {
 	m.mu.Lock()
 	ts.status = s
@@ -188,7 +201,7 @@ func (m *Manager) runTunnel(iso string, ts *tunnelState) error {
 	if err != nil {
 		return err
 	}
-	if v := m.shimVersion(iso); v != "" && v < shimproto.Version {
+	if v := m.shimVersion(iso); v != "" && v < shimproto.ProxiesVersion {
 		return fmt.Errorf("the isolation's image predates the credential proxies; run `gero iso upgrade %s`", rec.Name)
 	}
 	conn, err := m.cli.DialTunnel(m.ctx, rec.Container)
@@ -235,11 +248,19 @@ func (m *Manager) runTunnel(iso string, ts *tunnelState) error {
 		m.log.Printf("isolation %s: proxy tunnel up", rec.Name)
 	}
 	m.setTunnelStatus(ts, status)
+	m.mu.Lock()
+	ts.live = t
+	m.mu.Unlock()
+	// A Mac port another program held may be free by now.
+	m.retryForwards()
 	select {
 	case <-t.Done():
 	case <-ts.stop:
 	case <-m.ctx.Done():
 	}
+	m.mu.Lock()
+	ts.live = nil
+	m.mu.Unlock()
 	for _, l := range listeners {
 		l.Close()
 	}
@@ -391,7 +412,7 @@ func (m *Manager) syncLocked(ctx context.Context, iso store.Isolation) {
 	if len(m.registry().All()) == 0 {
 		return
 	}
-	if v := m.shimVersion(iso.ID); v != "" && v < shimproto.Version {
+	if v := m.shimVersion(iso.ID); v != "" && v < shimproto.ProxiesVersion {
 		return
 	}
 	w, err := m.workspace(iso.ID)
@@ -467,8 +488,9 @@ func (m *Manager) Services() []api.Service {
 	var out []api.Service
 	for _, s := range m.registry().All() {
 		_, replaces := s.(proxy.Mounter)
+		_, forwards := s.(proxy.Forwarder)
 		out = append(out, api.Service{Name: s.Name(), Summary: s.Summary(), Ports: s.Ports(), Fields: s.Fields(),
-			Settings: s.Settings(), Secrets: creds.Fields[s.Name()], Login: creds.LoginServices[s.Name()], Replaces: replaces})
+			Settings: s.Settings(), Secrets: creds.Fields[s.Name()], Login: creds.LoginServices[s.Name()], Replaces: replaces, Forwards: forwards})
 	}
 	return out
 }
@@ -539,13 +561,23 @@ func (m *Manager) PutEnv(ctx context.Context, service, name string, p proxy.Patc
 	}
 	b, _ := json.Marshal(cfg)
 	e := store.Env{Service: service, Name: name, Config: b, CreatedAt: cur.CreatedAt}
+	before := m.forwardErrs()
 	if err := m.store.PutEnv(e); err != nil {
 		return api.Env{}, err
+	}
+	holders, _ := m.store.Exposing(service, name)
+	if _, ok := svc.(proxy.Forwarder); ok {
+		// What is stored is what listens: a port the Mac cannot have puts
+		// the env back as it was.
+		if err := forwardErrors(before, m.reforward(), func(k forwardKey) bool { return k.service == service && k.env == name }); err != nil {
+			m.store.PutEnv(cur)
+			m.reforward()
+			return api.Env{}, err
+		}
 	}
 	e, _ = m.store.Env(service, name)
 	v := m.envView(e)
 	v.Warnings = warnings
-	holders, _ := m.store.Exposing(service, name)
 	if _, ok := svc.(proxy.Mounter); ok {
 		v.Warnings = append(v.Warnings, m.remountAll(ctx, holders)...)
 	}
@@ -569,6 +601,9 @@ func (m *Manager) DeleteEnv(ctx context.Context, service, name string, force boo
 	var problems []string
 	if _, ok := svc.(proxy.Mounter); ok {
 		problems = m.remountAll(ctx, holders)
+	}
+	if _, ok := svc.(proxy.Forwarder); ok {
+		m.reforward()
 	}
 	m.servicesChanged(ctx, holders...)
 	if len(problems) > 0 {
@@ -697,7 +732,7 @@ func (m *Manager) Exposures(name string) ([]api.Exposure, error) {
 		if err != nil {
 			return nil, err
 		}
-		x := api.Exposure{Service: svc.Name(), Enabled: v.Enabled, Exposure: v.Exposure, Missing: v.Missing}
+		x := api.Exposure{Service: svc.Name(), Enabled: v.Enabled, Exposure: v.Exposure, Missing: v.Missing, Forwards: m.forwardsOf(iso.ID, svc, v)}
 		x.Settings = m.settingsOut(svc, x.Settings)
 		if !v.Enabled {
 			x.Exposure = store.Exposure{IsolationID: iso.ID, Service: svc.Name(), Envs: []string{}}
@@ -788,28 +823,43 @@ func (m *Manager) Expose(ctx context.Context, name, service string, req api.Expo
 			return api.Exposure{}, badRequest(err)
 		}
 	}
+	before := m.forwardErrs()
 	if err := m.store.PutExposure(x); err != nil {
 		return api.Exposure{}, err
 	}
 	if _, err := m.store.EnsureTokens(iso.ID, service, svc.TokenKeys(x)); err != nil {
 		return api.Exposure{}, err
 	}
+	// What is stored is what runs: an exposure the container or the Mac
+	// cannot have goes back to what they still have.
+	putBack := func() {
+		if had {
+			m.store.PutExposure(cur)
+		} else {
+			m.store.DeleteExposure(iso.ID, service)
+		}
+	}
 	if _, ok := svc.(proxy.Mounter); ok {
 		if err := m.remount(ctx, iso.ID); err != nil {
-			// What is stored is what runs: the exposure goes back to what
-			// the container still has.
-			if had {
-				m.store.PutExposure(cur)
-			} else {
-				m.store.DeleteExposure(iso.ID, service)
-			}
+			putBack()
 			m.servicesChanged(ctx, iso.ID)
+			return api.Exposure{}, err
+		}
+	}
+	if _, ok := svc.(proxy.Forwarder); ok {
+		if err := forwardErrors(before, m.reforward(), func(k forwardKey) bool { return k.iso == iso.ID && k.service == service }); err != nil {
+			putBack()
+			m.reforward()
 			return api.Exposure{}, err
 		}
 	}
 	m.servicesChanged(ctx, iso.ID)
 	x.Settings = m.settingsOut(svc, x.Settings)
-	return api.Exposure{Service: service, Enabled: true, Exposure: x}, nil
+	out := api.Exposure{Service: service, Enabled: true, Exposure: x}
+	if v, err := m.viewFor(iso.ID, svc); err == nil {
+		out.Forwards = m.forwardsOf(iso.ID, svc, v)
+	}
+	return out, nil
 }
 
 func (m *Manager) Unexpose(ctx context.Context, name, service string) error {
@@ -826,6 +876,9 @@ func (m *Manager) Unexpose(ctx context.Context, name, service string) error {
 	}
 	if _, ok := svc.(proxy.Mounter); ok {
 		err = m.remount(ctx, iso.ID)
+	}
+	if _, ok := svc.(proxy.Forwarder); ok {
+		m.reforward()
 	}
 	m.servicesChanged(ctx, iso.ID)
 	return err

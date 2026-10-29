@@ -1,5 +1,7 @@
 // Package tunnel carries connections from inside an isolation out to the
-// daemon's credential proxies, over the exec channel and nothing else.
+// daemon's credential proxies, and the daemon's own connections in to a
+// port on the isolation's loopback (a forwarded port), over the exec
+// channel and nothing else.
 //
 // The isolation can accept connections but cannot originate any toward the
 // host — the fence exists to make sure of that — so every byte of every
@@ -13,10 +15,14 @@
 //
 //	isolation  gero-shim tunnel   SSH server on its stdio; listens on
 //	           127.0.0.1:<port> when the daemon asks, and hands every
-//	           accepted connection back as a forwarded-tcpip channel
+//	           accepted connection back as a forwarded-tcpip channel;
+//	           connects a direct-tcpip channel to its own loopback, never
+//	           past it
 //	              |  container exec -i (the same channel the shim client uses)
 //	host       daemon             SSH client; each forwarded connection goes
-//	                              straight to an in-process proxy
+//	                              straight to an in-process proxy, and a
+//	                              connection to a forwarded port on the
+//	                              Mac goes in as a direct-tcpip channel
 //
 // Authentication is the exec channel itself: only someone who can run
 // `container exec` on this Mac reaches the server, and the client is

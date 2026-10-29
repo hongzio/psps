@@ -2,11 +2,13 @@ package tunnel
 
 import (
 	"bytes"
+	"context"
 	"crypto/rand"
 	"fmt"
 	"io"
 	"net"
 	"os"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -53,7 +55,7 @@ func start(t *testing.T, allow Allow) (*Tunnel, chan error) {
 	t.Helper()
 	inside, host := pair()
 	served := make(chan error, 1)
-	go func() { served <- Serve(inside, allow, t.Logf) }()
+	go func() { served <- Serve(inside, allow, nil, t.Logf) }()
 	tun, err := Open(host)
 	if err != nil {
 		t.Fatal(err)
@@ -170,7 +172,7 @@ func TestClosingTheTunnelClosesItsListeners(t *testing.T) {
 
 func TestTheIsolationCannotOpenChannelsToTheHost(t *testing.T) {
 	inside, host := pair()
-	go Serve(inside, anyLoopback, t.Logf)
+	go Serve(inside, anyLoopback, nil, t.Logf)
 	tun, err := Open(host)
 	if err != nil {
 		t.Fatal(err)
@@ -218,5 +220,63 @@ func TestAPortHeldForGoodIsRefusedNotWaitedOnForever(t *testing.T) {
 	tun, _ := start(t, anyLoopback)
 	if _, err := tun.Listen(port); err == nil {
 		t.Fatal("a held port was granted")
+	}
+}
+
+// over sends msg over c, ends its half, and returns the answer.
+func over(t *testing.T, c net.Conn, msg string) string {
+	t.Helper()
+	defer c.Close()
+	c.Write([]byte(msg))
+	c.(interface{ CloseWrite() error }).CloseWrite()
+	b, _ := io.ReadAll(c)
+	return string(b)
+}
+
+func TestTheDaemonReachesTheIsolationsOwnLoopback(t *testing.T) {
+	inside, host := pair()
+	go Serve(inside, anyLoopback, LoopbackExcept(3020, 3029), t.Logf)
+	tun, err := Open(host)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer tun.Close()
+	ctx := context.Background()
+
+	l, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer l.Close()
+	go echo(l)
+	c, err := tun.Dial(ctx, l.Addr().(*net.TCPAddr).Port)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := over(t, c, "hello"); got != "got:hello" {
+		t.Fatalf("got %q", got)
+	}
+
+	// A server told to listen on localhost may have taken ::1 only.
+	if l6, err := net.Listen("tcp", "[::1]:0"); err == nil {
+		defer l6.Close()
+		go echo(l6)
+		c, err := tun.Dial(ctx, l6.Addr().(*net.TCPAddr).Port)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got := over(t, c, "six"); got != "got:six" {
+			t.Fatalf("over ::1: got %q", got)
+		}
+	}
+
+	if _, err := tun.Dial(ctx, freePort(t)); err == nil || !strings.Contains(err.Error(), "connect failed") {
+		t.Fatalf("nothing listening: %v", err)
+	}
+	// Past the loopback, or into the tunnel's own listeners: refused.
+	for _, addr := range []string{"10.0.0.1:80", "example.com:80", "127.0.0.1:3020"} {
+		if _, err := tun.client.Dial("tcp", addr); err == nil || !strings.Contains(err.Error(), "not the isolation's to connect to") {
+			t.Fatalf("%s: %v", addr, err)
+		}
 	}
 }
