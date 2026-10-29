@@ -336,6 +336,7 @@ type httpError struct {
 }
 
 func (e httpError) Error() string { return e.err.Error() }
+func (e httpError) Unwrap() error { return e.err }
 
 func badRequest(err error) error { return httpError{http.StatusBadRequest, err} }
 

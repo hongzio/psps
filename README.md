@@ -220,7 +220,8 @@ rules pf actually holds cover that bridge, and only then measures; a probe
 that could not even leave the isolation (its link-local address is still
 tentative for the first seconds after boot) counts as not measured, not as a
 pass or a leak. `gero iso create NAME --fence off` opts an
-isolation out. `gero pf status -v` shows the loaded rules;
+isolation out; without the helper installed, creating one with the fence on
+is refused, since its agents would never start. `gero pf status -v` shows the loaded rules;
 `sudo gero pf uninstall` removes everything the helper installed.
 
 Isolations resolve names through their network's gateway, which forwards to

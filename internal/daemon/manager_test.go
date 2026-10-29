@@ -313,6 +313,8 @@ func (f *fakeFence) Apply(_ context.Context, nets []pf.Network) (pf.Status, erro
 	return st, nil
 }
 
+func (f *fakeFence) Installed() bool { f.mu.Lock(); defer f.mu.Unlock(); return f.installed }
+
 func (f *fakeFence) applies() int { f.mu.Lock(); defer f.mu.Unlock(); return len(f.applied) }
 
 func (f *fakeFence) set(installed bool) { f.mu.Lock(); f.installed = installed; f.mu.Unlock() }
@@ -1120,6 +1122,31 @@ func TestRenamingAnIsolationKeepsItsAgentsRunning(t *testing.T) {
 	}
 	if _, err := m.CreateIsolation(ctx, api.CreateIsolation{Name: "work"}, nil); !errors.Is(err, store.ErrExists) {
 		t.Fatalf("a second isolation called work: %v", err)
+	}
+}
+
+// Behind no helper a fenced isolation's agents never start: it is refused
+// before an image is built or a container made, and one with the fence
+// off is still made.
+func TestAFencedIsolationNeedsTheHelper(t *testing.T) {
+	e := newTestEnv(t)
+	ctx := context.Background()
+	m, stop := e.daemon()
+	defer stop()
+	e.fence.set(false)
+	before := e.fc.lastCreated()
+	_, err := m.CreateIsolation(ctx, api.CreateIsolation{Name: "work"}, nil)
+	if !errors.Is(err, pf.ErrNotInstalled) || !strings.Contains(err.Error(), "fence off") {
+		t.Fatalf("created behind no helper: %v", err)
+	}
+	if e.fc.lastCreated() != before {
+		t.Fatalf("a container was made: %q", e.fc.lastCreated())
+	}
+	if _, err := e.st.IsolationNamed("work"); !errors.Is(err, store.ErrNotFound) {
+		t.Fatalf("stored: %v", err)
+	}
+	if _, err := m.CreateIsolation(ctx, api.CreateIsolation{Name: "work", Fence: "off"}, nil); err != nil {
+		t.Fatal(err)
 	}
 }
 

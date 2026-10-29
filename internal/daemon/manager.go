@@ -62,6 +62,7 @@ type Containers interface {
 // LAN; pf.Client is the real one.
 type Fence interface {
 	Apply(ctx context.Context, networks []pf.Network) (pf.Status, error)
+	Installed() bool
 }
 
 // Manager reconciles the store's desired state with the world: isolations
@@ -461,6 +462,11 @@ func (m *Manager) CreateIsolation(ctx context.Context, req api.CreateIsolation, 
 	case "on", "off":
 	default:
 		return store.Isolation{}, badRequest(fmt.Errorf("fence must be on or off, not %q", fence))
+	}
+	// Its agents would never start, and that is found minutes later, once
+	// the image is built: refused now, before anything is made.
+	if fence == "on" && (m.fence == nil || !m.fence.Installed()) {
+		return store.Isolation{}, httpError{http.StatusConflict, fmt.Errorf("%w, or create the isolation with the fence off", pf.ErrNotInstalled)}
 	}
 	// Said in the log, since nobody may be waiting for the answer: it can
 	// take minutes when the image is built first.
