@@ -199,6 +199,7 @@ type (
 	}
 	createdMsg struct {
 		agent api.Agent
+		sent  bool
 		err   error
 	}
 )
@@ -606,7 +607,11 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.agents = append(m.agents, msg.agent)
 		m.selectItem(msg.agent.ID)
 		m.setFocus(focusInput)
-		m.setFlash("agent "+shownID(msg.agent)+" created; your first message starts it", false)
+		if msg.sent {
+			m.setFlash("agent "+shownID(msg.agent)+" created; it has your first message", false)
+		} else {
+			m.setFlash("agent "+shownID(msg.agent)+" created; your first message starts it", false)
+		}
 		return m, m.fetchAgents()
 
 	case tea.KeyMsg:

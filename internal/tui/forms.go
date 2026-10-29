@@ -572,10 +572,11 @@ const (
 	nfEffort
 	nfModel
 	nfApprovals
+	nfPrompt
 )
 
-// newAgentForm makes an agent that waits for its first message, typed in
-// the input it opens on.
+// newAgentForm makes an agent and sends it the first message, if one is
+// typed; without one it waits for it in the input it opens on.
 func newAgentForm(isos []api.Isolation) *agentForm {
 	f := &agentForm{form: form{fields: []*field{
 		selectField("Isolation", nil, "required"),
@@ -585,6 +586,7 @@ func newAgentForm(isos []api.Isolation) *agentForm {
 		textField("Model", "optional; the CLI's default otherwise", ""),
 		selectField("Approvals", approvalModes(),
 			"never: runs unattended inside the isolation · auto: unattended, a reviewer model refuses risky actions · ask: the agent asks first for what its own rules flag · default: the CLI's own settings decide"),
+		textField("Message", "optional; it waits for your first message otherwise", "sent as soon as it is made, and names it"),
 	}}}
 	// A new agent starts on the CLI's own settings.
 	f.fields[nfApprovals].idx = indexOf(f.fields[nfApprovals].options, string(driver.ApprovalsDefault))
@@ -660,14 +662,15 @@ func (m *Model) submitNewAgent() tea.Cmd {
 	if e := f.fields[nfEffort].value(); e != "default" {
 		opts.Effort = e
 	}
-	req := api.CreateAgent{Isolation: iso, Kind: driver.Kind(f.fields[nfKind].value()), Handle: f.fields[nfID].value(), Options: opts}
+	req := api.CreateAgent{Isolation: iso, Kind: driver.Kind(f.fields[nfKind].value()), Handle: f.fields[nfID].value(),
+		Prompt: f.fields[nfPrompt].value(), Options: opts}
 	f.busy, f.err = true, ""
 	be := m.be
 	return func() tea.Msg {
 		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
 		defer cancel()
 		a, err := be.CreateAgent(ctx, req)
-		return createdMsg{a, err}
+		return createdMsg{a, req.Prompt != "", err}
 	}
 }
 

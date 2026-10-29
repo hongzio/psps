@@ -1072,31 +1072,42 @@ function newAgentView() {
   const drawSeg = () => seg.replaceChildren(...['claude', 'codex'].map((k) =>
     h('button', { type: 'button', class: k === kind ? 'on' : '', onclick: () => { kind = k; drawSeg(); fillEfforts() } }, k === 'codex' ? 'Codex' : 'Claude')))
   drawSeg()
-  const create = h('button', { class: 'btn primary' }, 'Create agent')
-  create.addEventListener('click', async () => {
+  const prompt = h('textarea', {
+    placeholder: 'optional; it waits for your first message otherwise',
+    title: coarse ? null : 'Enter creates · Shift+Enter adds a line',
+  })
+  const create = h('button', { class: 'btn primary' })
+  const idle = () => { create.textContent = prompt.value.trim() ? 'Create and send' : 'Create agent' }
+  idle()
+  const submit = async () => {
     err.textContent = ''
     if (!iso.value) { err.textContent = 'Create an isolation first.'; return }
     create.disabled = true
     create.textContent = 'Creating…'
     try {
       const a = await api('POST', '/v1/agents', {
-        isolation: iso.value, kind, handle: handle.value.trim() || undefined,
+        isolation: iso.value, kind, handle: handle.value.trim() || undefined, prompt: prompt.value.trim() || undefined,
         options: { effort: effort.value || undefined, model: model.value.trim() || undefined, approvals: approvals.value },
       })
       await refreshAgents()
       select(a.id)
-      // It waits for its first message.
+      // Without a first message it waits for one.
       document.querySelector('.composer textarea')?.focus()
     } catch (e) {
       if (e instanceof Unauthorized) { S.authed = false; render(); return }
       err.textContent = e.message
       create.disabled = false
-      create.textContent = 'Create agent'
+      idle()
     }
+  }
+  create.addEventListener('click', submit)
+  prompt.addEventListener('input', () => { if (!create.disabled) idle() })
+  prompt.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter' && !e.shiftKey && !coarse && !e.isComposing) { e.preventDefault(); if (!create.disabled) submit() }
   })
   return h('div', { class: 'page' }, h('div', { class: 'page-inner' },
     h('h2', null, 'New agent'),
-    h('p', { class: 'lead' }, 'It runs inside an isolation, in a workspace of its own, and starts on the first message you send it.'),
+    h('p', { class: 'lead' }, 'It runs inside an isolation, in a workspace of its own, and starts on its first message: written here, or sent once it is made.'),
     noIso,
     h('div', { class: 'row' },
       h('div', { class: 'field' }, h('label', null, 'Isolation'), iso),
@@ -1107,6 +1118,8 @@ function newAgentView() {
       h('div', { class: 'field' }, h('label', null, 'Effort'), effort),
       h('div', { class: 'field' }, h('label', null, 'Model'), model)),
     h('div', { class: 'field' }, h('label', null, 'Approvals'), approvals),
+    h('div', { class: 'field' }, h('label', null, 'First message'), prompt,
+      h('span', { class: 'hint' }, 'Sent as soon as the agent is made, and names it, as a first message does.')),
     err,
     create))
 }

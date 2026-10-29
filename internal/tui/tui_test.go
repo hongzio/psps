@@ -659,9 +659,8 @@ func TestNewAgentForm(t *testing.T) {
 	if h.m.view != viewNewAgent || h.m.newForm == nil {
 		t.Fatal("new agent form not open")
 	}
-	// It asks for no prompt or repository: the agent waits for its first
-	// message, and clones what that asks for.
-	if v := h.m.View(); strings.Contains(v, "Prompt") || strings.Contains(v, "Repository") {
+	// It asks for no repository: the first message clones what it asks for.
+	if v := h.m.View(); strings.Contains(v, "Repository") {
 		t.Fatalf("form:\n%s", v)
 	}
 	h.key("enter") // Isolation -> Agent
@@ -671,6 +670,7 @@ func TestNewAgentForm(t *testing.T) {
 	h.key("enter") // Effort
 	h.key("enter") // Model
 	h.key("enter") // Approvals
+	h.key("enter") // Message, left empty
 	if len(h.be.created) != 0 {
 		t.Fatalf("created before the last field: %v", h.be.created)
 	}
@@ -695,6 +695,24 @@ func TestNewAgentForm(t *testing.T) {
 	// "+ New agent" is always there; the agent's row and header too.
 	if strings.Count(h.m.View(), "New agent") < 3 {
 		t.Fatalf("an agent with no name yet:\n%s", h.m.View())
+	}
+}
+
+// A message typed in the form is the agent's first: it goes with the
+// request, and the agent does not wait for one.
+func TestNewAgentFormSendsItsMessage(t *testing.T) {
+	h := newHarness(t)
+	h.key("ctrl+n")
+	for range nfPrompt {
+		h.key("enter")
+	}
+	h.typeText("  fix the flaky test  ")
+	h.key("enter")
+	if len(h.be.created) != 1 || h.be.created[0].Prompt != "fix the flaky test" {
+		t.Fatalf("created = %+v", h.be.created)
+	}
+	if !strings.Contains(h.m.View(), "it has your first message") {
+		t.Fatalf("after create:\n%s", h.m.View())
 	}
 }
 

@@ -67,7 +67,7 @@ bin/gero tui
 Agents on the left (status at a glance; archived ones folded at the bottom,
 `r` renames one, `i` gives it an ID of your own, `d` deletes one),
 the selected agent's conversation in the middle, the input at the bottom with
-the agent's settings behind `ctrl+o`. `ctrl+n` makes an agent (its first message, typed in the input, starts it and names it), `ctrl+g`
+the agent's settings behind `ctrl+o`. `ctrl+n` makes an agent (its first message, typed in the form or later in the input, starts it and names it), `ctrl+g`
 manages isolations (environment, `s` to rename or resize one, upgrades, `v` to verify one, `l` its accounts
 (what Claude and Codex log in with), and with `p` the credential proxies each one serves), `ctrl+r` the
 proxies' environments (secrets and
