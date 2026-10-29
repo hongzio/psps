@@ -221,10 +221,36 @@ code, pre { font-family: var(--mono); font-size: 13px; }
 .msg-agent .who { font-size: 12.5px; font-weight: 600; color: var(--ok); margin-bottom: 2px; }
 .msg-agent.live .text::after { content: "▍"; color: var(--accent); animation: pulse 1s infinite; }
 .text p { margin: 0 0 .6em; overflow-wrap: anywhere; }
-.text p:last-child { margin-bottom: 0; }
+.text p.raw { white-space: pre-wrap; }
 .text code { background: var(--code); padding: 1px 5px; border-radius: 4px; }
 .text pre.code { background: var(--code); padding: 10px 12px; border-radius: 8px; overflow-x: auto; margin: 0 0 .6em; }
 .text pre.code code { background: none; padding: 0; }
+.text :is(h1, h2, h3, h4, h5, h6) { margin: 1em 0 .4em; line-height: 1.3; }
+.text h1 { font-size: 1.3em; }
+.text h2 { font-size: 1.18em; }
+.text h3 { font-size: 1.06em; }
+.text :is(h4, h5, h6) { font-size: 1em; }
+.text :is(ul, ol) { margin: 0 0 .6em; padding-left: 1.5em; }
+.text li { overflow-wrap: anywhere; }
+.text li + li { margin-top: .2em; }
+.text li > :is(p, ul, ol, pre.code, blockquote, .table-wrap) { margin-bottom: .3em; }
+.text li.task { list-style: none; }
+.text li.task > input, .text li.task > p > input { margin: 0 .45em 0 -1.35em; vertical-align: -1px; }
+.text blockquote { margin: 0 0 .6em; padding-left: 12px; border-left: 3px solid var(--border); color: var(--muted); }
+.text hr { border: 0; border-top: 1px solid var(--border); margin: .9em 0; }
+/* A table wider than the message scrolls in its own box. */
+.text .table-wrap { overflow-x: auto; margin: 0 0 .6em; }
+.text table { border-collapse: collapse; }
+/* keep-all: squeezed by a wide column, a cell breaks between words, not
+   between the syllables of a Korean one. */
+.text :is(th, td) { border: 1px solid var(--border); padding: 5px 10px; text-align: left; vertical-align: top; word-break: keep-all; }
+.text th { background: var(--code); font-weight: 600; }
+.text :is(th, td).al-center { text-align: center; }
+.text :is(th, td).al-right { text-align: right; }
+.text a { color: var(--accent); }
+.text .link-off { text-decoration: underline dotted; text-underline-offset: 3px; }
+.text > :first-child { margin-top: 0; }
+.text :last-child { margin-bottom: 0; }
 .reasoning { color: var(--muted); font-style: italic; font-size: 13.5px; white-space: pre-wrap; display: -webkit-box; -webkit-line-clamp: 4; -webkit-box-orient: vertical; overflow: hidden; }
 .tool { border: 1px solid var(--border); border-radius: 8px; background: var(--panel); }
 .tool summary {

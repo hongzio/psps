@@ -2,7 +2,11 @@
 //
 // Everything an agent says is untrusted (a repository or a web page can put
 // words in its mouth), so agent text only ever reaches the page through
-// text nodes: h() below never parses HTML.
+// text nodes: h() below never parses HTML, and markdown is only lexed by
+// marked (marked.esm.js, marked 18.1.1 from npm as published) and drawn
+// here, never made into HTML.
+
+import { Lexer } from './marked.esm.js'
 
 const root = document.getElementById('app')
 
@@ -447,8 +451,99 @@ const pending = (c) => c.entries.filter((en) => en.kind === 'approval' && !en.de
 const decisionText = (d) => ({ accept: 'accepted', decline: 'declined', cancel: 'declined, turn stopped', void: 'the process ended' })[d] || d
 const askText = (kind) => ({ command: 'run a command', file_change: 'change files', tool: 'use a tool' })[kind] || kind
 
-// richText renders markdown-ish agent text: fenced code, `inline code`,
-// **bold**, paragraphs. Text nodes only.
+// markdown draws what an agent writes, which is GitHub markdown, from
+// marked's tokens. Raw HTML in it is shown as written. Only a web address
+// is a link: a path in the workspace has nowhere to go in a browser. An
+// image is a link to it, never loaded: a page that fetched an agent's URL
+// would carry what the agent put in it past the isolation's fence.
+const mdTokens = new Map()
+
+function markdown(text, live) {
+  let toks = mdTokens.get(text)
+  if (!toks) {
+    try {
+      toks = Lexer.lex(text, { gfm: true, breaks: true })
+    } catch {
+      return richText(text)
+    }
+    // The convo is redrawn at every delta of a message being written, too
+    // often to lex every message each time; a finished one is kept.
+    if (!live) {
+      if (mdTokens.size >= 1000) mdTokens.clear()
+      mdTokens.set(text, toks)
+    }
+  }
+  return toks.map(mdBlock)
+}
+
+function mdBlock(t) {
+  switch (t.type) {
+    case 'paragraph': return h('p', null, mdInline(t.tokens))
+    case 'text': return t.tokens ? mdInline(t.tokens) : entities(t.text) // a tight list item's
+    case 'heading': return h(`h${t.depth}`, null, mdInline(t.tokens))
+    case 'code': return h('pre', { class: 'code' }, h('code', null, t.text))
+    case 'blockquote': return h('blockquote', null, t.tokens.map(mdBlock))
+    case 'list':
+      return h(t.ordered ? 'ol' : 'ul', { start: t.ordered && t.start !== 1 ? t.start : null }, t.items.map(mdItem))
+    case 'table': {
+      const cell = (tag) => (c, i) => h(tag, { class: t.align[i] ? `al-${t.align[i]}` : null }, mdInline(c.tokens))
+      return h('div', { class: 'table-wrap' }, h('table', null,
+        h('thead', null, h('tr', null, t.header.map(cell('th')))),
+        t.rows.length ? h('tbody', null, t.rows.map((r) => h('tr', null, r.map(cell('td'))))) : null))
+    }
+    case 'hr': return h('hr')
+    case 'html': return h('p', { class: 'raw' }, t.text)
+    case 'space': case 'def': return null
+    default: return t.raw ? h('p', { class: 'raw' }, t.raw) : null
+  }
+}
+
+function mdItem(it) {
+  const kids = it.tokens.filter((t) => t.type !== 'checkbox').map(mdBlock)
+  if (it.task) {
+    const box = h('input', { type: 'checkbox', checked: it.checked, disabled: true })
+    if (kids[0] instanceof HTMLParagraphElement) kids[0].prepend(box)
+    else kids.unshift(box)
+  }
+  return h('li', { class: it.task ? 'task' : null }, kids)
+}
+
+function mdInline(toks) {
+  return (toks || []).map((t) => {
+    switch (t.type) {
+      case 'text': return t.tokens ? mdInline(t.tokens) : entities(t.text)
+      case 'escape': return t.text
+      case 'strong': return h('strong', null, mdInline(t.tokens))
+      case 'em': return h('em', null, mdInline(t.tokens))
+      case 'del': return h('del', null, mdInline(t.tokens))
+      case 'codespan': return h('code', null, t.text)
+      case 'br': return h('br')
+      case 'link': return mdLink(t.href, mdInline(t.tokens), t.title)
+      case 'image': return mdLink(t.href, `🖼 ${t.text || 'image'}`, t.title)
+      // A table cell's line break is the one tag agents write often.
+      case 'html': return /^<br\s*\/?>$/i.test(t.text) ? h('br') : t.text
+      default: return t.raw || ''
+    }
+  })
+}
+
+function mdLink(href, kids, title) {
+  if (!/^(https?|mailto):/i.test(href)) return h('span', { class: 'link-off', title: href }, kids)
+  return h('a', { href, title: title || null, target: '_blank', rel: 'noopener noreferrer' }, kids)
+}
+
+// entities turns a character reference in text (&amp;, &#39;) into its
+// character, as markdown has it; in code it is left as written.
+const NAMED = { amp: '&', lt: '<', gt: '>', quot: '"', apos: "'", nbsp: ' ' }
+const entities = (s) => s.replace(/&(?:#(\d{1,7})|#[xX]([0-9a-fA-F]{1,6})|(\w+));/g, (m, d, x, n) => {
+  if (n) return NAMED[n] ?? m
+  const c = d ? Number(d) : parseInt(x, 16)
+  return c > 0 && c <= 0x10ffff && (c < 0xd800 || c > 0xdfff) ? String.fromCodePoint(c) : '�'
+})
+
+// richText renders what a person writes lightly: fenced code, `inline
+// code`, **bold**, paragraphs. A line of theirs that starts with "1." or
+// "#" stays as typed. Text nodes only.
 function richText(text) {
   const frag = document.createDocumentFragment()
   text.split('```').forEach((part, i) => {
@@ -885,7 +980,7 @@ function entryView(en, a, frozen) {
   switch (en.kind) {
     case 'user': {
       const l = letter(en.text)
-      if (l) return h('div', { class: 'msg-mail' }, h('div', { class: 'who' }, `✉ Mail #${l.id} from ${l.from} · ${l.iso}`), h('div', { class: 'text' }, richText(l.body)))
+      if (l) return h('div', { class: 'msg-mail' }, h('div', { class: 'who' }, `✉ Mail #${l.id} from ${l.from} · ${l.iso}`), h('div', { class: 'text' }, markdown(l.body)))
       if (!frozen && S.edit?.agent === a.id && S.edit.id === en.id) return editView(en, a)
       const bubble = h('div', { class: 'msg-user text' }, richText(en.text))
       if (frozen || !en.id || !rewindable(a)) return bubble
@@ -904,7 +999,7 @@ function entryView(en, a, frozen) {
         h('div', { class: 'rewound-body' }, en.entries.map((x) => entryView(x, a, true)).filter(Boolean)))
     }
     case 'assistant':
-      return h('div', { class: 'msg-agent' + (en.live ? ' live' : '') }, h('div', { class: 'who' }, label(a)), h('div', { class: 'text' }, richText(en.text)))
+      return h('div', { class: 'msg-agent' + (en.live ? ' live' : '') }, h('div', { class: 'who' }, label(a)), h('div', { class: 'text' }, markdown(en.text, en.live)))
     case 'reasoning': return h('div', { class: 'reasoning' }, en.text)
     case 'tool': {
       const mark = { ok: '✓', failed: '✗', running: '…' }[en.state]
