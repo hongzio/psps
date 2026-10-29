@@ -798,6 +798,12 @@ func (m *Manager) CreateAgent(ctx context.Context, req api.CreateAgent) (store.A
 	if err := req.Options.Check(); err != nil {
 		return store.Agent{}, badRequest(err)
 	}
+	var ownDir string
+	if strings.TrimSpace(req.Workdir) != "" {
+		if ownDir, err = m.isoPath(req.Workdir); err != nil {
+			return store.Agent{}, badRequest(fmt.Errorf("working directory: %w", err))
+		}
+	}
 	iso, err := m.isolationNamed(req.Isolation)
 	if err != nil {
 		return store.Agent{}, err
@@ -827,6 +833,9 @@ func (m *Manager) CreateAgent(ctx context.Context, req api.CreateAgent) (store.A
 		return store.Agent{}, fmt.Errorf("isolation %s has no verified network fence: %s", iso.Name, why)
 	}
 	workdir := m.workRoot + "/" + id
+	if ownDir != "" {
+		workdir = ownDir
+	}
 	if req.Repo != "" {
 		if _, err := m.cli.RunAsAgent(ctx, iso.Container, "git", "clone", "--", req.Repo, workdir); err != nil {
 			return store.Agent{}, fmt.Errorf("clone: %w", err)

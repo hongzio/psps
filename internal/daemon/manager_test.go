@@ -14,7 +14,9 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"reflect"
 	"slices"
+	"sort"
 	"strings"
 	"sync"
 	"syscall"
@@ -1713,5 +1715,71 @@ func TestAPickedNameTakenMeanwhileIsPickedAgain(t *testing.T) {
 	}
 	if st, _ := e.st.Agent("k2"); st.Handle != "red-owl" {
 		t.Fatalf("k2 stored with %q", st.Handle)
+	}
+}
+
+// An agent told where to work works there, made if missing; ~ is the
+// agent's home, and a relative path is refused before anything is made.
+func TestAnAgentWorksWhereItIsTold(t *testing.T) {
+	e := newTestEnv(t)
+	ctx := context.Background()
+	m, stop := e.daemon()
+	defer stop()
+	a, err := m.CreateAgent(ctx, api.CreateAgent{Isolation: "dev", Kind: driver.Codex, Workdir: "~/proj//webapp/"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := e.home + "/proj/webapp"; a.Workdir != want {
+		t.Fatalf("works in %s, want %s", a.Workdir, want)
+	}
+	if fi, err := os.Stat(a.Workdir); err != nil || !fi.IsDir() {
+		t.Fatalf("not made: %v", err)
+	}
+	if _, err := m.CreateAgent(ctx, api.CreateAgent{Isolation: "dev", Kind: driver.Codex, Workdir: "proj"}); err == nil ||
+		!strings.Contains(err.Error(), "not absolute") {
+		t.Fatalf("a relative path: %v", err)
+	}
+}
+
+// What is typed goes on to the directories in its last part's parent
+// whose names begin with the rest; hidden ones once a dot is typed.
+func TestDirsCompleteWhatIsTyped(t *testing.T) {
+	e := newTestEnv(t)
+	m, stop := e.daemon()
+	defer stop()
+	for _, d := range []string{"work/webapp", "Wonder", ".config", "old"} {
+		if err := os.MkdirAll(filepath.Join(e.home, d), 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	os.WriteFile(filepath.Join(e.home, "worknotes"), nil, 0o644)
+	dirs := func(typed string) []string {
+		t.Helper()
+		d, err := m.Dirs(context.Background(), "dev", typed)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if d.Home != e.home {
+			t.Fatalf("home %s", d.Home)
+		}
+		sort.Strings(d.Dirs)
+		return d.Dirs
+	}
+	h := e.home
+	for typed, want := range map[string][]string{
+		"~/wo":       {h + "/Wonder/", h + "/work/"},
+		"":           {h + "/Wonder/", h + "/old/", h + "/work/"},
+		"~/":         {h + "/Wonder/", h + "/old/", h + "/work/"},
+		"~/.c":       {h + "/.config/"},
+		"~/work/":    {h + "/work/webapp/"},
+		h + "/work":  {h + "/work/"},
+		"~/nowhere/": {},
+	} {
+		if got := dirs(typed); !reflect.DeepEqual(got, want) {
+			t.Errorf("%q: %v, want %v", typed, got, want)
+		}
+	}
+	if _, err := m.Dirs(context.Background(), "dev", "work"); err == nil {
+		t.Fatal("a relative path listed")
 	}
 }

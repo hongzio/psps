@@ -208,6 +208,12 @@ func (c *Client) Files(ctx context.Context, id string) (api.Files, error) {
 	return v, c.do(ctx, "GET", "/v1/agents/"+url.PathEscape(id)+"/files", nil, &v)
 }
 
+// Dirs completes a directory typed in an isolation.
+func (c *Client) Dirs(ctx context.Context, iso, typed string) (api.Dirs, error) {
+	var v api.Dirs
+	return v, c.do(ctx, "GET", "/v1/isolations/"+url.PathEscape(iso)+"/dirs?path="+url.QueryEscape(typed), nil, &v)
+}
+
 func (c *Client) Approve(ctx context.Context, id, approval string, d driver.Decision, answers map[string]string) error {
 	return c.do(ctx, "POST", "/v1/agents/"+url.PathEscape(id)+"/approvals/"+url.PathEscape(approval), api.Decision{Decision: d, Answers: answers}, nil)
 }

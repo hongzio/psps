@@ -251,6 +251,10 @@ func (m *Manager) Handler() http.Handler {
 		v, err := m.Commands(r.PathValue("id"))
 		reply(w, v, err)
 	})
+	mux.HandleFunc("GET /v1/isolations/{name}/dirs", func(w http.ResponseWriter, r *http.Request) {
+		v, err := m.Dirs(r.Context(), r.PathValue("name"), r.URL.Query().Get("path"))
+		reply(w, v, err)
+	})
 	mux.HandleFunc("GET /v1/agents/{id}/files", func(w http.ResponseWriter, r *http.Request) {
 		v, err := m.Files(r.Context(), r.PathValue("id"))
 		reply(w, v, err)

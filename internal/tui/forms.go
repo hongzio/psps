@@ -566,6 +566,7 @@ const (
 	nfIso = iota
 	nfKind
 	nfID
+	nfWorkdir
 	nfEffort
 	nfModel
 	nfApprovals
@@ -579,6 +580,7 @@ func newAgentForm(isos []api.Isolation) *agentForm {
 		selectField("Isolation", nil, "required"),
 		selectField("Agent", []string{string(driver.Claude), string(driver.Codex)}, ""),
 		textField("ID", "optional: lowercase letters, digits, dashes", "unique among all agents, archived ones too; an adjective-noun like brave-otter otherwise"),
+		dirField(),
 		selectField("Effort", efforts(string(driver.Claude)), ""),
 		textField("Model", "optional; the CLI's default otherwise", ""),
 		selectField("Approvals", approvalModes(),
@@ -589,6 +591,68 @@ func newAgentForm(isos []api.Isolation) *agentForm {
 	f.fields[nfApprovals].idx = indexOf(f.fields[nfApprovals].options, string(driver.ApprovalsDefault))
 	f.setIsolations(isos)
 	return f
+}
+
+// dirField is where in the isolation an agent works: typed, it offers the
+// isolation's directories it could go on to, asked of the isolation as it
+// changes.
+func dirField() *field {
+	fd := textField("Directory", "optional; ~/work/<its ID> otherwise", "~ is the agent's home; made if it is not there")
+	fd.single, fd.pick, fd.looked = true, -1, "\x00"
+	return fd
+}
+
+// dirsMsg is what the isolation has under typed.
+type dirsMsg struct {
+	typed string
+	dirs  api.Dirs
+	err   error
+}
+
+// lookDirs asks the isolation for what the directory field could go on
+// to, unless it already has for what is in it now.
+func (m *Model) lookDirs() tea.Cmd {
+	f := m.newForm
+	fd, iso := f.fields[nfWorkdir], f.fields[nfIso].value()
+	typed := fd.text.Value()
+	if f.cur != nfWorkdir || iso == "" || fd.looked == iso+"\x00"+typed || fd.pick >= 0 {
+		return nil
+	}
+	fd.looked = iso + "\x00" + typed
+	be := m.be
+	return func() tea.Msg {
+		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+		defer cancel()
+		d, err := be.Dirs(ctx, iso, typed)
+		return dirsMsg{typed, d, err}
+	}
+}
+
+// gotDirs fills the directory field's suggestions, if it still holds
+// what they answer. A path typed with ~ keeps it.
+func (f *agentForm) gotDirs(msg dirsMsg) {
+	fd := f.fields[nfWorkdir]
+	if fd.text.Value() != msg.typed {
+		return
+	}
+	fd.options, fd.pick, fd.typed = nil, -1, ""
+	switch {
+	case msg.err != nil:
+		fd.status = "can't list: " + msg.err.Error()
+		return
+	case len(msg.dirs.Dirs) == 0:
+		fd.status = "no such directory here; it is made when the agent is"
+		return
+	}
+	fd.status = ""
+	t := strings.TrimSpace(msg.typed)
+	tilde := t == "" || strings.HasPrefix(t, "~")
+	for _, d := range msg.dirs.Dirs {
+		if tilde && strings.HasPrefix(d+"/", msg.dirs.Home+"/") {
+			d = "~" + d[len(msg.dirs.Home):]
+		}
+		fd.options = append(fd.options, d)
+	}
 }
 
 func (f *agentForm) setIsolations(isos []api.Isolation) {
@@ -635,7 +699,7 @@ func (m *Model) handleNewAgentKey(msg tea.KeyMsg) tea.Cmd {
 		return m.submitNewAgent()
 	case msg.String() == "enter":
 		f.move(1)
-		return nil
+		return m.lookDirs()
 	}
 	kind := f.fields[nfKind].value()
 	cmd, _ := f.handle(k, msg)
@@ -645,7 +709,7 @@ func (m *Model) handleNewAgentKey(msg tea.KeyMsg) tea.Cmd {
 		eff.options = efforts(nk)
 		eff.idx = indexOf(eff.options, v)
 	}
-	return cmd
+	return tea.Batch(cmd, m.lookDirs())
 }
 
 func (m *Model) submitNewAgent() tea.Cmd {
@@ -660,7 +724,7 @@ func (m *Model) submitNewAgent() tea.Cmd {
 		opts.Effort = e
 	}
 	req := api.CreateAgent{Isolation: iso, Kind: driver.Kind(f.fields[nfKind].value()), Handle: f.fields[nfID].value(),
-		Prompt: f.fields[nfPrompt].value(), Options: opts}
+		Prompt: f.fields[nfPrompt].value(), Workdir: f.fields[nfWorkdir].value(), Options: opts}
 	f.busy, f.err = true, ""
 	be := m.be
 	return func() tea.Msg {

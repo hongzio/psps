@@ -1612,6 +1612,71 @@ function renderSettings(a) {
       h('button', { class: 'btn', onclick: () => { S.settingsOpen = false; renderSettings(a) } }, 'Cancel'))))
 }
 
+// dirCompleter offers the isolation's directories that what is typed in
+// input could go on to, asked of the isolation as typing pauses: arrows
+// choose, Tab or Enter takes one and goes on into it, Esc closes the list.
+// A path typed with ~ keeps it.
+function dirCompleter(input, isoName) {
+  const box = h('div', { class: 'complete below', role: 'listbox', hidden: true })
+  let items = [], active = 0, seq = 0, timer = null
+  const close = () => { box.hidden = true; items = []; seq++ }
+  const draw = (note) => {
+    box.replaceChildren(...items.map((d, i) => h('div', {
+      class: 'complete-item dir' + (i === active ? ' active' : ''), role: 'option', 'aria-selected': String(i === active),
+      onmousedown: (e) => { e.preventDefault(); active = i; accept() },
+    }, h('span', { class: 'ci-name' }, d))), ...(note ? [h('div', { class: 'complete-note' }, note)] : []))
+    box.hidden = !items.length && !note
+    box.querySelector('.active')?.scrollIntoView({ block: 'nearest' })
+  }
+  const ask = async () => {
+    const iso = isoName()
+    if (!iso || document.activeElement !== input) return close()
+    const my = ++seq
+    const typed = input.value
+    try {
+      const d = await api('GET', `/v1/isolations/${encodeURIComponent(iso)}/dirs?path=${encodeURIComponent(typed)}`)
+      if (my !== seq) return
+      const tilde = (p) => (typed.trim() === '' || typed.trim().startsWith('~')) && (p + '/').startsWith(d.home + '/') ? '~' + p.slice(d.home.length) : p
+      items = d.dirs.map(tilde)
+      active = 0
+      draw(items.length ? null : 'No such directory here: it is made when the agent is.')
+    } catch (e) {
+      if (my !== seq) return
+      items = []
+      draw(e instanceof Unauthorized ? null : `Can't list it: ${e.message}`)
+    }
+  }
+  const later = () => { clearTimeout(timer); timer = setTimeout(ask, 120) }
+  const accept = () => {
+    if (!items[active]) return false
+    input.value = items[active]
+    input.setSelectionRange(input.value.length, input.value.length)
+    later()
+    return true
+  }
+  input.addEventListener('input', later)
+  input.addEventListener('focus', later)
+  input.addEventListener('blur', close)
+  input.addEventListener('keydown', (e) => {
+    if (box.hidden || e.isComposing) return
+    switch (e.key) {
+      case 'ArrowDown': case 'ArrowUp':
+        if (!items.length) return
+        e.preventDefault()
+        active = (active + (e.key === 'ArrowDown' ? 1 : items.length - 1)) % items.length
+        draw()
+        return
+      case 'Tab': case 'Enter':
+        if (items.length && !e.shiftKey) { e.preventDefault(); accept() }
+        return
+      case 'Escape':
+        e.preventDefault()
+        close()
+    }
+  })
+  return h('div', { class: 'with-complete' }, input, box)
+}
+
 function newAgentView() {
   let kind = 'claude'
   const err = h('p', { class: 'form-error' })
@@ -1627,6 +1692,7 @@ function newAgentView() {
   fillIsos()
   S.refillIsolations = fillIsos
   const handle = h('input', { placeholder: 'optional; like brave-otter otherwise', autocomplete: 'off', autocapitalize: 'off', spellcheck: 'false' })
+  const workdir = h('input', { placeholder: 'optional; ~/work/<its ID> otherwise', autocomplete: 'off', autocapitalize: 'off', spellcheck: 'false' })
   const effort = dropdown([], { label: 'Effort' })
   const model = h('input', { placeholder: "optional; the CLI's default otherwise" })
   const approvals = dropdown([
@@ -1656,6 +1722,7 @@ function newAgentView() {
     try {
       const a = await api('POST', '/v1/agents', {
         isolation: iso.value, kind, handle: handle.value.trim() || undefined, prompt: prompt.value.trim() || undefined,
+        workdir: workdir.value.trim() || undefined,
         options: { effort: effort.value || undefined, model: model.value.trim() || undefined, approvals: approvals.value },
       })
       await refreshAgents()
@@ -1683,6 +1750,8 @@ function newAgentView() {
       h('div', { class: 'field' }, h('label', null, 'Agent'), seg)),
     h('div', { class: 'field' }, h('label', null, 'ID'), handle,
       h('span', { class: 'hint' }, 'Lowercase letters, digits and dashes; unique among all agents, archived ones too. Left empty, it gets an adjective-noun no agent has.')),
+    h('div', { class: 'field' }, h('label', null, 'Working directory'), dirCompleter(workdir, () => iso.value),
+      h('span', { class: 'hint' }, 'Where in the isolation it works, like ~/work/webapp; made if it is not there. ~ is the agent\'s home. Left empty, it gets a workspace of its own.')),
     h('div', { class: 'row' },
       h('div', { class: 'field' }, h('label', null, 'Effort'), effort),
       h('div', { class: 'field' }, h('label', null, 'Model'), model)),

@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"path"
 	"slices"
 	"strconv"
 	"strings"
@@ -146,6 +147,73 @@ func (m *Manager) Message(id, text string) (api.Sent, error) {
 		when = "Claude restarts with it when it is idle."
 	}
 	return api.Sent{Done: fmt.Sprintf("%s set to %s. %s", what, shown(v), when)}, nil
+}
+
+// isoPath is a path in an isolation as typed: ~ is the agent's home, and
+// it must be absolute after that.
+func (m *Manager) isoPath(s string) (string, error) {
+	s = strings.TrimSpace(s)
+	switch {
+	case s == "~":
+		s = m.home
+	case strings.HasPrefix(s, "~/"):
+		s = m.home + s[1:]
+	}
+	if strings.ContainsAny(s, "\x00\n") {
+		return "", errors.New("a path has no NUL or newline in it")
+	}
+	if !path.IsAbs(s) {
+		return "", fmt.Errorf("%q is not absolute; start it with / or ~", s)
+	}
+	return path.Clean(s), nil
+}
+
+// dirsMax is how many directories a completion offers.
+const dirsMax = 200
+
+// dirsScript lists the directories in $1 by name, hidden ones included.
+const dirsScript = `cd "$1" 2>/dev/null || exit 0
+for d in * .[!.]* ..?*; do [ -d "$d" ] && printf '%s\n' "$d"; done
+exit 0`
+
+// Dirs completes a directory typed in the isolation: the directories in
+// the part up to its last slash whose names begin with the rest. A hidden
+// one is offered once a dot is typed. "" is the home.
+func (m *Manager) Dirs(ctx context.Context, isoName, typed string) (api.Dirs, error) {
+	iso, err := m.isolationNamed(isoName)
+	if err != nil {
+		return api.Dirs{}, err
+	}
+	if strings.TrimSpace(typed) == "" {
+		typed = "~/"
+	}
+	full, err := m.isoPath(typed)
+	if err != nil {
+		return api.Dirs{}, badRequest(err)
+	}
+	// Clean took the trailing slash that says "inside this one".
+	parent, prefix := path.Split(full)
+	if strings.HasSuffix(strings.TrimSpace(typed), "/") {
+		parent, prefix = strings.TrimSuffix(full, "/")+"/", ""
+	}
+	ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
+	defer cancel()
+	out, err := m.cli.RunAsAgent(ctx, iso.Container, "sh", "-c", dirsScript, "sh", parent)
+	if err != nil {
+		return api.Dirs{}, fmt.Errorf("listing %s: %w", parent, err)
+	}
+	ds := api.Dirs{Parent: parent, Dirs: []string{}, Home: m.home}
+	for name := range strings.SplitSeq(out, "\n") {
+		if name == "" || !strings.HasPrefix(strings.ToLower(name), strings.ToLower(prefix)) ||
+			strings.HasPrefix(name, ".") && !strings.HasPrefix(prefix, ".") {
+			continue
+		}
+		ds.Dirs = append(ds.Dirs, parent+name+"/")
+		if len(ds.Dirs) == dirsMax {
+			break
+		}
+	}
+	return ds, nil
 }
 
 // filesMax is how many of a workspace's files are offered.

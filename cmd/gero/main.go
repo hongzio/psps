@@ -60,7 +60,7 @@ const usage = `gero — run coding agents in isolated containers
   gero env choices SERVICE NAME FIELD   what a field can list, looked up with the env's credential (git: repos)
   gero env check SERVICE NAME   exercise it from the host, now
 
-  gero agent new --iso NAME --kind claude|codex [--id ID] [--repo URL] [--model M] [--effort E] [--approvals never|auto|ask|default] [PROMPT...]
+  gero agent new --iso NAME --kind claude|codex [--id ID] [--repo URL] [--workdir DIR] [--model M] [--effort E] [--approvals never|auto|ask|default] [PROMPT...]
   gero agent ls [--all]
   gero agent log ID [-f]
   gero agent send ID TEXT...

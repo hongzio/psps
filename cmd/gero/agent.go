@@ -41,15 +41,16 @@ func agentCmd(p paths.Paths, args []string) error {
 		iso := fs.String("iso", "", "isolation to run in (required)")
 		kind := fs.String("kind", "claude", "claude or codex")
 		repo := fs.String("repo", "", "git URL to clone into the workspace")
+		workdir := fs.String("workdir", "", "where in the isolation it works, made if missing; ~ is the agent's home (default: a workspace of its own under ~/work)")
 		name := fs.String("name", "", "display name (default: the first line of its first message)")
 		handle := fs.String("id", "", "an ID of your own for it, unique among all agents (default: an adjective-noun no agent has, like brave-otter)")
 		opts := optFlags()
 		prompt := strings.Join(parse(fs, args[1:]), " ")
 		if *iso == "" {
-			return errors.New("usage: gero agent new --iso NAME --kind claude|codex [--id ID] [--repo URL] [PROMPT...]")
+			return errors.New("usage: gero agent new --iso NAME --kind claude|codex [--id ID] [--repo URL] [--workdir DIR] [PROMPT...]")
 		}
 		a, err := c.CreateAgent(ctx, api.CreateAgent{Isolation: *iso, Kind: driver.Kind(*kind), Prompt: prompt,
-			Name: *name, Handle: *handle, Repo: *repo, Options: opts()})
+			Name: *name, Handle: *handle, Repo: *repo, Workdir: *workdir, Options: opts()})
 		if err != nil {
 			return err
 		}

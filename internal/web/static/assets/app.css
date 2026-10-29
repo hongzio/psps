@@ -328,6 +328,9 @@ code, pre { font-family: var(--mono); font-size: 13px; }
   z-index: 11;
 }
 .complete[hidden] { display: none; }
+/* Under a form's input rather than over the message box */
+.with-complete { position: relative; }
+.complete.below { top: calc(100% + 4px); bottom: auto; }
 .complete-item {
   display: flex;
   align-items: baseline;

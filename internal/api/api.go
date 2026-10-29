@@ -124,9 +124,21 @@ type CreateAgent struct {
 	Name      string      `json:"name,omitempty"`
 	// Handle is an ID of the operator's for it, unique among all agents;
 	// without one it gets an adjective-noun nobody else has.
-	Handle  string         `json:"handle,omitempty"`
-	Repo    string         `json:"repo,omitempty"`
+	Handle string `json:"handle,omitempty"`
+	Repo   string `json:"repo,omitempty"`
+	// Workdir is where in the isolation it works, made if missing (Repo
+	// cloned into it); ~ is the agent's home. Without one it gets a
+	// workspace of its own under ~/work.
+	Workdir string         `json:"workdir,omitempty"`
 	Options driver.Options `json:"options"`
+}
+
+// Dirs are the directories in an isolation a typed path could go on to:
+// those in Parent whose names begin with what follows its last slash.
+type Dirs struct {
+	Parent string   `json:"parent"`
+	Dirs   []string `json:"dirs"` // whole paths, each ending in a slash
+	Home   string   `json:"home"` // what ~ stands for
 }
 
 type Message struct {

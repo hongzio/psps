@@ -65,6 +65,18 @@ func (f *fakeBackend) Agents(context.Context) ([]api.Agent, error) {
 	return append([]api.Agent(nil), f.agents...), nil
 }
 func (f *fakeBackend) Isolations(context.Context) ([]api.Isolation, error) { return f.isos, nil }
+
+// Dirs is an isolation whose home holds work/ and workspace/.
+func (f *fakeBackend) Dirs(_ context.Context, _, typed string) (api.Dirs, error) {
+	var ds []string
+	for _, d := range []string{"/home/agent/work/", "/home/agent/workspace/"} {
+		if q := strings.TrimPrefix(typed, "~/"); typed == "" || strings.HasPrefix(d, "/home/agent/"+q) {
+			ds = append(ds, d)
+		}
+	}
+	return api.Dirs{Parent: "/home/agent/", Dirs: ds, Home: "/home/agent"}, nil
+}
+
 func (f *fakeBackend) CreateAgent(_ context.Context, req api.CreateAgent) (api.Agent, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -670,6 +682,7 @@ func TestNewAgentForm(t *testing.T) {
 	h.key("right") // claude -> codex
 	h.key("enter") // ID
 	h.typeText("fix-tests")
+	h.key("enter") // Directory, left empty
 	h.key("enter") // Effort
 	h.key("enter") // Model
 	h.key("enter") // Approvals
@@ -873,5 +886,30 @@ func TestSettingsShowAnUnsetModeAsNever(t *testing.T) {
 	}
 	if got := h.m.settings.fields[2].value(); got != string(driver.ApprovalsNever) {
 		t.Fatalf("approvals shown as %q", got)
+	}
+}
+
+// The directory field offers the isolation's directories under what is
+// typed, keeping its ~, and ↑/↓ fill one in; the agent is made there.
+func TestNewAgentDirectoryIsCompleted(t *testing.T) {
+	h := newHarness(t)
+	h.key("ctrl+n")
+	for range nfWorkdir {
+		h.key("enter")
+	}
+	if v := h.m.View(); !strings.Contains(v, "~/work/") || !strings.Contains(v, "~/workspace/") {
+		t.Fatalf("the home's directories not offered:\n%s", v)
+	}
+	h.typeText("~/works")
+	if v := h.m.View(); strings.Contains(v, "~/work/\n") || !strings.Contains(v, "~/workspace/") {
+		t.Fatalf("not narrowed to what is typed:\n%s", v)
+	}
+	h.key("down")
+	if got := h.m.newForm.fields[nfWorkdir].value(); got != "~/workspace/" {
+		t.Fatalf("picked %q", got)
+	}
+	h.key("ctrl+s")
+	if len(h.be.created) != 1 || h.be.created[0].Workdir != "~/workspace/" {
+		t.Fatalf("created = %+v", h.be.created)
 	}
 }
