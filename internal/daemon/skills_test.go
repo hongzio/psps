@@ -10,6 +10,7 @@ import (
 
 	"github.com/hongzio/gero/internal/api"
 	"github.com/hongzio/gero/internal/creds"
+	"github.com/hongzio/gero/internal/driver"
 	"github.com/hongzio/gero/internal/proxy"
 	"github.com/hongzio/gero/internal/proxy/skillproxy"
 	"github.com/hongzio/gero/internal/shimproto"
@@ -36,9 +37,32 @@ func TestASkillIsKeptOnTheMacAndWrittenWhereTheCLIsLook(t *testing.T) {
 	if !strings.Contains(string(env.Config), `"description":"Read PDFs."`) {
 		t.Fatalf("stored %s", env.Config)
 	}
+	before := m.serviceWorkspace(testIsoID).signature()
 	if _, err := m.Expose(ctx, "dev", "skill", api.Expose{Envs: []string{"pdf"}}); err != nil {
 		t.Fatal(err)
 	}
+	// The CLIs list skills as they start, so agents get a new process.
+	exposed := m.serviceWorkspace(testIsoID).signature()
+	if exposed == before {
+		t.Fatal("exposing a skill left agents' processes as they were")
+	}
+	os.WriteFile(filepath.Join(src, "SKILL.md"), []byte("---\nname: pdf\ndescription: Read PDFs, now better.\n---\n\nUse pdftotext.\n"), 0o644)
+	if _, err := m.PutEnv(ctx, "skill", "pdf", proxy.Patch{Set: map[string]any{"path": src}}, false); err != nil {
+		t.Fatal(err)
+	}
+	if m.serviceWorkspace(testIsoID).signature() == exposed {
+		t.Fatal("a skill copied in again left agents' processes as they were")
+	}
+	// Offered to an agent there at once, as its CLI names a skill.
+	a, err := m.CreateAgent(ctx, api.CreateAgent{Isolation: "dev", Kind: driver.Codex})
+	if err != nil {
+		t.Fatal(err)
+	}
+	cs, _ := m.Commands(a.ID)
+	if i := slices.IndexFunc(cs.Commands, func(c api.Command) bool { return c.Prefix+c.Name == "$pdf" }); i < 0 || cs.Commands[i].Description != "Read PDFs, now better." {
+		t.Fatalf("commands %v", commandNames(cs))
+	}
+
 	req, _ := e.fc.lastSync()
 	var written []string
 	for _, f := range req.Files {
