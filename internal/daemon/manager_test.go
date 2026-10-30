@@ -1933,3 +1933,32 @@ func TestNewStartsASessionInTheAgentsPlace(t *testing.T) {
 		t.Fatal("purging an old session took the live one's workspace")
 	}
 }
+
+// An agent whose runtime has not reached its shim yet is starting, not
+// what its driver last knew; a problem keeping it from the shim is shown
+// as the problem.
+func TestAnAgentIsStartingUntilItsRuntimeIsConnected(t *testing.T) {
+	e := newTestEnv(t)
+	m, stop := e.daemon()
+	defer stop()
+	a, err := m.CreateAgent(context.Background(), api.CreateAgent{Isolation: "dev", Kind: driver.Codex})
+	if err != nil {
+		t.Fatal(err)
+	}
+	e.waitFor("idle", func() bool { return status(m, a.ID) == event.StatusIdle })
+
+	r, err := m.newRuntime(a)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, st, _ := r.view(); st.Status != event.StatusIdle {
+		t.Fatalf("the driver starts %s", st.Status)
+	}
+	if _, st, _ := r.shown(); st.Status != event.StatusStarting {
+		t.Fatalf("shown %s before the shim", st.Status)
+	}
+	r.problem = "isolation dev is down"
+	if _, st, p := r.shown(); st.Status == event.StatusStarting || p == "" {
+		t.Fatalf("shown %s, problem %q", st.Status, p)
+	}
+}

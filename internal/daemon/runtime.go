@@ -525,6 +525,19 @@ func (r *runtime) view() (store.Agent, driver.State, string) {
 	return r.agent, r.drv.State(), r.problem
 }
 
+// shown is view as the agent is shown: until its runtime is connected to
+// the shim and has read its log, what the driver last knew is not what the
+// agent is now, so it is starting, unless a problem says why it is not.
+func (r *runtime) shown() (store.Agent, driver.State, string) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	st := r.drv.State()
+	if (r.att == nil || !r.caughtUp) && r.problem == "" {
+		st.Status = event.StatusStarting
+	}
+	return r.agent, st, r.problem
+}
+
 func (r *runtime) stop(ctx context.Context) {
 	r.mu.Lock()
 	client, alive := r.client, r.drv.State().Alive
