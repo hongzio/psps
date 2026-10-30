@@ -535,6 +535,20 @@ func (r *runtime) stop(ctx context.Context) {
 	r.cancel()
 }
 
+// sortAgents puts agents in the order they were made, a line where its
+// first agent was: a new session stays where the one it took over from was.
 func sortAgents(as []agentView) {
-	sort.Slice(as, func(i, j int) bool { return as[i].CreatedAt.Before(as[j].CreatedAt) })
+	began := map[string]time.Time{}
+	for _, a := range as {
+		if t, ok := began[a.Line]; !ok || a.CreatedAt.Before(t) {
+			began[a.Line] = a.CreatedAt
+		}
+	}
+	sort.SliceStable(as, func(i, j int) bool {
+		bi, bj := began[as[i].Line], began[as[j].Line]
+		if !bi.Equal(bj) {
+			return bi.Before(bj)
+		}
+		return as[i].CreatedAt.Before(as[j].CreatedAt)
+	})
 }

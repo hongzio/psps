@@ -149,9 +149,11 @@ type Message struct {
 }
 
 // Sent is what came of a message. Done, for a message that was one of
-// gero's commands, is what gero did instead of sending it.
+// gero's commands, is what gero did instead of sending it; Agent, after
+// /new, is the key of the agent that took its place.
 type Sent struct {
-	Done string `json:"done,omitempty"`
+	Done  string `json:"done,omitempty"`
+	Agent string `json:"agent,omitempty"`
 }
 
 // Commands are what may be typed in a message to an agent, for a message

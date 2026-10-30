@@ -37,10 +37,10 @@ func TestCommands(t *testing.T) {
 		cs, _ = m.Commands(a.ID)
 		return slices.Contains(commandNames(cs), "$tidy")
 	})
-	if got := strings.Join(commandNames(cs), " "); got != "/model /effort /approvals /stop /compact $tidy" {
+	if got := strings.Join(commandNames(cs), " "); got != "/model /effort /approvals /stop /new /compact $tidy" {
 		t.Fatal(got)
 	}
-	if !cs.Commands[0].Gero || cs.Commands[4].Gero {
+	if !cs.Commands[0].Gero || !cs.Commands[4].Gero || cs.Commands[5].Gero {
 		t.Fatalf("%+v", cs.Commands)
 	}
 	if args := cs.Commands[0].Args; len(args) != 2 || args[1].Value != "gpt-fake" || args[1].Description != "Fake · A fake" {
