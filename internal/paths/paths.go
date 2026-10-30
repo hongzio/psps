@@ -50,6 +50,10 @@ func (p Paths) DB() string     { return filepath.Join(p.Data, "gero.db") }
 // from: an INI of [<service> <env>] sections, 0600.
 func (p Paths) Credentials() string { return filepath.Join(p.Config, "credentials") }
 
+// Skills holds the operator's own skills, one folder each, which the skill
+// service puts in isolations.
+func (p Paths) Skills() string { return filepath.Join(p.Config, "skills") }
+
 // Settings is the daemon's own settings file, read when it starts.
 func (p Paths) Settings() string { return filepath.Join(p.Config, "config.toml") }
 

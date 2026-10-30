@@ -2634,6 +2634,7 @@ function exposeForm(i, s, x) {
     return `${name}:${c.host_port || c.port} → ${c.port}`
   }
   const envNote = (n) => {
+    if (s.name === 'skill') return h('span', { class: 'hint' }, config(n).description || '')
     if (s.forwards) return h('span', { class: 'hint' }, `${forwardText(n)} · `, h('span', { class: 'mode' }, config(n).mode || 'http'))
     if (!s.replaces) return null
     const c = config(n)
@@ -2644,9 +2645,10 @@ function exposeForm(i, s, x) {
       names.length ? h('div', { class: 'ticks' }, boxes.map(({ n, el }) => h('label', { class: 'check' }, el, n, envNote(n))))
         : h('span', { class: 'hint' }, 'none defined yet — ', h('a', { href: '#/services', onclick: (ev) => { ev.preventDefault(); show('services') } }, 'define one')),
       h('span', { class: 'hint' }, s.replaces ? 'Each ticked folder is at /shared/NAME in the isolation.'
+        : s.name === 'skill' ? 'Each ticked skill is in Claude Code’s and Codex’s skills there; an untick removes it.'
         : s.forwards ? "Each ticked port is on the Mac's 127.0.0.1, never the LAN. The container stays."
           : 'None ticked: the service with no credential (git: public repositories only).')),
-    !noEnvs && !s.replaces && !s.forwards && names.length > 1 ? h('div', { class: 'field' }, h('label', null, 'Default'), def, h('span', { class: 'hint' }, 'what the plain variables point at')) : null,
+    !noEnvs && !s.replaces && !s.forwards && s.name !== 'skill' && names.length > 1 ? h('div', { class: 'field' }, h('label', null, 'Default'), def, h('span', { class: 'hint' }, 'what the plain variables point at')) : null,
     ctl.rows, err,
     h('div', { class: 'actions' }, apply,
       x.enabled ? h('button', {

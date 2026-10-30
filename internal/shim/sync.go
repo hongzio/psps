@@ -2,11 +2,13 @@ package shim
 
 import (
 	"bytes"
+	"encoding/base64"
 	"errors"
 	"fmt"
 	"io/fs"
 	"os"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"syscall"
@@ -40,9 +42,14 @@ func Sync(req shimproto.SyncRequest, uid, gid int) (shimproto.SyncResult, error)
 			return res, fmt.Errorf("sync: %q is not a path gero manages", f.Path)
 		}
 	}
-	for _, p := range req.Remove {
+	for _, p := range append(slices.Clone(req.Remove), req.Prune...) {
 		if !Managed(p) {
 			return res, fmt.Errorf("sync: %q is not a path gero manages", p)
+		}
+	}
+	for _, p := range req.Prune {
+		if !strings.HasPrefix(filepath.Base(p), "gero") {
+			return res, fmt.Errorf("sync: %q prunes names that do not start with gero", p)
 		}
 	}
 	var errs []error
@@ -68,17 +75,73 @@ func Sync(req shimproto.SyncRequest, uid, gid int) (shimproto.SyncResult, error)
 			res.Removed = append(res.Removed, p)
 		}
 	}
+	if len(req.Prune) > 0 {
+		keep := map[string]bool{}
+		for _, f := range req.Files {
+			for d := f.Path; !keep[d] && d != filepath.Dir(d); d = filepath.Dir(d) {
+				keep[d] = true
+			}
+		}
+		for _, p := range req.Prune {
+			dir, prefix := filepath.Split(p)
+			entries, err := os.ReadDir(dir)
+			if err != nil {
+				if !errors.Is(err, fs.ErrNotExist) {
+					errs = append(errs, err)
+				}
+				continue
+			}
+			for _, e := range entries {
+				if strings.HasPrefix(e.Name(), prefix) {
+					errs = append(errs, prune(filepath.Join(dir, e.Name()), keep, &res))
+				}
+			}
+		}
+	}
 	return res, errors.Join(errs...)
 }
 
+// prune removes path unless keep has it; a directory kept is pruned
+// inside. A link is never followed.
+func prune(path string, keep map[string]bool, res *shimproto.SyncResult) error {
+	if !keep[path] {
+		if err := os.RemoveAll(path); err != nil {
+			return err
+		}
+		res.Removed = append(res.Removed, path)
+		return nil
+	}
+	st, err := os.Lstat(path)
+	if err != nil || !st.IsDir() {
+		return nil
+	}
+	entries, err := os.ReadDir(path)
+	if err != nil {
+		return err
+	}
+	var errs []error
+	for _, e := range entries {
+		errs = append(errs, prune(filepath.Join(path, e.Name()), keep, res))
+	}
+	return errors.Join(errs...)
+}
+
 func writeFile(f shimproto.SyncFile, owner [2]int) (bool, error) {
+	content := []byte(f.Content)
+	if f.Base64 {
+		b, err := base64.StdEncoding.DecodeString(f.Content)
+		if err != nil {
+			return false, fmt.Errorf("sync: %s: %w", f.Path, err)
+		}
+		content = b
+	}
 	mode := fs.FileMode(f.Mode).Perm()
 	if mode == 0 {
 		mode = 0o644
 	}
 	if st, err := os.Lstat(f.Path); err == nil && st.Mode().IsRegular() && st.Mode().Perm() == mode {
 		if sys, ok := st.Sys().(*syscall.Stat_t); ok && int(sys.Uid) == owner[0] && int(sys.Gid) == owner[1] {
-			if b, err := os.ReadFile(f.Path); err == nil && bytes.Equal(b, []byte(f.Content)) {
+			if b, err := os.ReadFile(f.Path); err == nil && bytes.Equal(b, content) {
 				return false, nil
 			}
 		}
@@ -87,7 +150,7 @@ func writeFile(f shimproto.SyncFile, owner [2]int) (bool, error) {
 		return false, err
 	}
 	tmp := filepath.Join(filepath.Dir(f.Path), ".gero-sync-"+strconv.Itoa(os.Getpid())+"-"+filepath.Base(f.Path))
-	if err := os.WriteFile(tmp, []byte(f.Content), mode); err != nil {
+	if err := os.WriteFile(tmp, content, mode); err != nil {
 		return false, err
 	}
 	// WriteFile's mode is filtered by the umask.

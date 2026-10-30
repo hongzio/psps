@@ -331,6 +331,19 @@ type Mounter interface {
 	Mounts(v View) (mounts []isolation.Mount, missing []string)
 }
 
+// Pruner is a service whose files in the isolation are not a fixed set
+// (skill): Prune names DIR/PREFIX, where whatever its Workspace does not
+// write now is removed, exposed or not (shimproto.SyncRequest.Prune).
+type Pruner interface {
+	Prune() []string
+}
+
+// Deleter is a service that keeps something of an env's beside its
+// definition, to remove when the env is.
+type Deleter interface {
+	Deleted(env string) error
+}
+
 // Forwarder is a service that makes ports of the isolation's reachable from
 // the Mac (port): the daemon listens on the Mac's 127.0.0.1 and connects
 // what it accepts, through the tunnel, to the isolation's own loopback.
