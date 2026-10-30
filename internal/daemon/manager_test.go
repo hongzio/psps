@@ -1854,3 +1854,82 @@ func TestAParkedAgentWantsALookOnceItWorksAgain(t *testing.T) {
 		t.Fatal("an archived agent parked")
 	}
 }
+
+// /new puts a new session in the agent's place: its ID, workspace, place in
+// the list and crons, while the session it was is archived on the same line
+// however often the ID changes.
+func TestNewStartsASessionInTheAgentsPlace(t *testing.T) {
+	e := newTestEnv(t)
+	ctx := context.Background()
+	m, stop := e.daemon()
+	defer stop()
+
+	a, err := m.CreateAgent(ctx, api.CreateAgent{Isolation: "dev", Kind: driver.Codex, Prompt: "one", Handle: "id1"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	e.waitFor("an answer", func() bool { return e.hasAssistant(a.ID, "echo: one") && status(m, a.ID) == event.StatusIdle })
+	later, err := m.CreateAgent(ctx, api.CreateAgent{Isolation: "dev", Kind: driver.Codex})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := m.AddCron("id1", api.PutCron{Schedule: ptr("@every 1h"), Prompt: ptr("tick")}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := m.Message("id1", "/new please"); err == nil {
+		t.Fatal("/new took an argument")
+	}
+
+	sent, err := m.Message("id1", "/new")
+	if err != nil || sent.Agent == "" || sent.Agent == a.ID {
+		t.Fatalf("/new: %+v, %v", sent, err)
+	}
+	b, _ := e.st.Agent(sent.Agent)
+	old, _ := e.st.Agent(a.ID)
+	if old.ArchivedAt == nil || old.Handle != "" || old.Was != "id1" {
+		t.Fatalf("the old session: archived %v, handle %q, was %q", old.ArchivedAt, old.Handle, old.Was)
+	}
+	if b.ArchivedAt != nil || b.Handle != "id1" || b.Line != a.ID || b.Workdir != a.Workdir || b.Kind != a.Kind {
+		t.Fatalf("the new session: %+v", b)
+	}
+	if cs, _ := m.Crons("id1"); len(cs.Crons) != 1 {
+		t.Fatalf("the new session has %d crons", len(cs.Crons))
+	}
+	all, _ := m.Agents()
+	var order []string
+	for _, v := range all {
+		order = append(order, v.ID)
+	}
+	if want := []string{a.ID, b.ID, later.ID}; !slices.Equal(order, want) {
+		t.Fatalf("listed %v, want %v: the new session where the old one was", order, want)
+	}
+
+	if _, err := m.Message("id1", "two"); err != nil {
+		t.Fatal(err)
+	}
+	e.waitFor("the new session's answer", func() bool { return e.hasAssistant(b.ID, "echo: two") })
+	if e.hasAssistant(a.ID, "echo: two") {
+		t.Fatal("the archived session was sent it")
+	}
+
+	// A new ID, then another new session: still the one line.
+	if _, err := m.UpdateAgent("id1", api.UpdateAgent{Handle: ptr("id2")}); err != nil {
+		t.Fatal(err)
+	}
+	e.waitFor("idle", func() bool { return status(m, b.ID) == event.StatusIdle })
+	sent, err = m.Message("id2", "/new")
+	if err != nil {
+		t.Fatal(err)
+	}
+	c, _ := e.st.Agent(sent.Agent)
+	b, _ = e.st.Agent(b.ID)
+	if c.Handle != "id2" || c.Line != a.ID || b.Was != "id2" || b.ArchivedAt == nil {
+		t.Fatalf("after a rename: new %+v, old %+v", c, b)
+	}
+
+	// Purging an old session leaves the workspace the line still works in.
+	e.waitFor("its process to end", func() bool { return m.DeleteAgent(ctx, a.ID, true) == nil })
+	if !exists(c.Workdir) {
+		t.Fatal("purging an old session took the live one's workspace")
+	}
+}

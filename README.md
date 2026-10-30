@@ -142,12 +142,17 @@ what is typed there works the same.
 
 - gero's own, which gero does instead of sending them, wherever a message is
   typed (`gero agent send` too): `/model <model>`, `/effort <level>`,
-  `/approvals <mode>` (alone, each says what it is now) and `/stop`, which
-  stops the turn.
+  `/approvals <mode>` (alone, each says what it is now), `/stop`, which
+  stops the turn, and `/new`, which starts the agent over: a new session
+  in the same isolation and directory takes its ID, settings, crons and
+  waiting mail, and the old one is archived. The web UI and the TUI go on
+  in the new one; an agent's archived sessions fold together under
+  Archived, whatever ID they went by.
 - Claude's: its slash commands and skills, as the running `claude` lists
   them (asked once a process, which costs no turn). Its `/model` and
   `/effort` are left out for gero's, which last beyond the process, and
-  `/clear` because it starts a session gero does not follow.
+  `/clear` because it starts a session gero does not follow (`/new` is
+  gero's).
 - Codex's: its skills, `$name` anywhere in a message, and `/compact`, which
   gero has Codex do; its app-server takes any other slash command for text.
 

@@ -67,6 +67,13 @@ type Agent struct {
 	// Parked: idle, and the operator has said it needs no look until it
 	// does something again.
 	Parked bool `json:"parked,omitempty"`
+	// Line is the key of the first agent of the ones that took over from
+	// one another with /new, this one included: its own key for an agent
+	// that took over from none. It never changes, whatever they are
+	// called.
+	Line string `json:"line"`
+	// Was is the ID it went by until a new session of it took that ID.
+	Was string `json:"was,omitempty"`
 	// LastSrc is the newest shim log Seq whose events are committed.
 	LastSrc int64 `json:"-"`
 }
@@ -100,7 +107,9 @@ CREATE TABLE IF NOT EXISTS agents (
 	last_src    INTEGER NOT NULL DEFAULT 0,
 	created_at  TEXT NOT NULL,
 	archived_at TEXT,
-	parked      INTEGER NOT NULL DEFAULT 0
+	parked      INTEGER NOT NULL DEFAULT 0,
+	line        TEXT,
+	was_handle  TEXT NOT NULL DEFAULT ''
 );
 CREATE TABLE IF NOT EXISTS outbox (
 	id         INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -166,6 +175,8 @@ var added = []struct{ table, column, def string }{
 	{"mail", "discarded_at", "TEXT"},
 	{"outbox", "rewind", "INTEGER NOT NULL DEFAULT 0"},
 	{"agents", "parked", "INTEGER NOT NULL DEFAULT 0"},
+	{"agents", "line", "TEXT"},
+	{"agents", "was_handle", "TEXT NOT NULL DEFAULT ''"},
 }
 
 func hasColumn(db interface {
@@ -399,7 +410,6 @@ func (s *Store) RenameIsolation(id, to string) error {
 // CreateAgent stores a new agent; neither its key nor its handle may be
 // any agent's key or handle.
 func (s *Store) CreateAgent(a Agent) error {
-	opts, _ := json.Marshal(a.Options)
 	tx, err := s.db.Begin()
 	if err != nil {
 		return err
@@ -410,10 +420,51 @@ func (s *Store) CreateAgent(a Agent) error {
 			return err
 		}
 	}
-	if _, err := tx.Exec(`INSERT INTO agents (id, handle, name, kind, isolation, workdir, repo, options, session_id, created_at)
-		VALUES (?, NULLIF(?, ''), ?, ?, ?, ?, ?, ?, ?, ?)`,
-		a.ID, a.Handle, a.Name, string(a.Kind), a.IsolationID, a.Workdir, a.Repo, string(opts), a.SessionID, ts(a.CreatedAt)); err != nil {
+	if err := insertAgent(tx, a); err != nil {
 		return err
+	}
+	return tx.Commit()
+}
+
+func insertAgent(tx *sql.Tx, a Agent) error {
+	opts, _ := json.Marshal(a.Options)
+	_, err := tx.Exec(`INSERT INTO agents (id, handle, name, kind, isolation, workdir, repo, options, session_id, created_at, line)
+		VALUES (?, NULLIF(?, ''), ?, ?, ?, ?, ?, ?, ?, ?, NULLIF(?, ''))`,
+		a.ID, a.Handle, a.Name, string(a.Kind), a.IsolationID, a.Workdir, a.Repo, string(opts), a.SessionID, ts(a.CreatedAt), a.Line)
+	return err
+}
+
+// Renew archives the live agent old and stores next in its place, at once:
+// next takes old's ID, its crons and the mail waiting for it, and goes on
+// its line; old keeps its history, and the ID it went by as Was.
+func (s *Store) Renew(old string, next Agent, at time.Time) error {
+	tx, err := s.db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	var line, handle string
+	err = tx.QueryRow(`SELECT COALESCE(line, id), COALESCE(handle, '') FROM agents WHERE id = ? AND archived_at IS NULL`, old).Scan(&line, &handle)
+	if errors.Is(err, sql.ErrNoRows) {
+		return fmt.Errorf("live agent %s: %w", old, ErrNotFound)
+	}
+	if err != nil {
+		return err
+	}
+	if _, err := tx.Exec(`UPDATE agents SET archived_at = ?, handle = NULL, was_handle = ?, parked = 0 WHERE id = ?`, ts(at), handle, old); err != nil {
+		return err
+	}
+	if err := refFree(tx, next.ID, ""); err != nil {
+		return err
+	}
+	next.Handle, next.Line = handle, line
+	if err := insertAgent(tx, next); err != nil {
+		return err
+	}
+	for _, q := range []string{`UPDATE crons SET agent = ? WHERE agent = ?`, `UPDATE mail SET agent = ? WHERE agent = ? AND ` + waiting} {
+		if _, err := tx.Exec(q, next.ID, old); err != nil {
+			return err
+		}
 	}
 	return tx.Commit()
 }
@@ -441,19 +492,35 @@ func refFree(q interface {
 // handle.
 func (s *Store) RefFree(ref string) error { return refFree(s.db, ref, "") }
 
+// KeyFree refuses a new agent's key that RefFree would, or that names a
+// line, a deleted agent's included.
+func (s *Store) KeyFree(key string) error {
+	if err := refFree(s.db, key, ""); err != nil {
+		return err
+	}
+	var n int
+	if err := s.db.QueryRow(`SELECT COUNT(*) FROM agents WHERE line = ?`, key).Scan(&n); err != nil {
+		return err
+	}
+	if n > 0 {
+		return fmt.Errorf("agent key %s names a line: %w", key, ErrExists)
+	}
+	return nil
+}
+
 // AgentByHandle is the agent the operator gave the ID handle.
 func (s *Store) AgentByHandle(handle string) (Agent, error) {
 	return scanAgent(s.db.QueryRow(`SELECT `+agentCols+` FROM agents WHERE handle = ?`, handle))
 }
 
-const agentCols = `id, COALESCE(handle, ''), name, kind, isolation, workdir, repo, options, session_id, last_src, created_at, archived_at, parked`
+const agentCols = `id, COALESCE(handle, ''), name, kind, isolation, workdir, repo, options, session_id, last_src, created_at, archived_at, parked, COALESCE(line, id), was_handle`
 
 func scanAgent(row interface{ Scan(...any) error }) (Agent, error) {
 	var a Agent
 	var kind, opts, created string
 	var archived sql.NullString
 	err := row.Scan(&a.ID, &a.Handle, &a.Name, &kind, &a.IsolationID, &a.Workdir, &a.Repo, &opts, &a.SessionID,
-		&a.LastSrc, &created, &archived, &a.Parked)
+		&a.LastSrc, &created, &archived, &a.Parked, &a.Line, &a.Was)
 	if errors.Is(err, sql.ErrNoRows) {
 		return a, ErrNotFound
 	}

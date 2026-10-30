@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"regexp"
 	goruntime "runtime"
+	"slices"
 	"sort"
 	"strings"
 	"sync"
@@ -91,6 +92,9 @@ type Manager struct {
 	creds      *creds.Store
 	tunnelPort func(int) int
 
+	// swap is held while /new puts a new session in an agent's place, so a
+	// list of agents shows it before or after, never halfway.
+	swap     sync.RWMutex
 	mu       sync.Mutex
 	runtimes map[string]*runtime
 	isos     map[string]*isoState
@@ -201,6 +205,12 @@ func (m *Manager) Wait() { m.loops.Wait() }
 // runtime is the live agent idOrPrefix names: by its own ID, its key, or
 // the only key starting with it.
 func (m *Manager) runtime(idOrPrefix string) (*runtime, error) {
+	m.swap.RLock()
+	defer m.swap.RUnlock()
+	return m.liveRuntime(idOrPrefix)
+}
+
+func (m *Manager) liveRuntime(idOrPrefix string) (*runtime, error) {
 	if a, err := m.store.AgentByHandle(idOrPrefix); err == nil {
 		idOrPrefix = a.ID
 	}
@@ -769,7 +779,7 @@ func agentHandle(handle string) (string, error) {
 func (m *Manager) newAgentID() (string, error) {
 	for {
 		id := newID()
-		err := m.store.RefFree(id)
+		err := m.store.KeyFree(id)
 		if !errors.Is(err, store.ErrExists) {
 			return id, err
 		}
@@ -859,6 +869,8 @@ func (m *Manager) CreateAgent(ctx context.Context, req api.CreateAgent) (store.A
 }
 
 func (m *Manager) Agents() ([]api.Agent, error) {
+	m.swap.RLock()
+	defer m.swap.RUnlock()
 	all, err := m.store.Agents()
 	if err != nil {
 		return nil, err
@@ -905,8 +917,10 @@ func (m *Manager) viewOf(a store.Agent) (api.Agent, error) {
 }
 
 func (m *Manager) Agent(idOrPrefix string) (api.Agent, error) {
+	m.swap.RLock()
+	defer m.swap.RUnlock()
 	var a store.Agent
-	if r, err := m.runtime(idOrPrefix); err == nil {
+	if r, err := m.liveRuntime(idOrPrefix); err == nil {
 		a, _, _ = r.view()
 	} else if a, err = m.storedAgent(idOrPrefix); err != nil {
 		return api.Agent{}, err
@@ -1051,6 +1065,44 @@ func (m *Manager) Archive(ctx context.Context, id string) error {
 	return nil
 }
 
+// Renew starts the agent over: a new session in the same isolation and
+// working directory, with its ID, options, crons and waiting mail, takes
+// its place, and it is archived. The two are one line, shown together
+// whatever they are called later.
+func (m *Manager) Renew(ctx context.Context, id string) (store.Agent, error) {
+	r, err := m.runtime(id)
+	if err != nil {
+		return store.Agent{}, err
+	}
+	old, _, _ := r.view()
+	key, err := m.newAgentID()
+	if err != nil {
+		return store.Agent{}, err
+	}
+	drv, err := driver.New(old.Kind, key, "", old.Options)
+	if err != nil {
+		return store.Agent{}, err
+	}
+	now := time.Now().UTC()
+	a := store.Agent{ID: key, Kind: old.Kind, IsolationID: old.IsolationID, Workdir: old.Workdir, Repo: old.Repo,
+		Options: old.Options, SessionID: drv.State().SessionID, CreatedAt: now}
+	m.swap.Lock()
+	defer m.swap.Unlock()
+	if err := m.store.Renew(old.ID, a, now); err != nil {
+		return store.Agent{}, err
+	}
+	if a, err = m.store.Agent(key); err != nil {
+		return store.Agent{}, err
+	}
+	r.stop(ctx)
+	m.mu.Lock()
+	delete(m.runtimes, old.ID)
+	m.mu.Unlock()
+	m.log.Printf("agent %s: renewed as %s", old.ID, a.ID)
+	_, err = m.ensureRuntime(a)
+	return a, err
+}
+
 // DeleteAgent forgets an archived agent: its history here and its log in
 // the isolation. Its workspace and the CLI's transcript of its session stay
 // in the isolation's volume unless purge, the way an isolation's volumes
@@ -1139,18 +1191,38 @@ var (
 // purgeAgent removes what the agent left in the isolation's home: its
 // workspace and its CLI's transcript of the session. Every path is derived
 // from the agent's own ID, workspace and session, nothing else.
+//
+// A workspace another agent works in too, a session of its line before or
+// after it, stays, and so does what its CLI keeps per directory: only this
+// session's own transcript goes.
 func (m *Manager) purgeAgent(ctx context.Context, iso store.Isolation, a store.Agent) error {
-	if a.Workdir != m.workRoot+"/"+a.ID {
+	if a.Workdir != m.workRoot+"/"+a.ID && a.Workdir != m.workRoot+"/"+a.Line {
 		return badRequest(fmt.Errorf("agent %s's workspace %s is not where gero makes one; delete it without purge and remove that yourself", a.ID, a.Workdir))
 	}
-	steps := [][]string{{"rm", "-rf", "--", a.Workdir}}
+	all, err := m.store.Agents()
+	if err != nil {
+		return err
+	}
+	shared := slices.ContainsFunc(all, func(b store.Agent) bool {
+		return b.ID != a.ID && b.IsolationID == a.IsolationID && b.Workdir == a.Workdir
+	})
+	var steps [][]string
+	if !shared {
+		steps = append(steps, []string{"rm", "-rf", "--", a.Workdir})
+	}
 	sid := a.SessionID
 	if !validSession.MatchString(sid) {
 		sid = ""
 	}
 	switch a.Kind {
 	case driver.Claude:
-		steps = append(steps, []string{"rm", "-rf", "--", m.home + "/.claude/projects/" + projectName.ReplaceAllString(a.Workdir, "-")})
+		project := m.home + "/.claude/projects/" + projectName.ReplaceAllString(a.Workdir, "-")
+		switch {
+		case !shared:
+			steps = append(steps, []string{"rm", "-rf", "--", project})
+		case sid != "":
+			steps = append(steps, []string{"rm", "-rf", "--", project + "/" + sid + ".jsonl", project + "/" + sid})
+		}
 		if sid != "" {
 			steps = append(steps, []string{"rm", "-rf", "--", m.home + "/.claude/session-env/" + sid})
 		}

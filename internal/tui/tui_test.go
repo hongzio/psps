@@ -913,3 +913,47 @@ func TestNewAgentDirectoryIsCompleted(t *testing.T) {
 		t.Fatalf("created = %+v", h.be.created)
 	}
 }
+
+// /new archives the open agent as a new session takes its place: the TUI
+// goes on in the new one, and an agent's archived sessions fold into one
+// entry under the ID it goes by now.
+func TestANewSessionIsFollowedAndItsArchivedOnesFold(t *testing.T) {
+	h := newHarness(t)
+	h.drainFeed()
+	if h.m.openID != "bbbb" {
+		t.Fatalf("open %q", h.m.openID)
+	}
+	now := time.Now()
+	agents := append([]api.Agent(nil), h.m.agents...)
+	for i := range agents {
+		agents[i].Line = agents[i].ID
+	}
+	h.send(agentsMsg{agents: append([]api.Agent(nil), agents...)})
+	prev := agents[1]
+	prev.ArchivedAt, prev.Was, prev.Handle = &now, "id1", ""
+	older := prev
+	older.ID, older.Was = "b000", "id0"
+	next := agents[1]
+	next.ID, next.Handle, next.Name = "cccc", "id1", ""
+	h.send(agentsMsg{agents: []api.Agent{agents[0], older, prev, next}})
+	if h.m.openID != "cccc" || h.m.sel != "cccc" {
+		t.Fatalf("after /new: open %q, sel %q", h.m.openID, h.m.sel)
+	}
+
+	h.key("z")
+	items := strings.Join(h.m.items(), " ")
+	if !strings.Contains(items, "archived line:bbbb isolations") {
+		t.Fatalf("items %s", items)
+	}
+	if v := h.m.View(); !strings.Contains(v, "▸ id1 · 2 sessions") {
+		t.Fatalf("no folded line in\n%s", v)
+	}
+	h.m.sel = "line:bbbb"
+	h.key("enter")
+	if items := strings.Join(h.m.items(), " "); !strings.Contains(items, "line:bbbb b000 bbbb isolations") {
+		t.Fatalf("unfolded items %s", items)
+	}
+	if v := h.m.View(); !strings.Contains(v, "· id0") {
+		t.Fatalf("a session does not show the ID it went by\n%s", v)
+	}
+}

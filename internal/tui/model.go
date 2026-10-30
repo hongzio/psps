@@ -7,6 +7,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -107,21 +108,23 @@ type Model struct {
 	width, height int
 	agents        []api.Agent
 	isolations    []api.Isolation
-	sel           string // selNew, selArchived, selIsolations or an agent id
+	sel           string // selNew, selArchived, selIsolations, a lineItem or an agent id
 	showArchived  bool
-	focus         focus
-	view          view
-	approving     bool
-	answering     *answering
-	help          bool
-	confirm       *confirmation
-	prompt        *prompt
-	flash         string
-	flashErr      bool
-	flashUntil    time.Time
-	frame         int
-	connErr       string
-	lastIsoFetch  time.Time
+	// openLines are the lines whose archived sessions are unfolded.
+	openLines    map[string]bool
+	focus        focus
+	view         view
+	approving    bool
+	answering    *answering
+	help         bool
+	confirm      *confirmation
+	prompt       *prompt
+	flash        string
+	flashErr     bool
+	flashUntil   time.Time
+	frame        int
+	connErr      string
+	lastIsoFetch time.Time
 
 	convos   map[string]*convo
 	drafts   map[string]string
@@ -275,19 +278,68 @@ func (m *Model) convo(id string) *convo {
 // items is the sidebar, top to bottom.
 func (m *Model) items() []string {
 	out := []string{selNew}
-	var archived []string
 	for _, a := range m.agents {
-		if a.ArchivedAt != nil {
-			archived = append(archived, a.ID)
-		} else {
+		if a.ArchivedAt == nil {
 			out = append(out, a.ID)
 		}
 	}
 	out = append(out, selArchived)
 	if m.showArchived {
-		out = append(out, archived...)
+		for _, l := range m.archivedLines() {
+			if len(l.sessions) > 1 {
+				out = append(out, lineItem+l.line)
+				if !m.openLines[l.line] {
+					continue
+				}
+			}
+			for _, a := range l.sessions {
+				out = append(out, a.ID)
+			}
+		}
 	}
 	return append(out, selIsolations, selServices)
+}
+
+// lineItem prefixes the sidebar entry of a line's archived sessions.
+const lineItem = "line:"
+
+type archivedLine struct {
+	line     string
+	sessions []api.Agent
+}
+
+// archivedLines are the archived agents by line, in order, each line where
+// its first session is: an agent's archived sessions are one folded entry.
+func (m *Model) archivedLines() []archivedLine {
+	var out []archivedLine
+	at := map[string]int{}
+	for _, a := range m.agents {
+		if a.ArchivedAt == nil {
+			continue
+		}
+		line := a.Line
+		if line == "" {
+			line = a.ID
+		}
+		i, ok := at[line]
+		if !ok {
+			i = len(out)
+			at[line] = i
+			out = append(out, archivedLine{line: line})
+		}
+		out[i].sessions = append(out[i].sessions, a)
+	}
+	return out
+}
+
+// lineAgent is the agent a line goes on as: its live session, or its last.
+func (m *Model) lineAgent(l archivedLine) api.Agent {
+	for _, a := range m.agents {
+		if a.ArchivedAt == nil && a.Line == l.line {
+			return a
+		}
+	}
+	return l.sessions[len(l.sessions)-1]
 }
 
 func (m *Model) moveSel(delta int) tea.Cmd {
@@ -350,8 +402,11 @@ func (m *Model) openAgent(id string) {
 
 // shownID is the ID an agent goes by: its own, or the key gero gave it.
 func shownID(a api.Agent) string {
-	if a.Handle != "" {
+	switch {
+	case a.Handle != "":
 		return a.Handle
+	case a.Was != "":
+		return a.Was
 	}
 	return a.ID
 }
@@ -413,7 +468,22 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		m.connErr = ""
+		before, wasOpen := m.agent(m.openID)
 		m.agents = msg.agents
+		// The open agent was archived as a new session took its place
+		// (/new): go on in the new one, as if it were the same agent.
+		if now, ok := m.agent(m.openID); wasOpen && ok && before.ArchivedAt == nil && now.ArchivedAt != nil {
+			for _, a := range m.agents {
+				if a.ArchivedAt == nil && a.Line == now.Line {
+					follow := m.sel == m.openID
+					m.openAgent(a.ID)
+					if follow {
+						m.sel = a.ID
+					}
+					break
+				}
+			}
+		}
 		if _, ok := m.agent(m.openID); m.openID != "" && !ok {
 			// Deleted: stop following it.
 			if m.stopFeed != nil {
@@ -425,6 +495,9 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		if _, ok := m.agent(m.sel); !ok && !isFixed(m.sel) {
 			m.sel = selNew
+		}
+		if strings.HasPrefix(m.sel, lineItem) && !slices.Contains(m.items(), m.sel) {
+			m.sel = selArchived
 		}
 		if m.openID == "" && m.sel == selNew {
 			// First load: land on the most recent live agent, if any.
@@ -636,7 +709,7 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 }
 
 func isFixed(sel string) bool {
-	return sel == selNew || sel == selArchived || sel == selIsolations || sel == selServices
+	return sel == selNew || sel == selArchived || sel == selIsolations || sel == selServices || strings.HasPrefix(sel, lineItem)
 }
 
 func (m *Model) setFocus(f focus) {
@@ -777,6 +850,13 @@ func (m *Model) handleSidebarKey(msg tea.KeyMsg) tea.Cmd {
 			return m.openServices()
 		case selArchived:
 			m.showArchived = !m.showArchived
+			return nil
+		}
+		if line, ok := strings.CutPrefix(m.sel, lineItem); ok {
+			if m.openLines == nil {
+				m.openLines = map[string]bool{}
+			}
+			m.openLines[line] = !m.openLines[line]
 			return nil
 		}
 		if a, ok := m.agent(m.sel); ok && a.ArchivedAt == nil {
@@ -939,7 +1019,8 @@ func (m *Model) handleInputKey(msg tea.KeyMsg) tea.Cmd {
 			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
 			defer cancel()
 			sent, err := be.Send(ctx, id, text)
-			return doneMsg{flash: sent.Done, err: err}
+			// After /new the list shows the session that took its place.
+			return doneMsg{flash: sent.Done, err: err, refresh: sent.Agent != ""}
 		}
 	}
 	var cmd tea.Cmd

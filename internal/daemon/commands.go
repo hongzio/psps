@@ -47,6 +47,7 @@ func geroCommands(kind driver.Kind, models []driver.Choice) []api.Command {
 			{Value: "default", Description: "the CLI's own settings decide"},
 		}),
 		cmd("stop", "Stop its turn", "", nil),
+		cmd("new", "Start over in a new session: same ID and directory, this one archived", "", nil),
 	}
 }
 
@@ -80,7 +81,7 @@ func geroCommand(text string) (name string, args []string, ok bool) {
 	}
 	f := strings.Fields(t)
 	switch name = f[0][1:]; name {
-	case "model", "effort", "approvals", "stop":
+	case "model", "effort", "approvals", "stop", "new":
 		return name, f[1:], true
 	}
 	return "", nil, false
@@ -96,6 +97,16 @@ func (m *Manager) Message(id, text string) (api.Sent, error) {
 	r, err := m.runtime(id)
 	if err != nil {
 		return api.Sent{}, err
+	}
+	if name == "new" {
+		if len(args) > 0 {
+			return api.Sent{}, badRequest(errors.New("/new takes nothing"))
+		}
+		a, err := m.Renew(m.ctx, r.agent.ID)
+		if err != nil {
+			return api.Sent{}, err
+		}
+		return api.Sent{Done: "Started a new session; the last one is archived.", Agent: a.ID}, nil
 	}
 	if name == "stop" {
 		if len(args) > 0 {

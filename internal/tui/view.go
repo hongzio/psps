@@ -76,9 +76,22 @@ func (m *Model) renderSidebar(w int) string {
 	}
 	row(selArchived, th.dim.Render(fmt.Sprintf("%s Archived (%d)", arrow, archived)))
 	if m.showArchived {
-		for _, a := range m.agents {
-			if a.ArchivedAt != nil {
-				row(a.ID, th.dim.Render("  "+title(a)))
+		for _, l := range m.archivedLines() {
+			indent := "  "
+			if len(l.sessions) > 1 {
+				arrow, open := "▸", m.openLines[l.line]
+				if open {
+					arrow = "▾"
+				}
+				cur := m.lineAgent(l)
+				row(lineItem+l.line, th.dim.Render(fmt.Sprintf("  %s %s · %d sessions", arrow, shownID(cur), len(l.sessions))))
+				if !open {
+					continue
+				}
+				indent = "    "
+			}
+			for _, a := range l.sessions {
+				row(a.ID, th.dim.Render(indent+title(a)+" · "+shownID(a)))
 			}
 		}
 	}

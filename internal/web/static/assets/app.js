@@ -52,6 +52,8 @@ const S = {
   sel: null, // agent id
   view: 'agent', // agent | new | isolations
   showArchived: false,
+  // Lines whose archived sessions are unfolded, by line.
+  openLines: new Set(),
   drawer: false,
   convos: new Map(),
   drafts: new Map(),
@@ -95,8 +97,9 @@ const agentById = (id) => S.agents.find((a) => a.id === id)
 // agentTitle is what an agent is called on the page: one made without a
 // prompt has no name until its first message.
 const agentTitle = (a) => a.name || 'New agent'
-// shownID is the ID an agent goes by: its own, or the key gero gave it.
-const shownID = (a) => a.handle || a.id
+// shownID is the ID an agent goes by: its own, the one it went by until a
+// new session took it, or the key gero gave it.
+const shownID = (a) => a.handle || a.was || a.id
 // letter reads a mail from another agent as the agent got it (the daemon's
 // mailproxy.Letter): who wrote it, from where, and what it says.
 const LETTER = /^\[gero mail #(\d+) from agent (\S+) in isolation (\S+)\. [^\n]*\]\n\n/
@@ -680,9 +683,25 @@ function scheduleConvo() {
 
 // ---- Polling
 
+// Answers can cross: only the newest asked for is drawn.
+let agentsAsked = 0
 async function refreshAgents() {
+  const n = ++agentsAsked
   const agents = await api('GET', '/v1/agents')
+  if (n !== agentsAsked) return
+  const before = agentById(S.sel)
   S.agents = agents
+  // The open agent was archived as a new session took its place (/new):
+  // go on in the new one, as if it were the same agent.
+  const now = agentById(S.sel)
+  if (S.view === 'agent' && before && !before.archived_at && now?.archived_at) {
+    const next = agents.find((a) => !a.archived_at && a.line === now.line)
+    if (next) {
+      history.replaceState(null, '', '#/a/' + next.id)
+      select(next.id, false)
+      return
+    }
+  }
   if (!S.sel && S.view === 'agent') {
     const live = agents.filter((a) => !a.archived_at)
     if (live.length) select(live[live.length - 1].id, false)
@@ -891,6 +910,20 @@ function renderSidebar() {
       onclick: () => select(a.id),
     }, dot, h('span', { class: 'name' }, agentTitle(a)), h('span', { class: 'meta' }, meta))
   }
+  // An agent's archived sessions are one folded line, under the ID it goes
+  // by now; a lone one is a row of its own.
+  const archivedRows = () => archivedEntries(archived).map((e) => {
+    if (e.sessions.length === 1) return row(e.sessions[0])
+    const open = S.openLines.has(e.line)
+    const current = S.agents.find((a) => !a.archived_at && a.line === e.line) || e.sessions[e.sessions.length - 1]
+    return h('div', { class: 'line-group' + (open ? ' open' : '') },
+      h('button', {
+        class: 'agent line-head', 'aria-expanded': String(open),
+        onclick: () => { open ? S.openLines.delete(e.line) : S.openLines.add(e.line); renderSidebar() },
+      }, h('span', { class: 'caret' }, open ? '▾' : '▸'), h('span', { class: 'name' }, shownID(current)),
+      h('span', { class: 'meta' }, `${e.sessions.length} sessions · ${current.isolation}`)),
+      open ? h('div', { class: 'line-sessions' }, e.sessions.map(row)) : null)
+  })
   el.replaceChildren(
     h('div', { class: 'brand' }, 'gero', h('span', { class: 'count' }, `${live.length} agent${live.length === 1 ? '' : 's'}`)),
     h('button', { class: 'new-agent' + (S.view === 'new' ? ' active' : ''), onclick: () => show('new') }, '+ New agent'),
@@ -898,12 +931,25 @@ function renderSidebar() {
       live.map(row),
       h('button', { class: 'fold', onclick: () => { S.showArchived = !S.showArchived; renderSidebar() } },
         `${S.showArchived ? '▾' : '▸'} Archived (${archived.length})`),
-      S.showArchived ? archived.map(row) : null),
+      S.showArchived ? archivedRows() : null),
     h('div', { class: 'side-foot' },
       h('button', { class: S.view === 'isolations' ? 'active' : '', onclick: () => show('isolations') }, '⚙ Isolations'),
       h('button', { class: S.view === 'services' ? 'active' : '', onclick: () => show('services') }, '⚿ Services'),
       h('button', { class: S.view === 'setup' ? 'active' : '', onclick: () => show('setup') }, '✦ Accounts')),
   )
+}
+
+// archivedEntries are the archived agents by line, in order, each line
+// where its first session is.
+function archivedEntries(archived) {
+  const out = [], byLine = new Map()
+  for (const a of archived) {
+    const line = a.line || a.id
+    let e = byLine.get(line)
+    if (!e) { e = { line, sessions: [] }; byLine.set(line, e); out.push(e) }
+    e.sessions.push(a)
+  }
+  return out
 }
 
 function agentView() {
