@@ -17,7 +17,7 @@ import (
 
 func agentCmd(p paths.Paths, args []string) error {
 	if len(args) == 0 {
-		return errors.New("usage: gero agent new|ls|log|send|inbox|mail|cron|approve|interrupt|set|rename|id|archive|rm")
+		return errors.New("usage: gero agent new|ls|log|send|inbox|mail|cron|approve|interrupt|set|rename|id|archive|restore|rm")
 	}
 	c, err := connect(p)
 	if err != nil {
@@ -401,6 +401,18 @@ func agentCmd(p paths.Paths, args []string) error {
 			return errors.New("usage: gero agent archive ID")
 		}
 		return c.Archive(ctx, pos[0])
+
+	case "restore":
+		pos := parse(fs, args[1:])
+		if len(pos) != 1 {
+			return errors.New("usage: gero agent restore ID   (an archived agent)")
+		}
+		a, err := c.Restore(ctx, pos[0])
+		if err != nil {
+			return err
+		}
+		fmt.Printf("restored agent %s\n", shownID(a))
+		return nil
 
 	case "rm":
 		purge := fs.Bool("purge", false, "also remove its workspace and its CLI's session transcript from the isolation")

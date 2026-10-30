@@ -86,6 +86,8 @@ bin/gero agent cron <id> --add "0 9 * * 1-5" "check CI"  # a message on a schedu
 bin/gero agent rename <id> login bug      # only the name changes; a turn carries on
 bin/gero agent id <id> login              # an ID of your own (--clear gives it back)
 bin/gero agent archive <id>               # stops it; its history is kept
+bin/gero agent restore <id>               # an archived one carries on where it left off,
+                                          # under its line's ID; a live session there is archived
 bin/gero agent rm <id> [--purge]          # an archived one: gone from gero; --purge also
                                           # removes its workspace and session transcript
 ```
@@ -147,7 +149,11 @@ what is typed there works the same.
   in the same isolation and directory takes its ID, settings, crons and
   waiting mail, and the old one is archived. The web UI and the TUI go on
   in the new one; an agent's archived sessions fold together under
-  Archived, whatever ID they went by.
+  Archived, whatever ID they went by. Restoring one (Restore in the web UI,
+  `u` in the TUI, `gero agent restore`) goes back to it: its session
+  resumes and it takes the ID, crons and waiting mail back from the
+  session there now, which is archived. One session of an agent is live at
+  a time.
 - Claude's: its slash commands and skills, as the running `claude` lists
   them (asked once a process, which costs no turn). Its `/model` and
   `/effort` are left out for gero's, which last beyond the process, and

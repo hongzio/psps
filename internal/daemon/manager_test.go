@@ -1962,3 +1962,90 @@ func TestAnAgentIsStartingUntilItsRuntimeIsConnected(t *testing.T) {
 		t.Fatalf("shown %s, problem %q", st.Status, p)
 	}
 }
+
+// Restoring an archived session brings it back under its line's ID: the
+// live session of the line is archived for it and hands over its crons;
+// with none live, the session that went by the ID last hands it over.
+func TestRestoreBringsASessionBackUnderItsLinesID(t *testing.T) {
+	e := newTestEnv(t)
+	ctx := context.Background()
+	m, stop := e.daemon()
+	defer stop()
+
+	a, err := m.CreateAgent(ctx, api.CreateAgent{Isolation: "dev", Kind: driver.Codex, Prompt: "one", Handle: "id1"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	e.waitFor("an answer", func() bool { return e.hasAssistant(a.ID, "echo: one") && status(m, a.ID) == event.StatusIdle })
+	sent, err := m.Message("id1", "/new")
+	if err != nil {
+		t.Fatal(err)
+	}
+	b := sent.Agent
+	if _, err := m.AddCron("id1", api.PutCron{Schedule: ptr("@every 1h"), Prompt: ptr("tick")}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := m.Restore(ctx, b); err == nil {
+		t.Fatal("a live agent was restored")
+	}
+
+	// Not while the session there is in a turn.
+	if _, err := m.Message("id1", "hang"); err != nil {
+		t.Fatal(err)
+	}
+	e.waitFor("the turn", func() bool { return status(m, b) == event.StatusWorking })
+	if _, err := m.Restore(ctx, a.ID); err == nil {
+		t.Fatal("restored over a session in a turn")
+	}
+	if st := status(m, b); st != event.StatusWorking {
+		t.Fatalf("the session there is %s", st)
+	}
+	if err := m.Interrupt("id1"); err != nil {
+		t.Fatal(err)
+	}
+	e.waitFor("the turn to stop", func() bool { s := status(m, b); return s == event.StatusIdle || s == event.StatusInterrupted })
+
+	got, err := m.Restore(ctx, a.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.ID != a.ID || got.Handle != "id1" || got.ArchivedAt != nil || got.Was != "" {
+		t.Fatalf("restored: %+v", got.Agent)
+	}
+	if old, _ := e.st.Agent(b); old.ArchivedAt == nil || old.Handle != "" || old.Was != "id1" {
+		t.Fatalf("the session it replaced: %+v", old)
+	}
+	if cs, _ := m.Crons("id1"); len(cs.Crons) != 1 {
+		t.Fatalf("the restored session has %d crons", len(cs.Crons))
+	}
+	if _, err := m.Message("id1", "two"); err != nil {
+		t.Fatal(err)
+	}
+	e.waitFor("the restored session's answer", func() bool { return e.hasAssistant(a.ID, "echo: two") })
+
+	// None live: the archived session that went by the ID hands it over.
+	e.waitFor("idle", func() bool { return status(m, a.ID) == event.StatusIdle })
+	if err := m.Archive(ctx, "id1"); err != nil {
+		t.Fatal(err)
+	}
+	if got, err = m.Restore(ctx, b); err != nil || got.Handle != "id1" {
+		t.Fatalf("restored with none live: %+v, %v", got.Agent, err)
+	}
+	if old, _ := e.st.Agent(a.ID); old.Handle != "" || old.Was != "id1" {
+		t.Fatalf("the session that had the ID: %+v", old)
+	}
+	if live := liveIDs(m); !slices.Equal(live, []string{b}) {
+		t.Fatalf("live %v, want only %s", live, b)
+	}
+}
+
+func liveIDs(m *Manager) []string {
+	all, _ := m.Agents()
+	var out []string
+	for _, a := range all {
+		if a.ArchivedAt == nil {
+			out = append(out, a.ID)
+		}
+	}
+	return out
+}

@@ -469,6 +469,78 @@ func (s *Store) Renew(old string, next Agent, at time.Time) error {
 	return tx.Commit()
 }
 
+// Restore brings the archived agent id back as its line's live session, at
+// once. The line's ID goes with it: a live session on the line is archived
+// in its place, as /new would, and hands over its ID, its crons and the
+// mail waiting for it; with none live, the session that went by the ID last
+// hands it over. An agent that gets no ID that way keeps its own, or else
+// goes by fallback. replaced is the live session archived, if any.
+func (s *Store) Restore(id, fallback string, at time.Time) (replaced string, err error) {
+	tx, err := s.db.Begin()
+	if err != nil {
+		return "", err
+	}
+	defer tx.Rollback()
+	var line, own string
+	var archived sql.NullString
+	err = tx.QueryRow(`SELECT COALESCE(line, id), COALESCE(handle, ''), archived_at FROM agents WHERE id = ?`, id).Scan(&line, &own, &archived)
+	if errors.Is(err, sql.ErrNoRows) {
+		return "", fmt.Errorf("agent %s: %w", id, ErrNotFound)
+	}
+	if err != nil {
+		return "", err
+	}
+	if !archived.Valid {
+		return "", fmt.Errorf("agent %s is not archived: %w", id, ErrExists)
+	}
+	// The line's ID: its live session's, or else the latest one's to go by it.
+	var holder, handle string
+	err = tx.QueryRow(`SELECT id, COALESCE(handle, '') FROM agents WHERE COALESCE(line, id) = ? AND archived_at IS NULL`, line).Scan(&holder, &handle)
+	switch {
+	case err == nil:
+		replaced = holder
+		if _, err := tx.Exec(`UPDATE agents SET archived_at = ?, handle = NULL, was_handle = ?, parked = 0 WHERE id = ?`, ts(at), handle, holder); err != nil {
+			return "", err
+		}
+		for _, q := range []string{`UPDATE crons SET agent = ? WHERE agent = ?`, `UPDATE mail SET agent = ? WHERE agent = ? AND ` + waiting} {
+			if _, err := tx.Exec(q, id, holder); err != nil {
+				return "", err
+			}
+		}
+	case errors.Is(err, sql.ErrNoRows):
+		if own != "" {
+			break
+		}
+		err = tx.QueryRow(`SELECT id, handle FROM agents WHERE COALESCE(line, id) = ? AND id != ? AND handle IS NOT NULL
+			ORDER BY created_at DESC LIMIT 1`, line, id).Scan(&holder, &handle)
+		if errors.Is(err, sql.ErrNoRows) {
+			break
+		}
+		if err != nil {
+			return "", err
+		}
+		if _, err := tx.Exec(`UPDATE agents SET handle = NULL, was_handle = ? WHERE id = ?`, handle, holder); err != nil {
+			return "", err
+		}
+	default:
+		return "", err
+	}
+	if handle == "" {
+		handle = own
+	}
+	if handle == "" {
+		handle = fallback
+	}
+	if err := refFree(tx, handle, id); err != nil {
+		return "", err
+	}
+	if _, err := tx.Exec(`UPDATE agents SET archived_at = NULL, handle = NULLIF(?, ''), was_handle = CASE WHEN ? = '' THEN was_handle ELSE '' END WHERE id = ?`,
+		handle, handle, id); err != nil {
+		return "", err
+	}
+	return replaced, tx.Commit()
+}
+
 // refFree refuses ref if an agent other than except has it as its key or
 // its handle. "" is no ref.
 func refFree(q interface {

@@ -36,6 +36,7 @@ type Backend interface {
 	Interrupt(ctx context.Context, id string) error
 	SetOptions(ctx context.Context, id string, o driver.Options) error
 	Archive(ctx context.Context, id string) error
+	Restore(ctx context.Context, id string) (api.Agent, error)
 	UpdateAgent(ctx context.Context, id string, req api.UpdateAgent) (api.Agent, error)
 	DeleteAgent(ctx context.Context, id string, purge bool) error
 	Follow(ctx context.Context, id string, after int64, fn func(event.Event) error) error
@@ -939,6 +940,28 @@ func (m *Model) handleSidebarKey(msg tea.KeyMsg) tea.Cmd {
 			prompt: fmt.Sprintf("archive %q? its history is kept (y/n)", title(a)),
 			onYes: func() tea.Cmd {
 				return m.do("archived "+shown, true, func(ctx context.Context) error { return be.Archive(ctx, id) })
+			},
+		}
+		return nil
+	case k.Is(msg, "restore"):
+		a, ok := m.agent(m.sel)
+		if !ok || a.ArchivedAt == nil {
+			return nil
+		}
+		be, id := m.be, a.ID
+		prompt := fmt.Sprintf("restore %q? it carries on where it left off (y/n)", title(a))
+		for _, o := range m.agents {
+			if o.ArchivedAt == nil && o.Line == a.Line {
+				prompt = fmt.Sprintf("restore %q as %s? %q, there now, is archived (y/n)", title(a), shownID(o), title(o))
+			}
+		}
+		m.confirm = &confirmation{
+			prompt: prompt,
+			onYes: func() tea.Cmd {
+				return m.do("restored "+title(a), true, func(ctx context.Context) error {
+					_, err := be.Restore(ctx, id)
+					return err
+				})
 			},
 		}
 		return nil

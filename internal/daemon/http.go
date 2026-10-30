@@ -337,6 +337,10 @@ func (m *Manager) Handler() http.Handler {
 	mux.HandleFunc("POST /v1/agents/{id}/archive", func(w http.ResponseWriter, r *http.Request) {
 		reply(w, nil, m.Archive(r.Context(), r.PathValue("id")))
 	})
+	mux.HandleFunc("POST /v1/agents/{id}/restore", func(w http.ResponseWriter, r *http.Request) {
+		v, err := m.Restore(r.Context(), r.PathValue("id"))
+		reply(w, v, err)
+	})
 	mux.HandleFunc("DELETE /v1/agents/{id}", func(w http.ResponseWriter, r *http.Request) {
 		reply(w, nil, m.DeleteAgent(r.Context(), r.PathValue("id"), r.URL.Query().Get("purge") == "1"))
 	})
