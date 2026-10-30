@@ -73,6 +73,7 @@ const usage = `gero — run coding agents in isolated containers
   gero agent rename ID NAME...   only the name changes; a running turn carries on
   gero agent id ID NEW-ID|--clear   an ID of your own, unique among all agents; usable wherever an ID is
   gero agent archive ID
+  gero agent fork ID            a new agent in its directory, its conversation copied; no crons or mail
   gero agent restore ID         an archived one, back where it left off; a live session of its line is archived for it
   gero agent rm ID [--purge]    an archived one; --purge also removes its workspace and session transcript
 

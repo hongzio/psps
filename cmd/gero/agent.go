@@ -17,7 +17,7 @@ import (
 
 func agentCmd(p paths.Paths, args []string) error {
 	if len(args) == 0 {
-		return errors.New("usage: gero agent new|ls|log|send|inbox|mail|cron|approve|interrupt|set|rename|id|archive|restore|rm")
+		return errors.New("usage: gero agent new|ls|log|send|inbox|mail|cron|approve|interrupt|set|rename|id|archive|restore|fork|rm")
 	}
 	c, err := connect(p)
 	if err != nil {
@@ -401,6 +401,18 @@ func agentCmd(p paths.Paths, args []string) error {
 			return errors.New("usage: gero agent archive ID")
 		}
 		return c.Archive(ctx, pos[0])
+
+	case "fork":
+		pos := parse(fs, args[1:])
+		if len(pos) != 1 {
+			return errors.New("usage: gero agent fork ID   (live or archived)")
+		}
+		a, err := c.Fork(ctx, pos[0])
+		if err != nil {
+			return err
+		}
+		fmt.Printf("forked agent %s\n", shownID(a))
+		return nil
 
 	case "restore":
 		pos := parse(fs, args[1:])

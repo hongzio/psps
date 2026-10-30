@@ -108,6 +108,14 @@ func (f *fakeBackend) SetOptions(_ context.Context, _ string, o driver.Options) 
 	return nil
 }
 func (f *fakeBackend) Archive(context.Context, string) error { return nil }
+func (f *fakeBackend) Fork(_ context.Context, id string) (api.Agent, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	a := api.Agent{}
+	a.ID, a.Handle, a.Name = "ffff", id+"-x1y2", "forked"
+	f.agents = append(f.agents, a)
+	return a, nil
+}
 func (f *fakeBackend) Restore(_ context.Context, id string) (api.Agent, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -991,5 +999,19 @@ func TestAnArchivedAgentIsRestoredSayingWhichSessionItArchives(t *testing.T) {
 	defer h.be.mu.Unlock()
 	if len(h.be.restored) != 1 || h.be.restored[0] != "bbbb" {
 		t.Fatalf("restored %v", h.be.restored)
+	}
+}
+
+func TestAForkIsOpenedOnceMade(t *testing.T) {
+	h := newHarness(t)
+	h.drainFeed()
+	h.key("f")
+	if h.m.confirm == nil || !strings.Contains(h.m.confirm.prompt, `fork "second"?`) {
+		t.Fatalf("confirm %+v", h.m.confirm)
+	}
+	h.key("y")
+	h.drainFeed()
+	if h.m.sel != "ffff" || !strings.Contains(h.m.flash, "forked as bbbb-x1y2") {
+		t.Fatalf("sel %q, flash %q", h.m.sel, h.m.flash)
 	}
 }

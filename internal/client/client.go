@@ -230,6 +230,12 @@ func (c *Client) Archive(ctx context.Context, id string) error {
 	return c.do(ctx, "POST", "/v1/agents/"+url.PathEscape(id)+"/archive", nil, nil)
 }
 
+// Fork makes a new agent from one, its session a copy of that one's.
+func (c *Client) Fork(ctx context.Context, id string) (api.Agent, error) {
+	var v api.Agent
+	return v, c.do(ctx, "POST", "/v1/agents/"+url.PathEscape(id)+"/fork", nil, &v)
+}
+
 // Restore brings an archived agent back as its line's live session.
 func (c *Client) Restore(ctx context.Context, id string) (api.Agent, error) {
 	var v api.Agent

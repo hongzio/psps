@@ -974,6 +974,12 @@ function agentView() {
   return frag
 }
 
+// forkedFrom is the ID of the agent a was forked from, while gero has it.
+function forkedFrom(a) {
+  const from = a.forked_from && agentById(a.forked_from)
+  return from ? shownID(from) : ''
+}
+
 function renderTopbar() {
   const slot = document.getElementById('topbar-slot')
   const a = agentById(S.sel)
@@ -982,7 +988,7 @@ function renderTopbar() {
   const working = st === 'working'
   // replaceChildren turns null into the text "null"; keep only nodes.
   slot.replaceChildren(...[
-    topbar(agentTitle(a), `${a.kind} · ${a.isolation} · ${shownID(a)}`,
+    topbar(agentTitle(a), `${a.kind} · ${a.isolation} · ${shownID(a)}` + (forkedFrom(a) ? ` · fork of ${forkedFrom(a)}` : ''),
       h('span', { class: 'chip ' + st }, st),
       h('div', { class: 'actions' },
         working ? h('button', { class: 'btn', onclick: () => guarded(() => api('POST', `/v1/agents/${a.id}/interrupt`)) }, '■', h('span', { class: 'label' }, ' Stop')) : null,
@@ -991,6 +997,21 @@ function renderTopbar() {
         a.archived_at ? null : h('button', { class: 'btn ghost', title: 'Cron: messages sent to it on a schedule', onclick: () => openCrons(a) },
           '◷', h('span', { class: 'label' }, ' Cron'), a.crons ? h('span', { class: 'badge' }, String(a.crons)) : null),
         h('button', { class: 'btn ghost', title: 'Name and ID', onclick: () => editAgent(a) }, '✎', h('span', { class: 'label' }, ' Name & ID')),
+        h('button', {
+          class: 'btn ghost', title: 'Fork: a new agent in its directory that knows its conversation so far', onclick: async () => {
+            if (!await ask({
+              title: `Fork "${agentTitle(a)}"?`,
+              body: `A new agent starts in ${a.workdir}, in ${a.isolation}, knowing this conversation so far. It has no crons or mail, and both work in the one directory.`,
+              ok: 'Fork',
+            })) return
+            await guarded(async () => {
+              const f = await api('POST', `/v1/agents/${enc(a.id)}/fork`)
+              toast(`Forked as ${shownID(f)}`)
+              await refreshAgents()
+              select(f.id)
+            })
+          },
+        }, '⑂', h('span', { class: 'label' }, ' Fork')),
         a.archived_at ? h('button', {
           class: 'btn ghost', title: 'Restore: carry on where it left off', onclick: async () => {
             const live = S.agents.find((o) => !o.archived_at && o.line === a.line)
