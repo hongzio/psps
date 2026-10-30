@@ -281,6 +281,8 @@ code, pre { font-family: var(--mono); font-size: 13px; }
 .tool .mark.running { color: var(--accent); }
 .tool .tname { color: var(--warn); flex: none; }
 .tool .tsum { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
+.tool .tcount { margin-left: auto; flex: none; color: var(--faint); }
+.tools-body { display: flex; flex-direction: column; gap: 6px; padding: 8px; border-top: 1px solid var(--border); }
 .tool pre { margin: 0; padding: 8px 10px 10px; border-top: 1px solid var(--border); max-height: 320px; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; color: var(--muted); }
 .approval { border: 1px solid var(--warn); background: var(--warn-soft); border-radius: 10px; padding: 10px 12px; }
 .approval .head { font-weight: 600; color: var(--warn); }
