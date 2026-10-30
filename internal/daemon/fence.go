@@ -132,6 +132,9 @@ func (m *Manager) measureFenceLocked(ctx context.Context, iso store.Isolation) f
 
 const leakPrefix = "the fence does not hold"
 
+// helperVersion is the fence helper this daemon needs; tests raise it.
+var helperVersion = pf.HelperVersion
+
 // notSent is a probe outcome that means the packet never left the
 // isolation: its own address not usable yet (IPv6 link-local addresses are
 // tentative for the first seconds after boot, while duplicate detection
@@ -260,6 +263,9 @@ func (m *Manager) verifyFence(ctx context.Context, iso store.Isolation) fenceRes
 		st, err := m.fence.Apply(ctx, nets)
 		if err != nil {
 			return fenceFailed(err.Error())
+		}
+		if v := st.Running(); v < helperVersion {
+			return fenceFailed(fmt.Sprintf("the network fence helper is older than this gero (version %d, it needs %d); run `sudo gero pf install`", v, helperVersion))
 		}
 		if !st.Enabled {
 			return fenceFailed("pf is not enabled")

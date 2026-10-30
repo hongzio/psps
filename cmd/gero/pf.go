@@ -46,7 +46,11 @@ func pfCmd(args []string) error {
 		if err != nil {
 			return err
 		}
-		fmt.Printf("pf enabled: %v\nnetworks:   %d\n", st.Enabled, len(st.Networks))
+		fmt.Printf("helper:     version %d", st.Running())
+		if st.Running() < pf.HelperVersion {
+			fmt.Printf(" (this gero needs %d: run `sudo gero pf install`)", pf.HelperVersion)
+		}
+		fmt.Printf("\npf enabled: %v\nnetworks:   %d\n", st.Enabled, len(st.Networks))
 		for _, n := range st.Networks {
 			fmt.Printf("  %s  %s via %s\n", n.Name, n.Subnet4, n.Gateway4)
 		}

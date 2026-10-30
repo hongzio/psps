@@ -12,6 +12,12 @@ import (
 	"time"
 )
 
+func TestTheHelperSaysWhichItIs(t *testing.T) {
+	if (Status{}).Running() != 1 || (Status{Version: HelperVersion}).Running() != HelperVersion {
+		t.Fatal("version")
+	}
+}
+
 // fakePfctl models just enough of pfctl: an enable reference count and one
 // anchor's rules.
 type fakePfctl struct {

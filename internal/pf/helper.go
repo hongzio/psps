@@ -65,8 +65,16 @@ type Request struct {
 	Networks []Network `json:"networks,omitempty"`
 }
 
+// HelperVersion is how the helper behaves: the rules it loads and the
+// protocol it speaks. It goes up only when a daemon needs a helper that
+// behaves differently, and only then does an upgrade of gero take a new
+// `sudo gero pf install`; the helper is a copy of gero that a brew upgrade
+// leaves as it was. Helpers from before it reported none, and are 1.
+const HelperVersion = 1
+
 type Status struct {
 	OK        bool      `json:"ok"`
+	Version   int       `json:"version,omitempty"`
 	Error     string    `json:"error,omitempty"`
 	Enabled   bool      `json:"enabled"`
 	Networks  []Network `json:"networks"`
@@ -229,6 +237,14 @@ func (h *Helper) handle(c net.Conn) {
 	reply(h.status())
 }
 
+// Running is the version of the helper that answered.
+func (s Status) Running() int {
+	if s.Version == 0 {
+		return 1
+	}
+	return s.Version
+}
+
 // union merges every owner's networks, by name, in a stable order.
 func union(owners map[string][]Network) []Network {
 	byName := map[string]Network{}
@@ -252,7 +268,7 @@ func union(owners map[string][]Network) []Network {
 func (h *Helper) status() Status {
 	h.mu.Lock()
 	defer h.mu.Unlock()
-	s := Status{OK: true, Networks: h.networks, AppliedAt: h.appliedAt, LastError: h.lastErr}
+	s := Status{OK: true, Version: HelperVersion, Networks: h.networks, AppliedAt: h.appliedAt, LastError: h.lastErr}
 	s.Enabled = h.enabled()
 	s.Loaded = h.loaded()
 	return s
