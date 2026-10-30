@@ -25,7 +25,8 @@ class Gero < Formula
 
       Once, for the network fence that keeps isolations off the Mac and the LAN:
         sudo gero pf install
-      The fence helper is a copy of gero: run that again after an upgrade.
+      The fence helper is a copy of gero. After an upgrade, run that again only
+      if gero says to (`gero iso ls`, `gero pf status`).
 
       Before `brew uninstall gero`:
         gero daemon uninstall

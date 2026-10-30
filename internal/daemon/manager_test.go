@@ -308,6 +308,7 @@ type fakeFence struct {
 	installed bool
 	applied   [][]pf.Network
 	lag       int
+	version   int
 }
 
 const testBridge = "bridge9"
@@ -319,7 +320,7 @@ func (f *fakeFence) Apply(_ context.Context, nets []pf.Network) (pf.Status, erro
 		return pf.Status{}, pf.ErrNotInstalled
 	}
 	f.applied = append(f.applied, nets)
-	st := pf.Status{OK: true, Enabled: true, Networks: nets,
+	st := pf.Status{OK: true, Version: f.version, Enabled: true, Networks: nets,
 		Loaded: []string{"block drop quick inet from 192.168.99.0/24 to <gero_private4>"}}
 	if f.lag > 0 {
 		f.lag--
@@ -877,6 +878,30 @@ func TestAgentsWaitForTheFence(t *testing.T) {
 	e.fc.leak = false
 	e.fc.mu.Unlock()
 	e.waitFor("the waiting message once the fence holds", func() bool { return e.hasAssistant(a.ID, "echo: two") })
+}
+
+// A helper older than the daemon needs keeps the fence unverified and names
+// the fix; one that reports no version is the first.
+func TestAnOlderFenceHelperNamesTheReinstall(t *testing.T) {
+	e := newTestEnv(t)
+	m, stop := e.daemon()
+	defer stop()
+	iso, _ := e.st.Isolation(testIsoID)
+	if r := m.verifyFence(context.Background(), iso); !r.ok {
+		t.Fatalf("a helper with no version: %s", r.why)
+	}
+	prev := helperVersion
+	helperVersion = 2
+	defer func() { helperVersion = prev }()
+	if r := m.verifyFence(context.Background(), iso); r.ok || !strings.Contains(r.why, "version 1, it needs 2") || !strings.Contains(r.why, "sudo gero pf install") {
+		t.Fatalf("%v %s", r.ok, r.why)
+	}
+	e.fence.mu.Lock()
+	e.fence.version = 2
+	e.fence.mu.Unlock()
+	if r := m.verifyFence(context.Background(), iso); !r.ok {
+		t.Fatalf("a current helper: %s", r.why)
+	}
 }
 
 func TestLegacyIsolationMustMoveOffTheDefaultNetwork(t *testing.T) {

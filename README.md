@@ -15,8 +15,11 @@ brew install gero        # the release's binary; brings Apple's container
 ```
 
 `brew upgrade gero` is all an upgrade takes: the next gero command moves the
-daemon onto the new version, its agents carrying on. Run `sudo gero pf install`
-again after one, since the fence helper is a copy of gero. Before
+daemon onto the new version, its agents carrying on. The fence helper is a
+copy of gero the upgrade leaves as it was, which is fine until a release
+needs a helper that behaves differently: then the fence shows `run sudo gero
+pf install` (in `gero iso ls`, `gero pf status` and the web) and agents wait
+for it. Before
 `brew uninstall gero`, run `gero daemon uninstall` and `sudo gero pf uninstall`.
 
 A release is `sh scripts/release.sh 1.2.3`: it tags main, builds gero, attaches
