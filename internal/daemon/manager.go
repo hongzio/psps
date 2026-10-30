@@ -899,7 +899,7 @@ func (m *Manager) view(a store.Agent, inbox, crons int) api.Agent {
 	if !ok {
 		return api.Agent{Agent: a, Isolation: m.isoName(a.IsolationID), Inbox: inbox, Crons: crons}
 	}
-	live, st, problem := r.view()
+	live, st, problem := r.shown()
 	return api.Agent{Agent: live, Isolation: m.isoName(live.IsolationID), State: st, Problem: problem, Inbox: inbox, Crons: crons}
 }
 
