@@ -405,7 +405,8 @@ families, reads by default and each write family a separate choice
 (`--allow-api`, `--allow-write`; a write whose reads are not open is dropped
 with a warning naming the flags that keep it). Datadog can pin a log-search
 scope, Grafana bounds queries to named data sources and saves to named
-folders, Slack can deny channels. For these, as for ClickHouse, Notion and Linear,
+folders, Slack can deny channels (its `users` family, who the U... ids
+in messages are, reads no channel, so the deny list does not touch it). For these, as for ClickHouse, Notion and Linear,
 the isolation's token is per env and its value picks the env.
 
 Notion is its hosted MCP server, behind a fixed tool table: a tool the

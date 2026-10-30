@@ -50,6 +50,10 @@ decided by the operator:
       curl -sS -H "Authorization: Bearer $SLACK_TOKEN" \
         "${SLACK_API_URL%%/api}/files/<F...>" -o <name>
 
+- ` + "`users`" + ` — users.list, users.info, users.lookupByEmail, users.profile.get:
+  the name behind a message's ` + "`user`" + ` (U...) id, or the id behind an email;
+  users.list pages with ` + "`cursor`" + ` from ` + "`response_metadata.next_cursor`" + `
+
 auth.test always answers, as the wiring probe.
 
 Environments and their boundaries:
