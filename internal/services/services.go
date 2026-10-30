@@ -1,6 +1,6 @@
 // Package services lists the credential proxies gero runs, and what is
-// turned on per isolation the way they are: shared folders, forwarded
-// ports, and mail between agents.
+// turned on per isolation the way they are: shared folders, the operator's
+// skills, forwarded ports, and mail between agents.
 package services
 
 import (
@@ -16,6 +16,7 @@ import (
 	"github.com/hongzio/gero/internal/proxy/pgproxy"
 	"github.com/hongzio/gero/internal/proxy/portproxy"
 	"github.com/hongzio/gero/internal/proxy/shareproxy"
+	"github.com/hongzio/gero/internal/proxy/skillproxy"
 	"github.com/hongzio/gero/internal/proxy/slackproxy"
 )
 
@@ -32,6 +33,7 @@ func Registry() *proxy.Registry {
 		notionproxy.Service{},
 		linearproxy.Service{},
 		shareproxy.Service{},
+		skillproxy.Service{},
 		portproxy.Service{},
 		mailproxy.Service{},
 	)

@@ -16,15 +16,18 @@ import "time"
 // Version is reported by ping so the daemon can tell an outdated shim apart.
 // 2 added `gero-shim tunnel` and `gero-shim sync`, which the credential
 // proxies need; 3 lets the tunnel connect the daemon to the isolation's own
-// loopback, which forwarded ports need; 4 opens 3030 (Linear's) as well.
-const Version = "4"
+// loopback, which forwarded ports need; 4 opens 3030 (Linear's) as well; 5
+// syncs binary files and prunes what a skill no longer has.
+const Version = "5"
 
 // ProxiesVersion and ForwardsVersion are the first shims that serve the
-// credential proxies and forwarded ports: an isolation whose image predates
-// one goes without it until `gero iso upgrade`.
+// credential proxies and forwarded ports, SkillsVersion the first that
+// syncs the operator's skills whole: an isolation whose image predates one
+// goes without it until `gero iso upgrade`.
 const (
 	ProxiesVersion  = "2"
 	ForwardsVersion = "3"
+	SkillsVersion   = "5"
 )
 
 // Dir says which stream a Record came from.
@@ -139,6 +142,11 @@ func PortVersion(port int) string {
 type SyncRequest struct {
 	Files  []SyncFile `json:"files"`
 	Remove []string   `json:"remove,omitempty"`
+	// Prune names DIR/PREFIX: everything in DIR whose name starts with
+	// PREFIX, and anything under it, goes unless it is one of Files or holds
+	// one. A skill taken away, or a file a skill no longer has, is removed
+	// although nothing remembers it was there.
+	Prune []string `json:"prune,omitempty"`
 }
 
 type SyncFile struct {
@@ -146,6 +154,9 @@ type SyncFile struct {
 	Mode    uint32 `json:"mode"`
 	Agent   bool   `json:"agent,omitempty"` // owned by the agent user, not root
 	Content string `json:"content"`
+	// Base64 says Content is base64: a file that is not UTF-8 text, which
+	// JSON's strings cannot carry.
+	Base64 bool `json:"base64,omitempty"`
 }
 
 type SyncResult struct {

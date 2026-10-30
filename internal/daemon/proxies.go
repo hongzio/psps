@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"net"
 	"net/url"
+	"slices"
 	"sort"
 	"strings"
 	"time"
@@ -312,6 +313,9 @@ func (m *Manager) workspace(iso string) (isoWorkspace, error) {
 		if err != nil {
 			return w, err
 		}
+		if p, ok := svc.(proxy.Pruner); ok {
+			w.req.Prune = append(w.req.Prune, p.Prune()...)
+		}
 		if !v.Enabled {
 			w.req.Remove = append(w.req.Remove, svc.Managed()...)
 			continue
@@ -429,6 +433,11 @@ func (m *Manager) syncLocked(ctx context.Context, iso store.Isolation) {
 		return
 	}
 	req := w.req
+	if v := m.shimVersion(iso.ID); v != "" && v < shimproto.SkillsVersion {
+		// It would write a binary file as its base64 and cannot prune.
+		req.Files = slices.DeleteFunc(slices.Clone(req.Files), func(f shimproto.SyncFile) bool { return f.Base64 })
+		req.Prune = nil
+	}
 	b, _ := json.Marshal(req)
 	m.mu.Lock()
 	same := m.synced[iso.ID] == string(b)
@@ -614,8 +623,13 @@ func (m *Manager) DeleteEnv(ctx context.Context, service, name string, force boo
 		return err
 	}
 	var problems []string
+	if d, ok := svc.(proxy.Deleter); ok {
+		if err := d.Deleted(name); err != nil {
+			problems = append(problems, err.Error())
+		}
+	}
 	if _, ok := svc.(proxy.Mounter); ok {
-		problems = m.remountAll(ctx, holders)
+		problems = append(problems, m.remountAll(ctx, holders)...)
 	}
 	if _, ok := svc.(proxy.Forwarder); ok {
 		m.reforward()

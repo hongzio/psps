@@ -86,3 +86,43 @@ func TestSyncRefusesAPathItDoesNotManage(t *testing.T) {
 		t.Fatal("the file was removed anyway")
 	}
 }
+
+func TestSyncPrunesWhatASkillNoLongerHas(t *testing.T) {
+	dir, err := os.MkdirTemp("", "gero-sync")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer os.RemoveAll(dir)
+	skills := filepath.Join(dir, "home", ".claude", "skills")
+	file := func(p string) string { return filepath.Join(skills, p) }
+	for _, p := range []string{"gero-skill-pdf/SKILL.md", "gero-skill-pdf/old.md", "gero-skill-pdf/scripts/gone.sh",
+		"gero-skill-xlsx/SKILL.md", "gero-git/SKILL.md", "mine/SKILL.md"} {
+		os.MkdirAll(filepath.Dir(file(p)), 0o755)
+		os.WriteFile(file(p), []byte("x"), 0o644)
+	}
+	req := shimproto.SyncRequest{
+		Files: []shimproto.SyncFile{
+			{Path: file("gero-skill-pdf/SKILL.md"), Mode: 0o644, Agent: true, Content: "pdf"},
+			{Path: file("gero-skill-pdf/logo.png"), Mode: 0o644, Agent: true, Content: "iVBORw0K", Base64: true},
+		},
+		Prune: []string{file("gero-skill-")},
+	}
+	if _, err := Sync(req, os.Getuid(), os.Getgid()); err != nil {
+		t.Fatal(err)
+	}
+	for p, want := range map[string]bool{
+		"gero-skill-pdf/SKILL.md": true, "gero-skill-pdf/logo.png": true,
+		"gero-skill-pdf/old.md": false, "gero-skill-pdf/scripts": false, "gero-skill-xlsx": false,
+		"gero-git/SKILL.md": true, "mine/SKILL.md": true,
+	} {
+		if _, err := os.Lstat(file(p)); (err == nil) != want {
+			t.Errorf("%s: there %v, want %v", p, err == nil, want)
+		}
+	}
+	if b, _ := os.ReadFile(file("gero-skill-pdf/logo.png")); string(b) != "\x89PNG\r\n" {
+		t.Errorf("logo.png = %q, want it decoded", b)
+	}
+	if _, err := Sync(shimproto.SyncRequest{Prune: []string{file("skill-")}}, os.Getuid(), os.Getgid()); err == nil {
+		t.Error("a prune of names not starting with gero was accepted")
+	}
+}

@@ -567,6 +567,55 @@ folder that has gone starts without it. Inside, the `gero-share` skill says
 which folder of the Mac's each one is, and how to treat it; Claude gets each
 one as `--add-dir`, and Codex's auto sandbox may write to the writable ones.
 
+## Skills
+
+A skill of your own — a folder with `SKILL.md` at its top, and whatever
+scripts, references and assets it ships — can be put in an isolation, for
+Claude Code and Codex alike:
+
+```sh
+gero env add skill pdf --path ~/skills/pdf      # checked, then copied to ~/.config/gero/skills/pdf
+gero iso expose dev skill pdf,xlsx              # in dev's agents' skills, at once
+gero env edit skill pdf --path ~/skills/pdf     # copied in again after you changed it
+gero env edit skill pdf                         # ...or check the kept one after editing it there
+gero env check skill pdf                        # what is kept, and anything worth fixing
+gero env rm skill pdf                           # gone from the Mac and every isolation
+```
+
+gero keeps its own copy in `~/.config/gero/skills/NAME`; the folder it came
+from can move or change without touching what agents have. Both CLIs drop a
+skill they cannot read without telling the agent, so a skill is checked as it
+is added, and refused rather than kept broken:
+
+- **`SKILL.md`**, named so, UTF-8, starting with a `---` line, its frontmatter
+  closed by another, and YAML both CLIs can read (a value with `: ` or ` #`
+  in it needs quotes).
+- **`name`** is the skill's name as it is added: lowercase letters, digits
+  and single hyphens, up to 64. Names starting with `gero` are gero's own.
+- **`description`**, not empty, up to 1024 characters: how an agent knows
+  when to use it.
+- **Claude Code's fields** have the type it reads (`user-invocable: true`,
+  `context: fork`, `metadata` of names to text…); one neither CLI reads is a
+  warning, as is a link in `SKILL.md` to a file the skill does not have, or a
+  `SKILL.md` past 500 lines.
+- **Its files and nothing else**: a link (symlink) is refused rather than
+  followed, so nothing else of the Mac's rides along; `.git` and `.DS_Store`
+  are left out. Up to 256 files, 1 MiB each, 4 MiB in all. Nothing is taken
+  from gero's own directories.
+
+In the isolation each skill is at `~/.claude/skills/gero-skill-NAME` and
+`~/.codex/skills/gero-skill-NAME`; both CLIs know it by its `name`. Executable
+scripts stay executable, and the agent owns its copy. Ticked, unticked,
+removed or copied in again, the isolation follows at once, and a file the new
+copy no longer has goes too; an edit made in `~/.config/gero/skills` reaches it
+with `gero env edit skill NAME`. Claude Code notices a changed skill as it
+runs; Codex reads them as a session starts. Isolations made before skills need `gero iso upgrade
+NAME` once for that, and for files that are not text; until then they get the
+text files, and lose a skill only when the service is turned off.
+
+A skill runs as the agent: its scripts are yours to trust, as you would a
+package.
+
 ## Forwarded ports
 
 A port of the isolation's — a dev server, a WAS an agent runs — can be put on

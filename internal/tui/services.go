@@ -828,6 +828,9 @@ func (m *Model) openExposeForm(svc api.Service) {
 		if svc.Forwards {
 			hint = "space ticks; each ticked port is on the Mac's 127.0.0.1, never the LAN"
 		}
+		if svc.Name == "skill" {
+			hint = "space ticks; each ticked skill is in Claude Code's and Codex's skills there"
+		}
 		envs := checkField("envs", names, x.Envs, hint)
 		def := selectField("default", append([]string{optDefault}, names...), "the env plain variables point at; default: the first ticked")
 		def.idx = indexOf(def.options, x.Default)
@@ -855,7 +858,7 @@ func (m *Model) renderExpose(width int) string {
 				envs = "no env"
 			}
 			detail = envs
-			if x.Default != "" && !s.Replaces && !s.Forwards {
+			if x.Default != "" && !s.Replaces && !s.Forwards && s.Name != "skill" {
 				detail += " (default " + x.Default + ")"
 			}
 			if len(x.Forwards) > 0 {
