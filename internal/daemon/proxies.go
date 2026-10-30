@@ -3,6 +3,7 @@ package daemon
 import (
 	"context"
 	"crypto/rand"
+	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -292,6 +293,10 @@ type isoWorkspace struct {
 	// mail: the isolation takes mail, so each agent starts with its own
 	// address (mailEnv).
 	mail bool
+	// skills are the files of the services whose files come and go
+	// (proxy.Pruner), each with its content's hash: an agent CLI lists
+	// skills as it starts, so a change to them wants a new process.
+	skills []string
 }
 
 // signature changes whenever what an agent process starts with does.
@@ -302,6 +307,9 @@ func (w isoWorkspace) signature() string {
 	}
 	if w.mail {
 		sig += "\nmail"
+	}
+	for _, f := range w.skills {
+		sig += "\nskill " + f
 	}
 	return sig
 }
@@ -328,6 +336,11 @@ func (m *Manager) workspace(iso string) (isoWorkspace, error) {
 			return w, fmt.Errorf("%s: %w", svc.Name(), err)
 		}
 		w.mail = w.mail || svc.Name() == mailproxy.Name
+		if _, ok := svc.(proxy.Pruner); ok {
+			for _, f := range ws.Files {
+				w.skills = append(w.skills, fmt.Sprintf("%s %x", f.Path, sha256.Sum256([]byte(f.Content))))
+			}
+		}
 		w.req.Files = append(w.req.Files, ws.Files...)
 		w.env = append(w.env, ws.Env...)
 		w.mcp = append(w.mcp, ws.MCP...)

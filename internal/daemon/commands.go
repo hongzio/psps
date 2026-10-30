@@ -2,6 +2,7 @@ package daemon
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"path"
@@ -12,6 +13,7 @@ import (
 
 	"github.com/hongzio/gero/internal/api"
 	"github.com/hongzio/gero/internal/driver"
+	"github.com/hongzio/gero/internal/proxy/skillproxy"
 )
 
 // Commands, for a message box to offer as they are typed: gero's own, which
@@ -58,12 +60,45 @@ func (m *Manager) Commands(id string) (api.Commands, error) {
 	}
 	kind, cmds, models := r.commands()
 	out := geroCommands(kind, models)
-	for _, c := range cmds {
+	for _, c := range slices.Concat(cmds, m.skillCommands(kind, r.isolationID())) {
 		if !slices.ContainsFunc(out, func(g api.Command) bool { return g.Prefix == c.Prefix && g.Name == c.Name }) {
 			out = append(out, api.Command{Command: c})
 		}
 	}
 	return api.Commands{Commands: out}, nil
+}
+
+// skillCommands are the skills the isolation (by ID) has from skill, as
+// its CLI names them: the CLI lists them only as a process starts, and an
+// agent has none until it is next sent something.
+func (m *Manager) skillCommands(kind driver.Kind, iso string) []driver.Command {
+	svc, err := m.registry().Get(skillproxy.Name)
+	if err != nil {
+		return nil
+	}
+	v, err := m.viewFor(iso, svc)
+	if err != nil || !v.Enabled {
+		return nil
+	}
+	prefix := "/"
+	if kind == driver.Codex {
+		prefix = "$"
+	}
+	var out []driver.Command
+	for _, n := range v.Exposure.Envs {
+		if raw, ok := v.Envs[n]; ok {
+			var cfg struct{ Description string }
+			json.Unmarshal(raw, &cfg)
+			out = append(out, driver.Command{Prefix: prefix, Name: n, Description: cfg.Description})
+		}
+	}
+	return out
+}
+
+func (r *runtime) isolationID() string {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.agent.IsolationID
 }
 
 func (r *runtime) commands() (driver.Kind, []driver.Command, []driver.Choice) {
