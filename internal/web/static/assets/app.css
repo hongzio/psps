@@ -6,7 +6,6 @@
   --muted: #6b6b78;
   --faint: #9a9aa6;
   --dot-idle: #6b6b78;
-  --dot-parked: #d4d4dc;
   --border: #e2e2e8;
   --accent: #5a4fcf;
   --accent-text: #ffffff;
@@ -31,7 +30,6 @@
     --muted: #9a9aa8;
     --faint: #6e6e7c;
     --dot-idle: #c9c9d4;
-    --dot-parked: #3c3c46;
     --border: #2a2a33;
     --accent: #a99cff;
     --accent-text: #15131f;
@@ -136,14 +134,14 @@ code, pre { font-family: var(--mono); font-size: 13px; }
 
 /* Status dots */
 .dot { width: 10px; height: 10px; border-radius: 50%; margin-top: 6px; background: var(--faint); }
-/* Idle wants a look; parked is idle the operator set aside. The dot of
-   either toggles between them, with a hit area a finger can find. A dot of
-   no status (a service turned off) stays faint. */
+/* Idle wants a look; parked is idle the operator set aside, the same grey
+   hollowed out. The dot of either toggles between them, with a hit area a
+   finger can find. A dot of no status (a service turned off) stays faint. */
 .dot.idle { background: var(--dot-idle); }
-.dot.parked { background: var(--dot-parked); }
+.dot.parked { background: transparent; border: 2px solid var(--dot-idle); }
 .dot.toggle { position: relative; cursor: pointer; }
 .dot.toggle::after { content: ''; position: absolute; inset: -10px; }
-.dot.working, .dot.starting { background: var(--accent); animation: pulse 1.2s ease-in-out infinite; }
+.dot.working, .dot.starting { background: var(--ok); animation: pulse 1.2s ease-in-out infinite; }
 .dot.blocked { background: var(--warn); }
 .dot.interrupted { background: transparent; border: 2px solid var(--warn); }
 .dot.error { background: var(--err); }
