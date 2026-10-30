@@ -83,9 +83,11 @@ const S = {
   isoCreating: null,
   isoCreateError: null,
   // edit is the user message being rewritten in place: { agent, id, text,
-  // sending }. openRewound holds the earlier versions shown unfolded.
+  // sending }. openRewound holds the earlier versions shown unfolded,
+  // openTools the runs of one tool likewise.
   edit: null,
   openRewound: new Set(),
+  openTools: new Set(),
 }
 
 const coarse = matchMedia('(pointer: coarse)').matches
@@ -1198,12 +1200,29 @@ function renderConvo(forceBottom) {
   // caret through that.
   const typing = document.activeElement?.classList.contains('edit-box') ? document.activeElement : null
   const sel = typing && [typing.selectionStart, typing.selectionEnd]
-  const items = c.entries.map((en) => entryView(en, a)).filter(Boolean)
+  const items = groupTools(c.entries).map((en) => entryView(en, a)).filter(Boolean)
   const none = c.ready ? 'Nothing yet: the first message you send starts it.' : 'Loading…'
   inner.replaceChildren(...(items.length ? items : [h('div', { class: 'empty' }, none)]))
   const ta = typing && inner.querySelector('.edit-box')
   if (ta) { ta.focus({ preventScroll: true }); ta.setSelectionRange(...sel) }
   if (atBottom) box.scrollTop = box.scrollHeight
+}
+
+// groupTools folds a run of one tool on one thing in a row (five Edits of
+// the same file) into a 'tools' entry, shown folded until opened.
+function groupTools(entries) {
+  const out = []
+  for (const en of entries) {
+    const prev = out[out.length - 1]
+    const first = prev?.kind === 'tools' ? prev.runs[0] : prev
+    if (en.kind === 'tool' && en.name && first?.kind === 'tool' && first.name === en.name && first.summary === en.summary) {
+      if (prev.kind === 'tools') prev.runs.push(en)
+      else out[out.length - 1] = { kind: 'tools', runs: [prev, en] }
+      continue
+    }
+    out.push(en)
+  }
+  return out
 }
 
 // entryView draws one entry; frozen ones are an earlier version, there to
@@ -1230,7 +1249,7 @@ function entryView(en, a, frozen) {
         ontoggle: (e) => { if (e.target.open) S.openRewound.add(key); else S.openRewound.delete(key) },
       },
         h('summary', null, `↺ Edited · the earlier version (${n} message${n === 1 ? '' : 's'}) is gone from the agent's memory`),
-        h('div', { class: 'rewound-body' }, en.entries.map((x) => entryView(x, a, true)).filter(Boolean)))
+        h('div', { class: 'rewound-body' }, groupTools(en.entries).map((x) => entryView(x, a, true)).filter(Boolean)))
     }
     case 'assistant':
       return h('div', { class: 'msg-agent' + (en.live ? ' live' : '') }, h('div', { class: 'who' }, label(a)), h('div', { class: 'text' }, markdown(en.text, en.live)))
@@ -1241,6 +1260,19 @@ function entryView(en, a, frozen) {
       return h('details', { class: 'tool' },
         h('summary', null, h('span', { class: 'mark ' + en.state }, mark), h('span', { class: 'tname' }, en.name), h('span', { class: 'tsum' }, en.summary)),
         out ? h('pre', null, clip(out, 40)) : null)
+    }
+    case 'tools': {
+      const first = en.runs[0]
+      const key = `${a.id}:${first.item}`
+      const states = en.runs.map((x) => x.state)
+      const state = states.includes('failed') ? 'failed' : states.includes('running') ? 'running' : 'ok'
+      return h('details', {
+        class: 'tool tools', open: S.openTools.has(key),
+        ontoggle: (e) => { if (e.target.open) S.openTools.add(key); else S.openTools.delete(key) },
+      },
+        h('summary', null, h('span', { class: 'mark ' + state }, { ok: '✓', failed: '✗', running: '…' }[state]),
+          h('span', { class: 'tname' }, first.name), h('span', { class: 'tsum' }, first.summary), h('span', { class: 'tcount' }, `×${en.runs.length}`)),
+        h('div', { class: 'tools-body' }, en.runs.map((x) => entryView(x, a, frozen))))
     }
     case 'approval': {
       const d = en.decision
