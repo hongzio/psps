@@ -41,10 +41,8 @@ var spinner = []string{"⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "
 // statusIcon is how the sidebar shows an agent's status at a glance.
 func (th theme) statusIcon(s event.Status, frame int) string {
 	switch s {
-	case event.StatusWorking:
-		return th.working.Render(spinner[frame%len(spinner)])
-	case event.StatusStarting:
-		return th.dim.Render(spinner[frame%len(spinner)])
+	case event.StatusWorking, event.StatusStarting:
+		return th.ok.Render(spinner[frame%len(spinner)])
 	case event.StatusBlocked:
 		return th.warn.Render("!")
 	case event.StatusInterrupted:
