@@ -53,13 +53,18 @@ var Families = map[string][]string{
 	"lists":    {"slackLists.items.info", "slackLists.items.list"},
 	"messages": {"conversations.history", "conversations.replies", "conversations.info"},
 	"search":   {"search.messages"},
+	// Who the workspace's members are: what turns a message's U... id into
+	// a name, and an email into a U... id. It reads no channel.
+	"users": {"users.list", "users.info", "users.lookupByEmail", "users.profile.get"},
 }
 
 // RequiredScopes is what each family needs from the stored token, checked
 // by `gero env check`. search.messages additionally answers only to a user
-// token (xoxp-...), which the same check surfaces as a missing scope.
+// token (xoxp-...), which the same check surfaces as a missing scope;
+// users.lookupByEmail and the email in a profile also need users:read.email.
 var RequiredScopes = map[string]string{
 	"files": "files:read", "lists": "lists:read", "messages": "channels:history", "search": "search:read",
+	"users": "users:read",
 }
 
 var DefaultFamilies = []string{"lists"}

@@ -154,6 +154,25 @@ func TestEachFamilyOpensExactlyItsMethods(t *testing.T) {
 	mustDeny(t, Allowed(e, "dev", "slackLists.items.list"), `"lists"`, "gero env edit slack dev --allow-api lists --allow-api messages")
 }
 
+func TestTheUsersFamilyIsItsOwnChoice(t *testing.T) {
+	mustDeny(t, Allowed(Env{Families: families("messages")}, "dev", "users.list"), `"users"`, "--allow-api messages --allow-api users")
+	e := Env{Families: families("users")}
+	for _, m := range []string{"users.list", "users.info", "users.lookupByEmail", "users.profile.get"} {
+		if got, d := Route("GET", "/api/"+m); d != nil || got != m {
+			t.Errorf("%s = %q, %v", m, got, d)
+		}
+		if d := Allowed(e, "dev", m); d != nil {
+			t.Errorf("%s: %v", m, d)
+		}
+	}
+	if _, d := Route("POST", "/api/users.profile.set"); d == nil {
+		t.Fatal("a profile write routed")
+	}
+	if ReadsChannels([]string{"users"}) {
+		t.Fatal("users is channel clamped")
+	}
+}
+
 func TestAClosedMessagesFamilyNamesTheFix(t *testing.T) {
 	mustDeny(t, Allowed(Env{}, "prod", "conversations.replies"), "--allow-api messages")
 }
