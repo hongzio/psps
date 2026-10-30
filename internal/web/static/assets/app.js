@@ -992,6 +992,24 @@ function renderTopbar() {
           '◷', h('span', { class: 'label' }, ' Cron'), a.crons ? h('span', { class: 'badge' }, String(a.crons)) : null),
         h('button', { class: 'btn ghost', title: 'Name and ID', onclick: () => editAgent(a) }, '✎', h('span', { class: 'label' }, ' Name & ID')),
         a.archived_at ? h('button', {
+          class: 'btn ghost', title: 'Restore: carry on where it left off', onclick: async () => {
+            const live = S.agents.find((o) => !o.archived_at && o.line === a.line)
+            if (!await ask({
+              title: `Restore "${agentTitle(a)}"?`,
+              body: live
+                ? `It carries on where it left off, as ${shownID(live)}. "${agentTitle(live)}", the session there now, is archived, and its crons and waiting mail move over.`
+                : 'It carries on where it left off.',
+              ok: 'Restore',
+            })) return
+            await guarded(async () => {
+              const back = await api('POST', `/v1/agents/${enc(a.id)}/restore`)
+              toast(`Restored as ${shownID(back)}`)
+              await refreshAgents()
+              render()
+            })
+          },
+        }, '↺', h('span', { class: 'label' }, ' Restore')) : null,
+        a.archived_at ? h('button', {
           class: 'btn ghost danger', title: 'Delete', onclick: async () => {
             const purge = h('input', { type: 'checkbox' })
             if (!await ask({

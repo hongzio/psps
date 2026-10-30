@@ -230,6 +230,12 @@ func (c *Client) Archive(ctx context.Context, id string) error {
 	return c.do(ctx, "POST", "/v1/agents/"+url.PathEscape(id)+"/archive", nil, nil)
 }
 
+// Restore brings an archived agent back as its line's live session.
+func (c *Client) Restore(ctx context.Context, id string) (api.Agent, error) {
+	var v api.Agent
+	return v, c.do(ctx, "POST", "/v1/agents/"+url.PathEscape(id)+"/restore", nil, &v)
+}
+
 func (c *Client) UpdateAgent(ctx context.Context, id string, req api.UpdateAgent) (api.Agent, error) {
 	var v api.Agent
 	return v, c.do(ctx, "PATCH", "/v1/agents/"+url.PathEscape(id), req, &v)

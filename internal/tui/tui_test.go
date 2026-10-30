@@ -57,6 +57,8 @@ type fakeBackend struct {
 	deleted []string
 	// renamed are the agents renamed, as "id name" or "id id=handle".
 	renamed []string
+	// restored are the agents restored.
+	restored []string
 }
 
 func (f *fakeBackend) Agents(context.Context) ([]api.Agent, error) {
@@ -106,6 +108,12 @@ func (f *fakeBackend) SetOptions(_ context.Context, _ string, o driver.Options) 
 	return nil
 }
 func (f *fakeBackend) Archive(context.Context, string) error { return nil }
+func (f *fakeBackend) Restore(_ context.Context, id string) (api.Agent, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.restored = append(f.restored, id)
+	return api.Agent{}, nil
+}
 func (f *fakeBackend) UpdateAgent(_ context.Context, id string, req api.UpdateAgent) (api.Agent, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -955,5 +963,33 @@ func TestANewSessionIsFollowedAndItsArchivedOnesFold(t *testing.T) {
 	}
 	if v := h.m.View(); !strings.Contains(v, "· id0") {
 		t.Fatalf("a session does not show the ID it went by\n%s", v)
+	}
+}
+
+func TestAnArchivedAgentIsRestoredSayingWhichSessionItArchives(t *testing.T) {
+	h := newHarness(t)
+	h.drainFeed()
+	h.key("u")
+	if h.m.confirm != nil {
+		t.Fatal("offered to restore a live agent")
+	}
+	now := time.Now()
+	h.be.mu.Lock()
+	h.be.agents[0].Line, h.be.agents[1].Line = "bbbb", "bbbb"
+	h.be.agents[1].ArchivedAt = &now
+	agents := append([]api.Agent(nil), h.be.agents...)
+	h.be.mu.Unlock()
+	h.send(agentsMsg{agents: agents})
+	h.m.sel = "bbbb"
+	h.key("u")
+	if h.m.confirm == nil || !strings.Contains(h.m.confirm.prompt, `restore "second" as`) || !strings.Contains(h.m.confirm.prompt, "is archived") {
+		t.Fatalf("confirm %+v", h.m.confirm)
+	}
+	h.key("y")
+	h.drainFeed()
+	h.be.mu.Lock()
+	defer h.be.mu.Unlock()
+	if len(h.be.restored) != 1 || h.be.restored[0] != "bbbb" {
+		t.Fatalf("restored %v", h.be.restored)
 	}
 }

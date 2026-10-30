@@ -41,6 +41,7 @@ var defaultBindings = []binding{
 	{"rename_agent", []string{"r"}, "sidebar", "rename the selected agent"},
 	{"agent_id", []string{"i"}, "sidebar", "give the selected agent an ID of your own, unique among all agents"},
 	{"archive", []string{"x"}, "sidebar", "archive the selected agent"},
+	{"restore", []string{"u"}, "sidebar", "restore the selected archived agent, archiving its line's live session"},
 	{"delete_agent", []string{"d"}, "sidebar", "delete the selected archived agent"},
 	{"toggle_archived", []string{"z"}, "sidebar", "show / hide archived agents"},
 

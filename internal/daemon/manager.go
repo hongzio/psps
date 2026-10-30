@@ -1,6 +1,7 @@
 package daemon
 
 import (
+	"cmp"
 	"context"
 	"crypto/rand"
 	"encoding/hex"
@@ -8,6 +9,7 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"maps"
 	"net/http"
 	"regexp"
 	goruntime "runtime"
@@ -1101,6 +1103,55 @@ func (m *Manager) Renew(ctx context.Context, id string) (store.Agent, error) {
 	m.log.Printf("agent %s: renewed as %s", old.ID, a.ID)
 	_, err = m.ensureRuntime(a)
 	return a, err
+}
+
+// Restore brings an archived agent back where it left off, its session
+// resumed in its working directory. It goes by its line's ID: a live
+// session of the line is archived in its place, handing over its crons and
+// waiting mail, as /new hands them on.
+func (m *Manager) Restore(ctx context.Context, id string) (api.Agent, error) {
+	a, err := m.storedAgent(id)
+	if err != nil {
+		return api.Agent{}, err
+	}
+	if a.ArchivedAt == nil {
+		return api.Agent{}, httpError{http.StatusConflict, fmt.Errorf("agent %s is not archived", a.ID)}
+	}
+	fallback, err := m.newAgentHandle()
+	if err != nil {
+		return api.Agent{}, err
+	}
+	m.swap.Lock()
+	defer m.swap.Unlock()
+	// A turn the live session is in is not cut short for it.
+	m.mu.Lock()
+	rs := slices.Collect(maps.Values(m.runtimes))
+	m.mu.Unlock()
+	for _, r := range rs {
+		if live, st, _ := r.view(); live.Line == a.Line && st.Busy {
+			return api.Agent{}, httpError{http.StatusConflict, fmt.Errorf("%s, there now, is working: stop its turn or let it finish, then restore", cmp.Or(live.Handle, live.ID))}
+		}
+	}
+	replaced, err := m.store.Restore(a.ID, fallback, time.Now().UTC())
+	if err != nil {
+		return api.Agent{}, err
+	}
+	if a, err = m.store.Agent(a.ID); err != nil {
+		return api.Agent{}, err
+	}
+	m.mu.Lock()
+	r := m.runtimes[replaced]
+	delete(m.runtimes, replaced)
+	m.mu.Unlock()
+	if r != nil {
+		r.stop(ctx)
+		m.log.Printf("agent %s: archived as %s was restored", replaced, a.ID)
+	}
+	m.log.Printf("agent %s: restored", a.ID)
+	if _, err := m.ensureRuntime(a); err != nil {
+		return api.Agent{}, err
+	}
+	return m.viewOf(a)
 }
 
 // DeleteAgent forgets an archived agent: its history here and its log in
