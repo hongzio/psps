@@ -1154,6 +1154,76 @@ func (m *Manager) Restore(ctx context.Context, id string) (api.Agent, error) {
 	return m.viewOf(a)
 }
 
+// Fork makes a new agent from one, live or archived: in the same isolation
+// and directory, with its kind and settings, and its session as a copy of
+// the one it forks, so it knows what that one was told and did. It has no
+// crons or mail; it is an agent of its own, on a line of its own, going by
+// the ID of the one it forks with a random suffix.
+func (m *Manager) Fork(ctx context.Context, id string) (api.Agent, error) {
+	from, err := m.storedAgent(id)
+	if err != nil {
+		return api.Agent{}, err
+	}
+	session := from.SessionID
+	if r, err := m.runtime(from.ID); err == nil {
+		_, st, _ := r.view()
+		session = st.SessionID
+	}
+	if _, err := m.ensureIsolation(ctx, from.IsolationID); err != nil {
+		return api.Agent{}, err
+	}
+	if ok, why := m.fenceOK(from.IsolationID); !ok {
+		return api.Agent{}, fmt.Errorf("isolation %s has no verified network fence: %s", m.isoName(from.IsolationID), why)
+	}
+	key, err := m.newAgentID()
+	if err != nil {
+		return api.Agent{}, err
+	}
+	drv, err := driver.New(from.Kind, key, "", from.Options)
+	if err != nil {
+		return api.Agent{}, err
+	}
+	a := store.Agent{ID: key, Name: from.Name, Kind: from.Kind, IsolationID: from.IsolationID, Workdir: from.Workdir, Repo: from.Repo,
+		Options: from.Options, SessionID: drv.State().SessionID, CreatedAt: time.Now().UTC(), ForkedFrom: from.ID, ForkOf: session}
+	if a.Name != "" {
+		a.Name += " (fork)"
+	}
+	base := cmp.Or(from.Handle, from.Was, from.ID)
+	for try := 0; ; try++ {
+		a.Handle = forkHandle(base)
+		err = m.store.CreateAgent(a)
+		if !errors.Is(err, store.ErrExists) || try == 4 {
+			break
+		}
+	}
+	if err != nil {
+		return api.Agent{}, err
+	}
+	if a, err = m.store.Agent(a.ID); err != nil {
+		return api.Agent{}, err
+	}
+	m.log.Printf("agent %s: forked from %s", a.ID, from.ID)
+	if _, err := m.ensureRuntime(a); err != nil {
+		return api.Agent{}, err
+	}
+	return m.viewOf(a)
+}
+
+// forkHandle is base, cut to leave room, with a random suffix.
+func forkHandle(base string) string {
+	const suffix = 4
+	const digits = "abcdefghijklmnopqrstuvwxyz0123456789"
+	b := make([]byte, suffix)
+	rand.Read(b)
+	for i := range b {
+		b[i] = digits[int(b[i])%len(digits)]
+	}
+	if max := 32 - 1 - suffix; len(base) > max {
+		base = base[:max]
+	}
+	return strings.TrimRight(base, "-") + "-" + string(b)
+}
+
 // DeleteAgent forgets an archived agent: its history here and its log in
 // the isolation. Its workspace and the CLI's transcript of its session stay
 // in the isolation's volume unless purge, the way an isolation's volumes
@@ -1247,12 +1317,24 @@ var (
 // after it, stays, and so does what its CLI keeps per directory: only this
 // session's own transcript goes.
 func (m *Manager) purgeAgent(ctx context.Context, iso store.Isolation, a store.Agent) error {
-	if a.Workdir != m.workRoot+"/"+a.ID && a.Workdir != m.workRoot+"/"+a.Line {
-		return badRequest(fmt.Errorf("agent %s's workspace %s is not where gero makes one; delete it without purge and remove that yourself", a.ID, a.Workdir))
-	}
 	all, err := m.store.Agents()
 	if err != nil {
 		return err
+	}
+	// One gero made: the agent's, or the one it shares with the agents it
+	// took over from or, a fork, was forked from.
+	made := false
+	for b, seen := a, map[string]bool{}; !seen[b.ID]; {
+		seen[b.ID] = true
+		made = made || a.Workdir == m.workRoot+"/"+b.ID || a.Workdir == m.workRoot+"/"+b.Line
+		i := slices.IndexFunc(all, func(c store.Agent) bool { return c.ID == b.ForkedFrom })
+		if b.ForkedFrom == "" || i < 0 {
+			break
+		}
+		b = all[i]
+	}
+	if !made {
+		return badRequest(fmt.Errorf("agent %s's workspace %s is not where gero makes one; delete it without purge and remove that yourself", a.ID, a.Workdir))
 	}
 	shared := slices.ContainsFunc(all, func(b store.Agent) bool {
 		return b.ID != a.ID && b.IsolationID == a.IsolationID && b.Workdir == a.Workdir

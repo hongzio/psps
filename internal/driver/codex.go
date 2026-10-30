@@ -306,6 +306,9 @@ func (c *codex) Next() [][]byte {
 		if c.threadID != "" {
 			params["threadId"] = c.threadID
 			out = append(out, c.call("thread/resume", params))
+		} else if c.forkOf != "" {
+			params["threadId"] = c.forkOf
+			out = append(out, c.call("thread/fork", params))
 		} else {
 			out = append(out, c.call("thread/start", params))
 		}
@@ -440,7 +443,7 @@ func (c *codex) observeIn(rec shimproto.Record, m rpcMsg) []event.Event {
 			c.reading = true
 		case "skills/list":
 			c.listed = true
-		case "thread/start", "thread/resume":
+		case "thread/start", "thread/resume", "thread/fork":
 			c.phase = cxOpening
 		case "thread/compact/start":
 			// A turn of codex's own, which a rewind does not go back to.
@@ -542,6 +545,11 @@ func (c *codex) response(rec shimproto.Record, method string, m rpcMsg) []event.
 			c.threadID, c.phase, c.prompts = "", cxNeedThread, nil
 			return []event.Event{c.text(rec, event.KindError, "",
 				fmt.Sprintf("could not resume codex thread %s (%s); starting a new thread without the earlier context", old, m.Error.Message))}
+		case "thread/fork":
+			from := c.forkOf
+			c.forkOf, c.phase = "", cxNeedThread
+			return []event.Event{c.text(rec, event.KindError, "",
+				fmt.Sprintf("could not fork codex thread %s (%s); starting a new thread without its context", from, m.Error.Message))}
 		case "turn/start", "thread/compact/start":
 			c.busy = false
 		case "skills/list", "model/list":
@@ -585,7 +593,7 @@ func (c *codex) response(rec shimproto.Record, method string, m rpcMsg) []event.
 		c.skills = codexSkills(m.Result)
 	case "model/list":
 		c.models = codexModels(m.Result)
-	case "thread/start", "thread/resume":
+	case "thread/start", "thread/resume", "thread/fork":
 		var r struct {
 			Thread struct {
 				ID string `json:"id"`

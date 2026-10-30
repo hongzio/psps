@@ -86,6 +86,8 @@ bin/gero agent cron <id> --add "0 9 * * 1-5" "check CI"  # a message on a schedu
 bin/gero agent rename <id> login bug      # only the name changes; a turn carries on
 bin/gero agent id <id> login              # an ID of your own (--clear gives it back)
 bin/gero agent archive <id>               # stops it; its history is kept
+bin/gero agent fork <id>                  # live or archived: a new agent, <id>-xxxx, in its
+                                          # directory, knowing its conversation; no crons or mail
 bin/gero agent restore <id>               # an archived one carries on where it left off,
                                           # under its line's ID; a live session there is archived
 bin/gero agent rm <id> [--purge]          # an archived one: gone from gero; --purge also
@@ -153,7 +155,11 @@ what is typed there works the same.
   `u` in the TUI, `gero agent restore`) goes back to it: its session
   resumes and it takes the ID, crons and waiting mail back from the
   session there now, which is archived. One session of an agent is live at
-  a time.
+  a time. Forking one, live or archived (Fork in the web UI, `f` in the
+  TUI, `gero agent fork`), makes a new agent instead: its ID is the
+  agent's with a random suffix, it works in the same isolation and
+  directory, and its session starts as a copy of the agent's (Claude's
+  `--fork-session`, Codex's `thread/fork`), with no crons or mail.
 - Claude's: its slash commands and skills, as the running `claude` lists
   them (asked once a process, which costs no turn). Its `/model` and
   `/effort` are left out for gero's, which last beyond the process, and

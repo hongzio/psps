@@ -337,6 +337,10 @@ func (m *Manager) Handler() http.Handler {
 	mux.HandleFunc("POST /v1/agents/{id}/archive", func(w http.ResponseWriter, r *http.Request) {
 		reply(w, nil, m.Archive(r.Context(), r.PathValue("id")))
 	})
+	mux.HandleFunc("POST /v1/agents/{id}/fork", func(w http.ResponseWriter, r *http.Request) {
+		v, err := m.Fork(r.Context(), r.PathValue("id"))
+		reply(w, v, err)
+	})
 	mux.HandleFunc("POST /v1/agents/{id}/restore", func(w http.ResponseWriter, r *http.Request) {
 		v, err := m.Restore(r.Context(), r.PathValue("id"))
 		reply(w, v, err)

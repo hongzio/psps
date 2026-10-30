@@ -158,6 +158,10 @@ type Driver interface {
 	// until one has.
 	Commands() []Command
 	Models() []Choice
+	// ForkFrom starts the agent's session, before it has one, as a copy of
+	// the session from: what it was told and did there, it knows. A
+	// session it already has goes on as it is.
+	ForkFrom(from string)
 }
 
 // A Command is one a person types in a message: Prefix and Name, then what
@@ -214,6 +218,8 @@ func New(kind Kind, agentID, sessionID string, opts Options) (Driver, error) {
 type base struct {
 	agent string
 	opts  Options
+	// forkOf is the session to start the agent's own from, until it has one.
+	forkOf string
 
 	alive       bool
 	busy        bool
@@ -227,6 +233,8 @@ type base struct {
 
 	status event.Status
 }
+
+func (b *base) ForkFrom(from string) { b.forkOf = from }
 
 func (b *base) Hold(on bool) { b.held = on }
 

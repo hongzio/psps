@@ -37,6 +37,7 @@ type Backend interface {
 	SetOptions(ctx context.Context, id string, o driver.Options) error
 	Archive(ctx context.Context, id string) error
 	Restore(ctx context.Context, id string) (api.Agent, error)
+	Fork(ctx context.Context, id string) (api.Agent, error)
 	UpdateAgent(ctx context.Context, id string, req api.UpdateAgent) (api.Agent, error)
 	DeleteAgent(ctx context.Context, id string, purge bool) error
 	Follow(ctx context.Context, id string, after int64, fn func(event.Event) error) error
@@ -207,6 +208,11 @@ type (
 	createdMsg struct {
 		agent api.Agent
 		sent  bool
+		err   error
+	}
+	// forkedMsg is a fork made, opened once it is.
+	forkedMsg struct {
+		agent api.Agent
 		err   error
 	}
 )
@@ -697,6 +703,17 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return m, m.fetchAgents()
 
+	case forkedMsg:
+		if msg.err != nil {
+			m.setFlash(msg.err.Error(), true)
+			return m, nil
+		}
+		m.agents = append(m.agents, msg.agent)
+		m.selectItem(msg.agent.ID)
+		m.setFocus(focusInput)
+		m.setFlash("forked as "+shownID(msg.agent)+"; it knows the conversation so far", false)
+		return m, m.fetchAgents()
+
 	case tea.KeyMsg:
 		return m, m.handleKey(msg)
 	}
@@ -940,6 +957,24 @@ func (m *Model) handleSidebarKey(msg tea.KeyMsg) tea.Cmd {
 			prompt: fmt.Sprintf("archive %q? its history is kept (y/n)", title(a)),
 			onYes: func() tea.Cmd {
 				return m.do("archived "+shown, true, func(ctx context.Context) error { return be.Archive(ctx, id) })
+			},
+		}
+		return nil
+	case k.Is(msg, "fork"):
+		a, ok := m.agent(m.sel)
+		if !ok {
+			return nil
+		}
+		be, id := m.be, a.ID
+		m.confirm = &confirmation{
+			prompt: fmt.Sprintf("fork %q? a new agent in its directory, knowing its conversation so far (y/n)", title(a)),
+			onYes: func() tea.Cmd {
+				return func() tea.Msg {
+					ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
+					defer cancel()
+					f, err := be.Fork(ctx, id)
+					return forkedMsg{f, err}
+				}
 			},
 		}
 		return nil

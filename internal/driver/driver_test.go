@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"os"
 	"reflect"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -774,5 +775,38 @@ func TestSwitchingCodexToDefaultReadsItsConfigurationBeforeTheTurn(t *testing.T)
 	sp, _ := p["sandboxPolicy"].(map[string]any)
 	if m["method"] != "turn/start" || p["approvalsReviewer"] != "user" || sp["type"] != "readOnly" {
 		t.Fatalf("next turn = %v", m)
+	}
+}
+
+// A fork's first claude copies the session it forks into its own; once
+// that took, it resumes its own. One that never took starts afresh.
+func TestClaudeForkCopiesTheSessionOnce(t *testing.T) {
+	d := newClaude("a1", "own", Options{})
+	d.ForkFrom("theirs")
+	argv := d.Command()
+	if !strings.Contains(strings.Join(argv, " "), "--resume theirs --fork-session --session-id own") {
+		t.Fatalf("first command %v", argv)
+	}
+	tp := &tape{}
+	d.Observe(tp.add(shimproto.DirSys, "", &shimproto.Sys{Kind: shimproto.SysStarted, PID: 1, Argv: argv}))
+	d.Observe(tp.out(`{"type":"system","subtype":"init","session_id":"own"}`))
+	d.Observe(tp.exited(0))
+	if argv := strings.Join(d.Command(), " "); !strings.Contains(argv, "--resume own") || strings.Contains(argv, "fork") {
+		t.Fatalf("after the fork took: %s", argv)
+	}
+
+	f := newClaude("a2", "mine", Options{})
+	f.ForkFrom("gone")
+	tp = &tape{}
+	f.Observe(tp.add(shimproto.DirSys, "", &shimproto.Sys{Kind: shimproto.SysStarted, PID: 1, Argv: f.Command()}))
+	f.Observe(tp.add(shimproto.DirErr, "No conversation found with session ID: gone", nil))
+	evs := f.Observe(tp.exited(1))
+	if !slices.ContainsFunc(evs, func(e event.Event) bool {
+		return e.Kind == event.KindError && strings.Contains(e.Text, "could not fork")
+	}) {
+		t.Fatalf("no word of the failed fork: %+v", evs)
+	}
+	if argv := strings.Join(f.Command(), " "); strings.Contains(argv, "fork") || !strings.Contains(argv, "--session-id mine") {
+		t.Fatalf("after a failed fork: %s", argv)
 	}
 }

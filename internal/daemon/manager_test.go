@@ -15,6 +15,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"reflect"
+	"regexp"
 	"slices"
 	"sort"
 	"strings"
@@ -45,7 +46,8 @@ func TestMain(m *testing.M) {
 }
 
 // fakeCodex answers just enough of the app-server protocol: one thread whose
-// id survives restarts, and turns that echo. A turn whose text is "hang", or
+// id survives restarts (a fork's is named for the one it forks), and turns
+// that echo. A turn whose text is "hang", or
 // a mail that says only that, starts and ends only when interrupted;
 // "recall" answers with the thread's earlier messages, which thread/revert
 // cuts.
@@ -55,7 +57,7 @@ func fakeCodex() {
 	enc := json.NewEncoder(os.Stdout)
 	reply := func(id any, result any) { enc.Encode(map[string]any{"id": id, "result": result}) }
 	notify := func(method string, params any) { enc.Encode(map[string]any{"method": method, "params": params}) }
-	const thread = "th-fake"
+	thread := "th-fake"
 	turns := 0
 	type turn struct{ id, text string }
 	var history []turn
@@ -72,6 +74,9 @@ func fakeCodex() {
 		case "account/read":
 			reply(m.ID, map[string]any{"account": map[string]any{"type": "apiKey"}, "requiresOpenaiAuth": true})
 		case "thread/start", "thread/resume":
+			reply(m.ID, map[string]any{"thread": map[string]any{"id": thread}})
+		case "thread/fork":
+			thread = "fork-of-" + m.Params["threadId"].(string)
 			reply(m.ID, map[string]any{"thread": map[string]any{"id": thread}})
 		case "skills/list":
 			reply(m.ID, map[string]any{"data": []any{map[string]any{"cwd": ".", "errors": []any{}, "skills": []any{
@@ -2048,4 +2053,60 @@ func liveIDs(m *Manager) []string {
 		}
 	}
 	return out
+}
+
+// A fork is an agent of its own in the same directory, its thread a copy of
+// the one it forks, with no crons; live and archived agents fork alike.
+func TestAForkStartsFromTheConversationItForks(t *testing.T) {
+	e := newTestEnv(t)
+	ctx := context.Background()
+	m, stop := e.daemon()
+	defer stop()
+
+	a, err := m.CreateAgent(ctx, api.CreateAgent{Isolation: "dev", Kind: driver.Codex, Prompt: "one", Handle: "id1"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	e.waitFor("an answer", func() bool { return e.hasAssistant(a.ID, "echo: one") && status(m, a.ID) == event.StatusIdle })
+	if _, err := m.AddCron("id1", api.PutCron{Schedule: ptr("@every 1h"), Prompt: ptr("tick")}); err != nil {
+		t.Fatal(err)
+	}
+
+	f, err := m.Fork(ctx, "id1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !regexp.MustCompile(`^id1-[a-z0-9]{4}$`).MatchString(f.Handle) || f.ArchivedAt != nil || f.Line != f.ID ||
+		f.Workdir != a.Workdir || f.Kind != a.Kind || f.ForkedFrom != a.ID || f.ForkOf != "th-fake" {
+		t.Fatalf("the fork: %+v", f.Agent)
+	}
+	if cs, _ := m.Crons(f.ID); len(cs.Crons) != 0 {
+		t.Fatalf("the fork has %d crons", len(cs.Crons))
+	}
+	if _, err := m.Message(f.Handle, "two"); err != nil {
+		t.Fatal(err)
+	}
+	e.waitFor("the fork's answer", func() bool { return e.hasAssistant(f.ID, "echo: two") })
+	e.waitFor("its own thread", func() bool { b, _ := e.st.Agent(f.ID); return b.SessionID == "fork-of-th-fake" })
+	if e.hasAssistant(a.ID, "echo: two") {
+		t.Fatal("the agent it forks was sent it")
+	}
+
+	if err := m.Archive(ctx, "id1"); err != nil {
+		t.Fatal(err)
+	}
+	g, err := m.Fork(ctx, "id1")
+	if err != nil || g.Handle == f.Handle || g.ForkedFrom != a.ID || g.ArchivedAt != nil {
+		t.Fatalf("forking the archived one: %+v, %v", g.Agent, err)
+	}
+
+	// Purging a fork leaves the directory the others work in.
+	e.waitFor("idle", func() bool { return status(m, f.ID) == event.StatusIdle })
+	if err := m.Archive(ctx, f.ID); err != nil {
+		t.Fatal(err)
+	}
+	e.waitFor("its process to end", func() bool { return m.DeleteAgent(ctx, f.ID, true) == nil })
+	if !exists(a.Workdir) {
+		t.Fatal("purging a fork took the directory")
+	}
 }

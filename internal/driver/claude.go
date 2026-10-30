@@ -60,6 +60,9 @@ type claude struct {
 	// started with it, until claude's init shows the resume took.
 	rewind *clRewind
 	going  *clRewind
+	// forking: this generation was started as a fork of forkOf, until
+	// claude's init shows it took.
+	forking bool
 	// asked: this generation was sent the initialize request, which
 	// claude answers with its commands and models, whenever it is sent.
 	// terminal are the commands it says need its terminal.
@@ -113,6 +116,9 @@ func (c *claude) Command() []string {
 		argv = append(argv, "--resume", c.sessionID, "--resume-session-at", c.rewind.at)
 	case c.sessionUsed:
 		argv = append(argv, "--resume", c.sessionID)
+	case c.forkOf != "":
+		// A copy of that session, under the id this one is to have.
+		argv = append(argv, "--resume", c.forkOf, "--fork-session", "--session-id", c.sessionID)
 	default:
 		argv = append(argv, "--session-id", c.sessionID)
 	}
@@ -423,6 +429,7 @@ func (c *claude) Observe(rec shimproto.Record) []event.Event {
 			c.alive, c.restart, c.errText, c.asked = true, false, "", false
 			c.busy, c.blocked, c.pendingTurns, c.pending, c.stopping = false, false, 0, nil, false
 			evs = append(evs, c.text(rec, event.KindNotice, "", fmt.Sprintf("claude started (pid %d)", rec.Sys.PID)))
+			c.forking = slices.Contains(rec.Sys.Argv, "--fork-session")
 			if rw := c.rewindIn(rec.Sys.Argv); rw != nil {
 				rw.start, rw.before = rec.Seq, c.lastEntry
 				c.rewind, c.going, c.lastEntry = nil, rw, rw.at
@@ -430,6 +437,16 @@ func (c *claude) Observe(rec shimproto.Record) []event.Event {
 		case shimproto.SysExited, shimproto.SysLost:
 			c.pending, c.pendingTurns = nil, 0
 			evs = c.processEnded(rec, "claude")
+			if c.forking {
+				// It never forked: the session it is a copy of is gone. The
+				// next start is a session of its own, without that context.
+				msg := fmt.Sprintf("claude could not fork session %s, so the agent starts a new session without its context", c.forkOf)
+				if c.lastStderr != "" {
+					msg += ": " + c.lastStderr
+				}
+				c.forking, c.forkOf = false, ""
+				evs = append(evs, c.text(rec, event.KindError, "", msg))
+			}
 			if rw := c.going; rw != nil {
 				// It never resumed: the conversation is the one before, and
 				// what was sent to it went nowhere to go back to.
@@ -541,7 +558,7 @@ func (c *claude) observeOut(rec shimproto.Record, m clMessage) []event.Event {
 	switch m.Type {
 	case "system":
 		if m.Subtype == "init" {
-			c.sessionUsed = true
+			c.sessionUsed, c.forking = true, false
 			c.terminal = m.Terminal
 			if m.SessionID != "" {
 				c.sessionID = m.SessionID
