@@ -217,10 +217,15 @@ func (m *Manager) runTunnel(iso string, ts *tunnelState) error {
 	}
 	defer t.Close()
 	var listeners []net.Listener
-	var failed []string
+	var failed, older []string
 	for _, svc := range m.registry().All() {
 		in := m.instance(iso, svc)
 		for _, port := range svc.Ports() {
+			if !m.shimOpens(iso, port) {
+				// The shim refuses the port; asking would fail the rest.
+				older = append(older, fmt.Sprintf("%s:%d", svc.Name(), port))
+				continue
+			}
 			l, err := t.Listen(m.tunnelPort(port))
 			if err != nil {
 				failed = append(failed, fmt.Sprintf("%s:%d", svc.Name(), port))
@@ -246,6 +251,9 @@ func (m *Manager) runTunnel(iso string, ts *tunnelState) error {
 	status := "up"
 	if m.tunnelStatus(iso) != "up" {
 		m.log.Printf("isolation %s: proxy tunnel up", rec.Name)
+		if len(older) > 0 {
+			m.log.Printf("isolation %s: its image predates %s; `gero iso upgrade %s` opens them", rec.Name, strings.Join(older, ", "), rec.Name)
+		}
 	}
 	m.setTunnelStatus(ts, status)
 	m.mu.Lock()
@@ -445,6 +453,13 @@ func (m *Manager) shimVersion(iso string) string {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	return m.versions[iso]
+}
+
+// shimOpens is whether the isolation's shim opens port in its tunnel; an
+// unknown version is taken to be current.
+func (m *Manager) shimOpens(iso string, port int) bool {
+	v := m.shimVersion(iso)
+	return v == "" || v >= shimproto.PortVersion(port)
 }
 
 // servicesChanged follows an edit to what isolations' proxies serve, by ID:

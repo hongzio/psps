@@ -16,8 +16,8 @@ import "time"
 // Version is reported by ping so the daemon can tell an outdated shim apart.
 // 2 added `gero-shim tunnel` and `gero-shim sync`, which the credential
 // proxies need; 3 lets the tunnel connect the daemon to the isolation's own
-// loopback, which forwarded ports need.
-const Version = "3"
+// loopback, which forwarded ports need; 4 opens 3030 (Linear's) as well.
+const Version = "4"
 
 // ProxiesVersion and ForwardsVersion are the first shims that serve the
 // credential proxies and forwarded ports: an isolation whose image predates
@@ -120,8 +120,17 @@ type AgentInfo struct {
 // opens nothing outside this range.
 const (
 	TunnelPortLo = 3020
-	TunnelPortHi = 3029
+	TunnelPortHi = 3030
 )
+
+// PortVersion is the first shim whose tunnel opens port: the ones past
+// 3029 came after the range first stopped there.
+func PortVersion(port int) string {
+	if port > 3029 {
+		return "4"
+	}
+	return ProxiesVersion
+}
 
 // SyncRequest is what `gero-shim sync` makes true inside the isolation: the
 // files gero manages there (skills, the proxies' environment, git's URL

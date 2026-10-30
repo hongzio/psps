@@ -313,6 +313,7 @@ tests included. Inside the isolation they are fixed loopback addresses:
 127.0.0.1:3027   Grafana    GRAFANA_URL points here
 127.0.0.1:3028   Notion     NOTION_MCP_URL; every agent gets it as an MCP server
 127.0.0.1:3029   mail       GERO_MAIL_URL, each agent's own (see Mail)
+127.0.0.1:3030   Linear     LINEAR_MCP_URL; every agent gets it as an MCP server
 ```
 
 The proxies run inside the daemon; nothing of theirs listens on the Mac. Each isolation
@@ -404,7 +405,7 @@ families, reads by default and each write family a separate choice
 (`--allow-api`, `--allow-write`; a write whose reads are not open is dropped
 with a warning naming the flags that keep it). Datadog can pin a log-search
 scope, Grafana bounds queries to named data sources and saves to named
-folders, Slack can deny channels. For these, as for ClickHouse and Notion,
+folders, Slack can deny channels. For these, as for ClickHouse, Notion and Linear,
 the isolation's token is per env and its value picks the env.
 
 Notion is its hosted MCP server, behind a fixed tool table: a tool the
@@ -420,7 +421,26 @@ gero iso expose dev notion work
 
 `gero env secret notion` works from a browser on another device too: the
 page Notion sends you to afterwards will not load there; paste its address
-back into the terminal. Services that are MCP servers reach agents at launch
+back into the terminal.
+
+Linear is its hosted MCP server the same way, logged in as you with no API
+key. An env reads issues, projects, documents, teams and users; each write
+is a family it opens by name: `issue-edits` (create and change issues),
+`comments`, `labels`, `project-edits`, `document-edits` and `deletes`.
+
+```sh
+gero env add linear work                 # every read, no write
+gero env edit linear work --allow-api issues --allow-api projects --allow-api documents \
+  --allow-api teams --allow-api users --allow-api issue-edits --allow-api comments
+                                         # the list is replaced, so the reads are named too
+gero env secret linear work              # prints a URL; approve it in any browser
+gero env check linear work               # who the login is, and any tool Linear offers
+                                         # that the table does not model (shut until it does)
+gero iso expose dev linear work
+```
+
+Port 3030 came after the others: an isolation made before it serves Linear
+after `gero iso upgrade NAME`. Services that are MCP servers reach agents at launch
 — Claude Code through `--mcp-config /etc/gero/mcp.json`, Codex through `-c
 mcp_servers.…` — so neither tool's own configuration is touched.
 

@@ -32,21 +32,24 @@ var Fields = map[string][]string{
 	"clickhouse": {"user", "password"},
 	"grafana":    {"token"},
 	"notion":     {"client_id", "refresh_token"},
+	"linear":     {"client_id", "refresh_token"},
 	// git's is optional: an env with a token command needs none.
 	"git": {"token"},
 	// Agent CLI accounts (a Claude token, an API key), by account name.
 	"account": {"token"},
 }
 
-// Optional fields are kept when present and never demanded: notion's access
-// token is minted from the refresh token whenever it is missing or stale.
+// Optional fields are kept when present and never demanded: notion's and
+// linear's access tokens are minted from the refresh token whenever they
+// are missing or stale.
 var Optional = map[string][]string{
 	"notion": {"access_token", "expires_at"},
+	"linear": {"access_token", "expires_at"},
 }
 
 // LoginServices have sections written by a browser login rather than by
 // hand, so the fix a refusal names is the login.
-var LoginServices = map[string]bool{"notion": true}
+var LoginServices = map[string]bool{"notion": true, "linear": true}
 
 // Denied is a refusal whose Reason is fit to show the operator — and the
 // agent, through a proxy's error — as the exact fix.

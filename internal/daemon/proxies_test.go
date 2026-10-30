@@ -445,3 +445,18 @@ func TestARenamedIsolationsProxiesServeItUnderItsNewName(t *testing.T) {
 		t.Fatalf("the agents' token changed: %s", env)
 	}
 }
+
+// A shim from before 3030 is not asked for it, so the ports it does open
+// keep their proxies; one that says nothing is taken to be current.
+func TestAnOldShimIsNotAskedForPortsItRefuses(t *testing.T) {
+	m := &Manager{versions: map[string]string{"old": "3", "new": shimproto.Version}}
+	for _, c := range []struct {
+		iso  string
+		port int
+		want bool
+	}{{"old", 3028, true}, {"old", 3030, false}, {"new", 3030, true}, {"unknown", 3030, true}} {
+		if got := m.shimOpens(c.iso, c.port); got != c.want {
+			t.Errorf("%s:%d %v", c.iso, c.port, got)
+		}
+	}
+}
