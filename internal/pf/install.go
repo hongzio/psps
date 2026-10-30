@@ -35,9 +35,8 @@ func Install(exe string, uid int) error {
 	if err := writeRootOwned(HelperPlist, plist, 0o644); err != nil {
 		return err
 	}
-	exec.Command("launchctl", "bootout", "system/"+HelperLabel).Run()
-	if out, err := exec.Command("launchctl", "bootstrap", "system", HelperPlist).CombinedOutput(); err != nil {
-		return fmt.Errorf("launchctl bootstrap: %v: %s", err, strings.TrimSpace(string(out)))
+	if err := reload(HelperPlist, 10*time.Second); err != nil {
+		return err
 	}
 	deadline := time.Now().Add(10 * time.Second)
 	for time.Now().Before(deadline) {
@@ -47,6 +46,37 @@ func Install(exe string, uid int) error {
 		time.Sleep(100 * time.Millisecond)
 	}
 	return fmt.Errorf("the helper did not start; see %s", LogPath)
+}
+
+// launchctl runs launchctl; tests stand in for it.
+var launchctl = func(args ...string) ([]byte, error) {
+	return exec.Command("launchctl", args...).CombinedOutput()
+}
+
+// reload replaces the loaded helper with plist's. bootout returns before
+// launchd has let go of the label, and a bootstrap in that window fails
+// with 5 (Input/output error) — every reinstall over a running helper did,
+// leaving none running. So it waits for the label to be gone, and still
+// retries a bootstrap that fails, until wait runs out.
+func reload(plist string, wait time.Duration) error {
+	launchctl("bootout", "system/"+HelperLabel)
+	deadline := time.Now().Add(wait)
+	for time.Now().Before(deadline) {
+		if _, err := launchctl("print", "system/"+HelperLabel); err != nil {
+			break
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+	for {
+		out, err := launchctl("bootstrap", "system", plist)
+		if err == nil {
+			return nil
+		}
+		if !time.Now().Before(deadline) {
+			return fmt.Errorf("launchctl bootstrap: %v: %s", err, strings.TrimSpace(string(out)))
+		}
+		time.Sleep(250 * time.Millisecond)
+	}
 }
 
 // Uninstall stops the helper and removes the fence and everything Install
