@@ -245,6 +245,9 @@ func (m *Manager) verifyServices(ctx context.Context, iso store.Isolation) []api
 				addr := net.JoinHostPort("127.0.0.1", strconv.Itoa(m.tunnelPort(p)))
 				check := fmt.Sprintf("%s reachable at 127.0.0.1:%d", name, p)
 				switch got := reach.TCP[addr]; {
+				case !m.shimOpens(iso.ID, p):
+					cs = append(cs, fail(check, api.SevConfig, "open", "not offered",
+						fmt.Sprintf("the isolation's image predates this port; `gero iso upgrade %s` opens it", iso.Name)))
 				case err != nil:
 					cs = append(cs, fail(check, api.SevConfig, "open", "not measured", err.Error()))
 				case got == "open":

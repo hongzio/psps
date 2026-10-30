@@ -10,6 +10,7 @@ import (
 	"github.com/hongzio/gero/internal/proxy/ddproxy"
 	"github.com/hongzio/gero/internal/proxy/gitproxy"
 	"github.com/hongzio/gero/internal/proxy/grafanaproxy"
+	"github.com/hongzio/gero/internal/proxy/linearproxy"
 	"github.com/hongzio/gero/internal/proxy/mailproxy"
 	"github.com/hongzio/gero/internal/proxy/notionproxy"
 	"github.com/hongzio/gero/internal/proxy/pgproxy"
@@ -29,6 +30,7 @@ func Registry() *proxy.Registry {
 		grafanaproxy.Service{},
 		slackproxy.Service{},
 		notionproxy.Service{},
+		linearproxy.Service{},
 		shareproxy.Service{},
 		portproxy.Service{},
 		mailproxy.Service{},
