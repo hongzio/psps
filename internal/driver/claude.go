@@ -1,6 +1,7 @@
 package driver
 
 import (
+	"cmp"
 	"crypto/rand"
 	"encoding/json"
 	"errors"
@@ -70,6 +71,7 @@ type claude struct {
 	commands []Command
 	models   []Choice
 	terminal []string
+	usage    Usage
 }
 
 // clHidden are claude's commands gero keeps out of its list: /model and
@@ -146,7 +148,8 @@ func (c *claude) Command() []string {
 }
 
 func (c *claude) State() State {
-	return State{Status: c.status, Alive: c.alive, Busy: c.busy, SessionID: c.sessionID, Error: c.errText, Restart: c.restart, Queued: len(c.queue)}
+	return State{Status: c.status, Alive: c.alive, Busy: c.busy, SessionID: c.sessionID, Error: c.errText, Restart: c.restart, Queued: len(c.queue),
+		Usage: c.usage.shown()}
 }
 
 func (c *claude) Send(text string) { c.queue = append(c.queue, text) }
@@ -375,6 +378,14 @@ type clMessage struct {
 	// ParentToolUseID is set on a subagent's messages, which are in a
 	// transcript of their own.
 	ParentToolUseID *string `json:"parent_tool_use_id"`
+	// Model and Cwd are init's; the cost and the models' usage a result's.
+	Model      string  `json:"model"`
+	Cwd        string  `json:"cwd"`
+	CostUSD    float64 `json:"total_cost_usd"`
+	ModelUsage map[string]struct {
+		ContextWindow int `json:"contextWindow"`
+	} `json:"modelUsage"`
+	RateLimit clRateLimit `json:"rate_limit_info"`
 }
 
 type clBlock struct {
@@ -560,6 +571,8 @@ func (c *claude) observeOut(rec shimproto.Record, m clMessage) []event.Event {
 		if m.Subtype == "init" {
 			c.sessionUsed, c.forking = true, false
 			c.terminal = m.Terminal
+			c.usage.Model = cmp.Or(m.Model, c.usage.Model)
+			c.usage.Cwd = cmp.Or(m.Cwd, c.usage.Cwd)
 			if m.SessionID != "" {
 				c.sessionID = m.SessionID
 			}
@@ -570,6 +583,9 @@ func (c *claude) observeOut(rec shimproto.Record, m clMessage) []event.Event {
 		}
 
 	case "assistant":
+		if m.ParentToolUseID == nil {
+			c.usage.assistantUsage(m.Message)
+		}
 		var msg clContent
 		json.Unmarshal(m.Message, &msg)
 		_, bs := blocks(msg.Content)
@@ -631,7 +647,11 @@ func (c *claude) observeOut(rec shimproto.Record, m clMessage) []event.Event {
 			}
 		}
 
+	case "rate_limit_event":
+		c.usage.rateLimits(m.RateLimit)
+
 	case "result":
+		c.usage.resultUsage(m.CostUSD, m.ModelUsage)
 		if c.pendingTurns > 0 {
 			c.pendingTurns--
 		}

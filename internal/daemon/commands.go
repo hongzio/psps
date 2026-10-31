@@ -262,6 +262,34 @@ func (m *Manager) Dirs(ctx context.Context, isoName, typed string) (api.Dirs, er
 	return ds, nil
 }
 
+// branchScript prints the branch of the repository $1 is in, or its
+// commit when it is on none, and nothing when it is in none. It takes no
+// lock, so it never stands in the way of the agent's own git.
+const branchScript = `cd "$1" 2>/dev/null || exit 0
+git --no-optional-locks symbolic-ref --short -q HEAD 2>/dev/null || git --no-optional-locks rev-parse --short -q HEAD 2>/dev/null || true`
+
+// Branch is the git branch of the agent's workspace, for its status line.
+func (m *Manager) Branch(ctx context.Context, id string) (api.Branch, error) {
+	a, err := m.storedAgent(id)
+	if err != nil {
+		return api.Branch{}, err
+	}
+	if a.ArchivedAt != nil {
+		return api.Branch{}, nil
+	}
+	iso, err := m.store.Isolation(a.IsolationID)
+	if err != nil {
+		return api.Branch{}, err
+	}
+	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+	out, err := m.cli.RunAsAgent(ctx, iso.Container, "sh", "-c", branchScript, "sh", a.Workdir)
+	if err != nil {
+		return api.Branch{}, fmt.Errorf("reading the workspace's branch: %w", err)
+	}
+	return api.Branch{Branch: strings.TrimSpace(out)}, nil
+}
+
 // filesMax is how many of a workspace's files are offered.
 const filesMax = 20000
 

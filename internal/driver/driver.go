@@ -125,6 +125,8 @@ type State struct {
 	// Queued user messages are waiting for the agent to be ready.
 	Queued int    `json:"queued,omitempty"`
 	Error  string `json:"error,omitempty"`
+	// Usage is the model and spending the CLI last stated.
+	Usage *Usage `json:"usage,omitempty"`
 }
 
 type Driver interface {
