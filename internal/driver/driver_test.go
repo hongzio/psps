@@ -472,6 +472,53 @@ func TestClaudeStoppedTurnIsInterruptedNotFailed(t *testing.T) {
 	}
 }
 
+// claude may take a message written mid-turn into that turn, and starts a
+// turn of its own when a background task ends: its results are not one a
+// message. The shapes are cut down from a real claude log.
+func TestClaudeIsIdleWhenItSaysNoTurnIsLeft(t *testing.T) {
+	tp := &tape{}
+	d := newClaude("a1", "", Options{})
+	d.Observe(tp.started())
+	write := func() {
+		for _, l := range d.Next() {
+			d.Observe(tp.in(string(l)))
+		}
+	}
+	status := func(want event.Status) {
+		t.Helper()
+		if st := d.State(); st.Status != want || st.Busy != (want == event.StatusWorking) {
+			t.Fatalf("state = %+v, want %s", st, want)
+		}
+	}
+
+	d.Send("open a pr")
+	write()
+	d.Observe(tp.out(`{"type":"system","subtype":"init","session_id":"s1"}`))
+	d.Send("is your name in the commit message?")
+	write()
+	d.Send("take it out")
+	write()
+	d.Observe(tp.out(`{"type":"result","subtype":"success","queued_turn_count":0}`))
+	status(event.StatusIdle)
+
+	d.Observe(tp.out(`{"type":"system","subtype":"task_notification","task_id":"b1","status":"completed"}`))
+	d.Observe(tp.out(`{"type":"system","subtype":"init","session_id":"s1"}`))
+	status(event.StatusWorking)
+	d.Observe(tp.out(`{"type":"result","subtype":"success","queued_turn_count":0}`))
+	status(event.StatusIdle)
+
+	// One queued behind the turn is still to run.
+	d.Send("merge it")
+	write()
+	d.Send("then check the mart")
+	write()
+	d.Observe(tp.out(`{"type":"result","subtype":"success","queued_turn_count":1}`))
+	status(event.StatusWorking)
+	d.Observe(tp.out(`{"type":"system","subtype":"init","session_id":"s1"}`))
+	d.Observe(tp.out(`{"type":"result","subtype":"success","queued_turn_count":0}`))
+	status(event.StatusIdle)
+}
+
 func TestProcessDeathMidTurnIsInterrupted(t *testing.T) {
 	tp := &tape{}
 	d := newClaude("a1", "", Options{})

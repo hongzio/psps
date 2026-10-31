@@ -386,6 +386,8 @@ type clMessage struct {
 		ContextWindow int `json:"contextWindow"`
 	} `json:"modelUsage"`
 	RateLimit clRateLimit `json:"rate_limit_info"`
+	// QueuedTurns is, in a result, how many turns claude still has queued.
+	QueuedTurns *int `json:"queued_turn_count"`
 }
 
 type clBlock struct {
@@ -569,6 +571,9 @@ func (c *claude) observeOut(rec shimproto.Record, m clMessage) []event.Event {
 	switch m.Type {
 	case "system":
 		if m.Subtype == "init" {
+			// init opens every turn, also one claude starts itself when a
+			// background task it ran ends.
+			c.busy = true
 			c.sessionUsed, c.forking = true, false
 			c.terminal = m.Terminal
 			c.usage.Model = cmp.Or(m.Model, c.usage.Model)
@@ -652,7 +657,11 @@ func (c *claude) observeOut(rec shimproto.Record, m clMessage) []event.Event {
 
 	case "result":
 		c.usage.resultUsage(m.CostUSD, m.ModelUsage)
-		if c.pendingTurns > 0 {
+		// Messages written while a turn runs may join it, so claude's own
+		// count of the turns left is the one to keep where it gives it.
+		if m.QueuedTurns != nil {
+			c.pendingTurns = *m.QueuedTurns
+		} else if c.pendingTurns > 0 {
 			c.pendingTurns--
 		}
 		if c.pendingTurns == 0 {
