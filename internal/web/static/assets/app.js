@@ -7,6 +7,7 @@
 // here, never made into HTML.
 
 import { Lexer } from './marked.esm.js'
+import { icons } from './icons.js'
 
 const root = document.getElementById('app')
 
@@ -24,6 +25,21 @@ function h(tag, props, ...children) {
     el.append(c instanceof Node ? c : document.createTextNode(String(c)))
   }
   return el
+}
+
+// icon is one of icons.js, built element by element like h(): sized to
+// the text around it and drawn in its color.
+const svgNS = 'http://www.w3.org/2000/svg'
+function icon(name) {
+  const svg = document.createElementNS(svgNS, 'svg')
+  for (const [k, v] of Object.entries({ class: 'icon', viewBox: '0 0 24 24', fill: 'none', stroke: 'currentColor',
+    'stroke-width': '2', 'stroke-linecap': 'round', 'stroke-linejoin': 'round', 'aria-hidden': 'true' })) svg.setAttribute(k, v)
+  for (const [tag, attrs] of icons[name]) {
+    const el = document.createElementNS(svgNS, tag)
+    for (const [k, v] of Object.entries(attrs)) el.setAttribute(k, v)
+    svg.append(el)
+  }
+  return svg
 }
 
 // ---- API
@@ -578,7 +594,7 @@ function mdInline(toks) {
       case 'codespan': return h('code', null, t.text)
       case 'br': return h('br')
       case 'link': return mdLink(t.href, mdInline(t.tokens), t.title)
-      case 'image': return mdLink(t.href, `🖼 ${t.text || 'image'}`, t.title)
+      case 'image': return mdLink(t.href, [icon('image'), ' ' + (t.text || 'image')], t.title)
       // A table cell's line break is the one tag agents write often.
       case 'html': return /^<br\s*\/?>$/i.test(t.text) ? h('br') : t.text
       default: return t.raw || ''
@@ -916,7 +932,7 @@ function render() {
 
 function topbar(title, sub, ...extra) {
   return h('header', { class: 'topbar', id: 'topbar' },
-    h('button', { class: 'menu-btn', 'aria-label': 'Agents', onclick: () => { S.drawer = true; render() } }, '☰'),
+    h('button', { class: 'menu-btn', 'aria-label': 'Agents', onclick: () => { S.drawer = true; render() } }, icon('menu')),
     h('div', { class: 'title' }, h('h1', null, title), sub ? h('div', { class: 'sub' }, sub) : null),
     ...extra)
 }
@@ -955,8 +971,8 @@ function renderSidebar() {
         })
       })
     }
-    const meta = a.problem ? h('span', { class: 'problem' }, '⚠ ' + a.problem)
-      : `${shownID(a)} · ${a.isolation}` + (a.inbox ? ` · ✉ ${a.inbox}` : '')
+    const meta = a.problem ? h('span', { class: 'problem' }, icon('triangle-alert'), ' ' + a.problem)
+      : [`${shownID(a)} · ${a.isolation}`, a.inbox ? [' · ', icon('mail'), ` ${a.inbox}`] : null]
     return h('button', {
       class: 'agent' + (a.id === S.sel && S.view === 'agent' ? ' selected' : '') + (a.archived_at ? ' archived' : ''),
       'data-line': a.line || a.id, onclick: () => select(a.id),
@@ -972,7 +988,7 @@ function renderSidebar() {
       h('button', {
         class: 'agent line-head', 'aria-expanded': String(open),
         onclick: () => { open ? S.openLines.delete(e.line) : S.openLines.add(e.line); renderSidebar() },
-      }, h('span', { class: 'caret' }, open ? '▾' : '▸'), h('span', { class: 'name' }, shownID(current)),
+      }, h('span', { class: 'caret' }, icon(open ? 'chevron-down' : 'chevron-right')), h('span', { class: 'name' }, shownID(current)),
       h('span', { class: 'meta' }, `${e.sessions.length} sessions · ${current.isolation}`)),
       open ? h('div', { class: 'line-sessions' }, e.sessions.map(row)) : null)
   })
@@ -982,12 +998,12 @@ function renderSidebar() {
     h('div', { class: 'agent-list' },
       sortable('live', live.map(row)),
       h('button', { class: 'fold', onclick: () => { S.showArchived = !S.showArchived; renderSidebar() } },
-        `${S.showArchived ? '▾' : '▸'} Archived (${archived.length})`),
+        icon(S.showArchived ? 'chevron-down' : 'chevron-right'), ` Archived (${archived.length})`),
       S.showArchived ? sortable('archived', archivedRows()) : null),
     h('div', { class: 'side-foot' },
-      h('button', { class: S.view === 'isolations' ? 'active' : '', onclick: () => show('isolations') }, '⚙ Isolations'),
-      h('button', { class: S.view === 'services' ? 'active' : '', onclick: () => show('services') }, '⚿ Services'),
-      h('button', { class: S.view === 'setup' ? 'active' : '', onclick: () => show('setup') }, '✦ Accounts')),
+      h('button', { class: S.view === 'isolations' ? 'active' : '', onclick: () => show('isolations') }, icon('box'), ' Isolations'),
+      h('button', { class: S.view === 'services' ? 'active' : '', onclick: () => show('services') }, icon('key-round'), ' Services'),
+      h('button', { class: S.view === 'setup' ? 'active' : '', onclick: () => show('setup') }, icon('user-round'), ' Accounts')),
   )
 }
 
@@ -1151,14 +1167,14 @@ function renderTopbar() {
     topbar(agentTitle(a), `${a.kind} · ${a.isolation} · ${shownID(a)}` + (forkedFrom(a) ? ` · fork of ${forkedFrom(a)}` : ''),
       h('span', { class: 'chip ' + st }, st),
       h('div', { class: 'actions' },
-        working ? h('button', { class: 'btn', onclick: () => guarded(() => api('POST', `/v1/agents/${a.id}/interrupt`)) }, '■', h('span', { class: 'label' }, ' Stop')) : null,
+        working ? h('button', { class: 'btn stop', onclick: () => guarded(() => api('POST', `/v1/agents/${a.id}/interrupt`)) }, icon('square'), h('span', { class: 'label' }, ' Stop')) : null,
         h('button', { class: 'btn ghost', title: 'Its mail: what it was sent and what it wrote', onclick: () => openMail(a) },
-          '✉', h('span', { class: 'label' }, ' Mail'), a.inbox ? h('span', { class: 'badge' }, String(a.inbox)) : null),
+          icon('mail'), h('span', { class: 'label' }, ' Mail'), a.inbox ? h('span', { class: 'badge' }, String(a.inbox)) : null),
         a.archived_at ? null : h('button', { class: 'btn ghost', title: 'Cron: messages sent to it on a schedule', onclick: () => openCrons(a) },
-          '◷', h('span', { class: 'label' }, ' Cron'), a.crons ? h('span', { class: 'badge' }, String(a.crons)) : null),
+          icon('clock'), h('span', { class: 'label' }, ' Cron'), a.crons ? h('span', { class: 'badge' }, String(a.crons)) : null),
         a.archived_at ? null : h('button', { class: 'btn ghost', title: 'TODO: prompts put aside to send it later', onclick: () => openTodos(a) },
-          '☑', h('span', { class: 'label' }, ' TODO'), a.todos ? h('span', { class: 'badge' }, String(a.todos)) : null),
-        h('button', { class: 'btn ghost', title: 'Name and ID', onclick: () => editAgent(a) }, '✎', h('span', { class: 'label' }, ' Name & ID')),
+          icon('list-todo'), h('span', { class: 'label' }, ' TODO'), a.todos ? h('span', { class: 'badge' }, String(a.todos)) : null),
+        h('button', { class: 'btn ghost', title: 'Name and ID', onclick: () => editAgent(a) }, icon('pencil'), h('span', { class: 'label' }, ' Name & ID')),
         h('button', {
           class: 'btn ghost', title: 'Fork: a new agent in its directory that knows its conversation so far', onclick: async () => {
             if (!await ask({
@@ -1173,7 +1189,7 @@ function renderTopbar() {
               select(f.id)
             })
           },
-        }, '⑂', h('span', { class: 'label' }, ' Fork')),
+        }, icon('git-fork'), h('span', { class: 'label' }, ' Fork')),
         a.archived_at ? h('button', {
           class: 'btn ghost', title: 'Restore: carry on where it left off', onclick: async () => {
             const live = S.agents.find((o) => !o.archived_at && o.line === a.line)
@@ -1191,7 +1207,7 @@ function renderTopbar() {
               render()
             })
           },
-        }, '↺', h('span', { class: 'label' }, ' Restore')) : null,
+        }, icon('archive-restore'), h('span', { class: 'label' }, ' Restore')) : null,
         a.archived_at ? h('button', {
           class: 'btn ghost danger', title: 'Delete', onclick: async () => {
             const purge = h('input', { type: 'checkbox' })
@@ -1209,7 +1225,7 @@ function renderTopbar() {
               render()
             })
           },
-        }, '🗑', h('span', { class: 'label' }, ' Delete')) : null,
+        }, icon('trash-2'), h('span', { class: 'label' }, ' Delete')) : null,
         a.archived_at ? null : h('button', {
           class: 'btn ghost', title: 'Archive', onclick: async () => {
             if (!await ask({ title: `Archive "${agentTitle(a)}"?`, body: 'Its history is kept.', ok: 'Archive' })) return
@@ -1218,7 +1234,7 @@ function renderTopbar() {
             await guarded(refreshAgents)
             render()
           },
-        }, '🗄', h('span', { class: 'label' }, ' Archive')))),
+        }, icon('archive'), h('span', { class: 'label' }, ' Archive')))),
     a.problem ? h('div', { class: 'banner' }, a.problem) : null,
   ].filter(Boolean))
   fitTopbar()
@@ -1237,7 +1253,7 @@ function fitTopbar() {
     more = h('button', {
       class: 'btn ghost more-btn', title: 'More', 'aria-label': 'More', hidden: true,
       onclick: (e) => { e.stopPropagation(); S.moreOpen = menu.hidden; menu.hidden = !menu.hidden },
-    }, '⋯')
+    }, icon('ellipsis'))
     // A choice in it closes it, after the choice is taken.
     menu.addEventListener('click', () => { S.moreOpen = false; menu.hidden = true })
     actions.append(more)
@@ -1585,18 +1601,20 @@ function groupTools(entries) {
 
 // entryView draws one entry; frozen ones are an earlier version, there to
 // read only.
+const toolMarks = { ok: 'check', failed: 'x', running: 'ellipsis' }
+
 function entryView(en, a, frozen) {
   switch (en.kind) {
     case 'user': {
       const l = letter(en.text)
-      if (l) return h('div', { class: 'msg-mail' }, h('div', { class: 'who' }, `✉ Mail #${l.id} from ${l.from} · ${l.iso}`), h('div', { class: 'text' }, markdown(l.body)))
+      if (l) return h('div', { class: 'msg-mail' }, h('div', { class: 'who' }, icon('mail'), ` Mail #${l.id} from ${l.from} · ${l.iso}`), h('div', { class: 'text' }, markdown(l.body)))
       const cm = cronMsg(en.text)
-      if (cm) return h('div', { class: 'msg-cron' }, h('div', { class: 'who' }, `◷ Cron #${cm.id} · ${describeSchedule(cm.schedule)}`), h('div', { class: 'text' }, richText(cm.body)))
+      if (cm) return h('div', { class: 'msg-cron' }, h('div', { class: 'who' }, icon('clock'), ` Cron #${cm.id} · ${describeSchedule(cm.schedule)}`), h('div', { class: 'text' }, richText(cm.body)))
       if (!frozen && S.edit?.agent === a.id && S.edit.id === en.id) return editView(en, a)
       const bubble = h('div', { class: 'msg-user text' }, richText(en.text))
       if (frozen || !en.id || !rewindable(a)) return bubble
       return h('div', { class: 'msg-user-row' },
-        h('button', { class: 'edit-msg', title: 'Edit and resend: the agent goes back to here', 'aria-label': 'Edit message', onclick: () => startEdit(a, en) }, '✎'),
+        h('button', { class: 'edit-msg', title: 'Edit and resend: the agent goes back to here', 'aria-label': 'Edit message', onclick: () => startEdit(a, en) }, icon('pencil')),
         bubble)
     }
     case 'rewound': {
@@ -1606,14 +1624,14 @@ function entryView(en, a, frozen) {
         class: 'rewound', open: S.openRewound.has(key),
         ontoggle: (e) => { if (e.target.open) S.openRewound.add(key); else S.openRewound.delete(key) },
       },
-        h('summary', null, `↺ Edited · the earlier version (${n} message${n === 1 ? '' : 's'}) is gone from the agent's memory`),
+        h('summary', null, icon('archive-restore'), ` Edited · the earlier version (${n} message${n === 1 ? '' : 's'}) is gone from the agent's memory`),
         h('div', { class: 'rewound-body' }, groupTools(en.entries).map((x) => entryView(x, a, true)).filter(Boolean)))
     }
     case 'assistant':
       return h('div', { class: 'msg-agent' + (en.live ? ' live' : '') }, h('div', { class: 'who' }, label(a)), h('div', { class: 'text' }, markdown(en.text, en.live)))
     case 'reasoning': return h('div', { class: 'reasoning' }, en.text)
     case 'tool': {
-      const mark = { ok: '✓', failed: '✗', running: '…' }[en.state]
+      const mark = icon(toolMarks[en.state])
       const out = (en.output || '').trim()
       return h('details', { class: 'tool' },
         h('summary', null, h('span', { class: 'mark ' + en.state }, mark), h('span', { class: 'tname' }, en.name), h('span', { class: 'tsum' }, en.summary)),
@@ -1628,7 +1646,7 @@ function entryView(en, a, frozen) {
         class: 'tool tools', open: S.openTools.has(key),
         ontoggle: (e) => { if (e.target.open) S.openTools.add(key); else S.openTools.delete(key) },
       },
-        h('summary', null, h('span', { class: 'mark ' + state }, { ok: '✓', failed: '✗', running: '…' }[state]),
+        h('summary', null, h('span', { class: 'mark ' + state }, icon(toolMarks[state])),
           h('span', { class: 'tname' }, first.name), h('span', { class: 'tsum' }, first.summary), h('span', { class: 'tcount' }, `×${en.runs.length}`)),
         h('div', { class: 'tools-body' }, en.runs.map((x) => entryView(x, a, frozen))))
     }
@@ -1642,8 +1660,8 @@ function entryView(en, a, frozen) {
         (en.questions || []).filter((q) => en.answers && q.question in en.answers)
           .map((q) => h('div', { class: 'why' }, `${q.question} → ${en.answers[q.question]}`)))
     }
-    case 'interrupted': return h('div', { class: 'interrupted' }, '⏸ This turn was interrupted. Send a message to continue.')
-    case 'error': return h('div', { class: 'error-line' }, '✗ ' + en.text)
+    case 'interrupted': return h('div', { class: 'interrupted' }, icon('pause'), ' This turn was interrupted. Send a message to continue.')
+    case 'error': return h('div', { class: 'error-line' }, icon('x'), ' ' + en.text)
     case 'notice': return h('div', { class: 'notice' }, en.text)
   }
   return null
@@ -1986,7 +2004,7 @@ function composer(a) {
       h('button', {
         class: 'icon-btn' + (S.settingsOpen ? ' on' : ''), 'aria-label': 'Agent settings', title: 'Agent settings',
         disabled: !!a.archived_at, onclick: () => { S.settingsOpen = !S.settingsOpen; renderSettings(a) },
-      }, '⚙'),
+      }, icon('settings')),
       h('button', { class: 'btn primary send-btn', disabled: !!a.archived_at, onclick: submit }, 'Send')))
   queueMicrotask(() => { renderSettings(a); renderStatusLine() })
   return wrap
@@ -2302,7 +2320,7 @@ function renderIsolations() {
       h('div', { class: 'head' },
         h('h3', null, i.name),
         h('span', { class: 'chip ' + (i.state === 'running' ? '' : 'blocked') }, i.state),
-        h('span', { class: 'chip ' + (i.fence_state === 'verified' ? '' : i.fence_state === 'off' ? 'blocked' : 'error') }, fenceText(i) || 'fence ✗')),
+        h('span', { class: 'chip ' + (i.fence_state === 'verified' ? '' : i.fence_state === 'off' ? 'blocked' : 'error') }, fenceText(i) || ['fence ', icon('x')])),
       i.fence_state !== 'verified' && i.fence_state !== 'off' ? h('div', { class: 'fence-bad' }, i.fence_state) : null,
       h('div', { class: 'facts' }, `${i.image} · ${isoSize(i.cpus, i.memory)} · network ${i.network || 'default'} · env: ${(i.env_keys || []).join(', ') || '—'}`),
       S.openForm === `verify:${i.name}` && S.verifyOut ? verifyView(S.verifyOut) : null,
