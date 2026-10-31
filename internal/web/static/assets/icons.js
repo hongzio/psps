@@ -9,6 +9,8 @@ export const icons = {
   "box": [["path",{"d":"M21 8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16Z"}],["path",{"d":"m3.3 7 8.7 5 8.7-5"}],["path",{"d":"M12 22V12"}]],
   "check": [["path",{"d":"M20 6 9 17l-5-5"}]],
   "chevron-down": [["path",{"d":"m6 9 6 6 6-6"}]],
+  "chevron-up": [["path",{"d":"m18 15-6-6-6 6"}]],
+  "arrow-down-to-line": [["path",{"d":"M12 17V3"}],["path",{"d":"m6 11 6 6 6-6"}],["path",{"d":"M19 21H5"}]],
   "chevron-right": [["path",{"d":"m9 18 6-6-6-6"}]],
   "clock": [["circle",{"cx":"12","cy":"12","r":"10"}],["polyline",{"points":"12 6 12 12 16 14"}]],
   "ellipsis": [["circle",{"cx":"12","cy":"12","r":"1"}],["circle",{"cx":"19","cy":"12","r":"1"}],["circle",{"cx":"5","cy":"12","r":"1"}]],
