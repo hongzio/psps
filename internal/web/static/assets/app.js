@@ -2095,18 +2095,20 @@ function sendButton(a, ta, submit) {
   const menu = h('div', { class: 'send-menu', hidden: true })
   const close = () => { menu.hidden = true; document.removeEventListener('pointerdown', outside, true) }
   const outside = (e) => { if (!wrap.contains(e.target)) close() }
-  const todo = () => guarded(async () => {
+  const todo = (auto) => guarded(async () => {
     close()
     const text = ta.value.trim()
     if (!text) { ta.focus(); return }
-    await api('POST', `/v1/agents/${enc(a.id)}/todos`, { text })
+    await api('POST', `/v1/agents/${enc(a.id)}/todos`, { text, auto })
     ta.value = ''
     S.drafts.set(a.id, '')
     ta.dispatchEvent(new Event('input'))
-    toast('Put aside in TODO')
+    toast(auto ? 'Put aside in TODO, sent when a turn ends' : 'Put aside in TODO')
     guarded(refreshAgents)
   })
-  menu.append(h('button', { type: 'button', class: 'btn primary send-btn', onclick: todo }, 'TODO'))
+  menu.append(
+    h('button', { type: 'button', class: 'btn primary send-btn', title: 'Sent by itself when a turn ends in idle', onclick: () => todo(true) }, 'Send when idle'),
+    h('button', { type: 'button', class: 'btn primary send-btn', onclick: () => todo(false) }, 'TODO'))
   const btn = h('button', { class: 'btn primary send-btn', disabled: !!a.archived_at, title: 'Hold for TODO' }, 'Send')
   btn.addEventListener('pointerdown', (e) => {
     if (e.button !== 0) return
