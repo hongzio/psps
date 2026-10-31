@@ -49,6 +49,9 @@ type entry struct {
 	live     bool
 	tool     *toolEntry
 	approval *event.Approval
+	// drawn is the entry as last rendered, and drawnAs what it was
+	// rendered from: an event redraws only the entries it changed.
+	drawn, drawnAs string
 }
 
 type toolEntry struct {
@@ -220,7 +223,6 @@ func (c *convo) render(width int, agentLabel string, th theme) string {
 	if width < 10 {
 		width = 10
 	}
-	body := lipgloss.NewStyle().Width(width - 2).PaddingLeft(2)
 	var b strings.Builder
 	prev := entryKind(-1)
 	for _, en := range c.entries {
@@ -230,71 +232,95 @@ func (c *convo) render(width int, agentLabel string, th theme) string {
 			b.WriteString("\n")
 		}
 		prev = en.kind
-		switch en.kind {
-		case eUser:
-			who := "You"
-			if en.from != "" {
-				who = en.from
-			}
-			b.WriteString(th.user.Render(who) + "\n")
-			b.WriteString(body.Render(en.text) + "\n")
-		case eAssistant:
-			b.WriteString(th.agent.Render(agentLabel) + "\n")
-			text := en.text
-			if en.live {
-				text += "▍"
-			}
-			b.WriteString(body.Render(text) + "\n")
-		case eReasoning:
-			b.WriteString(th.dim.Italic(true).Width(width-2).PaddingLeft(2).Render(clip(en.text, 4)) + "\n")
-		case eTool:
-			t := en.tool
-			mark := th.working.Render("…")
-			switch t.state {
-			case toolOK:
-				mark = th.ok.Render("✓")
-			case toolFailed:
-				mark = th.err.Render("✗")
-			}
-			head := fmt.Sprintf("  %s %s %s", mark, th.tool.Render(t.name), t.summary)
-			b.WriteString(lipgloss.NewStyle().Width(width).MaxHeight(2).Render(head) + "\n")
-			if out := strings.TrimRight(t.output, "\n"); out != "" {
-				b.WriteString(th.dim.Width(width-4).PaddingLeft(4).Render(clip(out, 6)) + "\n")
-			}
-		case eApproval:
-			a := en.approval
-			line := th.warn.Render("⚠ approval") + "  " + a.Summary
-			switch a.Decision {
-			case "":
-			case "accept":
-				line += "  " + th.ok.Render("✓ accepted")
-			case "void":
-				line += "  " + th.dim.Render("(the process ended)")
-			case "cancel":
-				line += "  " + th.err.Render("✗ declined, turn stopped")
-			default:
-				line += "  " + th.err.Render("✗ declined")
-			}
-			b.WriteString(lipgloss.NewStyle().Width(width).PaddingLeft(2).Render(line) + "\n")
-			if a.Reason != "" && a.Decision == "" {
-				b.WriteString(th.dim.Width(width-4).PaddingLeft(4).Render(a.Reason) + "\n")
-			}
-			for _, q := range a.Questions {
-				if ans, ok := a.Answers[q.Question]; ok {
-					b.WriteString(th.dim.Width(width-4).PaddingLeft(4).Render(q.Question+" → "+ans) + "\n")
-				}
-			}
-		case eNotice:
-			b.WriteString(th.dim.Width(width-2).PaddingLeft(2).Render("· "+en.text) + "\n")
-		case eError:
-			b.WriteString(th.err.Width(width-2).PaddingLeft(2).Render("✗ "+en.text) + "\n")
-		case eInterrupted:
-			b.WriteString(th.warn.Width(width-2).PaddingLeft(2).Render("⏸ this turn was interrupted; send a message to continue") + "\n")
-		case eRewound:
-			b.WriteString(th.dim.Width(width-2).PaddingLeft(2).Render(en.text) + "\n")
+		if as := en.drawnFrom(width, agentLabel); as != en.drawnAs {
+			en.drawn, en.drawnAs = en.render(width, agentLabel, th), as
 		}
+		b.WriteString(en.drawn)
 	}
 	return strings.TrimRight(b.String(), "\n")
+}
+
+// drawnFrom is what the entry's rendering depends on. Text only grows or
+// is replaced whole, so its length and its end stand for it.
+func (en *entry) drawnFrom(width int, agentLabel string) string {
+	tail := en.text[max(len(en.text)-32, 0):]
+	as := fmt.Sprintf("%d|%s|%v|%d|%s", width, agentLabel, en.live, len(en.text), tail)
+	if t := en.tool; t != nil {
+		as += fmt.Sprintf("|%d|%s|%s|%d", t.state, t.name, t.summary, len(t.output))
+	}
+	if a := en.approval; a != nil {
+		as += fmt.Sprintf("|%s|%d", a.Decision, len(a.Answers))
+	}
+	return as
+}
+
+func (en *entry) render(width int, agentLabel string, th theme) string {
+	body := lipgloss.NewStyle().Width(width - 2).PaddingLeft(2)
+	var b strings.Builder
+	switch en.kind {
+	case eUser:
+		who := "You"
+		if en.from != "" {
+			who = en.from
+		}
+		b.WriteString(th.user.Render(who) + "\n")
+		b.WriteString(body.Render(en.text) + "\n")
+	case eAssistant:
+		b.WriteString(th.agent.Render(agentLabel) + "\n")
+		text := en.text
+		if en.live {
+			text += "▍"
+		}
+		b.WriteString(body.Render(text) + "\n")
+	case eReasoning:
+		b.WriteString(th.dim.Italic(true).Width(width-2).PaddingLeft(2).Render(clip(en.text, 4)) + "\n")
+	case eTool:
+		t := en.tool
+		mark := th.working.Render("…")
+		switch t.state {
+		case toolOK:
+			mark = th.ok.Render("✓")
+		case toolFailed:
+			mark = th.err.Render("✗")
+		}
+		head := fmt.Sprintf("  %s %s %s", mark, th.tool.Render(t.name), t.summary)
+		b.WriteString(lipgloss.NewStyle().Width(width).MaxHeight(2).Render(head) + "\n")
+		if out := strings.TrimRight(t.output, "\n"); out != "" {
+			b.WriteString(th.dim.Width(width-4).PaddingLeft(4).Render(clip(out, 6)) + "\n")
+		}
+	case eApproval:
+		a := en.approval
+		line := th.warn.Render("⚠ approval") + "  " + a.Summary
+		switch a.Decision {
+		case "":
+		case "accept":
+			line += "  " + th.ok.Render("✓ accepted")
+		case "void":
+			line += "  " + th.dim.Render("(the process ended)")
+		case "cancel":
+			line += "  " + th.err.Render("✗ declined, turn stopped")
+		default:
+			line += "  " + th.err.Render("✗ declined")
+		}
+		b.WriteString(lipgloss.NewStyle().Width(width).PaddingLeft(2).Render(line) + "\n")
+		if a.Reason != "" && a.Decision == "" {
+			b.WriteString(th.dim.Width(width-4).PaddingLeft(4).Render(a.Reason) + "\n")
+		}
+		for _, q := range a.Questions {
+			if ans, ok := a.Answers[q.Question]; ok {
+				b.WriteString(th.dim.Width(width-4).PaddingLeft(4).Render(q.Question+" → "+ans) + "\n")
+			}
+		}
+	case eNotice:
+		b.WriteString(th.dim.Width(width-2).PaddingLeft(2).Render("· "+en.text) + "\n")
+	case eError:
+		b.WriteString(th.err.Width(width-2).PaddingLeft(2).Render("✗ "+en.text) + "\n")
+	case eInterrupted:
+		b.WriteString(th.warn.Width(width-2).PaddingLeft(2).Render("⏸ this turn was interrupted; send a message to continue") + "\n")
+	case eRewound:
+		b.WriteString(th.dim.Width(width-2).PaddingLeft(2).Render(en.text) + "\n")
+	}
+	return b.String()
 }
 
 // clip keeps the first n lines and says how many it dropped.

@@ -535,13 +535,32 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case feedEventMsg:
-		if msg.gen == m.feedGen {
-			m.convo(m.openID).apply(msg.ev)
-			m.layout()
-			m.refreshConvo(false)
-			if m.approving && len(m.convo(m.openID).pending()) == 0 {
-				m.approving = false
+		// What else the feed already holds (a history comes all at once) is
+		// applied with it and drawn once: drawn event by event, a long
+		// conversation was redrawn over and over, scrolling as it came.
+		var next tea.Msg
+		for ev := msg; ; {
+			if ev.gen == m.feedGen {
+				m.convo(m.openID).apply(ev.ev)
 			}
+			select {
+			case more := <-m.feed:
+				if fe, ok := more.(feedEventMsg); ok {
+					ev = fe
+					continue
+				}
+				next = more
+			default:
+			}
+			break
+		}
+		m.layout()
+		m.refreshConvo(false)
+		if m.approving && len(m.convo(m.openID).pending()) == 0 {
+			m.approving = false
+		}
+		if next != nil {
+			return m.Update(next)
 		}
 		return m, m.listen()
 
