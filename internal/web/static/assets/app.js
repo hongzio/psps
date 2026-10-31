@@ -131,7 +131,8 @@ function letter(text) {
 const CRON = /^\[gero cron #(\d+), on schedule "([^"\n]*)"\. [^\n]*\]\n\n/
 function cronMsg(text) {
   const m = CRON.exec(text)
-  return m && { id: m[1], schedule: m[2], body: text.slice(m[0].length) }
+  // One the agent set itself says so (cronLetter).
+  return m && { id: m[1], schedule: m[2], self: m[0].includes('You set this message yourself'), body: text.slice(m[0].length) }
 }
 
 // A schedule as the cron form has it: every N minutes or hours, a time on
@@ -1429,7 +1430,8 @@ async function openCrons(a) {
     h('div', { class: 'cron-head' },
       h('strong', null, describeSchedule(c.schedule)),
       h('span', { class: 'chip ' + (c.enabled ? 'ok' : '') }, c.enabled ? 'on' : 'off'),
-      c.waiting_since ? h('span', { class: 'chip waiting', title: `since ${when(c.waiting_since)}` }, 'waiting for idle') : null),
+      c.waiting_since ? h('span', { class: 'chip waiting', title: `since ${when(c.waiting_since)}` }, 'waiting for idle') : null,
+      c.self ? h('span', { class: 'chip', title: 'The agent set this cron itself, with the cron service' }, 'set by the agent') : null),
     h('div', { class: 'cron-meta' },
       [c.enabled && c.next_at ? `next ${when(c.next_at)}` : null, c.if_busy === 'wait' ? 'waits if busy' : 'skipped if busy'].filter(Boolean).join(' · ')),
     c.last_at ? h('div', { class: 'cron-meta' }, `${when(c.last_at)}: ${c.last_result}` +
@@ -1826,7 +1828,7 @@ function entryView(en, a, frozen) {
       const l = letter(en.text)
       if (l) return h('div', { class: 'msg-mail' }, h('div', { class: 'who' }, icon('mail'), ` Mail #${l.id} from ${l.from} · ${l.iso}`), h('div', { class: 'text' }, markdown(l.body)))
       const cm = cronMsg(en.text)
-      if (cm) return h('div', { class: 'msg-cron' }, h('div', { class: 'who' }, icon('clock'), ` Cron #${cm.id} · ${describeSchedule(cm.schedule)}`), h('div', { class: 'text' }, richText(cm.body)))
+      if (cm) return h('div', { class: 'msg-cron' }, h('div', { class: 'who' }, icon('clock'), ` Cron #${cm.id}${cm.self ? ' (the agent\'s own)' : ''} · ${describeSchedule(cm.schedule)}`), h('div', { class: 'text' }, richText(cm.body)))
       if (!frozen && S.edit?.agent === a.id && S.edit.id === en.id) return editView(en, a)
       const bubble = h('div', { class: 'msg-user text' }, richText(en.text))
       const edit = !frozen && en.id && rewindable(a)

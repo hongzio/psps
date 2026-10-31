@@ -29,6 +29,9 @@ type Cron struct {
 	LastAt     *time.Time `json:"last_at,omitempty"`
 	LastResult string     `json:"last_result,omitempty"`
 	SentAt     *time.Time `json:"sent_at,omitempty"`
+	// Self: the agent set it itself, through the cron service. It may
+	// change and remove only those; the operator any.
+	Self bool `json:"self,omitempty"`
 }
 
 const (
@@ -49,12 +52,13 @@ CREATE TABLE IF NOT EXISTS crons (
 	waiting_since TEXT,
 	last_at       TEXT,
 	last_result   TEXT NOT NULL DEFAULT '',
-	sent_at       TEXT
+	sent_at       TEXT,
+	self          INTEGER NOT NULL DEFAULT 0
 );
 CREATE INDEX IF NOT EXISTS crons_agent ON crons(agent, id);
 `
 
-const cronColumns = `id, agent, schedule, prompt, if_busy, enabled, created_at, next_at, waiting_since, last_at, last_result, sent_at`
+const cronColumns = `id, agent, schedule, prompt, if_busy, enabled, created_at, next_at, waiting_since, last_at, last_result, sent_at, self`
 
 // cronLive is the condition for a cron that runs: on, of an agent that is not
 // archived.
@@ -75,7 +79,7 @@ func scanCron(row interface{ Scan(...any) error }) (Cron, error) {
 	var c Cron
 	var created string
 	var next, waiting, last, sent sql.NullString
-	err := row.Scan(&c.ID, &c.Agent, &c.Schedule, &c.Prompt, &c.IfBusy, &c.Enabled, &created, &next, &waiting, &last, &c.LastResult, &sent)
+	err := row.Scan(&c.ID, &c.Agent, &c.Schedule, &c.Prompt, &c.IfBusy, &c.Enabled, &created, &next, &waiting, &last, &c.LastResult, &sent, &c.Self)
 	if errors.Is(err, sql.ErrNoRows) {
 		return c, ErrNotFound
 	}
@@ -115,8 +119,8 @@ func (s *Store) crons(where string, args ...any) ([]Cron, error) {
 // AddCron stores c and returns it with its ID.
 func (s *Store) AddCron(c Cron) (Cron, error) {
 	c.CreatedAt = time.Now().UTC().Truncate(time.Second)
-	res, err := s.db.Exec(`INSERT INTO crons (agent, schedule, prompt, if_busy, enabled, created_at, next_at) VALUES (?, ?, ?, ?, ?, ?, ?)`,
-		c.Agent, c.Schedule, c.Prompt, c.IfBusy, c.Enabled, cts(c.CreatedAt), nullTS(c.NextAt))
+	res, err := s.db.Exec(`INSERT INTO crons (agent, schedule, prompt, if_busy, enabled, created_at, next_at, self) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+		c.Agent, c.Schedule, c.Prompt, c.IfBusy, c.Enabled, cts(c.CreatedAt), nullTS(c.NextAt), c.Self)
 	if err != nil {
 		return c, err
 	}

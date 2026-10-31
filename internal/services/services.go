@@ -1,12 +1,13 @@
 // Package services lists the credential proxies gero runs, and what is
 // turned on per isolation the way they are: shared folders, the operator's
-// skills, forwarded ports, and mail between agents.
+// skills, forwarded ports, mail between agents, and the crons they set.
 package services
 
 import (
 	"github.com/hongzio/gero/internal/proxy"
 	"github.com/hongzio/gero/internal/proxy/awsproxy"
 	"github.com/hongzio/gero/internal/proxy/chproxy"
+	"github.com/hongzio/gero/internal/proxy/cronproxy"
 	"github.com/hongzio/gero/internal/proxy/ddproxy"
 	"github.com/hongzio/gero/internal/proxy/gitproxy"
 	"github.com/hongzio/gero/internal/proxy/grafanaproxy"
@@ -36,5 +37,6 @@ func Registry() *proxy.Registry {
 		skillproxy.Service{},
 		portproxy.Service{},
 		mailproxy.Service{},
+		cronproxy.Service{},
 	)
 }

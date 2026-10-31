@@ -381,7 +381,7 @@ func agentCmd(p paths.Paths, args []string) error {
 		}
 		fmt.Printf("times are the Mac's: %s\n", v.Zone)
 		tw := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
-		fmt.Fprintln(tw, "#\tSCHEDULE\tIF BUSY\tNEXT\tLAST\tMESSAGE")
+		fmt.Fprintln(tw, "#\tSCHEDULE\tIF BUSY\tNEXT\tLAST\tSET BY\tMESSAGE")
 		for _, cr := range v.Crons {
 			next := "off"
 			if cr.Enabled && cr.NextAt != nil {
@@ -391,7 +391,11 @@ func agentCmd(p paths.Paths, args []string) error {
 			if cr.LastAt != nil {
 				last = cr.LastAt.Local().Format("Jan 2 15:04") + " " + cr.LastResult
 			}
-			fmt.Fprintf(tw, "%d\t%s\t%s\t%s\t%s\t%s\n", cr.ID, cr.Schedule, cr.IfBusy, next, last, mailLine(cr.Prompt))
+			by := "you"
+			if cr.Self {
+				by = "the agent"
+			}
+			fmt.Fprintf(tw, "%d\t%s\t%s\t%s\t%s\t%s\t%s\n", cr.ID, cr.Schedule, cr.IfBusy, next, last, by, mailLine(cr.Prompt))
 		}
 		return tw.Flush()
 
