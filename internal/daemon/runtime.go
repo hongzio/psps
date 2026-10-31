@@ -43,8 +43,9 @@ type runtime struct {
 	starting bool
 	stopping bool
 	problem  string
-	// restartWhenIdle replaces the process at the next idle moment, so a
-	// changed isolation environment reaches it.
+	// restartWhenIdle replaces the process at the next idle moment with
+	// nothing in the background (envRestartDue), so a changed isolation
+	// environment reaches it.
 	restartWhenIdle bool
 
 	outbox []store.Pending
@@ -263,7 +264,7 @@ func (r *runtime) kickLocked() {
 	// in it. What is queued waits for the next process, which starts with
 	// what the replacement is for.
 	st := r.drv.State()
-	replacing := st.Alive && (r.stopping || st.Restart || r.restartWhenIdle)
+	replacing := st.Alive && (r.stopping || st.Restart || r.envRestartDue(st))
 	r.drv.Hold(!fenced || replacing)
 	if !fenced {
 		if msg := "waiting for the network fence: " + why; msg != r.problem {
@@ -296,8 +297,11 @@ func (r *runtime) kickLocked() {
 				return
 			}
 		}
-		if st = r.drv.State(); (st.Restart || r.restartWhenIdle) && !st.Busy && !r.stopping {
+		if st = r.drv.State(); (st.Restart || r.envRestartDue(st)) && !st.Busy && !r.stopping {
 			r.stopping, r.restartWhenIdle = true, false
+			if st.Background > 0 {
+				r.m.log.Printf("agent %s: replacing its process ends %d task(s) it ran in the background", r.agent.ID, st.Background)
+			}
 			client, id := r.client, r.agent.ID
 			go client.Signal(r.ctx, id, "TERM")
 		}
@@ -424,7 +428,15 @@ func (r *runtime) mailDueLocked(st driver.State) bool {
 // cannot work would otherwise spend its inbox failing.
 func (r *runtime) freeLocked(st driver.State) bool {
 	return len(r.outbox) == 0 && st.Queued == 0 && st.Status == event.StatusIdle &&
-		!r.starting && !r.stopping && !(st.Alive && (st.Restart || r.restartWhenIdle))
+		!r.starting && !r.stopping && !(st.Alive && (st.Restart || r.envRestartDue(st)))
+}
+
+// envRestartDue is whether the process is to be replaced now for a new
+// environment: not while it runs tasks in the background, which would die
+// with it. Until they end it goes on with the environment it has, taking
+// turns as before; one that never ends keeps it.
+func (r *runtime) envRestartDue(st driver.State) bool {
+	return r.restartWhenIdle && st.Background == 0
 }
 
 // deliverMailLocked moves the oldest mail from the inbox to the outbox,
