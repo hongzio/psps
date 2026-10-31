@@ -334,6 +334,28 @@ func (m *Manager) Handler() http.Handler {
 			reply(w, nil, m.DeleteCron(r.PathValue("id"), id))
 		}
 	})
+	mux.HandleFunc("GET /v1/agents/{id}/todos", func(w http.ResponseWriter, r *http.Request) {
+		v, err := m.Todos(r.PathValue("id"))
+		reply(w, v, err)
+	})
+	mux.HandleFunc("POST /v1/agents/{id}/todos", func(w http.ResponseWriter, r *http.Request) {
+		var req api.AddTodo
+		if !decode(w, r, &req) {
+			return
+		}
+		v, err := m.AddTodo(r.PathValue("id"), req.Text)
+		reply(w, v, err)
+	})
+	// Deleting a todo hands it back: whoever deletes it is the one to have it.
+	mux.HandleFunc("DELETE /v1/agents/{id}/todos/{todo}", func(w http.ResponseWriter, r *http.Request) {
+		id, err := strconv.ParseInt(r.PathValue("todo"), 10, 64)
+		if err != nil {
+			reply(w, nil, badRequest(fmt.Errorf("%q is not a todo number", r.PathValue("todo"))))
+			return
+		}
+		v, err := m.TakeTodo(r.PathValue("id"), id)
+		reply(w, v, err)
+	})
 	mux.HandleFunc("POST /v1/agents/{id}/archive", func(w http.ResponseWriter, r *http.Request) {
 		reply(w, nil, m.Archive(r.Context(), r.PathValue("id")))
 	})
