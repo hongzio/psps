@@ -714,7 +714,7 @@ async function refreshAgents() {
   // once it is known.
   if (S.view === 'agent' && S.sel && S.drawn !== S.sel && agentById(S.sel)) { render(); return }
   renderSidebar()
-  if (S.view === 'agent') renderTopbar()
+  if (S.view === 'agent') { renderTopbar(); renderStatusLine() }
 }
 
 async function refreshIsolations() {
@@ -1891,6 +1891,7 @@ function composer(a) {
   queueMicrotask(grow)
   const wrap = h('div', { class: 'composer' },
     h('div', { id: 'settings-slot' }),
+    h('div', { id: 'status-slot', class: 'status-line' }),
     h('div', { class: 'composer-row' },
       done.box,
       ta,
@@ -1899,8 +1900,76 @@ function composer(a) {
         disabled: !!a.archived_at, onclick: () => { S.settingsOpen = !S.settingsOpen; renderSettings(a) },
       }, '⚙'),
       h('button', { class: 'btn primary send-btn', disabled: !!a.archived_at, onclick: submit }, 'Send')))
-  queueMicrotask(() => renderSettings(a))
+  queueMicrotask(() => { renderSettings(a); renderStatusLine() })
   return wrap
+}
+
+// ---- Status line: what the agent's CLI last said of its model and
+// spending, as Claude Code's own status line shows it.
+
+// branches are the agents' workspace branches, as last read, and when.
+const branches = new Map()
+
+function readBranch(a) {
+  const st = a.state?.status || 'idle'
+  const b = branches.get(a.id)
+  // Read again once a turn ends, which may have switched it, or a minute on.
+  if (b && (b.pending || b.status === st || st === 'working') && Date.now() - b.at < 60000) return b.branch
+  branches.set(a.id, { ...b, pending: true, status: st, at: Date.now() })
+  api('GET', `/v1/agents/${a.id}/branch`)
+    .then((r) => { branches.set(a.id, { branch: r.branch, status: st, at: Date.now() }); renderStatusLine() })
+    .catch(() => branches.set(a.id, { ...branches.get(a.id), pending: false }))
+  return b?.branch || ''
+}
+
+// modelName is claude-opus-5-5 as Opus 5.5; any other model as it is.
+function modelName(id) {
+  const m = /^claude-([a-z]+)-(\d+)-(\d+)/.exec(id || '')
+  return m ? `${m[1][0].toUpperCase()}${m[1].slice(1)} ${m[2]}.${m[3]}` : id || ''
+}
+
+function tokens(n) {
+  if (n >= 1e6) return +(n / 1e6).toFixed(n % 1e6 ? 1 : 0) + 'M'
+  if (n >= 1e3) return Math.round(n / 1e3) + 'k'
+  return String(n)
+}
+
+// left is the time until a unix second, in its two largest units.
+function left(at) {
+  const s = Math.max(0, at - Date.now() / 1000)
+  const d = Math.floor(s / 86400), hr = Math.floor(s % 86400 / 3600), m = Math.floor(s % 3600 / 60)
+  return d ? `${d}d${hr}h` : hr ? `${hr}h${m}m` : `${m}m`
+}
+
+const windowNames = { five_hour: '5h', seven_day: '7d' }
+
+function renderStatusLine() {
+  const slot = document.getElementById('status-slot')
+  const a = agentById(S.sel)
+  if (!slot || !a) return
+  const u = a.state?.usage
+  if (!u || a.archived_at) { slot.replaceChildren(); return }
+  const dir = (u.cwd || a.workdir || '').replace(/^\/home\/agent(?=\/|$)/, '~')
+  const branch = readBranch(a)
+  const parts = [
+    dir && h('span', { class: 'sl-dir' }, dir),
+    branch && h('span', { class: 'sl-branch' }, `(${branch})`),
+    u.model && h('span', { class: 'sl-model' }, modelName(u.model)),
+  ]
+  if (u.context) parts.push(h('span', null, `cache ${Math.floor(100 * (u.cached || 0) / u.context)}%`))
+  if (u.window) {
+    const used = Math.round(100 * (u.context || 0) / u.window)
+    parts.push(h('span', { class: used >= 80 ? 'sl-low' : used >= 50 ? 'sl-warn' : null },
+      `ctx ${used}% (${tokens(u.context || 0)}/${tokens(u.window)})`))
+  }
+  for (const l of u.limits || []) {
+    const name = windowNames[l.window]
+    if (name) parts.push(h('span', { class: l.percent >= 90 ? 'sl-low' : l.percent >= 70 ? 'sl-warn' : null },
+      `${name} ${Math.round(l.percent)}%` + (l.resets_at ? ` (${left(l.resets_at)})` : '')))
+  }
+  if (u.cost_usd) parts.push(h('span', null, '$' + u.cost_usd.toFixed(2)))
+  const shown = parts.filter(Boolean)
+  slot.replaceChildren(...shown.flatMap((p, i) => i ? [h('span', { class: 'sl-sep' }, '│'), p] : [p]))
 }
 
 function renderSettings(a) {

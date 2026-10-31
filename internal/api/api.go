@@ -183,6 +183,12 @@ type Files struct {
 	Truncated bool `json:"truncated,omitempty"`
 }
 
+// Branch is the git branch an agent's workspace is on: a commit when it is
+// on none, "" when it is no repository.
+type Branch struct {
+	Branch string `json:"branch"`
+}
+
 // Rewind replaces a message the agent got: Event is that message's event
 // ID; the agent goes back to before it and gets Text instead.
 type Rewind struct {

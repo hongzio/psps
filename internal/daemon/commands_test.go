@@ -154,3 +154,27 @@ func TestFiles(t *testing.T) {
 		t.Fatalf("%q", got)
 	}
 }
+
+func TestBranch(t *testing.T) {
+	e := newTestEnv(t)
+	m, stop := e.daemon()
+	defer stop()
+	a, _ := m.CreateAgent(context.Background(), api.CreateAgent{Isolation: "dev", Kind: driver.Codex})
+	branch := func() string {
+		t.Helper()
+		b, err := m.Branch(context.Background(), a.ID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return b.Branch
+	}
+	if got := branch(); got != "" {
+		t.Fatalf("no repository is on %q", got)
+	}
+	if out, err := exec.Command("git", "-C", a.Workdir, "init", "-q", "-b", "trunk").CombinedOutput(); err != nil {
+		t.Skipf("git: %v %s", err, out)
+	}
+	if got := branch(); got != "trunk" {
+		t.Fatalf("branch %q", got)
+	}
+}
