@@ -889,11 +889,16 @@ func (m *Manager) Agents() ([]api.Agent, error) {
 	if err != nil {
 		return nil, err
 	}
+	order, err := m.store.Order()
+	if err != nil {
+		return nil, err
+	}
 	out := make([]api.Agent, 0, len(all))
 	for _, a := range all {
 		out = append(out, m.view(a, counts[a.ID], crons[a.ID], todos[a.ID]))
 	}
 	sortAgents(out)
+	orderAgents(out, order)
 	return out, nil
 }
 

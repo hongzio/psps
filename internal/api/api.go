@@ -77,6 +77,11 @@ type Agent struct {
 	Todos int `json:"todos,omitempty"`
 }
 
+// AgentOrder is a sidebar list's lines, from the top.
+type AgentOrder struct {
+	Lines []string `json:"lines"`
+}
+
 // Mail is one agent's mail to another. From and To are the two agents as
 // they are called now (as it was called, for a sender that is gone), with
 // the isolations the mail went between. Sent: the agent whose mail this
