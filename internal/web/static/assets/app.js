@@ -2036,7 +2036,14 @@ function composer(a) {
     disabled: !!a.archived_at,
     value: S.drafts.get(a.id) || '',
   })
-  const grow = () => { ta.style.height = 'auto'; ta.style.height = Math.min(ta.scrollHeight, 200) + 'px' }
+  // An empty box is one line: its scrollHeight would count the
+  // placeholder's lines where it wraps, as on a phone.
+  const grow = () => {
+    ta.style.height = ''
+    if (!ta.value) return
+    ta.style.height = 'auto'
+    ta.style.height = Math.min(ta.scrollHeight, 200) + 'px'
+  }
   const submit = async () => {
     const text = ta.value.trim()
     if (!text) return
