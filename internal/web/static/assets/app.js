@@ -3465,5 +3465,71 @@ document.addEventListener('keydown', (e) => {
   if (e.key === 'Escape' && S.drawer) { S.drawer = false; render() }
 })
 
+// ---- Keyboard shortcuts, taken only when no field has the keys: ? lists
+// them. Letters are read by key position as well, so they work with a
+// Korean layout on.
+
+const shortcuts = [
+  ['?', 'Show these shortcuts'],
+  ['/', 'Write in the message box'],
+  ['Esc', 'Leave the message box'],
+  ['j / k', 'Next / previous agent'],
+  ['n', 'New agent'],
+  ['m', 'Mail of the agent'],
+  ['c', 'Cron of the agent'],
+  ['t', 'TODO of the agent'],
+  ['e', 'Name and ID of the agent'],
+  ['g then i / s / a', 'Go to Isolations / Services / Accounts'],
+]
+
+function showShortcuts() {
+  if (document.querySelector('dialog[open]')) return
+  ask({
+    title: 'Keyboard shortcuts', cancel: 'Close',
+    extra: h('table', { class: 'shortcuts' }, shortcuts.map(([k, what]) =>
+      h('tr', null, h('td', null, k === '/' ? h('kbd', null, k) : k.split(' ').map((p) => ['then', '/'].includes(p) ? ` ${p} ` : h('kbd', null, p))), h('td', null, what)))),
+  })
+}
+
+// stepAgent opens the agent by from the open one in the sidebar's live list.
+function stepAgent(by) {
+  const rows = [...document.querySelectorAll('#sidebar .sortable:first-of-type > .agent')]
+  if (!rows.length) return
+  const ids = rows.map((r) => S.agents.find((a) => !a.archived_at && (a.line || a.id) === r.dataset.line)?.id)
+  const at = ids.indexOf(S.view === 'agent' ? S.sel : null)
+  const next = ids[at < 0 ? (by > 0 ? 0 : ids.length - 1) : Math.min(Math.max(at + by, 0), ids.length - 1)]
+  if (next) { select(next); rows[ids.indexOf(next)].scrollIntoView({ block: 'nearest' }) }
+}
+
+let goPending = 0
+document.addEventListener('keydown', (e) => {
+  const t = e.target
+  // Esc leaves the message box, once nothing in it (a completion) took it.
+  if (e.key === 'Escape' && t.matches?.('.composer textarea') && !e.defaultPrevented) { t.blur(); return }
+  if (e.ctrlKey || e.metaKey || e.altKey || e.isComposing || e.defaultPrevented) return
+  if (t.closest?.('input, textarea, select, [contenteditable]') || document.querySelector('dialog[open]')) return
+  const key = e.code?.startsWith('Key') ? e.code.slice(3).toLowerCase() : e.key
+  const a = S.view === 'agent' ? agentById(S.sel) : null
+  const go = Date.now() - goPending < 1500
+  goPending = 0
+  const act = go ? { i: () => show('isolations'), s: () => show('services'), a: () => show('setup') }[key]
+    : e.key === '?' ? showShortcuts
+    : e.shiftKey ? null
+    : {
+      '/': () => document.querySelector('.composer textarea:not(:disabled)')?.focus(),
+      j: () => stepAgent(1),
+      k: () => stepAgent(-1),
+      n: () => show('new'),
+      m: a && (() => openMail(a)),
+      c: a && !a.archived_at && (() => openCrons(a)),
+      t: a && !a.archived_at && (() => openTodos(a)),
+      e: a && (() => editAgent(a)),
+      g: () => { goPending = Date.now() },
+    }[key]
+  if (!act) return
+  e.preventDefault()
+  act()
+})
+
 route()
 startPolling()
