@@ -2107,7 +2107,7 @@ function sendButton(a, ta, submit) {
     guarded(refreshAgents)
   })
   menu.append(
-    h('button', { type: 'button', class: 'btn primary send-btn', title: 'Sent by itself when a turn ends in idle', onclick: () => todo(true) }, 'Send when idle'),
+    h('button', { type: 'button', class: 'btn primary send-btn', title: 'Sent by itself when a turn ends in idle', onclick: () => todo(true) }, 'Auto'),
     h('button', { type: 'button', class: 'btn primary send-btn', onclick: () => todo(false) }, 'TODO'))
   const btn = h('button', { class: 'btn primary send-btn', disabled: !!a.archived_at, title: 'Hold for TODO' }, 'Send')
   btn.addEventListener('pointerdown', (e) => {
