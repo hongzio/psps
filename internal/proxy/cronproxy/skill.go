@@ -29,7 +29,7 @@ you, without this conversation's context, so write the message the way you
 would brief a colleague: what to do, where, and when to stop.
 
 Your crons (JSON: the Mac's time zone, and each cron's id, schedule, prompt,
-if_busy, enabled, next_at, last_result, and self, true for those you set):
+if_busy, once, enabled, next_at, last_result, and self, true for those you set):
 
     curl -sS "$GERO_CRON_URL"
 
@@ -47,16 +47,25 @@ Set one:
 - if_busy says what a run does when you are busy as it comes: "skip" (the
   default) lets it go; "wait" sends it as soon as you are idle, runs that come
   meanwhile folded into it.
+- "once": true sends it the first time it comes and then removes it: for
+  something at one later time, give a schedule that names that time (minute,
+  hour, day and month, as "30 14 3 11 *") and once. A cron that comes once
+  always waits if you are busy, so its one run is not lost.
 
-Change one you set (any of schedule, prompt, if_busy, enabled), or remove it:
+Once, at 14:30 on November 3:
+
+    curl -sS "$GERO_CRON_URL" --data-binary '{"schedule": "30 14 3 11 *", "once": true, "prompt": "..."}'
+
+Change one you set (any of schedule, prompt, if_busy, once, enabled), or remove it:
 
     curl -sS -X PATCH "$GERO_CRON_URL/3" --data-binary '{"enabled": false}'
     curl -sS -X DELETE "$GERO_CRON_URL/3"
 
 - Set a cron only when you were asked to, or the work plainly needs coming
   back to. Every run costs a turn, and runs go on while nobody watches.
-- Stop a cron yourself when its work is done; a cron for a single later time
-  removes itself in its message ("... then DELETE $GERO_CRON_URL/<its id>").
+- Stop a cron yourself when its work is done. For a single later time, use
+  once rather than a cron that is to remove itself: one that does not would
+  come again a year on.
 - The crons your operator set are theirs: you see them, and only they change
   or remove them.
 

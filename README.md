@@ -545,6 +545,15 @@ Its own come as yours do, saying the agent set them; the web marks them "set
 by the agent", `gero agent cron` under SET BY. An agent sets at most twenty,
 none coming more often than every five minutes.
 
+A cron that comes once (`--once`, the web's Once, `"once": true`) is sent the
+first time it comes and then removed: with a schedule that names a time and a
+day of a month, it is something at one later time. Its one run always waits if
+the agent is busy.
+
+```sh
+gero agent cron <id> --add "30 14 3 11 *" --once "deploy the release branch"
+```
+
 ## Shared folders
 
 A folder of the Mac's can be put in an isolation, at `/shared/<name>`:

@@ -303,13 +303,15 @@ func agentCmd(p paths.Paths, args []string) error {
 		schedule := fs.String("schedule", "", "with --set: its new `SCHEDULE`")
 		wait := fs.Bool("wait", false, "a run that finds the agent busy waits until it is idle")
 		skip := fs.Bool("skip", false, "a run that finds the agent busy is skipped (a new cron's default)")
+		once := fs.Bool("once", false, "it is sent the first time it comes, then removed (it waits if the agent is busy)")
+		every := fs.Bool("every-time", false, "with --set: no longer --once")
 		on := fs.Int64("on", 0, "turn cron `N` on")
 		off := fs.Int64("off", 0, "turn cron `N` off")
 		rm := fs.Int64("rm", 0, "delete cron `N`")
 		pos := parse(fs, args[1:])
 		usage := errors.New(`usage: gero agent cron AGENT                                   its crons
-       gero agent cron AGENT --add SCHEDULE [--wait] MESSAGE...
-       gero agent cron AGENT --set N [--schedule SCHEDULE] [--wait|--skip] [MESSAGE...]
+       gero agent cron AGENT --add SCHEDULE [--wait] [--once] MESSAGE...
+       gero agent cron AGENT --set N [--schedule SCHEDULE] [--wait|--skip] [--once|--every-time] [MESSAGE...]
        gero agent cron AGENT --on N | --off N | --rm N`)
 		acts := 0
 		for _, x := range []bool{*add != "", *set != 0, *on != 0, *off != 0, *rm != 0} {
@@ -317,7 +319,7 @@ func agentCmd(p paths.Paths, args []string) error {
 				acts++
 			}
 		}
-		if len(pos) < 1 || acts > 1 || (*wait && *skip) || (*schedule != "" && *set == 0) {
+		if len(pos) < 1 || acts > 1 || (*wait && *skip) || (*once && *every) || (*schedule != "" && *set == 0) || (*every && *set == 0) {
 			return usage
 		}
 		agent, msg := pos[0], strings.Join(pos[1:], " ")
@@ -334,7 +336,7 @@ func agentCmd(p paths.Paths, args []string) error {
 			if msg == "" {
 				return usage
 			}
-			cr, err := c.AddCron(ctx, agent, api.PutCron{Schedule: add, Prompt: &msg, IfBusy: busy})
+			cr, err := c.AddCron(ctx, agent, api.PutCron{Schedule: add, Prompt: &msg, IfBusy: busy, Once: once})
 			if err != nil {
 				return err
 			}
@@ -342,6 +344,9 @@ func agentCmd(p paths.Paths, args []string) error {
 			return nil
 		case *set != 0:
 			n, req.IfBusy = *set, busy
+			if *once || *every {
+				req.Once = once
+			}
 			if *schedule != "" {
 				req.Schedule = schedule
 			}
@@ -395,7 +400,11 @@ func agentCmd(p paths.Paths, args []string) error {
 			if cr.Self {
 				by = "the agent"
 			}
-			fmt.Fprintf(tw, "%d\t%s\t%s\t%s\t%s\t%s\t%s\n", cr.ID, cr.Schedule, cr.IfBusy, next, last, by, mailLine(cr.Prompt))
+			busy := cr.IfBusy
+			if cr.Once {
+				busy += ", once"
+			}
+			fmt.Fprintf(tw, "%d\t%s\t%s\t%s\t%s\t%s\t%s\n", cr.ID, cr.Schedule, busy, next, last, by, mailLine(cr.Prompt))
 		}
 		return tw.Flush()
 
@@ -464,6 +473,9 @@ func cronLine(c store.Cron) string {
 	busy := "skipped"
 	if c.IfBusy == store.CronWait {
 		busy = "waits"
+	}
+	if c.Once {
+		return fmt.Sprintf("%s, once, %s, then removed; it waits if it finds it busy", c.Schedule, c.NextAt.Local().Format("Mon Jan 2 15:04"))
 	}
 	return fmt.Sprintf("%s, next %s; a run that finds it busy %s", c.Schedule, c.NextAt.Local().Format("Mon Jan 2 15:04"), busy)
 }

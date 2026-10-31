@@ -30,12 +30,14 @@ const cronMaxPrompt = 32 << 10
 
 // cronLetter is a cron's message as its agent gets it.
 func cronLetter(c store.Cron) string {
+	who := "Your operator set this message to be sent on a schedule and may not be watching."
 	if c.Self {
-		return fmt.Sprintf("[gero cron #%d, on schedule %q. You set this message yourself, with the gero-cron skill, to be sent to you on a schedule; your operator may not be watching.]\n\n%s",
-			c.ID, c.Schedule, c.Prompt)
+		who = "You set this message yourself, with the gero-cron skill, to be sent to you on a schedule; your operator may not be watching."
 	}
-	return fmt.Sprintf("[gero cron #%d, on schedule %q. Your operator set this message to be sent on a schedule and may not be watching.]\n\n%s",
-		c.ID, c.Schedule, c.Prompt)
+	if c.Once {
+		who += " It comes this once: gero has removed it."
+	}
+	return fmt.Sprintf("[gero cron #%d, on schedule %q. %s]\n\n%s", c.ID, c.Schedule, who, c.Prompt)
 }
 
 // zoneName is what the Mac's time zone is called: its tz name if there is
@@ -212,6 +214,13 @@ func setCron(c *store.Cron, req api.PutCron, now time.Time) error {
 	}
 	if req.Enabled != nil {
 		c.Enabled = *req.Enabled
+	}
+	if req.Once != nil {
+		c.Once = *req.Once
+	}
+	// Its one run is not skipped.
+	if c.Once {
+		c.IfBusy = store.CronWait
 	}
 	if !c.Enabled {
 		c.NextAt, c.WaitingSince = nil, nil

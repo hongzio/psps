@@ -32,6 +32,9 @@ type Cron struct {
 	// Self: the agent set it itself, through the cron service. It may
 	// change and remove only those; the operator any.
 	Self bool `json:"self,omitempty"`
+	// Once: it is sent once, then removed. A run of it that finds the
+	// agent busy waits, so that one is not lost.
+	Once bool `json:"once,omitempty"`
 }
 
 const (
@@ -53,12 +56,13 @@ CREATE TABLE IF NOT EXISTS crons (
 	last_at       TEXT,
 	last_result   TEXT NOT NULL DEFAULT '',
 	sent_at       TEXT,
-	self          INTEGER NOT NULL DEFAULT 0
+	self          INTEGER NOT NULL DEFAULT 0,
+	once          INTEGER NOT NULL DEFAULT 0
 );
 CREATE INDEX IF NOT EXISTS crons_agent ON crons(agent, id);
 `
 
-const cronColumns = `id, agent, schedule, prompt, if_busy, enabled, created_at, next_at, waiting_since, last_at, last_result, sent_at, self`
+const cronColumns = `id, agent, schedule, prompt, if_busy, enabled, created_at, next_at, waiting_since, last_at, last_result, sent_at, self, once`
 
 // cronLive is the condition for a cron that runs: on, of an agent that is not
 // archived.
@@ -79,7 +83,7 @@ func scanCron(row interface{ Scan(...any) error }) (Cron, error) {
 	var c Cron
 	var created string
 	var next, waiting, last, sent sql.NullString
-	err := row.Scan(&c.ID, &c.Agent, &c.Schedule, &c.Prompt, &c.IfBusy, &c.Enabled, &created, &next, &waiting, &last, &c.LastResult, &sent, &c.Self)
+	err := row.Scan(&c.ID, &c.Agent, &c.Schedule, &c.Prompt, &c.IfBusy, &c.Enabled, &created, &next, &waiting, &last, &c.LastResult, &sent, &c.Self, &c.Once)
 	if errors.Is(err, sql.ErrNoRows) {
 		return c, ErrNotFound
 	}
@@ -119,8 +123,8 @@ func (s *Store) crons(where string, args ...any) ([]Cron, error) {
 // AddCron stores c and returns it with its ID.
 func (s *Store) AddCron(c Cron) (Cron, error) {
 	c.CreatedAt = time.Now().UTC().Truncate(time.Second)
-	res, err := s.db.Exec(`INSERT INTO crons (agent, schedule, prompt, if_busy, enabled, created_at, next_at, self) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-		c.Agent, c.Schedule, c.Prompt, c.IfBusy, c.Enabled, cts(c.CreatedAt), nullTS(c.NextAt), c.Self)
+	res, err := s.db.Exec(`INSERT INTO crons (agent, schedule, prompt, if_busy, enabled, created_at, next_at, self, once) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		c.Agent, c.Schedule, c.Prompt, c.IfBusy, c.Enabled, cts(c.CreatedAt), nullTS(c.NextAt), c.Self, c.Once)
 	if err != nil {
 		return c, err
 	}
@@ -144,8 +148,8 @@ func (s *Store) Cron(agent string, id int64) (Cron, error) {
 // PutCron writes what the operator sets of c, with when it next comes due
 // and whether a run of it waits.
 func (s *Store) PutCron(c Cron) error {
-	res, err := s.db.Exec(`UPDATE crons SET schedule = ?, prompt = ?, if_busy = ?, enabled = ?, next_at = ?, waiting_since = ? WHERE id = ? AND agent = ?`,
-		c.Schedule, c.Prompt, c.IfBusy, c.Enabled, nullTS(c.NextAt), nullTS(c.WaitingSince), c.ID, c.Agent)
+	res, err := s.db.Exec(`UPDATE crons SET schedule = ?, prompt = ?, if_busy = ?, enabled = ?, once = ?, next_at = ?, waiting_since = ? WHERE id = ? AND agent = ?`,
+		c.Schedule, c.Prompt, c.IfBusy, c.Enabled, c.Once, nullTS(c.NextAt), nullTS(c.WaitingSince), c.ID, c.Agent)
 	if err != nil {
 		return err
 	}
@@ -242,7 +246,8 @@ func (s *Store) WaitingCrons(agent string) (int, error) {
 // SendCron moves cron id's message, text, to its agent's outbox in one
 // transaction with recording it sent at at, so it reaches the agent exactly
 // once whenever the daemon dies. next, if given, is that it came due at at
-// and next comes then; without it, it is a run that waited being sent.
+// and next comes then; without it, it is a run that waited being sent. A
+// cron that comes once is removed as it is sent.
 func (s *Store) SendCron(id int64, text string, after int64, at time.Time, next *time.Time) (Pending, error) {
 	tx, err := s.db.Begin()
 	if err != nil {
@@ -250,7 +255,8 @@ func (s *Store) SendCron(id int64, text string, after int64, at time.Time, next 
 	}
 	defer tx.Rollback()
 	var agent string
-	err = tx.QueryRow(`SELECT agent FROM crons WHERE id = ? AND enabled = 1`, id).Scan(&agent)
+	var once bool
+	err = tx.QueryRow(`SELECT agent, once FROM crons WHERE id = ? AND enabled = 1`, id).Scan(&agent, &once)
 	if errors.Is(err, sql.ErrNoRows) {
 		return Pending{}, fmt.Errorf("cron %d: %w", id, ErrNotFound)
 	}
@@ -261,6 +267,9 @@ func (s *Store) SendCron(id int64, text string, after int64, at time.Time, next 
 	q, args := `UPDATE crons SET waiting_since = NULL, last_result = 'sent', sent_at = ? WHERE id = ?`, []any{now, id}
 	if next != nil {
 		q, args = `UPDATE crons SET waiting_since = NULL, last_result = 'sent', sent_at = ?, last_at = ?, next_at = ? WHERE id = ?`, []any{now, now, cts(*next), id}
+	}
+	if once {
+		q, args = `DELETE FROM crons WHERE id = ?`, []any{id}
 	}
 	if _, err := tx.Exec(q, args...); err != nil {
 		return Pending{}, err

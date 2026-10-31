@@ -100,6 +100,11 @@ func TestAnAgentKeepsCronsOfItsOwn(t *testing.T) {
 	if code, out := mailAs(t, m, testIsoID, a.ID, "DELETE", path, ""); code != http.StatusOK {
 		t.Fatalf("remove: %d %s", code, out)
 	}
+	code, out = mailAs(t, m, testIsoID, a.ID, "POST", "/crons", `{"schedule":"30 14 3 11 *","prompt":"deploy","once":true}`)
+	if json.Unmarshal([]byte(out), &mine); code != http.StatusCreated || !mine.Once || !mine.Self || mine.IfBusy != store.CronWait {
+		t.Fatalf("once: %d %s", code, out)
+	}
+	mailAs(t, m, testIsoID, a.ID, "DELETE", "/crons/"+strconv.FormatInt(mine.ID, 10), "")
 
 	// As many as it may, and no more.
 	for i := range cronproxy.MaxCrons {

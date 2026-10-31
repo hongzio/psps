@@ -210,3 +210,45 @@ func TestSettingACron(t *testing.T) {
 		t.Fatalf("%+v", cs)
 	}
 }
+
+// A cron that comes once waits for a busy agent, whatever it was told, and
+// is removed as it is sent.
+func TestACronThatComesOnceIsRemovedAsItIsSent(t *testing.T) {
+	e := newTestEnv(t)
+	m, stop := e.daemon()
+	defer stop()
+	a, _ := m.CreateAgent(context.Background(), api.CreateAgent{Isolation: "dev", Kind: driver.Codex, Prompt: "hang"})
+	e.waitFor("the hanging turn", func() bool { return status(m, a.ID) == event.StatusWorking })
+
+	c, err := m.AddCron(a.ID, api.PutCron{Schedule: ptr("30 14 3 11 *"), Prompt: ptr("deploy"), IfBusy: ptr(store.CronSkip), Once: ptr(true)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !c.Once || c.IfBusy != store.CronWait {
+		t.Fatalf("%+v", c)
+	}
+	if _, err := m.UpdateCron(a.ID, c.ID, api.PutCron{IfBusy: ptr(store.CronSkip)}); err != nil {
+		t.Fatal(err)
+	}
+	if c = cronOf(t, m, a.ID, c.ID); c.IfBusy != store.CronWait {
+		t.Fatalf("a cron that comes once was set to skip: %+v", c)
+	}
+	m.cronTick(*c.NextAt)
+	if c = cronOf(t, m, a.ID, c.ID); c.WaitingSince == nil {
+		t.Fatalf("not waiting: %+v", c)
+	}
+	if err := syscall.Kill(agentPID(t, m, a.ID), syscall.SIGKILL); err != nil {
+		t.Fatal(err)
+	}
+	e.waitFor("the interruption", func() bool { return status(m, a.ID) == event.StatusInterrupted })
+	if err := m.Send(a.ID, "go on"); err != nil {
+		t.Fatal(err)
+	}
+	e.waitFor("the cron", func() bool { return e.hasAssistant(a.ID, "echo: "+cronLetter(c)) })
+	if !strings.Contains(cronLetter(c), "It comes this once: gero has removed it.") {
+		t.Fatalf("%q", cronLetter(c))
+	}
+	if _, err := m.store.Cron(a.ID, c.ID); !errors.Is(err, store.ErrNotFound) {
+		t.Fatalf("still there: %v", err)
+	}
+}
