@@ -943,6 +943,25 @@ function topbar(title, sub, ...extra) {
     ...extra)
 }
 
+// togglePark parks an idle agent, or takes a parked one back: it is idle
+// and wants a look again, as it does once it next does anything.
+function togglePark(a) {
+  if (a.archived_at || (a.state?.status || 'idle') !== 'idle') return false
+  const want = !a.parked
+  a.parked = want
+  renderSidebar()
+  guarded(async () => {
+    try {
+      await api('PATCH', `/v1/agents/${a.id}`, { parked: want })
+    } catch (x) {
+      a.parked = !want
+      renderSidebar()
+      throw x
+    }
+  })
+  return true
+}
+
 function renderSidebar() {
   const el = document.getElementById('sidebar')
   if (!el) return
@@ -960,23 +979,7 @@ function renderSidebar() {
       class: 'dot ' + st + (togglable ? ' toggle' : ''), role: togglable ? 'button' : 'img', 'aria-label': st,
       title: !togglable ? st : st === 'parked' ? 'parked: needs no look; tap to make it idle' : 'idle: wants a look; tap to park it',
     })
-    if (togglable) {
-      dot.addEventListener('click', async (e) => {
-        e.stopPropagation()
-        const want = !a.parked
-        a.parked = want
-        renderSidebar()
-        await guarded(async () => {
-          try {
-            await api('PATCH', `/v1/agents/${a.id}`, { parked: want })
-          } catch (x) {
-            a.parked = !want
-            renderSidebar()
-            throw x
-          }
-        })
-      })
-    }
+    if (togglable) dot.addEventListener('click', (e) => { e.stopPropagation(); togglePark(a) })
     const meta = a.problem ? h('span', { class: 'problem' }, icon('triangle-alert'), ' ' + a.problem)
       : [`${shownID(a)} · ${a.isolation}`, a.inbox ? [' · ', icon('mail'), ` ${a.inbox}`] : null]
     return h('button', {
@@ -3704,6 +3707,7 @@ const shortcuts = [
   ['/', 'Write in the message box'],
   ['Esc', 'Leave the message box'],
   ['j / k', 'Next / previous agent'],
+  ['Space', 'Park the idle agent, or make it idle again'],
   ['n', 'New agent'],
   ['m', 'Mail of the agent'],
   ['c', 'Cron of the agent'],
@@ -3747,6 +3751,7 @@ document.addEventListener('keydown', (e) => {
     : e.shiftKey ? null
     : {
       '/': () => document.querySelector('.composer textarea:not(:disabled)')?.focus(),
+      ' ': a && (a.archived_at || (a.state?.status || 'idle') !== 'idle' ? null : () => togglePark(a)),
       j: () => stepAgent(1),
       k: () => stepAgent(-1),
       n: () => show('new'),
