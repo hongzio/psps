@@ -2072,8 +2072,47 @@ function composer(a) {
         class: 'icon-btn' + (S.settingsOpen ? ' on' : ''), 'aria-label': 'Agent settings', title: 'Agent settings',
         disabled: !!a.archived_at, onclick: () => { S.settingsOpen = !S.settingsOpen; renderSettings(a) },
       }, icon('settings')),
-      h('button', { class: 'btn primary send-btn', disabled: !!a.archived_at, onclick: submit }, 'Send')))
+      sendButton(a, ta, submit)))
   queueMicrotask(() => { renderSettings(a); renderStatusLine() })
+  return wrap
+}
+
+// sendButton sends on a click; held down, it offers to put the message
+// aside in the agent's TODO instead.
+function sendButton(a, ta, submit) {
+  let timer = 0
+  let held = false
+  const menu = h('div', { class: 'send-menu', hidden: true })
+  const close = () => { menu.hidden = true; document.removeEventListener('pointerdown', outside, true) }
+  const outside = (e) => { if (!wrap.contains(e.target)) close() }
+  const todo = () => guarded(async () => {
+    close()
+    const text = ta.value.trim()
+    if (!text) { ta.focus(); return }
+    await api('POST', `/v1/agents/${enc(a.id)}/todos`, { text })
+    ta.value = ''
+    S.drafts.set(a.id, '')
+    ta.dispatchEvent(new Event('input'))
+    toast('Put aside in TODO')
+    guarded(refreshAgents)
+  })
+  menu.append(h('button', { type: 'button', class: 'btn', onclick: todo }, icon('list-todo'), ' TODO'))
+  const btn = h('button', { class: 'btn primary send-btn', disabled: !!a.archived_at, title: 'Hold for TODO' }, 'Send')
+  btn.addEventListener('pointerdown', (e) => {
+    if (e.button !== 0) return
+    held = false
+    clearTimeout(timer)
+    timer = setTimeout(() => {
+      held = true
+      menu.hidden = false
+      document.addEventListener('pointerdown', outside, true)
+    }, 500)
+  })
+  for (const ev of ['pointerup', 'pointerleave', 'pointercancel']) btn.addEventListener(ev, () => clearTimeout(timer))
+  btn.addEventListener('contextmenu', (e) => e.preventDefault())
+  btn.addEventListener('click', () => { if (held) { held = false; return } close(); submit() })
+  menu.addEventListener('keydown', (e) => { if (e.key === 'Escape') { close(); ta.focus() } })
+  const wrap = h('div', { class: 'send-wrap' }, menu, btn)
   return wrap
 }
 
