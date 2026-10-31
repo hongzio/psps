@@ -1196,7 +1196,7 @@ function agentView() {
   frag.append(
     h('div', { id: 'topbar-slot' }),
     h('div', { class: 'convo', id: 'convo', onscroll: (e) => onConvoScroll(e.target, a.id) },
-      h('div', { class: 'last-sent-bar', id: 'last-sent', hidden: true }, h('button', { type: 'button', class: 'last-sent' })),
+      h('div', { class: 'last-sent-bar', id: 'last-sent', hidden: true }, h('div', { class: 'last-sent-strip' }, h('button', { type: 'button', class: 'last-sent' }))),
       h('div', { class: 'convo-inner', id: 'convo-inner' })),
     h('div', { id: 'approvals' }),
     composer(a),
@@ -1635,12 +1635,16 @@ let stick = true
 function onConvoScroll(box, id) {
   stick = box.scrollHeight - box.scrollTop - box.clientHeight < 8
   if (box.scrollTop < 400 && convo(id).hidden) showEarlier(convo(id))
+  if (!lastSentQueued) { lastSentQueued = true; requestAnimationFrame(() => { lastSentQueued = false; renderLastSent() }) }
 }
+let lastSentQueued = false
 
 // drawn keeps each entry's node, with what it was drawn from: an event
 // redraws only the entries it changed. A group of tools is kept under its
 // first run.
 const drawn = new WeakMap()
+// sentBy is the message a node shows, for those the person sent.
+const sentBy = new WeakMap()
 
 // drawnSig is what an entry's view is drawn from, the agent's part included.
 function drawnSig(en, a) {
@@ -1665,6 +1669,7 @@ function drawEntry(en, a) {
   if (was && was.sig === sig) return was.node
   const node = entryView(en, a)
   if (node) drawn.set(key, { sig, node })
+  if (node && en.kind === 'user' && !letter(en.text) && !cronMsg(en.text)) sentBy.set(node, en)
   return node
 }
 
@@ -1702,29 +1707,33 @@ function renderConvo(forceBottom) {
     if (node === at) at = at.nextSibling
     else inner.insertBefore(node, at)
   }
-  renderLastSent(c)
   const ta = typing && inner.querySelector('.edit-box')
   if (ta && ta !== typing) { ta.focus({ preventScroll: true }); ta.setSelectionRange(...sel) }
   if (stick) box.scrollTop = box.scrollHeight
+  renderLastSent()
 }
 
 const convoPage = 150
 
-// renderLastSent pins the last message the person sent above the
-// conversation, a line of it; it takes them back to it.
-function renderLastSent(c) {
+// renderLastSent pins, above the conversation, a line of the message the
+// person sent that what is read answers: the last one gone up past the top.
+// It takes them back to it.
+function renderLastSent() {
   const bar = document.getElementById('last-sent')
-  if (!bar) return
-  const en = c.entries.findLast((x) => x.kind === 'user' && !letter(x.text) && !cronMsg(x.text))
-  bar.hidden = !en
-  if (!en) return
-  const btn = bar.firstChild
-  btn.textContent = en.text.replace(/\s+/g, ' ').trim()
-  btn.title = en.text
-  btn.onclick = () => {
-    const node = drawn.get(en)?.node
-    if (node?.isConnected) node.scrollIntoView({ block: 'start', behavior: 'smooth' })
+  const inner = document.getElementById('convo-inner')
+  if (!bar || !inner) return
+  const line = document.getElementById('convo').getBoundingClientRect().top + 60
+  let node = null
+  for (let n = inner.lastElementChild; n; n = n.previousElementSibling) {
+    if (sentBy.has(n) && n.getBoundingClientRect().top < line) { node = n; break }
   }
+  bar.hidden = !node
+  if (!node) return
+  const en = sentBy.get(node)
+  const btn = bar.querySelector('.last-sent')
+  const text = en.text.replace(/\s+/g, ' ').trim()
+  if (btn.textContent !== text) { btn.textContent = text; btn.title = en.text }
+  btn.onclick = () => node.scrollIntoView({ block: 'start', behavior: 'smooth' })
 }
 
 // showEarlier draws a page more of the conversation above, the one read
