@@ -186,6 +186,7 @@ var added = []struct{ table, column, def string }{
 	{"agents", "was_handle", "TEXT NOT NULL DEFAULT ''"},
 	{"agents", "forked_from", "TEXT NOT NULL DEFAULT ''"},
 	{"agents", "fork_of", "TEXT NOT NULL DEFAULT ''"},
+	{"todos", "auto", "INTEGER NOT NULL DEFAULT 0"},
 }
 
 func hasColumn(db interface {
