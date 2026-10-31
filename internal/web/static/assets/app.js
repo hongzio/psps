@@ -1196,7 +1196,11 @@ function agentView() {
   frag.append(
     h('div', { id: 'topbar-slot' }),
     h('div', { class: 'convo', id: 'convo', onscroll: (e) => onConvoScroll(e.target, a.id) },
-      h('div', { class: 'last-sent-bar', id: 'last-sent', hidden: true }, h('div', { class: 'last-sent-strip' }, h('button', { type: 'button', class: 'last-sent' }))),
+      h('div', { class: 'last-sent-bar', id: 'last-sent', hidden: true }, h('div', { class: 'last-sent-strip' }, h('div', { class: 'last-sent-row' },
+        h('button', { type: 'button', class: 'last-sent' }),
+        h('button', { type: 'button', class: 'sent-nav', 'data-go': 'up', title: 'The message you sent before', 'aria-label': 'Previous message you sent', onclick: () => goSent(-1) }, icon('chevron-up')),
+        h('button', { type: 'button', class: 'sent-nav', 'data-go': 'down', title: 'The message you sent after', 'aria-label': 'Next message you sent', onclick: () => goSent(1) }, icon('chevron-down')),
+        h('button', { type: 'button', class: 'sent-nav', 'data-go': 'end', title: 'To the end', 'aria-label': 'Scroll to the end', onclick: () => { const b = document.getElementById('convo'); b.scrollTo({ top: b.scrollHeight, behavior: 'smooth' }) } }, icon('arrow-down-to-line'))))),
       h('div', { class: 'convo-inner', id: 'convo-inner' })),
     h('div', { id: 'approvals' }),
     composer(a),
@@ -1634,7 +1638,8 @@ let stick = true
 
 function onConvoScroll(box, id) {
   stick = box.scrollHeight - box.scrollTop - box.clientHeight < 8
-  if (box.scrollTop < 400 && convo(id).hidden) showEarlier(convo(id))
+  // Drawing the earlier would stop a scroll the buttons began.
+  if (box.scrollTop < 400 && convo(id).hidden && Date.now() > goingUntil) showEarlier(convo(id))
   if (!lastSentQueued) { lastSentQueued = true; requestAnimationFrame(() => { lastSentQueued = false; renderLastSent() }) }
 }
 let lastSentQueued = false
@@ -1739,6 +1744,39 @@ function renderLastSent() {
   const text = en.text.replace(/\s+/g, ' ').trim()
   if (btn.textContent !== text) { btn.textContent = text; btn.title = en.text }
   btn.onclick = () => node.scrollIntoView({ block: 'start', behavior: 'smooth' })
+  const c = convo(S.sel)
+  bar.querySelector('[data-go=up]').disabled = !sentNear(-1) && !c.hidden
+  bar.querySelector('[data-go=down]').disabled = !sentNear(1)
+  const box = document.getElementById('convo')
+  bar.querySelector('[data-go=end]').disabled = box.scrollHeight - box.scrollTop - box.clientHeight < 8
+}
+
+// sentNear is the message the person sent before (-1) or after (1) where
+// one comes to rest when gone to, under the pinned line.
+function sentNear(dir) {
+  const inner = document.getElementById('convo-inner')
+  const box = document.getElementById('convo')
+  // At the top, what is above where one rests is already in view.
+  if (dir < 0 && box.scrollTop < 2) return null
+  const rest = box.getBoundingClientRect().top + 56
+  const sent = [...inner.children].filter((n) => sentBy.has(n))
+  return dir < 0
+    ? sent.findLast((n) => n.getBoundingClientRect().top < rest - 12)
+    : sent.find((n) => n.getBoundingClientRect().top > rest + 12)
+}
+
+let goingUntil = 0
+
+function goSent(dir) {
+  const c = convo(S.sel)
+  // Before the first drawn, the earlier are drawn: they start at one.
+  if (dir < 0 && !sentNear(-1) && c.hidden) showEarlier(c)
+  const node = sentNear(dir)
+  if (!node) return
+  goingUntil = Date.now() + 1000
+  node.scrollIntoView({ block: 'start', behavior: 'smooth' })
+  const id = S.sel
+  setTimeout(() => { const box = document.getElementById('convo'); if (box && S.sel === id) onConvoScroll(box, id) }, 1050)
 }
 
 // showEarlier draws a page more of the conversation above, the one read
