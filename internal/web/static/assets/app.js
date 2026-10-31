@@ -1175,7 +1175,49 @@ function renderTopbar() {
         }, '🗄', h('span', { class: 'label' }, ' Archive')))),
     a.problem ? h('div', { class: 'banner' }, a.problem) : null,
   ].filter(Boolean))
+  fitTopbar()
 }
+
+// fitTopbar keeps the agent's name readable: when the actions crowd it,
+// they lose their labels first, then the last of them go behind ⋯.
+const titleMin = 140
+function fitTopbar() {
+  const bar = document.querySelector('#topbar-slot .topbar')
+  const actions = bar?.querySelector('.actions')
+  if (!actions) return
+  let more = actions.querySelector('.more-btn'), menu = bar.querySelector('.more-menu')
+  if (!more) {
+    menu = h('div', { class: 'more-menu', hidden: true })
+    more = h('button', {
+      class: 'btn ghost more-btn', title: 'More', 'aria-label': 'More', hidden: true,
+      onclick: (e) => { e.stopPropagation(); S.moreOpen = menu.hidden; menu.hidden = !menu.hidden },
+    }, '⋯')
+    // A choice in it closes it, after the choice is taken.
+    menu.addEventListener('click', () => { S.moreOpen = false; menu.hidden = true })
+    actions.append(more)
+    bar.append(menu)
+  }
+  actions.prepend(...menu.children)
+  actions.append(more)
+  bar.classList.remove('compact')
+  more.hidden = true
+  const crowded = () => bar.querySelector('.title').getBoundingClientRect().width < titleMin || bar.scrollWidth > bar.clientWidth
+  if (crowded()) bar.classList.add('compact')
+  if (crowded()) {
+    more.hidden = false
+    // Stop stays out: it is wanted at once.
+    let b
+    while (crowded() && (b = more.previousElementSibling) && actions.firstElementChild !== b) menu.prepend(b)
+  }
+  // A count behind ⋯ (mail, crons, TODO) still shows that there is one.
+  more.classList.toggle('has-badge', !!menu.querySelector('.badge'))
+  menu.hidden = !(S.moreOpen && menu.children.length)
+}
+window.addEventListener('resize', fitTopbar)
+document.addEventListener('click', (e) => {
+  const menu = document.querySelector('.more-menu')
+  if (menu && !menu.hidden && !menu.contains(e.target)) { S.moreOpen = false; menu.hidden = true }
+})
 
 // openMail shows an agent's mail, newest first: what other agents sent it,
 // read or still waiting, and what it wrote to them. Waiting mail can be
@@ -1989,7 +2031,7 @@ function renderStatusLine() {
   slot.replaceChildren(...[
     // The marks keep the path in its order in a box set right to left.
     dir && h('div', { class: 'sl-dir', title: dir }, '\u200e' + dir + '\u200e'),
-    shown.length && h('div', { class: 'sl-row' }, ...shown.flatMap((p, i) => i ? [h('span', { class: 'sl-sep' }, '│'), p] : [p])),
+    shown.length && h('div', { class: 'sl-row' }, h('div', { class: 'sl-items' }, ...shown)),
   ].filter(Boolean))
 }
 

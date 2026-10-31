@@ -172,9 +172,23 @@ code, pre { font-family: var(--mono); font-size: 13px; }
   border-bottom: 1px solid var(--border);
   min-height: 56px;
 }
+.topbar { position: relative; }
 .topbar .title { min-width: 0; flex: 1; }
+.topbar .chip { flex: none; }
+.topbar .actions { display: flex; align-items: center; gap: 2px; flex: none; }
+.topbar.compact .actions .label { display: none; }
+.topbar .actions [hidden] { display: none; }
+.more-menu {
+  position: absolute; top: calc(100% - 4px); right: 12px; z-index: 25;
+  display: flex; flex-direction: column; min-width: 170px; padding: 4px;
+  background: var(--panel); border: 1px solid var(--border); border-radius: var(--radius); box-shadow: var(--shadow);
+}
+.more-menu[hidden] { display: none; }
+.more-btn { position: relative; }
+.more-btn.has-badge::after { content: ''; position: absolute; top: 5px; right: 6px; width: 7px; height: 7px; border-radius: 50%; background: var(--accent); }
+.more-menu .btn { text-align: left; }
 .topbar h1 { margin: 0; font-size: 16px; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.topbar .sub { color: var(--muted); font-size: 12.5px; font-family: var(--mono); }
+.topbar .sub { color: var(--muted); font-size: 12.5px; font-family: var(--mono); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .menu-btn { display: none; border: 0; background: transparent; font-size: 20px; padding: 4px 6px; }
 .chip {
   display: inline-flex;
@@ -341,15 +355,17 @@ code, pre { font-family: var(--mono); font-size: 13px; }
   font-family: var(--mono); font-size: 11.5px; line-height: 1.5; color: var(--muted);
 }
 .status-line:empty { display: none; }
-.status-line .sl-row { display: flex; gap: 6px; overflow-x: auto; scrollbar-width: none; }
-.status-line .sl-row::-webkit-scrollbar { display: none; }
-.status-line .sl-row > span { white-space: nowrap; }
+.status-line .sl-row { overflow: hidden; }
+/* Each item's separator is before it; the line's first one is pulled out
+   of view, so a wrapped line starts with none. */
+.status-line .sl-items { display: flex; flex-wrap: wrap; margin-left: -15px; }
+.status-line .sl-items > span { white-space: nowrap; }
+.status-line .sl-items > span::before { content: '│'; display: inline-block; width: 15px; text-align: center; color: var(--faint); }
 /* A path too long for its line keeps its end, the part that tells it
    apart: the ellipsis goes on the left. */
 .status-line .sl-dir { color: var(--accent); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; direction: rtl; text-align: left; }
 .status-line .sl-branch { color: var(--text); }
 .status-line .sl-model { color: var(--text); }
-.status-line .sl-sep { color: var(--faint); }
 .status-line .sl-warn { color: var(--warn); }
 .status-line .sl-low { color: var(--err); }
 
@@ -497,7 +513,6 @@ code, pre { font-family: var(--mono); font-size: 13px; }
   .msg-user { max-width: 92%; }
   .msg-user-row { max-width: 92%; }
   .msg-edit { width: 92%; }
-  .topbar .actions .label { display: none; }
 }
 
 /* Services */
