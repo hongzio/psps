@@ -1196,6 +1196,7 @@ function agentView() {
   frag.append(
     h('div', { id: 'topbar-slot' }),
     h('div', { class: 'convo', id: 'convo', onscroll: (e) => onConvoScroll(e.target, a.id) },
+      h('div', { class: 'last-sent-bar', id: 'last-sent', hidden: true }, h('button', { type: 'button', class: 'last-sent' })),
       h('div', { class: 'convo-inner', id: 'convo-inner' })),
     h('div', { id: 'approvals' }),
     composer(a),
@@ -1701,12 +1702,30 @@ function renderConvo(forceBottom) {
     if (node === at) at = at.nextSibling
     else inner.insertBefore(node, at)
   }
+  renderLastSent(c)
   const ta = typing && inner.querySelector('.edit-box')
   if (ta && ta !== typing) { ta.focus({ preventScroll: true }); ta.setSelectionRange(...sel) }
   if (stick) box.scrollTop = box.scrollHeight
 }
 
 const convoPage = 150
+
+// renderLastSent pins the last message the person sent above the
+// conversation, a line of it; it takes them back to it.
+function renderLastSent(c) {
+  const bar = document.getElementById('last-sent')
+  if (!bar) return
+  const en = c.entries.findLast((x) => x.kind === 'user' && !letter(x.text) && !cronMsg(x.text))
+  bar.hidden = !en
+  if (!en) return
+  const btn = bar.firstChild
+  btn.textContent = en.text.replace(/\s+/g, ' ').trim()
+  btn.title = en.text
+  btn.onclick = () => {
+    const node = drawn.get(en)?.node
+    if (node?.isConnected) node.scrollIntoView({ block: 'start', behavior: 'smooth' })
+  }
+}
 
 // showEarlier draws a page more of the conversation above, the one read
 // staying where it was.
