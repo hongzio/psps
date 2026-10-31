@@ -996,6 +996,8 @@ function renderTopbar() {
           '✉', h('span', { class: 'label' }, ' Mail'), a.inbox ? h('span', { class: 'badge' }, String(a.inbox)) : null),
         a.archived_at ? null : h('button', { class: 'btn ghost', title: 'Cron: messages sent to it on a schedule', onclick: () => openCrons(a) },
           '◷', h('span', { class: 'label' }, ' Cron'), a.crons ? h('span', { class: 'badge' }, String(a.crons)) : null),
+        a.archived_at ? null : h('button', { class: 'btn ghost', title: 'TODO: prompts put aside to send it later', onclick: () => openTodos(a) },
+          '☑', h('span', { class: 'label' }, ' TODO'), a.todos ? h('span', { class: 'badge' }, String(a.todos)) : null),
         h('button', { class: 'btn ghost', title: 'Name and ID', onclick: () => editAgent(a) }, '✎', h('span', { class: 'label' }, ' Name & ID')),
         h('button', {
           class: 'btn ghost', title: 'Fork: a new agent in its directory that knows its conversation so far', onclick: async () => {
@@ -1181,6 +1183,75 @@ async function openCrons(a) {
     extra: box, cancel: 'Close', wide: true,
   })
   clearInterval(ticker)
+}
+
+// openTodos is an agent's TODO: prompts put aside for later. Apply takes
+// one off the list and into the message being written, after what is
+// there already; it is not sent until the operator sends it.
+async function openTodos(a) {
+  const box = h('div', { class: 'todos' })
+  let todos = []
+  const load = async () => {
+    const v = await guarded(() => api('GET', `/v1/agents/${enc(a.id)}/todos`))
+    if (v) todos = v
+  }
+  const changed = async () => { await load(); draw(); guarded(refreshAgents) }
+  const text = h('textarea', { class: 'dialog-input', rows: 3, placeholder: 'A prompt to send it later', 'aria-label': 'New TODO' })
+  const err = h('p', { class: 'form-error', role: 'alert', hidden: true })
+  const add = async () => {
+    if (!text.value.trim()) { text.focus(); return }
+    err.hidden = true
+    try {
+      await api('POST', `/v1/agents/${enc(a.id)}/todos`, { text: text.value })
+      text.value = ''
+      await changed()
+      text.focus()
+    } catch (e) {
+      if (e instanceof Unauthorized) { S.authed = false; render(); return }
+      err.textContent = e.message
+      err.hidden = false
+    }
+  }
+  text.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter' && (e.metaKey || e.ctrlKey) && !e.isComposing) { e.preventDefault(); add() }
+  })
+  const apply = (t) => guarded(async () => {
+    // Taken first: from two pages at once, only one gets it.
+    await api('DELETE', `/v1/agents/${enc(a.id)}/todos/${t.id}`)
+    box.closest('dialog')?.close('cancel')
+    const ta = S.sel === a.id ? document.querySelector('.composer textarea') : null
+    const cur = ta ? ta.value : S.drafts.get(a.id) || ''
+    const next = cur.trim() ? cur.replace(/\s+$/, '') + '\n\n' + t.text : t.text
+    S.drafts.set(a.id, next)
+    if (ta) {
+      ta.value = next
+      ta.dispatchEvent(new Event('input'))
+      ta.focus()
+      ta.setSelectionRange(next.length, next.length)
+    }
+    guarded(refreshAgents)
+  })
+  const remove = async (t) => {
+    if (!await ask({ title: 'Delete this TODO?', body: clip(t.text, 3), ok: 'Delete', danger: true })) return
+    await guarded(async () => { await api('DELETE', `/v1/agents/${enc(a.id)}/todos/${t.id}`); await changed() })
+  }
+  const row = (t) => h('div', { class: 'todo' },
+    h('div', { class: 'todo-text' }, clip(t.text, 6)),
+    h('div', { class: 'todo-actions' },
+      h('button', { type: 'button', class: 'btn small ghost danger', onclick: () => remove(t) }, 'Delete'),
+      h('button', { type: 'button', class: 'btn small primary', title: 'Into the message box, and off the list', onclick: () => apply(t) }, 'Apply')))
+  const draw = () => box.replaceChildren(
+    todos.length ? h('div', { class: 'todo-list' }, todos.map(row)) : h('p', { class: 'mail-lead' }, 'Nothing put aside yet.'),
+    h('div', { class: 'todo-new' }, text, err,
+      h('div', { class: 'todo-actions' }, h('button', { type: 'button', class: 'btn', onclick: add }, 'Save'))))
+  await load()
+  draw()
+  queueMicrotask(() => text.focus())
+  await ask({
+    title: `TODO of "${agentTitle(a)}"`,
+    body: 'Prompts put aside to send it later. Apply puts one in the message box and takes it off the list.',
+    extra: box, cancel: 'Close', wide: true,
+  })
 }
 
 // cronForm sets one cron: when, its message, and what a run that finds the

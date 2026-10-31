@@ -142,7 +142,7 @@ func Open(path string) (*Store, error) {
 	// One writer is all SQLite allows anyway; a single connection turns
 	// contention into queueing instead of SQLITE_BUSY.
 	db.SetMaxOpenConns(1)
-	if _, err := db.Exec(schema + envSchema + accountSchema + mailSchema + cronSchema); err != nil {
+	if _, err := db.Exec(schema + envSchema + accountSchema + mailSchema + cronSchema + todoSchema); err != nil {
 		db.Close()
 		return nil, fmt.Errorf("store: schema: %w", err)
 	}
@@ -444,7 +444,7 @@ func insertAgent(tx *sql.Tx, a Agent) error {
 }
 
 // Renew archives the live agent old and stores next in its place, at once:
-// next takes old's ID, its crons and the mail waiting for it, and goes on
+// next takes old's ID, its crons and todos and the mail waiting for it, and goes on
 // its line; old keeps its history, and the ID it went by as Was.
 func (s *Store) Renew(old string, next Agent, at time.Time) error {
 	tx, err := s.db.Begin()
@@ -470,7 +470,7 @@ func (s *Store) Renew(old string, next Agent, at time.Time) error {
 	if err := insertAgent(tx, next); err != nil {
 		return err
 	}
-	for _, q := range []string{`UPDATE crons SET agent = ? WHERE agent = ?`, `UPDATE mail SET agent = ? WHERE agent = ? AND ` + waiting} {
+	for _, q := range []string{`UPDATE crons SET agent = ? WHERE agent = ?`, `UPDATE todos SET agent = ? WHERE agent = ?`, `UPDATE mail SET agent = ? WHERE agent = ? AND ` + waiting} {
 		if _, err := tx.Exec(q, next.ID, old); err != nil {
 			return err
 		}
@@ -480,8 +480,8 @@ func (s *Store) Renew(old string, next Agent, at time.Time) error {
 
 // Restore brings the archived agent id back as its line's live session, at
 // once. The line's ID goes with it: a live session on the line is archived
-// in its place, as /new would, and hands over its ID, its crons and the
-// mail waiting for it; with none live, the session that went by the ID last
+// in its place, as /new would, and hands over its ID, its crons and todos and
+// the mail waiting for it; with none live, the session that went by the ID last
 // hands it over. An agent that gets no ID that way keeps its own, or else
 // goes by fallback. replaced is the live session archived, if any.
 func (s *Store) Restore(id, fallback string, at time.Time) (replaced string, err error) {
@@ -511,7 +511,7 @@ func (s *Store) Restore(id, fallback string, at time.Time) (replaced string, err
 		if _, err := tx.Exec(`UPDATE agents SET archived_at = ?, handle = NULL, was_handle = ?, parked = 0 WHERE id = ?`, ts(at), handle, holder); err != nil {
 			return "", err
 		}
-		for _, q := range []string{`UPDATE crons SET agent = ? WHERE agent = ?`, `UPDATE mail SET agent = ? WHERE agent = ? AND ` + waiting} {
+		for _, q := range []string{`UPDATE crons SET agent = ? WHERE agent = ?`, `UPDATE todos SET agent = ? WHERE agent = ?`, `UPDATE mail SET agent = ? WHERE agent = ? AND ` + waiting} {
 			if _, err := tx.Exec(q, id, holder); err != nil {
 				return "", err
 			}
@@ -645,7 +645,7 @@ func (s *Store) DeleteAgent(id string) error {
 		return err
 	}
 	defer tx.Rollback()
-	for _, q := range []string{`DELETE FROM events WHERE agent = ?`, `DELETE FROM outbox WHERE agent = ?`, `DELETE FROM mail WHERE agent = ?`, `DELETE FROM crons WHERE agent = ?`,
+	for _, q := range []string{`DELETE FROM events WHERE agent = ?`, `DELETE FROM outbox WHERE agent = ?`, `DELETE FROM mail WHERE agent = ?`, `DELETE FROM crons WHERE agent = ?`, `DELETE FROM todos WHERE agent = ?`,
 		`DELETE FROM agents WHERE id = ?`} {
 		if _, err := tx.Exec(q, id); err != nil {
 			return err

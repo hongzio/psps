@@ -73,6 +73,8 @@ type Agent struct {
 	Inbox int `json:"inbox,omitempty"`
 	// Crons is how many of its crons are on.
 	Crons int `json:"crons,omitempty"`
+	// Todos is how many prompts are put aside for it.
+	Todos int `json:"todos,omitempty"`
 }
 
 // Mail is one agent's mail to another. From and To are the two agents as
@@ -199,6 +201,11 @@ type PutCron struct {
 	Prompt   *string `json:"prompt,omitempty"`
 	IfBusy   *string `json:"if_busy,omitempty"`
 	Enabled  *bool   `json:"enabled,omitempty"`
+}
+
+// AddTodo puts a prompt aside for an agent.
+type AddTodo struct {
+	Text string `json:"text"`
 }
 
 type Decision struct {

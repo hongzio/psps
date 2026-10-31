@@ -238,7 +238,7 @@ func (m *Manager) mailDirectory(from mailSender) (mailDirectory, error) {
 		if !ok {
 			continue
 		}
-		v := m.view(a, counts[a.ID], 0)
+		v := m.view(a, counts[a.ID], 0, 0)
 		ma := mailAgent{ID: shownID(v.Agent), Name: v.Name, Kind: v.Kind, Isolation: v.Isolation, Status: v.State.Status, Inbox: v.Inbox}
 		if a.ID == from.agent.ID {
 			dir.You = ma

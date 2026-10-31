@@ -885,24 +885,28 @@ func (m *Manager) Agents() ([]api.Agent, error) {
 	if err != nil {
 		return nil, err
 	}
+	todos, err := m.store.TodoCounts()
+	if err != nil {
+		return nil, err
+	}
 	out := make([]api.Agent, 0, len(all))
 	for _, a := range all {
-		out = append(out, m.view(a, counts[a.ID], crons[a.ID]))
+		out = append(out, m.view(a, counts[a.ID], crons[a.ID], todos[a.ID]))
 	}
 	sortAgents(out)
 	return out, nil
 }
 
-// view is a, live if it is, with inbox mails waiting and crons on.
-func (m *Manager) view(a store.Agent, inbox, crons int) api.Agent {
+// view is a, live if it is, with inbox mails waiting, crons on and todos.
+func (m *Manager) view(a store.Agent, inbox, crons, todos int) api.Agent {
 	m.mu.Lock()
 	r, ok := m.runtimes[a.ID]
 	m.mu.Unlock()
 	if !ok {
-		return api.Agent{Agent: a, Isolation: m.isoName(a.IsolationID), Inbox: inbox, Crons: crons}
+		return api.Agent{Agent: a, Isolation: m.isoName(a.IsolationID), Inbox: inbox, Crons: crons, Todos: todos}
 	}
 	live, st, problem := r.shown()
-	return api.Agent{Agent: live, Isolation: m.isoName(live.IsolationID), State: st, Problem: problem, Inbox: inbox, Crons: crons}
+	return api.Agent{Agent: live, Isolation: m.isoName(live.IsolationID), State: st, Problem: problem, Inbox: inbox, Crons: crons, Todos: todos}
 }
 
 // viewOf is a as view has it, counting what it shows of a alone.
@@ -915,7 +919,11 @@ func (m *Manager) viewOf(a store.Agent) (api.Agent, error) {
 	if err != nil {
 		return api.Agent{}, err
 	}
-	return m.view(a, inbox, crons), nil
+	todos, err := m.store.TodoCount(a.ID)
+	if err != nil {
+		return api.Agent{}, err
+	}
+	return m.view(a, inbox, crons, todos), nil
 }
 
 func (m *Manager) Agent(idOrPrefix string) (api.Agent, error) {
