@@ -1195,7 +1195,7 @@ function agentView() {
   const frag = document.createDocumentFragment()
   frag.append(
     h('div', { id: 'topbar-slot' }),
-    h('div', { class: 'convo', id: 'convo', onscroll: (e) => { if (e.target.scrollTop < 400 && convo(a.id).hidden) showEarlier(convo(a.id)) } },
+    h('div', { class: 'convo', id: 'convo', onscroll: (e) => onConvoScroll(e.target, a.id) },
       h('div', { class: 'convo-inner', id: 'convo-inner' })),
     h('div', { id: 'approvals' }),
     composer(a),
@@ -1627,29 +1627,83 @@ function cronForm(a, c, zone, saved, cancel) {
   return form
 }
 
+// stick: the conversation is read at its end, and follows it as events
+// come. Scrolled up, by however little, it stays where it was put.
+let stick = true
+
+function onConvoScroll(box, id) {
+  stick = box.scrollHeight - box.scrollTop - box.clientHeight < 8
+  if (box.scrollTop < 400 && convo(id).hidden) showEarlier(convo(id))
+}
+
+// drawn keeps each entry's node, with what it was drawn from: an event
+// redraws only the entries it changed. A group of tools is kept under its
+// first run.
+const drawn = new WeakMap()
+
+// drawnSig is what an entry's view is drawn from, the agent's part included.
+function drawnSig(en, a) {
+  switch (en.kind) {
+    case 'user': {
+      const ed = S.edit?.agent === a.id && S.edit.id === en.id && S.edit
+      return `user|${rewindable(a)}|${ed ? 'edit:' + !!ed.sending : ''}`
+    }
+    case 'assistant': return `assistant|${label(a)}|${en.live}|${en.text.length}|${en.text.slice(-32)}`
+    case 'tool': return `tool|${en.state}|${en.name}|${en.summary}|${en.output.length}`
+    case 'tools': return 'tools|' + en.runs.map((x) => drawnSig(x, a)).join('/')
+    case 'approval': return `approval|${en.decision}|${JSON.stringify(en.answers || null)}`
+    case 'rewound': return `rewound|${en.entries.length}`
+    default: return en.kind
+  }
+}
+
+function drawEntry(en, a) {
+  const key = en.kind === 'tools' ? en.runs[0] : en
+  const sig = drawnSig(en, a)
+  const was = drawn.get(key)
+  if (was && was.sig === sig) return was.node
+  const node = entryView(en, a)
+  if (node) drawn.set(key, { sig, node })
+  return node
+}
+
 function renderConvo(forceBottom) {
   const box = document.getElementById('convo')
   const inner = document.getElementById('convo-inner')
   const a = agentById(S.sel)
   if (!box || !inner || !a) return
-  const atBottom = forceBottom || box.scrollHeight - box.scrollTop - box.clientHeight < 80
+  if (forceBottom) stick = true
   const c = convo(a.id)
-  // The page is redrawn as events arrive; a message being edited keeps its
-  // caret through that.
+  // A message being edited keeps its caret through a redraw of its own.
   const typing = document.activeElement?.classList.contains('edit-box') ? document.activeElement : null
   const sel = typing && [typing.selectionStart, typing.selectionEnd]
-  // Only the latest are drawn, as all of a long one is redrawn with each
-  // event; the earlier come as it is scrolled up to them.
+  // Only the latest are drawn; the earlier come as it is scrolled up to them.
+  // Scrolled up, the first drawn stays: Safari would not hold the page
+  // still as one went above it.
   const all = groupTools(c.entries)
+  if (!stick && c.from !== undefined) c.shown = Math.max(c.shown || convoPage, all.length - c.from)
   const from = Math.max(0, all.length - (c.shown || convoPage))
-  const items = all.slice(from).map((en) => entryView(en, a)).filter(Boolean)
+  c.from = from
+  const items = all.slice(from).map((en) => drawEntry(en, a)).filter(Boolean)
   c.hidden = from
-  if (from) items.unshift(h('div', { class: 'earlier' }, `${from} earlier`))
-  const none = c.ready ? 'Nothing yet: the first message you send starts it.' : 'Loading…'
-  inner.replaceChildren(...(items.length ? items : [h('div', { class: 'empty' }, none)]))
+  if (from) {
+    c.earlier ||= h('div', { class: 'earlier' })
+    c.earlier.textContent = `${from} earlier`
+    items.unshift(c.earlier)
+  }
+  if (!items.length) items.push(h('div', { class: 'empty' }, c.ready ? 'Nothing yet: the first message you send starts it.' : 'Loading…'))
+  // Nodes already in place stay, so what is read does not move. Those
+  // gone go first: the rest are then in order, and none is moved.
+  const keep = new Set(items)
+  for (const node of [...inner.children]) if (!keep.has(node)) node.remove()
+  let at = inner.firstChild
+  for (const node of items) {
+    if (node === at) at = at.nextSibling
+    else inner.insertBefore(node, at)
+  }
   const ta = typing && inner.querySelector('.edit-box')
-  if (ta) { ta.focus({ preventScroll: true }); ta.setSelectionRange(...sel) }
-  if (atBottom) box.scrollTop = box.scrollHeight
+  if (ta && ta !== typing) { ta.focus({ preventScroll: true }); ta.setSelectionRange(...sel) }
+  if (stick) box.scrollTop = box.scrollHeight
 }
 
 const convoPage = 150
