@@ -293,6 +293,9 @@ body.resizing { cursor: col-resize; user-select: none; -webkit-user-select: none
 .msg-cron .who { font-size: 12.5px; font-weight: 600; color: var(--accent); margin-bottom: 4px; }
 .msg-agent { max-width: 100%; }
 .msg-agent .who { font-size: 12.5px; font-weight: 600; color: var(--ok); margin-bottom: 2px; }
+.stamp { font-size: 11px; font-weight: 400; color: var(--muted); white-space: nowrap; font-variant-numeric: tabular-nums; }
+.msg-agent .who .stamp { margin-left: 6px; }
+.msg-user-row > .stamp { align-self: flex-end; margin-bottom: 2px; }
 .msg-agent.live .text::after { content: "▍"; color: var(--accent); animation: pulse 1s infinite; }
 .text p { margin: 0 0 .6em; overflow-wrap: anywhere; }
 .text p.raw { white-space: pre-wrap; }
