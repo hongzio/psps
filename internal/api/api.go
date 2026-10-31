@@ -219,6 +219,8 @@ type PutCron struct {
 	Prompt   *string `json:"prompt,omitempty"`
 	IfBusy   *string `json:"if_busy,omitempty"`
 	Enabled  *bool   `json:"enabled,omitempty"`
+	// Once: sent once, then removed; it waits if the agent is busy.
+	Once *bool `json:"once,omitempty"`
 }
 
 // AddTodo puts a prompt aside for an agent.
