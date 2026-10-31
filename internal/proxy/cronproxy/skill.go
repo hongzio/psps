@@ -9,8 +9,8 @@ description: How to schedule a message to yourself with gero (a cron), and
   what a message that starts with "[gero cron" is. Use when asked to do
   something on a schedule, every so often, later at a set time, or to keep
   checking on something (CI, a deploy, a long job), or to see, change or stop
-  such a schedule. Claude Code's own CronCreate, ScheduleWakeup and /loop do
-  not outlive this process; this does.
+  such a schedule. Claude Code's own CronCreate, ScheduleWakeup and /loop live
+  in this process, which gero may replace; this does not.
 ---
 
 # Crons of your own
@@ -19,6 +19,15 @@ A cron is a message gero sends you on a schedule, as a turn of its own, when
 you are idle. Your operator can set them too; you can set your own through
 GERO_CRON_URL, your own address at gero. It carries a token that names you:
 use it as it is, and do not pass it on.
+
+Why not Claude Code's own CronCreate, ScheduleWakeup or /loop: they live in
+this process. gero keeps the process from turn to turn, but replaces it (the
+conversation resumed, nothing of it lost) when the operator changes its
+settings or the isolation's services, when the conversation is rewound, and
+when the isolation restarts; what was scheduled inside it ends then, at a time
+nobody can tell in advance. A gero cron is kept by gero, outside the process.
+For a change of services gero waits until nothing you started runs in the
+background; for the rest it does not, so a background task can end with it too.
 
 A cron's message starts with a line like
 

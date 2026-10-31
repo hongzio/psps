@@ -257,6 +257,11 @@ one to ask, so it does not.
   daemon catches up from the log. A reboot or container stop ends the agent
   process; the turn in flight shows as `interrupted`, and the next message
   starts a process that resumes the same session.
+- An agent's process lives from turn to turn. gero replaces it, resuming the
+  same session, when what it starts with changes: its options, a rewind, or
+  its isolation's services, login or CLI. That waits for an idle moment, and a
+  change of the isolation's waits too until nothing Claude started runs in the
+  background (a shell, a subagent), which would end with the process.
 - An isolation is an ID to gero (`7f3a9c1b`); its name is what people call
   it. Everything that belongs to it names it by ID: its agents, exposures,
   tokens and accounts in the store, and its container, network and volumes

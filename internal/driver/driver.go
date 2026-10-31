@@ -123,8 +123,11 @@ type State struct {
 	// effect. The caller does it when the agent is not busy.
 	Restart bool `json:"restart,omitempty"`
 	// Queued user messages are waiting for the agent to be ready.
-	Queued int    `json:"queued,omitempty"`
-	Error  string `json:"error,omitempty"`
+	Queued int `json:"queued,omitempty"`
+	// Background is how many tasks the process runs in the background,
+	// after its turn: replacing it would end them.
+	Background int    `json:"background,omitempty"`
+	Error      string `json:"error,omitempty"`
 	// Usage is the model and spending the CLI last stated.
 	Usage *Usage `json:"usage,omitempty"`
 }

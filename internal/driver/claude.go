@@ -43,9 +43,13 @@ type claude struct {
 	sessionUsed  bool
 	gen          int
 	pendingTurns int
-	queue        []string
-	pending      []*clPending
-	stop         bool
+	// background is how many tasks claude says run in the background (a
+	// shell, a subagent, a monitor): they go on after a turn ends, and die
+	// with the process.
+	background int
+	queue      []string
+	pending    []*clPending
+	stop       bool
 	// stopping: the turn running was told to stop, by an interrupt or a
 	// decision that stops it. Claude ends such a turn in an error during
 	// execution, which is the stop, not a failure.
@@ -149,7 +153,7 @@ func (c *claude) Command() []string {
 
 func (c *claude) State() State {
 	return State{Status: c.status, Alive: c.alive, Busy: c.busy, SessionID: c.sessionID, Error: c.errText, Restart: c.restart, Queued: len(c.queue),
-		Usage: c.usage.shown()}
+		Background: c.background, Usage: c.usage.shown()}
 }
 
 func (c *claude) Send(text string) { c.queue = append(c.queue, text) }
@@ -373,6 +377,9 @@ type clMessage struct {
 	Response  json.RawMessage `json:"response"`
 	Result    string          `json:"result"`
 	IsError   bool            `json:"is_error"`
+	// Tasks are, in background_tasks_changed, every task running in the
+	// background now.
+	Tasks []json.RawMessage `json:"tasks"`
 	// Terminal are, in init, the commands that need claude's terminal.
 	Terminal []string `json:"terminal_slash_commands"`
 	// ParentToolUseID is set on a subagent's messages, which are in a
@@ -440,7 +447,7 @@ func (c *claude) Observe(rec shimproto.Record) []event.Event {
 		case shimproto.SysStarted:
 			c.gen++
 			c.alive, c.restart, c.errText, c.asked = true, false, "", false
-			c.busy, c.blocked, c.pendingTurns, c.pending, c.stopping = false, false, 0, nil, false
+			c.busy, c.blocked, c.pendingTurns, c.pending, c.stopping, c.background = false, false, 0, nil, false, 0
 			evs = append(evs, c.text(rec, event.KindNotice, "", fmt.Sprintf("claude started (pid %d)", rec.Sys.PID)))
 			c.forking = slices.Contains(rec.Sys.Argv, "--fork-session")
 			if rw := c.rewindIn(rec.Sys.Argv); rw != nil {
@@ -448,7 +455,7 @@ func (c *claude) Observe(rec shimproto.Record) []event.Event {
 				c.rewind, c.going, c.lastEntry = nil, rw, rw.at
 			}
 		case shimproto.SysExited, shimproto.SysLost:
-			c.pending, c.pendingTurns = nil, 0
+			c.pending, c.pendingTurns, c.background = nil, 0, 0
 			evs = c.processEnded(rec, "claude")
 			if c.forking {
 				// It never forked: the session it is a copy of is gone. The
@@ -570,6 +577,9 @@ func (c *claude) observeOut(rec shimproto.Record, m clMessage) []event.Event {
 	}
 	switch m.Type {
 	case "system":
+		if m.Subtype == "background_tasks_changed" {
+			c.background = len(m.Tasks)
+		}
 		if m.Subtype == "init" {
 			// init opens every turn, also one claude starts itself when a
 			// background task it ran ends.
