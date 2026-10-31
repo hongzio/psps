@@ -10,9 +10,9 @@ import (
 // A Todo is a prompt the operator put aside for an agent, to send it later:
 // taken, it goes into the message being written and is gone from the list.
 type Todo struct {
-	ID        int64     `json:"id"`
-	Agent     string    `json:"agent"`
-	Text      string    `json:"text"`
+	ID    int64  `json:"id"`
+	Agent string `json:"agent"`
+	Text  string `json:"text"`
 	// Auto sends it by itself, oldest first, one each time the agent goes
 	// from a turn to idle.
 	Auto      bool      `json:"auto"`
