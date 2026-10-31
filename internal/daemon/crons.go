@@ -3,6 +3,7 @@ package daemon
 import (
 	"errors"
 	"fmt"
+	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
@@ -29,6 +30,10 @@ const cronMaxPrompt = 32 << 10
 
 // cronLetter is a cron's message as its agent gets it.
 func cronLetter(c store.Cron) string {
+	if c.Self {
+		return fmt.Sprintf("[gero cron #%d, on schedule %q. You set this message yourself, with the gero-cron skill, to be sent to you on a schedule; your operator may not be watching.]\n\n%s",
+			c.ID, c.Schedule, c.Prompt)
+	}
 	return fmt.Sprintf("[gero cron #%d, on schedule %q. Your operator set this message to be sent on a schedule and may not be watching.]\n\n%s",
 		c.ID, c.Schedule, c.Prompt)
 }
@@ -74,16 +79,27 @@ func (m *Manager) AddCron(agent string, req api.PutCron) (store.Cron, error) {
 	if err != nil {
 		return store.Cron{}, err
 	}
+	return m.addCron(a, req, false)
+}
+
+// addCron gives a a new cron; self: a sets it itself.
+func (m *Manager) addCron(a store.Agent, req api.PutCron, self bool) (store.Cron, error) {
 	if a.ArchivedAt != nil {
 		return store.Cron{}, badRequest(errors.New("an archived agent is sent nothing"))
 	}
-	c := store.Cron{Agent: a.ID, IfBusy: store.CronSkip, Enabled: true}
+	c := store.Cron{Agent: a.ID, IfBusy: store.CronSkip, Enabled: true, Self: self}
 	if req.Schedule == nil || req.Prompt == nil {
 		return store.Cron{}, badRequest(errors.New("a cron needs a schedule and a message"))
 	}
 	if err := setCron(&c, req, time.Now()); err != nil {
 		return store.Cron{}, err
 	}
+	if self {
+		if err := m.selfCron(c, true); err != nil {
+			return store.Cron{}, err
+		}
+	}
+	var err error
 	if c, err = m.store.AddCron(c); err != nil {
 		return store.Cron{}, err
 	}
@@ -99,6 +115,12 @@ func (m *Manager) UpdateCron(agent string, id int64, req api.PutCron) (store.Cro
 	if err != nil {
 		return store.Cron{}, err
 	}
+	return m.updateCron(a, id, req, false)
+}
+
+// updateCron changes a's cron id; self: a changes it itself, so it must be
+// one a set.
+func (m *Manager) updateCron(a store.Agent, id int64, req api.PutCron, self bool) (store.Cron, error) {
 	if a.ArchivedAt != nil {
 		return store.Cron{}, badRequest(errors.New("an archived agent is sent nothing"))
 	}
@@ -108,8 +130,16 @@ func (m *Manager) UpdateCron(agent string, id int64, req api.PutCron) (store.Cro
 	if err != nil {
 		return store.Cron{}, err
 	}
+	if self && !c.Self {
+		return store.Cron{}, operatorsCron(id)
+	}
 	if err := setCron(&c, req, time.Now()); err != nil {
 		return store.Cron{}, err
+	}
+	if self {
+		if err := m.selfCron(c, false); err != nil {
+			return store.Cron{}, err
+		}
 	}
 	if err := m.store.PutCron(c); err != nil {
 		return store.Cron{}, err
@@ -123,13 +153,32 @@ func (m *Manager) DeleteCron(agent string, id int64) error {
 	if err != nil {
 		return err
 	}
+	return m.deleteCron(a, id, false)
+}
+
+// deleteCron removes a's cron id; self: a removes it itself, so it must be
+// one a set.
+func (m *Manager) deleteCron(a store.Agent, id int64, self bool) error {
 	m.cronMu.Lock()
 	defer m.cronMu.Unlock()
+	if self {
+		c, err := m.store.Cron(a.ID, id)
+		if err != nil {
+			return err
+		}
+		if !c.Self {
+			return operatorsCron(id)
+		}
+	}
 	if err := m.store.DeleteCron(a.ID, id); err != nil {
 		return err
 	}
 	m.cronsChanged(a.ID)
 	return nil
+}
+
+func operatorsCron(id int64) error {
+	return httpError{http.StatusForbidden, fmt.Errorf("cron: cron %d is your operator's; only they change or remove it", id)}
 }
 
 // setCron applies req to c at now, checking it.

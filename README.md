@@ -332,7 +332,7 @@ tests included. Inside the isolation they are fixed loopback addresses:
 127.0.0.1:3026   GitHub API GITHUB_API_URL points here
 127.0.0.1:3027   Grafana    GRAFANA_URL points here
 127.0.0.1:3028   Notion     NOTION_MCP_URL; every agent gets it as an MCP server
-127.0.0.1:3029   mail       GERO_MAIL_URL, each agent's own (see Mail)
+127.0.0.1:3029   mail       GERO_MAIL_URL, each agent's own (see Mail); GERO_CRON_URL too (see Cron)
 127.0.0.1:3030   Linear     LINEAR_MCP_URL; every agent gets it as an MCP server
 ```
 
@@ -528,6 +528,22 @@ watching; the conversation shows it as the cron's. A time missed while the
 Mac slept or gero was down comes due once, as soon as it can, not once for
 each time missed. An archived agent's crons do not run; deleting it deletes
 them.
+
+Agents can set crons of their own, where you turn that on:
+
+```sh
+gero iso expose dev cron                   # dev's agents set crons of their own
+```
+
+Inside the isolation, `GERO_CRON_URL` is each agent's own address for its
+crons (on mail's port, at its mail address, so no `gero iso upgrade` is
+needed), and the `gero-cron` skill says how to use it: `GET` lists its crons,
+`POST` sets one (`{"schedule", "prompt", "if_busy"}`), `PATCH`/`DELETE
+$GERO_CRON_URL/<id>` change and remove one. An agent reaches its own crons
+only: it sees yours, and changes and removes those it set; you change any.
+Its own come as yours do, saying the agent set them; the web marks them "set
+by the agent", `gero agent cron` under SET BY. An agent sets at most twenty,
+none coming more often than every five minutes.
 
 ## Shared folders
 

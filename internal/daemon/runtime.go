@@ -309,6 +309,7 @@ func (r *runtime) kickLocked() {
 		r.starting = true
 		env, mcp := r.m.launchEnv(r.agent.IsolationID)
 		env = append(env, r.m.mailEnv(r.agent)...)
+		env = append(env, r.m.cronEnv(r.agent)...)
 		shares, _ := r.m.mountsFor(r.agent.IsolationID)
 		if d, ok := r.drv.(driver.Rooted); ok {
 			var roots []string
