@@ -82,6 +82,13 @@ type AgentOrder struct {
 	Lines []string `json:"lines"`
 }
 
+// AgentOrders are both sidebar lists' lines, from the top, with the
+// dividers ("divider:<id>") among them.
+type AgentOrders struct {
+	Live     []string `json:"live"`
+	Archived []string `json:"archived"`
+}
+
 // Mail is one agent's mail to another. From and To are the two agents as
 // they are called now (as it was called, for a sender that is gone), with
 // the isolations the mail went between. Sent: the agent whose mail this

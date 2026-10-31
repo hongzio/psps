@@ -4,7 +4,8 @@ import "fmt"
 
 // The operator's order of the sidebar: lines, not agents, so a new session
 // stays where its line is. The live agents and the archived ones are two
-// lists, each ordered on its own.
+// lists, each ordered on its own. A list may hold the sidebar's dividers
+// too, which the web UI names "divider:<id>"; they are no agent's line.
 const (
 	LiveList     = "live"
 	ArchivedList = "archived"
@@ -39,6 +40,27 @@ func (s *Store) SetOrder(list string, lines []string) error {
 		}
 	}
 	return tx.Commit()
+}
+
+// Lists are each list's lines from the top: lines of agents, and the
+// sidebar's dividers between them.
+func (s *Store) Lists() (map[string][]string, error) {
+	rows, err := s.db.Query(`SELECT list, line FROM agent_order ORDER BY list, pos`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := map[string][]string{LiveList: {}, ArchivedList: {}}
+	for rows.Next() {
+		var list, line string
+		if err := rows.Scan(&list, &line); err != nil {
+			return nil, err
+		}
+		if _, ok := out[list]; ok {
+			out[list] = append(out[list], line)
+		}
+	}
+	return out, rows.Err()
 }
 
 // Order is each list's lines' places in it.
