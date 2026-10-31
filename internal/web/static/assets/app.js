@@ -1195,7 +1195,8 @@ function agentView() {
   const frag = document.createDocumentFragment()
   frag.append(
     h('div', { id: 'topbar-slot' }),
-    h('div', { class: 'convo', id: 'convo' }, h('div', { class: 'convo-inner', id: 'convo-inner' })),
+    h('div', { class: 'convo', id: 'convo', onscroll: (e) => { if (e.target.scrollTop < 400 && convo(a.id).hidden) showEarlier(convo(a.id)) } },
+      h('div', { class: 'convo-inner', id: 'convo-inner' })),
     h('div', { id: 'approvals' }),
     composer(a),
   )
@@ -1638,11 +1639,12 @@ function renderConvo(forceBottom) {
   const typing = document.activeElement?.classList.contains('edit-box') ? document.activeElement : null
   const sel = typing && [typing.selectionStart, typing.selectionEnd]
   // Only the latest are drawn, as all of a long one is redrawn with each
-  // event; the earlier come when asked for.
+  // event; the earlier come as it is scrolled up to them.
   const all = groupTools(c.entries)
   const from = Math.max(0, all.length - (c.shown || convoPage))
   const items = all.slice(from).map((en) => entryView(en, a)).filter(Boolean)
-  if (from) items.unshift(h('button', { type: 'button', class: 'btn earlier', onclick: () => showEarlier(c) }, `Show earlier (${from} more)`))
+  c.hidden = from
+  if (from) items.unshift(h('div', { class: 'earlier' }, `${from} earlier`))
   const none = c.ready ? 'Nothing yet: the first message you send starts it.' : 'Loading…'
   inner.replaceChildren(...(items.length ? items : [h('div', { class: 'empty' }, none)]))
   const ta = typing && inner.querySelector('.edit-box')
