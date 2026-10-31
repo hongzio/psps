@@ -425,7 +425,8 @@ function apply(c, e) {
   }
   // src is the shim log record an entry came from: a rewind names what it
   // took back by those.
-  const add = (en) => { en.src = e.src; c.entries.push(en); if (en.item) c.byItem.set(en.item, en); return en }
+  // time is when the message began: an answer's first delta, not its end.
+  const add = (en) => { en.src = e.src; en.time = e.time; c.entries.push(en); if (en.item) c.byItem.set(en.item, en); return en }
   switch (e.kind) {
     case 'user': add({ kind: 'user', id: e.id, text: e.text || '' }); break
     case 'delta': {
@@ -1648,6 +1649,16 @@ function groupTools(entries) {
   return out
 }
 
+// stamp is a message's time, MM-DD HH:mm local; none for an event the
+// daemon gave no time.
+function stamp(time) {
+  const d = new Date(time)
+  if (!time || isNaN(d) || d.getFullYear() < 2000) return null
+  const p = (n) => String(n).padStart(2, '0')
+  return h('time', { class: 'stamp', datetime: d.toISOString(), title: d.toLocaleString() },
+    `${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`)
+}
+
 // entryView draws one entry; frozen ones are an earlier version, there to
 // read only.
 const toolMarks = { ok: 'check', failed: 'x', running: 'ellipsis' }
@@ -1661,10 +1672,10 @@ function entryView(en, a, frozen) {
       if (cm) return h('div', { class: 'msg-cron' }, h('div', { class: 'who' }, icon('clock'), ` Cron #${cm.id} · ${describeSchedule(cm.schedule)}`), h('div', { class: 'text' }, richText(cm.body)))
       if (!frozen && S.edit?.agent === a.id && S.edit.id === en.id) return editView(en, a)
       const bubble = h('div', { class: 'msg-user text' }, richText(en.text))
-      if (frozen || !en.id || !rewindable(a)) return bubble
-      return h('div', { class: 'msg-user-row' },
-        h('button', { class: 'edit-msg', title: 'Edit and resend: the agent goes back to here', 'aria-label': 'Edit message', onclick: () => startEdit(a, en) }, icon('pencil')),
-        bubble)
+      const edit = !frozen && en.id && rewindable(a)
+        ? h('button', { class: 'edit-msg', title: 'Edit and resend: the agent goes back to here', 'aria-label': 'Edit message', onclick: () => startEdit(a, en) }, icon('pencil'))
+        : null
+      return h('div', { class: 'msg-user-row' }, edit, stamp(en.time), bubble)
     }
     case 'rewound': {
       const key = `${a.id}:${en.src}`
@@ -1677,7 +1688,7 @@ function entryView(en, a, frozen) {
         h('div', { class: 'rewound-body' }, groupTools(en.entries).map((x) => entryView(x, a, true)).filter(Boolean)))
     }
     case 'assistant':
-      return h('div', { class: 'msg-agent' + (en.live ? ' live' : '') }, h('div', { class: 'who' }, label(a)), h('div', { class: 'text' }, markdown(en.text, en.live)))
+      return h('div', { class: 'msg-agent' + (en.live ? ' live' : '') }, h('div', { class: 'who' }, label(a), stamp(en.time)), h('div', { class: 'text' }, markdown(en.text, en.live)))
     case 'reasoning': return h('div', { class: 'reasoning' }, en.text)
     case 'tool': {
       const mark = icon(toolMarks[en.state])
