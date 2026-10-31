@@ -54,6 +54,8 @@ const S = {
   showArchived: false,
   // Lines whose archived sessions are unfolded, by line.
   openLines: new Set(),
+  // A sidebar row is being moved: the sidebar is not redrawn under it.
+  sorting: false,
   drawer: false,
   convos: new Map(),
   drafts: new Map(),
@@ -873,7 +875,7 @@ function topbar(title, sub, ...extra) {
 
 function renderSidebar() {
   const el = document.getElementById('sidebar')
-  if (!el) return
+  if (!el || S.sorting) return
   const live = S.agents.filter((a) => !a.archived_at)
   const archived = S.agents.filter((a) => a.archived_at)
   const row = (a) => {
@@ -907,7 +909,7 @@ function renderSidebar() {
       : `${shownID(a)} · ${a.isolation}` + (a.inbox ? ` · ✉ ${a.inbox}` : '')
     return h('button', {
       class: 'agent' + (a.id === S.sel && S.view === 'agent' ? ' selected' : '') + (a.archived_at ? ' archived' : ''),
-      onclick: () => select(a.id),
+      'data-line': a.line || a.id, onclick: () => select(a.id),
     }, dot, h('span', { class: 'name' }, agentTitle(a)), h('span', { class: 'meta' }, meta))
   }
   // An agent's archived sessions are one folded line, under the ID it goes
@@ -916,7 +918,7 @@ function renderSidebar() {
     if (e.sessions.length === 1) return row(e.sessions[0])
     const open = S.openLines.has(e.line)
     const current = S.agents.find((a) => !a.archived_at && a.line === e.line) || e.sessions[e.sessions.length - 1]
-    return h('div', { class: 'line-group' + (open ? ' open' : '') },
+    return h('div', { class: 'line-group' + (open ? ' open' : ''), 'data-line': e.line },
       h('button', {
         class: 'agent line-head', 'aria-expanded': String(open),
         onclick: () => { open ? S.openLines.delete(e.line) : S.openLines.add(e.line); renderSidebar() },
@@ -928,15 +930,115 @@ function renderSidebar() {
     h('div', { class: 'brand' }, 'gero', h('span', { class: 'count' }, `${live.length} agent${live.length === 1 ? '' : 's'}`)),
     h('button', { class: 'new-agent' + (S.view === 'new' ? ' active' : ''), onclick: () => show('new') }, '+ New agent'),
     h('div', { class: 'agent-list' },
-      live.map(row),
+      sortable('live', live.map(row)),
       h('button', { class: 'fold', onclick: () => { S.showArchived = !S.showArchived; renderSidebar() } },
         `${S.showArchived ? '▾' : '▸'} Archived (${archived.length})`),
-      S.showArchived ? archivedRows() : null),
+      S.showArchived ? sortable('archived', archivedRows()) : null),
     h('div', { class: 'side-foot' },
       h('button', { class: S.view === 'isolations' ? 'active' : '', onclick: () => show('isolations') }, '⚙ Isolations'),
       h('button', { class: S.view === 'services' ? 'active' : '', onclick: () => show('services') }, '⚿ Services'),
       h('button', { class: S.view === 'setup' ? 'active' : '', onclick: () => show('setup') }, '✦ Accounts')),
   )
+}
+
+// sortable is a sidebar list whose rows, a line each, move by a long press
+// (a long click with a mouse) and a drag, within the list only. The order
+// is kept by the daemon, so every page has it.
+function sortable(list, items) {
+  const box = h('div', { class: 'sortable' }, items)
+  const scroller = () => box.closest('.agent-list')
+  let hold = null, drag = null
+  const cancel = () => { if (hold) clearTimeout(hold.timer); hold = null }
+  const lines = () => [...box.children].map((c) => c.dataset.line)
+  // A row moves past another once the pointer is over that one's farther
+  // half, so rows of any height do not swap back and forth.
+  const place = (y) => {
+    const kids = [...box.children]
+    const at = kids.indexOf(drag.item)
+    for (const [i, c] of kids.entries()) {
+      if (c === drag.item) continue
+      const r = c.getBoundingClientRect()
+      if (y < r.top || y > r.bottom) continue
+      const mid = r.top + r.height / 2
+      if (i < at && y < mid) box.insertBefore(drag.item, c)
+      else if (i > at && y > mid) box.insertBefore(drag.item, c.nextSibling)
+      return
+    }
+  }
+  // Held near the list's top or bottom edge, the list scrolls.
+  const scroll = () => {
+    if (!drag) return
+    const sc = scroller(), r = sc.getBoundingClientRect(), edge = 40
+    const step = drag.y < r.top + edge ? -8 : drag.y > r.bottom - edge ? 8 : 0
+    if (step) { sc.scrollTop += step; place(drag.y) }
+    drag.frame = requestAnimationFrame(scroll)
+  }
+  const start = (item, id, y) => {
+    hold = null
+    drag = { item, id, y, before: lines().join('\n') }
+    S.sorting = true
+    item.classList.add('dragging')
+    box.classList.add('sorting')
+    try { box.setPointerCapture(id) } catch {}
+    navigator.vibrate?.(10)
+    drag.frame = requestAnimationFrame(scroll)
+  }
+  const end = (e) => {
+    cancel()
+    if (!drag || e.pointerId !== drag.id) return
+    cancelAnimationFrame(drag.frame)
+    drag.item.classList.remove('dragging')
+    box.classList.remove('sorting')
+    const order = lines(), moved = order.join('\n') !== drag.before
+    drag = null
+    S.sorting = false
+    S.sortedAt = Date.now()
+    if (moved) {
+      reorderAgents(list, order)
+      guarded(async () => {
+        try { await api('PUT', `/v1/agent-order/${list}`, { lines: order }) } finally { refreshAgents().catch(() => {}) }
+      })
+    }
+    renderSidebar()
+  }
+  box.addEventListener('pointerdown', (e) => {
+    if (e.button !== 0 || box.children.length < 2) return
+    let item = e.target
+    while (item && item.parentElement !== box) item = item.parentElement
+    if (!item?.dataset.line) return
+    const { clientX: x, clientY: y, pointerId: id } = e
+    cancel()
+    hold = { x, y, timer: setTimeout(() => start(item, id, y), 450) }
+  })
+  box.addEventListener('pointermove', (e) => {
+    if (hold && Math.hypot(e.clientX - hold.x, e.clientY - hold.y) > 8) cancel()
+    if (!drag || e.pointerId !== drag.id) return
+    e.preventDefault()
+    drag.y = e.clientY
+    place(e.clientY)
+  })
+  box.addEventListener('pointerup', end)
+  box.addEventListener('pointercancel', end)
+  // A row being moved is not scrolled with, nor opened when it is let go,
+  // nor given the long press's menu.
+  box.addEventListener('touchmove', (e) => { if (drag) e.preventDefault() }, { passive: false })
+  box.addEventListener('click', (e) => {
+    if (Date.now() - (S.sortedAt || 0) < 400) { e.preventDefault(); e.stopPropagation() }
+  }, true)
+  box.addEventListener('contextmenu', (e) => { if (hold || drag) e.preventDefault() })
+  return box
+}
+
+// reorderAgents puts one sidebar list's agents in the order of its lines at
+// once, in the places they had among all agents, before the daemon answers.
+function reorderAgents(list, order) {
+  const inList = (a) => !!a.archived_at === (list === 'archived')
+  const rank = new Map(order.map((l, i) => [l, i]))
+  const mine = S.agents.filter(inList)
+    .map((a, i) => [rank.get(a.line || a.id) ?? order.length + i, a])
+    .sort((x, y) => x[0] - y[0]).map(([, a]) => a)
+  let k = 0
+  S.agents = S.agents.map((a) => inList(a) ? mine[k++] : a)
 }
 
 // archivedEntries are the archived agents by line, in order, each line

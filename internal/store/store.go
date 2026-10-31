@@ -142,7 +142,7 @@ func Open(path string) (*Store, error) {
 	// One writer is all SQLite allows anyway; a single connection turns
 	// contention into queueing instead of SQLITE_BUSY.
 	db.SetMaxOpenConns(1)
-	if _, err := db.Exec(schema + envSchema + accountSchema + mailSchema + cronSchema + todoSchema); err != nil {
+	if _, err := db.Exec(schema + envSchema + accountSchema + mailSchema + cronSchema + todoSchema + orderSchema); err != nil {
 		db.Close()
 		return nil, fmt.Errorf("store: schema: %w", err)
 	}
