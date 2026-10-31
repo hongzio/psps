@@ -60,9 +60,10 @@ checked before an agent runs on them.
    - `/` lists its commands and models; Codex's `/compact` compacts and `$`
      lists its skills.
 4. `gero iso upgrade` each isolation, then `gero iso rm canary --purge`.
-   Going back is the old versions in image.go and another upgrade: the old
-   image is still there, so nothing is built. Keep it until the new versions
-   have proven themselves.
+   Going back is the old versions in image.go and another upgrade. With the
+   shim unchanged since, that is the old image, still there, so nothing is
+   built; a new shim makes it a new image, the old versions built with it.
+   Keep the old image until the new versions have proven themselves.
 
 ## Use
 
