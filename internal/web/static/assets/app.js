@@ -670,7 +670,8 @@ function follow(id) {
     const e = JSON.parse(m.data)
     apply(c, e)
     // Status rides the same stream; show it now rather than at the next poll.
-    if (e.kind === 'status' && !e.ephemeral) {
+    // One in the history is long past: the agent's list says what it is now.
+    if (e.kind === 'status' && !e.ephemeral && c.ready) {
       const a = agentById(id)
       if (a && a.state?.status !== e.status) {
         a.state = { ...a.state, status: e.status }
@@ -678,7 +679,9 @@ function follow(id) {
         if (S.sel === id) renderTopbar()
       }
     }
-    if (S.sel === id) scheduleConvo()
+    // The history is drawn once, when it is all there: drawn as it came,
+    // a long one was drawn over and over, each time whole.
+    if (S.sel === id && c.ready) scheduleConvo()
   }
   // After its history: an agent with none has none yet.
   es.addEventListener('ready', () => {
@@ -1634,12 +1637,29 @@ function renderConvo(forceBottom) {
   // caret through that.
   const typing = document.activeElement?.classList.contains('edit-box') ? document.activeElement : null
   const sel = typing && [typing.selectionStart, typing.selectionEnd]
-  const items = groupTools(c.entries).map((en) => entryView(en, a)).filter(Boolean)
+  // Only the latest are drawn, as all of a long one is redrawn with each
+  // event; the earlier come when asked for.
+  const all = groupTools(c.entries)
+  const from = Math.max(0, all.length - (c.shown || convoPage))
+  const items = all.slice(from).map((en) => entryView(en, a)).filter(Boolean)
+  if (from) items.unshift(h('button', { type: 'button', class: 'btn earlier', onclick: () => showEarlier(c) }, `Show earlier (${from} more)`))
   const none = c.ready ? 'Nothing yet: the first message you send starts it.' : 'Loading…'
   inner.replaceChildren(...(items.length ? items : [h('div', { class: 'empty' }, none)]))
   const ta = typing && inner.querySelector('.edit-box')
   if (ta) { ta.focus({ preventScroll: true }); ta.setSelectionRange(...sel) }
   if (atBottom) box.scrollTop = box.scrollHeight
+}
+
+const convoPage = 150
+
+// showEarlier draws a page more of the conversation above, the one read
+// staying where it was.
+function showEarlier(c) {
+  const box = document.getElementById('convo')
+  const below = box.scrollHeight - box.scrollTop
+  c.shown = (c.shown || convoPage) + convoPage
+  renderConvo()
+  box.scrollTop = box.scrollHeight - below
 }
 
 // groupTools folds a run of one tool on one thing in a row (five Edits of
