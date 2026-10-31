@@ -54,8 +54,10 @@ const S = {
   showArchived: false,
   // Lines whose archived sessions are unfolded, by line.
   openLines: new Set(),
-  // A sidebar row is being moved: the sidebar is not redrawn under it.
+  // A sidebar row is held or being moved: the sidebar is not redrawn under
+  // it, but once it is let go.
   sorting: false,
+  sidebarStale: false,
   drawer: false,
   convos: new Map(),
   drafts: new Map(),
@@ -875,7 +877,9 @@ function topbar(title, sub, ...extra) {
 
 function renderSidebar() {
   const el = document.getElementById('sidebar')
-  if (!el || S.sorting) return
+  if (!el) return
+  if (S.sorting) { S.sidebarStale = true; return }
+  S.sidebarStale = false
   const live = S.agents.filter((a) => !a.archived_at)
   const archived = S.agents.filter((a) => a.archived_at)
   const row = (a) => {
@@ -948,7 +952,14 @@ function sortable(list, items) {
   const box = h('div', { class: 'sortable' }, items)
   const scroller = () => box.closest('.agent-list')
   let hold = null, drag = null
-  const cancel = () => { if (hold) clearTimeout(hold.timer); hold = null }
+  const cancel = () => {
+    if (!hold) return
+    clearTimeout(hold.timer)
+    hold = null
+    S.sorting = false
+    // After the click a short press is, which opens the row.
+    if (S.sidebarStale) setTimeout(renderSidebar)
+  }
   const lines = () => [...box.children].map((c) => c.dataset.line)
   // A row moves past another once the pointer is over that one's farther
   // half, so rows of any height do not swap back and forth.
@@ -976,7 +987,6 @@ function sortable(list, items) {
   const start = (item, id, y) => {
     hold = null
     drag = { item, id, y, before: lines().join('\n') }
-    S.sorting = true
     item.classList.add('dragging')
     box.classList.add('sorting')
     try { box.setPointerCapture(id) } catch {}
@@ -1009,6 +1019,7 @@ function sortable(list, items) {
     const { clientX: x, clientY: y, pointerId: id } = e
     cancel()
     hold = { x, y, timer: setTimeout(() => start(item, id, y), 450) }
+    S.sorting = true
   })
   box.addEventListener('pointermove', (e) => {
     if (hold && Math.hypot(e.clientX - hold.x, e.clientY - hold.y) > 8) cancel()
@@ -1019,6 +1030,7 @@ function sortable(list, items) {
   })
   box.addEventListener('pointerup', end)
   box.addEventListener('pointercancel', end)
+  box.addEventListener('pointerleave', () => { if (hold) cancel() })
   // A row being moved is not scrolled with, nor opened when it is let go,
   // nor given the long press's menu.
   box.addEventListener('touchmove', (e) => { if (drag) e.preventDefault() }, { passive: false })
