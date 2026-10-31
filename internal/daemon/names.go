@@ -1,6 +1,7 @@
 package daemon
 
 import (
+	"cmp"
 	"errors"
 	"math/rand/v2"
 	"strconv"
@@ -161,6 +162,9 @@ func (m *Manager) newAgentHandle() (string, error) {
 // storeNamed stores a new agent, picking its name again if another agent
 // took that one meanwhile; an ID the operator chose is refused instead.
 func (m *Manager) storeNamed(a store.Agent, picked bool) (store.Agent, error) {
+	// A new agent begins its own line, as the store has it; the runtime
+	// is given this agent, not one read back.
+	a.Line = cmp.Or(a.Line, a.ID)
 	for try := 0; ; try++ {
 		err := m.store.CreateAgent(a)
 		if !picked || try == 4 || !errors.Is(err, store.ErrExists) {

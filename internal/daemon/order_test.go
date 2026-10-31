@@ -19,9 +19,9 @@ func TestTheOperatorsOrderComesFirstInEachList(t *testing.T) {
 		return a
 	}
 	as := []agentView{agent("a", "A", false), agent("a0", "A", true), agent("b", "B", false), agent("c", "C", false),
-		agent("d0", "D", true), agent("new", "N", false)}
+		agent("d0", "D", true), agent("new", "N", false), agent("e", "", false)}
 	orderAgents(as, map[string]map[string]int{
-		store.LiveList:     {"C": 0, "A": 1, "B": 2},
+		store.LiveList:     {"C": 0, "e": 1, "A": 2, "B": 3},
 		store.ArchivedList: {"D": 0, "A": 1},
 	})
 	var live, archived []string
@@ -32,7 +32,7 @@ func TestTheOperatorsOrderComesFirstInEachList(t *testing.T) {
 			live = append(live, a.ID)
 		}
 	}
-	if got, want := live, []string{"c", "a", "b", "new"}; !slices.Equal(got, want) {
+	if got, want := live, []string{"c", "e", "a", "b", "new"}; !slices.Equal(got, want) {
 		t.Errorf("live %v, want %v", got, want)
 	}
 	if got, want := archived, []string{"d0", "a0"}; !slices.Equal(got, want) {

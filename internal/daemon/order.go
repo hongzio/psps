@@ -1,6 +1,7 @@
 package daemon
 
 import (
+	"cmp"
 	"errors"
 	"fmt"
 	"sort"
@@ -36,7 +37,7 @@ func orderAgents(as []agentView, order map[string]map[string]int) {
 		if a.ArchivedAt != nil {
 			list = store.ArchivedList
 		}
-		p, ok := order[list][a.Line]
+		p, ok := order[list][cmp.Or(a.Line, a.ID)]
 		return p, ok
 	}
 	sort.SliceStable(as, func(i, j int) bool {
