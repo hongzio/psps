@@ -2096,7 +2096,7 @@ function sendButton(a, ta, submit) {
     toast('Put aside in TODO')
     guarded(refreshAgents)
   })
-  menu.append(h('button', { type: 'button', class: 'btn', onclick: todo }, icon('list-todo'), ' TODO'))
+  menu.append(h('button', { type: 'button', class: 'btn primary send-btn', onclick: todo }, 'TODO'))
   const btn = h('button', { class: 'btn primary send-btn', disabled: !!a.archived_at, title: 'Hold for TODO' }, 'Send')
   btn.addEventListener('pointerdown', (e) => {
     if (e.button !== 0) return
