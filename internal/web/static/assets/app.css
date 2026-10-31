@@ -698,7 +698,9 @@ body.resizing { cursor: col-resize; user-select: none; -webkit-user-select: none
 .todo-list { display: grid; gap: 8px; max-height: 45vh; overflow-y: auto; }
 .todo { border: 1px solid var(--border); border-radius: 8px; padding: 8px 10px; }
 .todo-text { white-space: pre-wrap; overflow-wrap: anywhere; font-size: 13.5px; }
-.todo-actions { display: flex; justify-content: flex-end; gap: 6px; margin-top: 8px; }
+.todo-actions { display: flex; justify-content: flex-end; align-items: center; gap: 6px; margin-top: 8px; }
+.todo-auto { margin-right: auto; font-size: 13px; }
+.todo.auto { border-color: var(--accent); }
 .todo-new textarea.dialog-input { min-height: 72px; resize: vertical; font: inherit; font-size: 14px; }
 .cron-form .dialog-field { margin-top: 0; margin-bottom: 14px; }
 .cron-form .dialog-field > .segmented { justify-self: start; }

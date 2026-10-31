@@ -1466,11 +1466,13 @@ async function openTodos(a) {
   const changed = async () => { await load(); draw(); guarded(refreshAgents) }
   const text = h('textarea', { class: 'dialog-input', rows: 3, placeholder: 'A prompt to send it later', 'aria-label': 'New TODO' })
   const err = h('p', { class: 'form-error', role: 'alert', hidden: true })
+  const autoNew = h('input', { type: 'checkbox' })
+  const autoTitle = 'Sent by itself when a turn ends in idle, oldest first, one a turn'
   const add = async () => {
     if (!text.value.trim()) { text.focus(); return }
     err.hidden = true
     try {
-      await api('POST', `/v1/agents/${enc(a.id)}/todos`, { text: text.value })
+      await api('POST', `/v1/agents/${enc(a.id)}/todos`, { text: text.value, auto: autoNew.checked })
       text.value = ''
       await changed()
       text.focus()
@@ -1503,21 +1505,29 @@ async function openTodos(a) {
     if (!await ask({ title: 'Delete this TODO?', body: clip(t.text, 3), ok: 'Delete', danger: true })) return
     await guarded(async () => { await api('DELETE', `/v1/agents/${enc(a.id)}/todos/${t.id}`); await changed() })
   }
-  const row = (t) => h('div', { class: 'todo' },
+  const setAuto = (t, on) => guarded(async () => {
+    await api('PATCH', `/v1/agents/${enc(a.id)}/todos/${t.id}`, { auto: on })
+    await changed()
+  })
+  const row = (t) => h('div', { class: 'todo' + (t.auto ? ' auto' : '') },
     h('div', { class: 'todo-text' }, clip(t.text, 6)),
     h('div', { class: 'todo-actions' },
+      h('label', { class: 'check todo-auto', title: autoTitle },
+        h('input', { type: 'checkbox', checked: !!t.auto, onchange: (e) => setAuto(t, e.target.checked) }), 'Send when idle'),
       h('button', { type: 'button', class: 'btn small ghost danger', onclick: () => remove(t) }, 'Delete'),
       h('button', { type: 'button', class: 'btn small primary', title: 'Into the message box, and off the list', onclick: () => apply(t) }, 'Apply')))
   const draw = () => box.replaceChildren(
     todos.length ? h('div', { class: 'todo-list' }, todos.map(row)) : h('p', { class: 'mail-lead' }, 'Nothing put aside yet.'),
     h('div', { class: 'todo-new' }, text, err,
-      h('div', { class: 'todo-actions' }, h('button', { type: 'button', class: 'btn', onclick: add }, 'Save'))))
+      h('div', { class: 'todo-actions' },
+        h('label', { class: 'check todo-auto', title: autoTitle }, autoNew, 'Send when idle'),
+        h('button', { type: 'button', class: 'btn', onclick: add }, 'Save'))))
   await load()
   draw()
   queueMicrotask(() => text.focus())
   await ask({
     title: `TODO of "${agentTitle(a)}"`,
-    body: 'Prompts put aside to send it later. Apply puts one in the message box and takes it off the list.',
+    body: 'Prompts put aside to send it later. Apply puts one in the message box and takes it off the list. Send when idle sends it by itself the next time a turn ends, oldest first, one a turn.',
     extra: box, cancel: 'Close', wide: true,
   })
 }

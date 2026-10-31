@@ -347,7 +347,24 @@ func (m *Manager) Handler() http.Handler {
 		if !decode(w, r, &req) {
 			return
 		}
-		v, err := m.AddTodo(r.PathValue("id"), req.Text)
+		v, err := m.AddTodo(r.PathValue("id"), req.Text, req.Auto)
+		reply(w, v, err)
+	})
+	mux.HandleFunc("PATCH /v1/agents/{id}/todos/{todo}", func(w http.ResponseWriter, r *http.Request) {
+		id, err := strconv.ParseInt(r.PathValue("todo"), 10, 64)
+		if err != nil {
+			reply(w, nil, badRequest(fmt.Errorf("%q is not a todo number", r.PathValue("todo"))))
+			return
+		}
+		var req api.PutTodo
+		if !decode(w, r, &req) {
+			return
+		}
+		if req.Auto == nil {
+			reply(w, nil, badRequest(errors.New("nothing to change")))
+			return
+		}
+		v, err := m.SetTodoAuto(r.PathValue("id"), id, *req.Auto)
 		reply(w, v, err)
 	})
 	// Deleting a todo hands it back: whoever deletes it is the one to have it.

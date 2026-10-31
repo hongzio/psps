@@ -13,6 +13,9 @@ type Todo struct {
 	ID        int64     `json:"id"`
 	Agent     string    `json:"agent"`
 	Text      string    `json:"text"`
+	// Auto sends it by itself, oldest first, one each time the agent goes
+	// from a turn to idle.
+	Auto      bool      `json:"auto"`
 	CreatedAt time.Time `json:"created_at"`
 }
 
@@ -29,7 +32,7 @@ CREATE INDEX IF NOT EXISTS todos_agent ON todos(agent, id);
 // AddTodo stores t and returns it with its ID.
 func (s *Store) AddTodo(t Todo) (Todo, error) {
 	t.CreatedAt = time.Now().UTC().Truncate(time.Second)
-	res, err := s.db.Exec(`INSERT INTO todos (agent, text, created_at) VALUES (?, ?, ?)`, t.Agent, t.Text, ts(t.CreatedAt))
+	res, err := s.db.Exec(`INSERT INTO todos (agent, text, auto, created_at) VALUES (?, ?, ?, ?)`, t.Agent, t.Text, t.Auto, ts(t.CreatedAt))
 	if err != nil {
 		return t, err
 	}
@@ -39,7 +42,7 @@ func (s *Store) AddTodo(t Todo) (Todo, error) {
 
 // Todos are agent's, oldest first.
 func (s *Store) Todos(agent string) ([]Todo, error) {
-	rows, err := s.db.Query(`SELECT id, agent, text, created_at FROM todos WHERE agent = ? ORDER BY id`, agent)
+	rows, err := s.db.Query(`SELECT id, agent, text, auto, created_at FROM todos WHERE agent = ? ORDER BY id`, agent)
 	if err != nil {
 		return nil, err
 	}
@@ -48,7 +51,7 @@ func (s *Store) Todos(agent string) ([]Todo, error) {
 	for rows.Next() {
 		var t Todo
 		var at string
-		if err := rows.Scan(&t.ID, &t.Agent, &t.Text, &at); err != nil {
+		if err := rows.Scan(&t.ID, &t.Agent, &t.Text, &t.Auto, &at); err != nil {
 			return nil, err
 		}
 		t.CreatedAt = parseTS(at)
@@ -62,7 +65,7 @@ func (s *Store) Todos(agent string) ([]Todo, error) {
 func (s *Store) TakeTodo(agent string, id int64) (Todo, error) {
 	t := Todo{ID: id, Agent: agent}
 	var at string
-	err := s.db.QueryRow(`DELETE FROM todos WHERE id = ? AND agent = ? RETURNING text, created_at`, id, agent).Scan(&t.Text, &at)
+	err := s.db.QueryRow(`DELETE FROM todos WHERE id = ? AND agent = ? RETURNING text, auto, created_at`, id, agent).Scan(&t.Text, &t.Auto, &at)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return t, fmt.Errorf("agent %s has no todo %d: %w", agent, id, ErrNotFound)
@@ -71,6 +74,48 @@ func (s *Store) TakeTodo(agent string, id int64) (Todo, error) {
 	}
 	t.CreatedAt = parseTS(at)
 	return t, nil
+}
+
+// SetTodoAuto sets whether one of agent's todos is sent by itself.
+func (s *Store) SetTodoAuto(agent string, id int64, auto bool) (Todo, error) {
+	t := Todo{ID: id, Agent: agent, Auto: auto}
+	var at string
+	err := s.db.QueryRow(`UPDATE todos SET auto = ? WHERE id = ? AND agent = ? RETURNING text, created_at`, auto, id, agent).Scan(&t.Text, &at)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return t, fmt.Errorf("agent %s has no todo %d: %w", agent, id, ErrNotFound)
+		}
+		return t, err
+	}
+	t.CreatedAt = parseTS(at)
+	return t, nil
+}
+
+// SendTodo moves agent's oldest auto todo to its outbox, in one
+// transaction: from then on it is a message like the operator's.
+func (s *Store) SendTodo(agent string, after int64) (Pending, error) {
+	tx, err := s.db.Begin()
+	if err != nil {
+		return Pending{}, err
+	}
+	defer tx.Rollback()
+	var text string
+	err = tx.QueryRow(`DELETE FROM todos WHERE id = (SELECT id FROM todos WHERE agent = ? AND auto ORDER BY id LIMIT 1) RETURNING text`, agent).Scan(&text)
+	if errors.Is(err, sql.ErrNoRows) {
+		return Pending{}, fmt.Errorf("agent %s has no auto todo: %w", agent, ErrNotFound)
+	}
+	if err != nil {
+		return Pending{}, err
+	}
+	res, err := tx.Exec(`INSERT INTO outbox (agent, text, after, created_at) VALUES (?, ?, ?, ?)`, agent, text, after, ts(time.Now()))
+	if err != nil {
+		return Pending{}, err
+	}
+	p := Pending{Text: text, After: after}
+	if p.ID, err = res.LastInsertId(); err != nil {
+		return Pending{}, err
+	}
+	return p, tx.Commit()
 }
 
 // TodoCounts are how many todos each agent has.

@@ -224,6 +224,14 @@ type PutCron struct {
 // AddTodo puts a prompt aside for an agent.
 type AddTodo struct {
 	Text string `json:"text"`
+	// Auto sends it by itself, oldest first, one each time a turn of the
+	// agent's ends in idle.
+	Auto bool `json:"auto,omitempty"`
+}
+
+// PutTodo changes a todo; what is left out stays as it is.
+type PutTodo struct {
+	Auto *bool `json:"auto,omitempty"`
 }
 
 type Decision struct {

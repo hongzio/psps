@@ -55,6 +55,10 @@ type runtime struct {
 	// oldest first, whenever it is idle. crons is how many of its crons
 	// have a run waiting for it, sent the same way after the mail.
 	inbox, crons int
+	// todoDue is set when a turn ends in idle: then, and only then, the
+	// oldest auto todo is sent, ahead of mail and crons. Another turn, an
+	// approval or a failure clears it.
+	todoDue bool
 }
 
 func (m *Manager) newRuntime(a store.Agent) (*runtime, error) {
@@ -148,6 +152,7 @@ func (r *runtime) observe(rec shimproto.Record, liveAfter int64) {
 		return
 	}
 	r.lastSeen = rec.Seq
+	was := r.drv.State().Status
 	evs := r.drv.Observe(rec)
 
 	for _, e := range evs {
@@ -162,6 +167,16 @@ func (r *runtime) observe(rec shimproto.Record, liveAfter int64) {
 		case event.KindApprovalDone:
 			delete(r.decisions, e.Approval.ID)
 		case event.KindStatus:
+			switch e.Status {
+			case event.StatusIdle:
+				// Not on a replay: what was due then is not now.
+				if was == event.StatusWorking && rec.Seq > r.agent.LastSrc {
+					r.todoDue = true
+				}
+			case event.StatusStarting:
+			default:
+				r.todoDue = false
+			}
 			// Something new (a turn, an approval, a failure) wants a look
 			// again. A record replayed from before does not.
 			if r.agent.Parked && rec.Seq > r.agent.LastSrc && e.Status != event.StatusIdle && e.Status != event.StatusStarting {
@@ -260,6 +275,10 @@ func (r *runtime) kickLocked() {
 		r.problem = ""
 	}
 	st = r.drv.State()
+	if fenced && r.todoDue && r.freeLocked(st) {
+		r.sendTodoLocked()
+		st = r.drv.State()
+	}
 	if fenced && r.mailDueLocked(st) {
 		r.deliverMailLocked()
 		st = r.drv.State()
