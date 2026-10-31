@@ -1645,6 +1645,7 @@ let lastSentQueued = false
 const drawn = new WeakMap()
 // sentBy is the message a node shows, for those the person sent.
 const sentBy = new WeakMap()
+const isSent = (en) => en.kind === 'user' && !letter(en.text) && !cronMsg(en.text)
 
 // drawnSig is what an entry's view is drawn from, the agent's part included.
 function drawnSig(en, a) {
@@ -1669,7 +1670,7 @@ function drawEntry(en, a) {
   if (was && was.sig === sig) return was.node
   const node = entryView(en, a)
   if (node) drawn.set(key, { sig, node })
-  if (node && en.kind === 'user' && !letter(en.text) && !cronMsg(en.text)) sentBy.set(node, en)
+  if (node && isSent(en)) sentBy.set(node, en)
   return node
 }
 
@@ -1688,8 +1689,12 @@ function renderConvo(forceBottom) {
   // still as one went above it.
   const all = groupTools(c.entries)
   if (!stick && c.from !== undefined) c.shown = Math.max(c.shown || convoPage, all.length - c.from)
-  const from = Math.max(0, all.length - (c.shown || convoPage))
+  // What is drawn starts at a message the person sent, so whatever is read
+  // has the one it answers drawn, to pin.
+  let from = Math.max(0, all.length - (c.shown || convoPage))
+  while (from > 0 && !isSent(all[from])) from--
   c.from = from
+  c.count = all.length - from
   const items = all.slice(from).map((en) => drawEntry(en, a)).filter(Boolean)
   c.hidden = from
   if (from) {
@@ -1741,7 +1746,7 @@ function renderLastSent() {
 function showEarlier(c) {
   const box = document.getElementById('convo')
   const below = box.scrollHeight - box.scrollTop
-  c.shown = (c.shown || convoPage) + convoPage
+  c.shown = (c.count || convoPage) + convoPage
   renderConvo()
   box.scrollTop = box.scrollHeight - below
 }
