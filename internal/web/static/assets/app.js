@@ -1943,15 +1943,32 @@ function renderSettings(a) {
 // input could go on to, asked of the isolation as typing pauses: arrows
 // choose, Tab or Enter takes one and goes on into it, Esc closes the list.
 // A path typed with ~ keeps it.
+// The working directory last given for a new agent, per isolation. It
+// is a convenience of this browser only.
+function recentDir(iso) {
+  try { return JSON.parse(localStorage.getItem('gero.recentDirs') || '{}')[iso] || null } catch { return null }
+}
+
+function rememberDir(iso, dir) {
+  try {
+    const all = JSON.parse(localStorage.getItem('gero.recentDirs') || '{}')
+    all[iso] = dir
+    localStorage.setItem('gero.recentDirs', JSON.stringify(all))
+  } catch {}
+}
+
 function dirCompleter(input, isoName) {
   const box = h('div', { class: 'complete below', role: 'listbox', hidden: true })
   let items = [], active = 0, seq = 0, timer = null
   const close = () => { box.hidden = true; items = []; seq++ }
+  let recent = null
   const draw = (note) => {
     box.replaceChildren(...items.map((d, i) => h('div', {
       class: 'complete-item dir' + (i === active ? ' active' : ''), role: 'option', 'aria-selected': String(i === active),
       onmousedown: (e) => { e.preventDefault(); active = i; accept() },
-    }, h('span', { class: 'ci-name' }, d))), ...(note ? [h('div', { class: 'complete-note' }, note)] : []))
+    }, h('span', { class: 'ci-name' }, d),
+      d === recent ? h('span', { class: 'ci-tag', title: 'The directory last given for an agent in this isolation' }, 'recent') : null)),
+    ...(note ? [h('div', { class: 'complete-note' }, note)] : []))
     box.hidden = !items.length && !note
     box.querySelector('.active')?.scrollIntoView({ block: 'nearest' })
   }
@@ -1965,6 +1982,12 @@ function dirCompleter(input, isoName) {
       if (my !== seq) return
       const tilde = (p) => (typed.trim() === '' || typed.trim().startsWith('~')) && (p + '/').startsWith(d.home + '/') ? '~' + p.slice(d.home.length) : p
       items = d.dirs.map(tilde)
+      // The last one given in this isolation leads, while what is typed
+      // could still become it.
+      recent = recentDir(iso)
+      const t = typed.trim()
+      if (recent && recent !== t && recent.startsWith(t)) items = [recent, ...items.filter((p) => p !== recent)]
+      else recent = null
       active = 0
       draw(items.length ? null : 'No such directory here: it is made when the agent is.')
     } catch (e) {
@@ -2052,6 +2075,7 @@ function newAgentView() {
         workdir: workdir.value.trim() || undefined,
         options: { effort: effort.value || undefined, model: model.value.trim() || undefined, approvals: approvals.value },
       })
+      if (workdir.value.trim()) rememberDir(iso.value, workdir.value.trim())
       await refreshAgents()
       select(a.id)
       // Without a first message it waits for one.
