@@ -842,6 +842,52 @@ async function decide(approvalID, decision, answers) {
   await guarded(() => api('POST', `/v1/agents/${S.sel}/approvals/${encodeURIComponent(approvalID)}`, { decision, answers }))
 }
 
+// ---- Sidebar width: its edge is dragged, by mouse or touch, and the
+// width is kept in this browser. A double click puts it back.
+
+const sidebarDefault = 290
+function setSidebarWidth(w) {
+  if (w == null) { root.style.removeProperty('--sidebar-w'); return }
+  w = Math.round(Math.min(Math.max(w, 200), Math.min(640, window.innerWidth * 0.6)))
+  root.style.setProperty('--sidebar-w', w + 'px')
+  return w
+}
+try { const w = +localStorage.getItem('gero.sidebarWidth'); if (w) setSidebarWidth(w) } catch {}
+
+function sidebarResizer() {
+  const bar = h('div', { class: 'sidebar-resizer', role: 'separator', 'aria-orientation': 'vertical', title: 'Drag to resize · double-click to reset' })
+  let startX = 0, startW = 0, w = null
+  const move = (e) => {
+    w = setSidebarWidth(startW + e.clientX - startX)
+    fitTopbar()
+  }
+  const end = () => {
+    bar.classList.remove('dragging')
+    document.body.classList.remove('resizing')
+    bar.removeEventListener('pointermove', move)
+    try { if (w) localStorage.setItem('gero.sidebarWidth', String(w)) } catch {}
+  }
+  bar.addEventListener('pointerdown', (e) => {
+    if (e.button !== 0) return
+    e.preventDefault()
+    startX = e.clientX
+    startW = document.getElementById('sidebar').getBoundingClientRect().width
+    w = null
+    bar.setPointerCapture(e.pointerId)
+    bar.classList.add('dragging')
+    document.body.classList.add('resizing')
+    bar.addEventListener('pointermove', move)
+  })
+  bar.addEventListener('pointerup', end)
+  bar.addEventListener('pointercancel', end)
+  bar.addEventListener('dblclick', () => {
+    setSidebarWidth(null)
+    try { localStorage.removeItem('gero.sidebarWidth') } catch {}
+    fitTopbar()
+  })
+  return bar
+}
+
 // ---- Rendering
 
 function render() {
@@ -853,7 +899,7 @@ function render() {
     return
   }
   root.style.display = ''
-  root.append(h('aside', { class: 'sidebar', id: 'sidebar' }), h('div', { class: 'scrim', onclick: () => { S.drawer = false; render() } }))
+  root.append(h('aside', { class: 'sidebar', id: 'sidebar' }), sidebarResizer(), h('div', { class: 'scrim', onclick: () => { S.drawer = false; render() } }))
   const main = h('main', { class: 'main', id: 'main' })
   root.append(main)
   renderSidebar()

@@ -60,9 +60,23 @@ code, pre { font-family: var(--mono); font-size: 13px; }
 
 .app {
   display: grid;
-  grid-template-columns: 290px 1fr;
+  grid-template-columns: var(--sidebar-w, 290px) 1fr;
   height: 100dvh;
+  position: relative;
 }
+
+/* The sidebar's edge, dragged to resize it: wider than the line it sits on,
+   so a finger finds it. */
+.sidebar-resizer {
+  position: absolute; top: 0; bottom: 0; left: calc(var(--sidebar-w, 290px) - 6px); width: 12px;
+  z-index: 15; cursor: col-resize; touch-action: none;
+}
+.sidebar-resizer::after {
+  content: ''; position: absolute; top: 0; bottom: 0; left: 5px; width: 2px;
+  background: var(--accent); opacity: 0; transition: opacity .15s;
+}
+.sidebar-resizer:hover::after, .sidebar-resizer.dragging::after { opacity: 1; }
+body.resizing { cursor: col-resize; user-select: none; -webkit-user-select: none; }
 
 /* Sidebar */
 .sidebar {
@@ -493,6 +507,7 @@ code, pre { font-family: var(--mono); font-size: 13px; }
 /* Phones: the sidebar becomes a drawer */
 @media (max-width: 760px) {
   .app { grid-template-columns: 1fr; }
+  .sidebar-resizer { display: none; }
   .sidebar {
     position: fixed;
     inset: 0 auto 0 0;
