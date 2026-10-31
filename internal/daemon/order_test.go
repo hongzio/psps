@@ -39,3 +39,19 @@ func TestTheOperatorsOrderComesFirstInEachList(t *testing.T) {
 		t.Errorf("archived %v, want %v", got, want)
 	}
 }
+
+func TestTheOrderKeepsTheSidebarsDividers(t *testing.T) {
+	e := newTestEnv(t)
+	m, stop := e.daemon()
+	defer stop()
+	if err := m.SetOrder(store.LiveList, []string{"a", "divider:1f", "b"}); err != nil {
+		t.Fatal(err)
+	}
+	o, err := m.Order()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !slices.Equal(o.Live, []string{"a", "divider:1f", "b"}) || o.Archived == nil || len(o.Archived) != 0 {
+		t.Fatalf("%+v", o)
+	}
+}

@@ -707,10 +707,11 @@ function scheduleConvo() {
 let agentsAsked = 0
 async function refreshAgents() {
   const n = ++agentsAsked
-  const agents = await api('GET', '/v1/agents')
+  const [agents, order] = await Promise.all([api('GET', '/v1/agents'), api('GET', '/v1/agent-order')])
   if (n !== agentsAsked) return
   const before = agentById(S.sel)
   S.agents = agents
+  S.order = order
   // The open agent was archived as a new session took its place (/new):
   // go on in the new one, as if it were the same agent.
   const now = agentById(S.sel)
@@ -993,10 +994,12 @@ function renderSidebar() {
       open ? h('div', { class: 'line-sessions' }, e.sessions.map(row)) : null)
   })
   el.replaceChildren(
-    h('div', { class: 'brand' }, 'gero', h('span', { class: 'count' }, `${live.length} agent${live.length === 1 ? '' : 's'}`)),
+    h('div', { class: 'brand' }, 'gero', h('span', { class: 'count' }, `${live.length} agent${live.length === 1 ? '' : 's'}`),
+      h('button', { class: 'add-divider', title: 'Add a divider at the bottom; hold it to move it', 'aria-label': 'Add a divider', onclick: addDivider },
+        icon('separator-horizontal'))),
     h('button', { class: 'new-agent' + (S.view === 'new' ? ' active' : ''), onclick: () => show('new') }, '+ New agent'),
     h('div', { class: 'agent-list' },
-      sortable('live', live.map(row)),
+      sortable('live', liveRows(live, row)),
       h('button', { class: 'fold', onclick: () => { S.showArchived = !S.showArchived; renderSidebar() } },
         icon(S.showArchived ? 'chevron-down' : 'chevron-right'), ` Archived (${archived.length})`),
       S.showArchived ? sortable('archived', archivedRows()) : null),
@@ -1103,6 +1106,51 @@ function sortable(list, items) {
   return box
 }
 
+// ---- Dividers: thin lines between the live agents, kept in the daemon's
+// order of the list as "divider:<id>", so every UI draws the same ones.
+
+const isDivider = (line) => line.startsWith('divider:')
+
+// liveRows are the live agents' rows with the dividers where the order
+// has them; agents it has not placed come after, as the daemon sorts them.
+function liveRows(live, row) {
+  const byLine = new Map(live.map((a) => [a.line || a.id, a]))
+  const out = [], drawn = new Set()
+  for (const l of S.order?.live || []) {
+    if (isDivider(l)) out.push(dividerRow(l))
+    else if (byLine.has(l)) { out.push(row(byLine.get(l))); drawn.add(l) }
+  }
+  for (const a of live) if (!drawn.has(a.line || a.id)) out.push(row(a))
+  return out
+}
+
+function dividerRow(line) {
+  return h('div', { class: 'divider', 'data-line': line, role: 'separator' },
+    h('button', {
+      class: 'divider-x', title: 'Remove this divider', 'aria-label': 'Remove divider',
+      onclick: (e) => { e.stopPropagation(); setLiveOrder(liveLines().filter((l) => l !== line)) },
+    }, icon('x')))
+}
+
+// liveLines are the live list as it is drawn, from the top.
+function liveLines() {
+  const box = document.querySelector('#sidebar .sortable')
+  return box ? [...box.children].map((c) => c.dataset.line) : []
+}
+
+function addDivider() {
+  const id = [...crypto.getRandomValues(new Uint8Array(4))].map((b) => b.toString(16).padStart(2, '0')).join('')
+  setLiveOrder([...liveLines(), 'divider:' + id])
+}
+
+function setLiveOrder(lines) {
+  S.order = { ...S.order, live: lines }
+  renderSidebar()
+  guarded(async () => {
+    try { await api('PUT', '/v1/agent-order/live', { lines }) } finally { refreshAgents().catch(() => {}) }
+  })
+}
+
 // reorderAgents puts one sidebar list's agents in the order of its lines at
 // once, in the places they had among all agents, before the daemon answers.
 function reorderAgents(list, order) {
@@ -1113,6 +1161,7 @@ function reorderAgents(list, order) {
     .sort((x, y) => x[0] - y[0]).map(([, a]) => a)
   let k = 0
   S.agents = S.agents.map((a) => inList(a) ? mine[k++] : a)
+  S.order = { ...S.order, [list]: order }
 }
 
 // archivedEntries are the archived agents by line, in order, each line

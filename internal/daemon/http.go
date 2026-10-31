@@ -361,6 +361,10 @@ func (m *Manager) Handler() http.Handler {
 		reply(w, v, err)
 	})
 	// The sidebar's order of a list, live or archived: its lines from the top.
+	mux.HandleFunc("GET /v1/agent-order", func(w http.ResponseWriter, r *http.Request) {
+		v, err := m.Order()
+		reply(w, v, err)
+	})
 	mux.HandleFunc("PUT /v1/agent-order/{list}", func(w http.ResponseWriter, r *http.Request) {
 		var req api.AgentOrder
 		if !decode(w, r, &req) {

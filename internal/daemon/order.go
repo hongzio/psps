@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"sort"
 
+	"github.com/hongzio/gero/internal/api"
 	"github.com/hongzio/gero/internal/store"
 )
 
@@ -26,6 +27,16 @@ func (m *Manager) SetOrder(list string, lines []string) error {
 		seen[l] = true
 	}
 	return m.store.SetOrder(list, lines)
+}
+
+// Order is every sidebar list from the top, dividers included, for each
+// UI to draw the one sidebar.
+func (m *Manager) Order() (api.AgentOrders, error) {
+	ls, err := m.store.Lists()
+	if err != nil {
+		return api.AgentOrders{}, err
+	}
+	return api.AgentOrders{Live: ls[store.LiveList], Archived: ls[store.ArchivedList]}, nil
 }
 
 // orderAgents puts the lines the operator ordered first in each list, in

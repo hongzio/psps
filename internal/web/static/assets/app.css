@@ -84,6 +84,22 @@ code, pre { font-family: var(--mono); font-size: 13px; }
 body.resizing { cursor: col-resize; user-select: none; -webkit-user-select: none; }
 
 /* Sidebar */
+.brand .add-divider {
+  margin-left: 6px; padding: 2px 4px; border: 0; border-radius: 6px; background: transparent; color: var(--faint);
+  font-size: 13px; line-height: 1;
+}
+.brand .add-divider:hover { color: var(--text); background: var(--border); }
+/* A divider: a thin line, in a strip tall enough to hold and drag. */
+.sortable > .divider { position: relative; height: 14px; margin: 2px 10px; border-radius: 6px; }
+.sortable > .divider::before { content: ''; position: absolute; left: 0; right: 0; top: 50%; border-top: 1px solid var(--border); }
+.sortable > .divider .divider-x {
+  position: absolute; right: -4px; top: 50%; transform: translateY(-50%);
+  width: 20px; height: 20px; padding: 0; border: 0; border-radius: 50%;
+  display: grid; place-items: center; background: var(--sidebar); color: var(--faint); font-size: 12px; opacity: 0;
+}
+.sortable > .divider:hover .divider-x { opacity: 1; }
+.sortable > .divider .divider-x:hover { color: var(--err); }
+@media (hover: none) { .sortable > .divider .divider-x { opacity: .6; } }
 .sidebar {
   background: var(--sidebar);
   border-right: 1px solid var(--border);
@@ -99,7 +115,7 @@ body.resizing { cursor: col-resize; user-select: none; -webkit-user-select: none
   font-weight: 700;
   letter-spacing: .02em;
 }
-.brand .count { color: var(--muted); font-weight: 400; font-size: 13px; }
+.brand .count { margin-left: auto; color: var(--muted); font-weight: 400; font-size: 13px; }
 .new-agent {
   margin: 4px 12px 10px;
   padding: 9px 12px;
