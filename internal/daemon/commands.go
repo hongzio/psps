@@ -268,11 +268,16 @@ func (m *Manager) Dirs(ctx context.Context, isoName, typed string) (api.Dirs, er
 const branchScript = `cd "$1" 2>/dev/null || exit 0
 git --no-optional-locks symbolic-ref --short -q HEAD 2>/dev/null || git --no-optional-locks rev-parse --short -q HEAD 2>/dev/null || true`
 
-// Branch is the git branch of the agent's workspace, for its status line.
+// Branch is the git branch of the agent's workspace, for its status line:
+// of where its CLI says it runs, a worktree perhaps, else its workdir.
 func (m *Manager) Branch(ctx context.Context, id string) (api.Branch, error) {
-	a, err := m.storedAgent(id)
+	a, err := m.Agent(id)
 	if err != nil {
 		return api.Branch{}, err
+	}
+	dir := a.Workdir
+	if u := a.State.Usage; u != nil && u.Cwd != "" {
+		dir = u.Cwd
 	}
 	if a.ArchivedAt != nil {
 		return api.Branch{}, nil
@@ -283,7 +288,7 @@ func (m *Manager) Branch(ctx context.Context, id string) (api.Branch, error) {
 	}
 	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
-	out, err := m.cli.RunAsAgent(ctx, iso.Container, "sh", "-c", branchScript, "sh", a.Workdir)
+	out, err := m.cli.RunAsAgent(ctx, iso.Container, "sh", "-c", branchScript, "sh", dir)
 	if err != nil {
 		return api.Branch{}, fmt.Errorf("reading the workspace's branch: %w", err)
 	}

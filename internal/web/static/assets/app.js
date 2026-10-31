@@ -1943,6 +1943,23 @@ function left(at) {
 
 const windowNames = { five_hour: '5h', seven_day: '7d' }
 
+// planLimits are a's plan windows as its isolation's agents last said
+// them: they are the account's, not its own, and an agent that has not
+// run since a window started over says the one before.
+function planLimits(a) {
+  const latest = new Map()
+  for (const b of S.agents) {
+    if (b.archived_at || b.isolation !== a.isolation) continue
+    for (const l of b.state?.usage?.limits || []) {
+      // Within one window use only grows: the most said is the latest.
+      const k = latest.get(l.window), at = l.resets_at || 0, kat = k?.resets_at || 0
+      if (!k || kat < at || kat === at && k.percent < l.percent) latest.set(l.window, l)
+    }
+  }
+  const now = Date.now() / 1000
+  return [...latest.values()].filter((l) => !l.resets_at || l.resets_at > now).sort((p, q) => p.window.localeCompare(q.window))
+}
+
 function renderStatusLine() {
   const slot = document.getElementById('status-slot')
   const a = agentById(S.sel)
@@ -1962,7 +1979,7 @@ function renderStatusLine() {
     parts.push(h('span', { class: used >= 80 ? 'sl-low' : used >= 50 ? 'sl-warn' : null },
       `ctx ${used}% (${tokens(u.context || 0)}/${tokens(u.window)})`))
   }
-  for (const l of u.limits || []) {
+  for (const l of planLimits(a)) {
     const name = windowNames[l.window]
     if (name) parts.push(h('span', { class: l.percent >= 90 ? 'sl-low' : l.percent >= 70 ? 'sl-warn' : null },
       `${name} ${Math.round(l.percent)}%` + (l.resets_at ? ` (${left(l.resets_at)})` : '')))
