@@ -1969,7 +1969,6 @@ function renderStatusLine() {
   const dir = (u.cwd || a.workdir || '').replace(/^\/home\/agent(?=\/|$)/, '~')
   const branch = readBranch(a)
   const parts = [
-    dir && h('span', { class: 'sl-dir' }, dir),
     branch && h('span', { class: 'sl-branch' }, `(${branch})`),
     u.model && h('span', { class: 'sl-model' }, modelName(u.model)),
   ]
@@ -1986,7 +1985,12 @@ function renderStatusLine() {
   }
   if (u.cost_usd) parts.push(h('span', null, '$' + u.cost_usd.toFixed(2)))
   const shown = parts.filter(Boolean)
-  slot.replaceChildren(...shown.flatMap((p, i) => i ? [h('span', { class: 'sl-sep' }, '│'), p] : [p]))
+  // The directory has a line of its own: it is often too long to share one.
+  slot.replaceChildren(...[
+    // The marks keep the path in its order in a box set right to left.
+    dir && h('div', { class: 'sl-dir', title: dir }, '\u200e' + dir + '\u200e'),
+    shown.length && h('div', { class: 'sl-row' }, ...shown.flatMap((p, i) => i ? [h('span', { class: 'sl-sep' }, '│'), p] : [p])),
+  ].filter(Boolean))
 }
 
 function renderSettings(a) {
