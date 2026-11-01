@@ -187,8 +187,25 @@ body.resizing { cursor: col-resize; user-select: none; -webkit-user-select: none
 .team > .sortable, .team-empty { margin-left: 14px; padding-left: 4px; border-left: 1px solid var(--border); }
 .team-empty { padding: 6px 10px; color: var(--faint); font-size: 12.5px; }
 .team-delete { margin-top: 14px; }
-.team-run { margin: -2px 0 2px 18px; color: var(--faint); font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.team-run {
+  display: block; width: calc(100% - 18px); margin: -2px 0 2px 18px; padding: 0; border: 0; background: none; cursor: pointer;
+  color: var(--faint); font: inherit; font-size: 12px; text-align: left; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.team-run:hover { color: var(--muted); }
 .team-run.stopped { color: var(--warn); }
+.lead-terms[hidden], .lead-teams[hidden] { display: none; }
+.lead-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 0 12px; }
+.dialog-field > .dropdown { min-width: 0; }
+.field-hint { color: var(--faint); font-size: 12px; font-weight: 400; }
+.dialog p.field-hint { margin-top: 10px; font-size: 12px; }
+.lead-teams { margin-top: 14px; align-items: flex-start; font-size: 13px; }
+.lead-teams input { margin-top: 3px; }
+.lead-run { display: grid; gap: 4px; margin-top: 14px; padding: 10px 12px; border: 1px solid var(--border); border-radius: 8px; font-size: 13px; color: var(--muted); }
+.lead-run strong { color: var(--text); font-weight: 600; }
+.lead-run.stopped { border-color: color-mix(in srgb, var(--warn) 50%, var(--border)); }
+.lead-evals { display: flex; flex-wrap: wrap; gap: 4px 10px; font-variant-numeric: tabular-nums; }
+.lead-actions { display: flex; gap: 8px; margin-top: 4px; }
+.lead-actions:empty { display: none; }
 .agent .name .mark { color: var(--faint); margin-right: 4px; }
 .agent .name .mark .icon { width: 13px; height: 13px; vertical-align: -2px; }
 .fold {

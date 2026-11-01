@@ -678,7 +678,7 @@ func (m *Model) closeMainPage() {
 	if m.svcPage != nil && m.svcPage.login != nil && m.svcPage.login.stop != nil {
 		m.svcPage.login.stop()
 	}
-	m.newForm, m.isoPage, m.svcPage = nil, nil, nil
+	m.newForm, m.isoPage, m.svcPage, m.teamPage = nil, nil, nil, nil
 	if _, ok := m.agent(m.openID); ok {
 		m.sel = m.openID
 	}

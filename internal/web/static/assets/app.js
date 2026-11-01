@@ -260,9 +260,9 @@ function ask({ title, body, ok, cancel: cancelLabel = 'Cancel', danger, extra, f
 // it the same way: value (get and set), disabled, a bubbling change event
 // when the operator picks something else, and setOptions to refill it,
 // keeping the choice if it is still there. Options are strings or
-// {value, label}. The list is drawn on the body, so no scrolling page or
-// popover clips it, follows the button while open, and shuts when the
-// button leaves the page. Keys follow a select-only combobox: arrows,
+// {value, label}. The list is drawn on the body (in a dialog, on the
+// dialog), so no scrolling page or popover clips it, follows the button
+// while open, and shuts when the button leaves the page. Keys follow a select-only combobox: arrows,
 // Home/End, typing a label's first letters, Enter or Space to pick, Esc.
 function dropdown(options, { value, label, disabled } = {}) {
   const id = 'dropdown-' + ++dropdown.n
@@ -334,7 +334,8 @@ function dropdown(options, { value, label, disabled } = {}) {
       const o = e.target.closest('[role=option]')
       if (o) highlight([...list.children].indexOf(o))
     })
-    document.body.append(list)
+    // A modal dialog is over the page: in one, the list is the dialog's.
+    ;(btn.closest('dialog') || document.body).append(list)
     btn.setAttribute('aria-expanded', 'true')
     btn.focus({ preventScroll: true })
     document.addEventListener('pointerdown', outside, true)
@@ -1199,9 +1200,9 @@ function teamGroup(t, members, row) {
         dots.length ? h('span', { class: 'team-dots', 'aria-label': dots.join(', ') },
           dots.slice(0, 8).map((st) => h('span', { class: 'dot ' + st })),
           dots.length > 8 ? h('span', { class: 'more' }, `+${dots.length - 8}`) : null) : null),
-      h('button', { class: 'team-edit', title: 'Rename or delete the team', 'aria-label': `Edit team ${t.name}`, onclick: () => editTeam(t) },
+      h('button', { class: 'team-edit', title: 'The team: its name, its lead and the terms', 'aria-label': `Edit team ${t.name}`, onclick: () => editTeam(t) },
         icon('pencil'))),
-    t.run ? teamRunLine(t.run) : null,
+    t.run ? teamRunLine(t.run, () => editTeam(t)) : null,
     folded ? null : members.length
       ? sortable('team:' + t.id, members.map(row))
       : h('div', { class: 'team-empty' }, 'No agents; an agent joins in Edit.'))
@@ -1209,14 +1210,117 @@ function teamGroup(t, members, row) {
 
 // teamRunLine is what a team's head says of its lead's run: what it does,
 // its spending of its budget, and its best score.
-function teamRunLine(run) {
+function teamRunLine(run, open) {
   const text = `${run.status} · ${tokens(run.spent)} of ${tokens(run.budget)}` + (run.best != null ? ` · best ${run.best}` : '')
-  return h('div', { class: 'team-run' + (run.status.startsWith('stopped') ? ' stopped' : ''), title: text }, text)
+  return h('button', { type: 'button', class: 'team-run' + (run.status.startsWith('stopped') ? ' stopped' : ''), title: text, onclick: open }, text)
 }
 
-// editTeam renames a team or deletes it, its agents left where it was.
+// editTeam is a team's dialog: its name, its lead and the lead's terms,
+// and how the lead's run goes; or the team deleted, its agents left where
+// it was.
 async function editTeam(t) {
+  let run = null
+  if (t.run) run = await api('GET', `/v1/teams/${enc(t.id)}/run`).catch(() => null)
   const name = h('input', { class: 'dialog-input', value: t.name, autocomplete: 'off' })
+  // A lead's own agents lead nothing.
+  const members = S.agents.filter((a) => !a.archived_at && a.team_id === t.id && !a.made_by)
+  const leading = run && members.find((a) => (a.line || a.id) === run.lead_line)
+  // A lead with no live session stays the lead until it is changed.
+  const gone = run && !leading ? [{ value: run.lead, label: `${run.lead} (not live)` }] : []
+  const lead = dropdown([{ value: '', label: 'No lead' }, ...gone,
+    ...members.map((a) => ({ value: a.id, label: `${shownID(a)} · ${agentTitle(a)} · ${a.isolation}` }))],
+  { value: leading?.id || gone[0]?.value || '', label: 'Lead' })
+  const st = run?.settings || {}
+  const input = (value, placeholder, mode) => h('input', { class: 'dialog-input', value: value ?? '', placeholder, autocomplete: 'off', inputmode: mode || null })
+  const budget = input(st.budget ? budgetText(st.budget) : '', 'required: 5M, 800k')
+  const maxLive = input(st.max_live, '3', 'numeric')
+  const turn = input(st.turn_minutes, '60', 'numeric')
+  const ceiling = input(st.plan_ceiling, '90', 'numeric')
+  const evalCmd = input(st.eval, 'none')
+  const evalDir = input(st.eval_dir, "the lead's directory")
+  const evalMin = input(st.eval_minutes, '20', 'numeric')
+  const target = input(st.target, 'none', 'decimal')
+  const patience = input(st.patience, '3', 'numeric')
+  const field = (label, el, hint) => h('label', { class: 'dialog-field' }, label, el, hint ? h('span', { class: 'field-hint' }, hint) : null)
+  const turnOn = h('input', { type: 'checkbox', checked: true })
+  const offIn = h('span')
+  const teamsOff = h('label', { class: 'check lead-teams', hidden: true }, turnOn, h('span', null, 'Turn teams on in ', offIn,
+    ", the lead's isolation: only there does it act. Its agents' processes are replaced when next idle; their sessions are kept."))
+  const terms = h('div', { class: 'lead-terms' },
+    h('div', { class: 'lead-grid' },
+      field('Budget (tokens)', budget), field('Live at most', maxLive), field('Turn limit (min)', turn), field('Plan ceiling (%)', ceiling)),
+    field('Eval', evalCmd, 'A shell command gero runs in the isolation as the agents; its last "SCORE: x" line is the score, higher better. Keep it, and what it reads, in a read-only shared folder.'),
+    h('div', { class: 'lead-grid' },
+      field('Eval directory', evalDir), field('Eval limit (min)', evalMin), field('Target', target, 'ends the run once reached'), field('Patience (evals)', patience, 'without a new best, end the run')),
+    teamsOff)
+  let off = null
+  const shown = async () => {
+    const a = members.find((m) => m.id === lead.value)
+    terms.hidden = !lead.value
+    teamsOff.hidden = true
+    off = null
+    if (!a) return
+    const xs = await api('GET', `/v1/isolations/${enc(a.isolation)}/services`).catch(() => null)
+    if (lead.value !== a.id || !xs) return
+    if (!xs.some((x) => x.service === 'team' && x.enabled)) {
+      off = a.isolation
+      offIn.textContent = a.isolation
+      teamsOff.hidden = false
+      // Ticked for a lead chosen now: saving the lead it has turns nothing on.
+      turnOn.checked = a.id !== leading?.id
+    }
+  }
+  lead.addEventListener('change', shown)
+  shown()
+  // terms are the form as the daemon takes them; a term left empty keeps
+  // what it was, or its default.
+  const asked = () => {
+    const req = { agent: lead.value }
+    const b = budget.value.trim()
+    if (b) {
+      const n = parseTokens(b)
+      if (!n) throw new Error(`The budget "${b}" is not a count of tokens (5M, 800k, 2000000).`)
+      req.budget = n
+    }
+    for (const [k, el, what] of [['max_live', maxLive, 'Live at most'], ['turn_minutes', turn, 'The turn limit'], ['plan_ceiling', ceiling, 'The plan ceiling'],
+      ['eval_minutes', evalMin, 'The eval limit'], ['patience', patience, 'The patience']]) {
+      const v = el.value.trim()
+      if (!v) continue
+      if (!/^\d+$/.test(v)) throw new Error(`${what} is a whole number, not "${v}".`)
+      req[k] = Number(v)
+    }
+    req.eval = evalCmd.value.trim()
+    if (evalDir.value.trim()) req.eval_dir = evalDir.value.trim()
+    const tv = target.value.trim()
+    if (!tv) req.no_target = true
+    else if (Number.isFinite(Number(tv))) req.target = Number(tv)
+    else throw new Error(`The target is a number, not "${tv}".`)
+    return req
+  }
+  const before = run ? JSON.stringify(asked()) : null
+  const runView = run && h('div', { class: 'lead-run' + (run.stopped ? ' stopped' : '') },
+    h('div', null, h('strong', null, `${run.lead} leads it: `), run.status),
+    h('div', null, `Spent ${tokens(run.spent.input + run.spent.output)} of ${tokens(run.settings.budget)} tokens` +
+      (run.best ? ` · best ${run.best.score} at eval #${run.best.id}, ${run.stale} since without a new one` : '')),
+    run.evals.length ? h('div', { class: 'lead-evals' }, run.evals.slice(-5).map((e) =>
+      h('span', { title: e.why }, `#${e.id} ${e.score ?? 'no score'}`))) : null,
+    h('div', { class: 'lead-actions' },
+      run.settings.eval ? h('button', {
+        type: 'button', class: 'btn small', onclick: async (e) => {
+          e.target.disabled = true
+          await guarded(async () => { await api('POST', `/v1/teams/${enc(t.id)}/eval`); toast('The eval runs; its result goes to the lead') })
+        },
+      }, 'Run eval now') : null,
+      run.stopped ? h('button', {
+        type: 'button', class: 'btn small primary', onclick: async (e) => {
+          e.target.closest('dialog').close('cancel')
+          await guarded(async () => {
+            await api('PUT', `/v1/teams/${enc(t.id)}/lead`, { agent: run.lead })
+            toast(`Team "${t.name}" runs again`)
+            await refreshAgents()
+          })
+        },
+      }, 'Resume') : null))
   const del = h('button', {
     type: 'button', class: 'btn danger', onclick: async (e) => {
       e.target.closest('dialog').close('cancel')
@@ -1231,16 +1335,41 @@ async function editTeam(t) {
   }, icon('trash-2'), ' Delete team')
   const ok = await ask({
     title: 'Team',
-    body: 'A team groups agents in the sidebar; they move within it.',
-    fields: [h('label', { class: 'dialog-field' }, 'Name', name), h('div', { class: 'team-delete' }, del)],
+    body: 'A team groups agents in the sidebar; they move within it. Its lead makes agents of its own in the team and hears when their turns end, within the terms below.',
+    wide: true,
+    fields: [h('label', { class: 'dialog-field' }, 'Name', name),
+      runView || null,
+      h('div', { class: 'dialog-field' }, 'Lead', lead),
+      terms,
+      run?.stopped ? h('p', { class: 'field-hint' }, 'Saving a change to the lead or its terms resumes the stopped run.') : null,
+      h('div', { class: 'team-delete' }, del)].filter(Boolean),
     ok: 'Save',
     onOk: async () => {
       const n = name.value.trim()
       if (!n) throw new Error('A name is required.')
+      const req = lead.value ? asked() : null
       if (n !== t.name) await api('PATCH', `/v1/teams/${enc(t.id)}`, { name: n })
+      if (!req) {
+        if (run) await api('DELETE', `/v1/teams/${enc(t.id)}/lead`)
+        return
+      }
+      if (JSON.stringify(req) !== before) await api('PUT', `/v1/teams/${enc(t.id)}/lead`, req)
+      if (off && turnOn.checked) await api('PUT', `/v1/isolations/${enc(off)}/services/team`, {})
     },
   })
   if (ok) await guarded(refreshAgents)
+}
+
+// parseTokens reads a count of tokens: 5000000, 5M, 800k; 0 if it is none.
+function parseTokens(s) {
+  const m = /^(\d+(?:\.\d+)?)\s*([km]?)$/i.exec(s.trim())
+  if (!m) return 0
+  return Math.round(Number(m[1]) * ({ k: 1e3, m: 1e6 }[m[2].toLowerCase()] || 1))
+}
+
+// budgetText is a budget as it is typed back: 5M, 800k, or the number.
+function budgetText(n) {
+  return n % 1e6 === 0 ? n / 1e6 + 'M' : n % 1e3 === 0 ? n / 1e3 + 'k' : String(n)
 }
 
 // teamInput is a text field for a team's name that offers the teams

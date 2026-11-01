@@ -45,6 +45,8 @@ var defaultBindings = []binding{
 	{"restore", []string{"u"}, "sidebar", "restore the selected archived agent, archiving its line's live session"},
 	{"delete_agent", []string{"d"}, "sidebar", "delete the selected archived agent, or team (its agents stay, in none)"},
 	{"team", []string{"t"}, "sidebar", "put the selected agent in a team, the sidebar's group of agents (a new name makes one)"},
+	{"team_lead", []string{"l"}, "sidebar", "the selected team's lead and its terms: budget, eval, limits"},
+	{"team_eval", []string{"e"}, "sidebar", "run the selected team's eval now; the result goes to its lead"},
 	{"toggle_archived", []string{"z"}, "sidebar", "show / hide archived agents"},
 
 	{"scroll_up", []string{"up", "k"}, "conversation", "scroll up"},
