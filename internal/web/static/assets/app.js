@@ -90,6 +90,15 @@ const S = {
   services: [],
   envs: [],
   exposures: {},
+  // The settings pages are a list and one of it in detail, the address's:
+  // an isolation by name (NEW for the form that makes one) and its tab, a
+  // service by name, and on Accounts an isolation's logins or an account
+  // ({ kind: 'iso' | 'account' | 'new', name }). None chosen, a wide page
+  // shows the first and a narrow one the list.
+  isoSel: null,
+  isoTab: 'overview',
+  svcSel: null,
+  setupSel: null,
   openForm: null,
   login: null,
   checkOut: null,
@@ -105,6 +114,7 @@ const S = {
   // The New isolation form: what is typed, the one being created, and why
   // the last one was not.
   isoDraft: { name: '', memory: '4G', fence: true },
+  acctDraft: { name: '', kind: null, secret: '' },
   isoCreating: null,
   isoCreateError: null,
   // edit is the user message being rewritten in place: { agent, id, text,
@@ -752,13 +762,14 @@ async function refreshIsolations() {
     if (!editing('isolations')) renderIsolations()
   }
   if (S.view === 'new') S.refillIsolations?.()
-  if (S.view === 'setup') {
-    if (S.accounts == null) await refreshAccounts()
-    // Reading a CLI starts it inside the isolation: once per visit, not on
-    // every poll.
-    const missing = S.isolations.map((i) => i.name).filter((n) => !(n in S.clis))
-    if (missing.length) await refreshCLIs(missing)
-  }
+  // Reading a CLI starts it inside the isolation: once per visit, not on
+  // every poll. Accounts lists every isolation's; an isolation's Logins tab
+  // reads its own.
+  const logins = S.view === 'setup' ? S.isolations.map((i) => i.name)
+    : S.view === 'isolations' && S.isoTab === 'logins' && shownIso() ? [shownIso().name] : []
+  if (logins.length && S.accounts == null) await refreshAccounts()
+  const missing = logins.filter((n) => !(n in S.clis))
+  if (missing.length) await refreshCLIs(missing)
 }
 
 // editing is whether redrawing page id now would lose what the operator is
@@ -773,6 +784,8 @@ async function refreshServices() {
   const [services, envs] = await Promise.all([api('GET', '/v1/services'), api('GET', '/v1/envs')])
   S.services = services || []
   S.envs = envs || []
+  // A service's page says which isolations have it.
+  if (S.view === 'services') await refreshExposures()
   if (S.view === 'services' && !editing('services')) renderServices()
 }
 
@@ -829,28 +842,52 @@ function select(id, closeDrawer = true) {
 }
 
 function show(view) {
-  S.view = view
-  S.drawer = false
-  S.settingsOpen = false
-  S.openForm = null
   setHash({ new: '#/new', isolations: '#/isolations', services: '#/services', setup: '#/setup' }[view] || location.hash)
-  if (view === 'setup') { S.clis = {}; S.accounts = null }
-  render()
-  if (view !== 'agent') guarded(refreshIsolations)
-  if (view === 'services') guarded(refreshServices)
+  route()
 }
 
+// go opens a page of the settings: one item of a list, or a tab of it.
+function go(hash) {
+  setHash(hash)
+  route()
+}
+
+const NEW = '+new'
+const ISO_TABS = ['overview', 'services', 'logins', 'environment', 'settings']
+const isoHash = (name, tab) => '#/isolations/' + enc(name) + (tab && tab !== 'overview' ? '/' + tab : '')
+const svcHash = (name) => '#/services/' + enc(name)
+const setupHash = (kind, name) => '#/setup/' + kind + (name ? '/' + enc(name) : '')
+
 function route() {
-  const m = location.hash.match(/^#\/a\/([a-z0-9-]+)$/)
-  if (m) { S.sel = m[1]; S.view = 'agent'; follow(m[1]) }
-  else if (location.hash === '#/new') S.view = 'new'
-  else if (location.hash === '#/isolations') S.view = 'isolations'
-  else if (location.hash === '#/services') { S.view = 'services'; guarded(refreshServices) }
-  else if (location.hash === '#/setup') { S.view = 'setup'; S.clis = {}; S.accounts = null; guarded(refreshIsolations) }
-  else S.view = 'agent'
+  const was = S.view
+  const hash = location.hash
+  let m
+  if ((m = hash.match(/^#\/a\/([a-z0-9-]+)$/))) { S.sel = m[1]; S.view = 'agent'; follow(m[1]) }
+  else if (hash === '#/new') S.view = 'new'
+  else if ((m = hash.match(/^#\/isolations(?:\/([^/]+)(?:\/([a-z]+))?)?$/))) {
+    S.view = 'isolations'
+    S.isoSel = m[1] ? decodeURIComponent(m[1]) : null
+    S.isoTab = ISO_TABS.includes(m[2]) ? m[2] : 'overview'
+  } else if ((m = hash.match(/^#\/services(?:\/([^/]+))?$/))) {
+    S.view = 'services'
+    S.svcSel = m[1] ? decodeURIComponent(m[1]) : null
+  } else if ((m = hash.match(/^#\/setup(?:\/(iso|account|new)(?:\/([^/]+))?)?$/))) {
+    S.view = 'setup'
+    S.setupSel = m[1] ? { kind: m[1], name: m[2] ? decodeURIComponent(m[2]) : null } : null
+  } else S.view = 'agent'
+  // A form belongs to what was on screen when it was opened.
+  if (was !== S.view || hash !== S.routed) { S.openForm = null; S.verifyOut = null }
+  S.routed = hash
   S.drawer = false
   S.settingsOpen = false
+  // Accounts reads each isolation's CLIs once per visit, from inside it.
+  if (S.view === 'setup' && was !== 'setup') { S.clis = {}; S.accounts = null }
+  if (!(S.view === 'setup' && S.setupSel?.kind === 'new')) S.acctDraft = { name: '', kind: null, secret: '' }
+  if (S.view === 'isolations' && S.isoTab === 'logins' && was !== 'isolations') S.clis = {}
   render()
+  if (S.view !== 'agent') guarded(refreshIsolations)
+  if (S.view === 'services') guarded(refreshServices)
+  document.getElementById('main')?.querySelector('.page')?.scrollTo?.(0, 0)
 }
 window.addEventListener('popstate', route)
 
@@ -932,9 +969,9 @@ function render() {
   root.append(main)
   renderSidebar()
   if (S.view === 'new') main.append(topbar('New agent'), newAgentView())
-  else if (S.view === 'isolations') main.append(topbar('Isolations'), h('div', { class: 'page', id: 'isolations' }))
-  else if (S.view === 'services') main.append(topbar('Services'), h('div', { class: 'page', id: 'services' }))
-  else if (S.view === 'setup') main.append(topbar('Accounts'), h('div', { class: 'page', id: 'setup' }))
+  else if (S.view === 'isolations') main.append(topbar('Isolations'), h('div', { class: 'page split', id: 'isolations' }))
+  else if (S.view === 'services') main.append(topbar('Services'), h('div', { class: 'page split', id: 'services' }))
+  else if (S.view === 'setup') main.append(topbar('Accounts'), h('div', { class: 'page split', id: 'setup' }))
   else main.append(agentView())
   if (S.view === 'isolations') renderIsolations()
   if (S.view === 'services') renderServices()
@@ -2786,7 +2823,7 @@ function newAgentView() {
   const err = h('p', { class: 'form-error' })
   const iso = dropdown([], { label: 'Isolation' })
   const noIso = h('p', { class: 'form-error' }, 'There is no isolation yet. ',
-    h('a', { href: '#/isolations', onclick: (e) => { e.preventDefault(); show('isolations') } }, 'Create one'), ' first.')
+    navLink('#/isolations/' + NEW, null, 'Create one'), ' first.')
   // The list may arrive after the form is drawn; refill it in place so
   // what is already chosen survives.
   const fillIsos = () => {
@@ -2872,58 +2909,341 @@ function newAgentView() {
     create))
 }
 
+// ---- The settings pages (isolations, services, accounts): a list, and
+// one of it in detail. Side by side where the page is wide; where it is
+// narrow (a phone, a narrow window) the list is the page and an item
+// replaces it, with the way back on top. The address names the item.
+
+// split fills page with the list and the detail. chosen: the address names
+// the item the detail shows, which a narrow page shows instead of the list.
+function split(page, chosen, label, master, detail) {
+  // Polling redraws the page: a list scrolled on its own stays where it was.
+  const scrolled = page.querySelector(':scope > .master')?.scrollTop || 0
+  page.classList.toggle('chosen', !!chosen)
+  page.replaceChildren(
+    h('nav', { class: 'master', 'aria-label': label }, master),
+    h('section', { class: 'detail' }, detail))
+  if (scrolled) page.querySelector(':scope > .master').scrollTop = scrolled
+}
+
+// navLink is a link within the page: drawn by go(), opened anew by the
+// browser's own ways (a new tab).
+function navLink(href, cls, ...kids) {
+  return h('a', {
+    class: cls || null, href,
+    onclick: (e) => { if (e.button || e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return; e.preventDefault(); go(href) },
+  }, kids)
+}
+
+function masterItem(href, on, ...kids) {
+  const a = navLink(href, 'master-item' + (on ? ' on' : ''), kids)
+  if (on) a.setAttribute('aria-current', 'page')
+  return a
+}
+
+const backLink = (href, text) => navLink(href, 'back', icon('chevron-left'), text)
+const cap = (s) => s ? s[0].toUpperCase() + s.slice(1) : s
+const plural = (n, one) => `${n} ${one}${n === 1 ? '' : 's'}`
+
+// block is a titled part of a detail.
+function block(title, ...body) {
+  return h('section', { class: 'block' }, title ? h('h3', null, title) : null, body)
+}
+
+// kv is labels and their values; a pair left out (null) is not drawn.
+function kv(pairs) {
+  return h('dl', { class: 'kv' }, pairs.filter(Boolean).map(([k, v]) => [h('dt', null, k), h('dd', null, v)]))
+}
+
+// ---- Isolations
+
+const fenceOK = (i) => i.fence_state === 'verified' || i.fence_state === 'off'
+const fenceText = (i) => i.fence_state === 'verified' ? 'fence verified' : i.fence_state === 'off' ? 'fence off' : 'fence ' + i.fence_state
+const isoAgents = (i) => S.agents.filter((a) => !a.archived_at && a.isolation === i.name)
+const isoTabNames = { overview: 'Overview', services: 'Services', logins: 'Logins', environment: 'Environment', settings: 'Settings' }
+
+// shownIso is the isolation the detail shows: the address's, or the first.
+function shownIso() {
+  if (S.isoSel === NEW) return null
+  return S.isolations.find((i) => i.name === S.isoSel) || S.isolations[0] || null
+}
+
 function renderIsolations() {
   const page = document.getElementById('isolations')
   if (!page) return
-  const fenceText = (i) => i.fence_state === 'verified' ? 'network fence verified' : i.fence_state === 'off' ? 'network fence off' : null
-  const card = (i) => {
-    const key = h('input', { placeholder: 'VARIABLE', autocomplete: 'off' })
-    const val = h('input', { type: 'password', placeholder: 'value (empty removes it)', autocomplete: 'new-password' })
-    return h('div', { class: 'card' },
-      h('div', { class: 'head' },
-        h('h3', null, i.name),
-        h('span', { class: 'chip ' + (i.state === 'running' ? '' : 'blocked') }, i.state),
-        h('span', { class: 'chip ' + (i.fence_state === 'verified' ? '' : i.fence_state === 'off' ? 'blocked' : 'error') }, fenceText(i) || ['fence ', icon('x')])),
-      i.fence_state !== 'verified' && i.fence_state !== 'off' ? h('div', { class: 'fence-bad' }, i.fence_state) : null,
-      h('div', { class: 'facts' }, `${i.image} · ${isoSize(i.cpus, i.memory)} · network ${i.network || 'default'} · env: ${(i.env_keys || []).join(', ') || '—'}`),
-      S.openForm === `verify:${i.name}` && S.verifyOut ? verifyView(S.verifyOut) : null,
-      exposuresView(i),
-      h('div', { class: 'inline-form' }, key, val,
-        h('button', {
-          class: 'btn', onclick: async () => {
-            const k = key.value.trim()
-            if (!k) return
-            await guarded(async () => {
-              await api('PATCH', `/v1/isolations/${i.name}/env`, { [k]: val.value === '' ? null : val.value })
-              toast(`${k} saved; idle agents restart with it`)
-              await refreshIsolations()
-            })
-          },
-        }, 'Set')),
-      h('div', { class: 'actions' },
+  const making = S.isoSel === NEW || !S.isolations.length
+  const shown = making ? null : shownIso()
+  const chosen = S.isoSel === NEW || (!!S.isoSel && shown?.name === S.isoSel)
+  split(page, chosen, 'Isolations', [
+    h('div', { class: 'master-head' },
+      h('span', { class: 'label' }, plural(S.isolations.length, 'isolation')),
+      navLink('#/isolations/' + NEW, 'btn small', '+ New')),
+    S.isolations.map((i) => isoItem(i, i === shown)),
+  ], making ? newIsolationView() : isoDetail(shown))
+}
+
+function isoItem(i, on) {
+  const n = isoAgents(i).length
+  const xs = (S.exposures[i.name] || []).filter((x) => x.enabled).map((x) => x.service)
+  return masterItem(isoHash(i.name), on,
+    h('span', { class: 'item-line' },
+      h('span', { class: 'dot' + (i.state === 'running' ? ' on' : '') }),
+      h('strong', null, i.name),
+      h('span', { class: 'item-side' }, n ? plural(n, 'agent') : 'no agents')),
+    h('span', { class: 'item-sub' + (fenceOK(i) ? '' : ' warn') }, `${cap(i.state)} · ${fenceText(i)}`),
+    xs.length ? h('span', { class: 'item-sub' }, xs.join(', ')) : null)
+}
+
+function isoDetail(i) {
+  const on = (S.exposures[i.name] || []).filter((x) => x.enabled).length
+  const tab = S.isoTab
+  return [
+    backLink('#/isolations', 'Isolations'),
+    h('div', { class: 'detail-head' },
+      h('h2', null, i.name),
+      h('span', { class: 'chip ' + (i.state === 'running' ? 'ok' : 'blocked') }, cap(i.state)),
+      h('span', { class: 'chip ' + (i.fence_state === 'verified' ? 'ok' : i.fence_state === 'off' ? '' : 'blocked') }, cap(fenceText(i))),
+      h('span', { class: 'grow' }),
+      h('span', { class: 'head-actions' },
         h('button', { class: 'btn', disabled: S.verifying === i.name, onclick: () => verifyIsolation(i) },
           S.verifying === i.name ? 'Measuring…' : 'Verify'),
-        h('button', { class: 'btn', onclick: () => openForm(`settings:${i.name}`) }, 'Settings'),
-        h('button', {
-          class: 'btn', onclick: async () => {
-            if (!await ask({ title: `Upgrade ${i.name} to the current image?`, body: 'Running agents restart; sessions are kept.', ok: 'Upgrade' })) return
-            toast('Upgrading…')
-            await guarded(async () => { await api('POST', `/v1/isolations/${i.name}/upgrade`); toast(`${i.name} upgraded`); await refreshIsolations() })
-          },
-        }, 'Upgrade'),
-        h('button', {
-          class: 'btn danger', onclick: async () => {
-            if (!await ask({ title: `Delete isolation ${i.name}?`, body: 'Its volumes are kept.', ok: 'Delete', danger: true })) return
-            await guarded(async () => { await api('DELETE', `/v1/isolations/${i.name}`); toast(`${i.name} deleted`); await refreshIsolations() })
-          },
-        }, 'Delete')),
-      S.openForm === `settings:${i.name}` ? isoSettingsForm(i) : null,
-      h('p', { class: 'note' }, 'What its Claude and Codex log in with: ',
-        h('a', { href: '#/setup', onclick: (e) => { e.preventDefault(); show('setup') } }, 'Accounts'), '.'))
+        h('button', { class: 'btn', onclick: () => upgradeIsolation(i) }, 'Upgrade'))),
+    fenceOK(i) ? null : h('p', { class: 'callout warn' }, `Agents start here only behind a verified network fence: ${i.fence_state}.`),
+    S.openForm === `verify:${i.name}` && S.verifyOut ? verifyView(S.verifyOut) : null,
+    h('div', { class: 'tabs', role: 'tablist' }, ISO_TABS.map((t) => {
+      const a = navLink(isoHash(i.name, t), 'tab' + (t === tab ? ' on' : ''), isoTabNames[t],
+        t === 'services' ? h('span', { class: 'count' }, String(on)) : null)
+      a.setAttribute('role', 'tab')
+      a.setAttribute('aria-selected', String(t === tab))
+      return a
+    })),
+    h('div', { class: 'tab-body', role: 'tabpanel' },
+      { overview: isoOverview, services: isoServices, logins: isoLogins, environment: isoEnvironment, settings: isoSettings }[tab](i)),
+  ]
+}
+
+function isoOverview(i) {
+  const agents = isoAgents(i)
+  const login = (k) => i.accounts?.[k] ? `Account ${i.accounts[k]}` : 'A login inside the isolation'
+  const xs = (S.exposures[i.name] || []).filter((x) => x.enabled).map((x) => x.service)
+  return [
+    block('Machine', kv([
+      ['State', cap(i.state)],
+      ['Network fence', i.fence_state === 'verified' ? 'Verified' : i.fence_state === 'off' ? 'Off: it reaches the Mac and the LAN' : cap(i.fence_state)],
+      i.proxies && i.proxies !== 'up' ? ['Proxies', i.proxies] : null,
+      ['Image', h('code', null, i.image)],
+      ['CPUs, memory', isoSize(i.cpus, i.memory)],
+      ['Network', h('code', null, i.network || 'default')],
+    ])),
+    block(`Agents · ${agents.length}`, agents.length
+      ? h('div', { class: 'list' }, agents.map((a) => h('a', {
+        class: 'list-row link', href: '#/a/' + a.id,
+        onclick: (e) => { if (e.button || e.metaKey || e.ctrlKey) return; e.preventDefault(); select(a.id) },
+      },
+      h('span', { class: 'dot ' + agentState(a) }),
+      h('span', { class: 'list-main' }, h('strong', null, agentTitle(a)), h('span', { class: 'list-sub' }, `${shownID(a)} · ${label(a)}`)),
+      icon('chevron-right'))))
+      : h('p', { class: 'note' }, 'None live.')),
+    block('Logins', kv([['Claude Code', login('claude')], ['Codex', login('codex')]]),
+      navLink(isoHash(i.name, 'logins'), 'more-link', 'Logins ', icon('chevron-right'))),
+    block('Services', h('p', null, xs.length ? xs.join(', ') : 'None on.'),
+      navLink(isoHash(i.name, 'services'), 'more-link', 'Services ', icon('chevron-right'))),
+  ]
+}
+
+// The services, grouped by what they give the agents.
+const SERVICE_GROUPS = [
+  { name: 'Credentials', note: 'your logins, used on the Mac within an allowlist' },
+  { name: 'Into the isolation', note: 'folders, skills and ports of the Mac’s' },
+  { name: 'Between agents', note: 'gero’s own' },
+]
+const serviceGroup = (s) => ['share', 'skill', 'port'].includes(s.name) ? 1 : ['mail', 'cron', 'team', 'control'].includes(s.name) ? 2 : 0
+const grouped = (services) => SERVICE_GROUPS.map((g, n) => ({ ...g, services: services.filter((s) => serviceGroup(s) === n) })).filter((g) => g.services.length)
+
+function isoServices(i) {
+  const xs = S.exposures[i.name]
+  if (!xs || !S.services.length) return h('p', { class: 'note' }, 'Loading…')
+  const byName = Object.fromEntries(xs.map((x) => [x.service, x]))
+  return [
+    h('p', { class: 'note' }, 'The credentials stay on the Mac; the isolation gets a proxy that uses them within an allowlist.'),
+    grouped(S.services).map((g) => h('div', { class: 'group' },
+      h('div', { class: 'group-head' }, h('strong', null, g.name), h('span', { class: 'note' }, g.note)),
+      h('div', { class: 'list' }, g.services.map((s) => serviceToggle(i, s, byName[s.name] || { service: s.name, enabled: false, envs: [] }))))),
+  ]
+}
+
+// serviceToggle is a service in an isolation: its switch, and what it
+// serves there, which opens the form that changes it.
+function serviceToggle(i, s, x) {
+  const key = `expose:${i.name}:${s.name}`
+  const open = S.openForm === key
+  return h('div', { class: 'svc-toggle' + (x.enabled ? ' on' : '') },
+    h('div', { class: 'toggle-line' },
+      h('button', {
+        class: 'switch' + (x.enabled ? ' on' : ''), role: 'switch', 'aria-checked': String(x.enabled),
+        'aria-label': `${s.name} in ${i.name}`, onclick: () => flipService(i, s, x, key),
+      }),
+      h('button', { class: 'toggle-main', 'aria-expanded': String(open), onclick: () => open ? closeForm() : openForm(key) },
+        h('span', { class: 'toggle-name' }, s.name),
+        h('span', { class: 'toggle-sum' }, exposureText(s, x))),
+      x.enabled && s.forwards && x.forwards?.length ? h('span', { class: 'toggle-links' }, forwardLinks(x.forwards)) : null,
+      x.missing?.length ? h('span', { class: 'chip error' }, 'missing ' + x.missing.join(',')) : null,
+      (x.forwards || []).filter((f) => f.error).map((f) => h('span', { class: 'chip error', title: f.error }, `${f.env} not listening`))),
+    open ? exposeForm(i, s, x) : null)
+}
+
+// exposureText is what a service serves in an isolation, or, off, what
+// turning it on takes.
+function exposureText(s, x) {
+  const envs = S.envs.filter((e) => e.service === s.name)
+  if (!x.enabled) {
+    if (!s.fields?.length) return s.summary
+    if (!envs.length) return 'No environment yet'
+    return envs.length === 1 ? `${envs[0].name} is ready to turn on` : `${envs.length} environments are ready to turn on`
   }
-  // The new isolation lives in S, typed and while it is created, since
-  // polling redraws this page: drawn from the DOM it came back empty two
-  // seconds after Create, as if nothing had happened.
+  if (s.replaces) return (x.envs || []).map((n) => '/shared/' + n).join(', ') || 'no folder'
+  if (s.forwards) return x.forwards?.length ? '' : 'no port'
+  const parts = []
+  if (s.fields?.length) parts.push((x.envs || []).join(', ') || 'no environment')
+  if (x.default_env && !s.one_env && (x.envs || []).length > 1) parts.push(`default ${x.default_env}`)
+  parts.push(...settingsText(s.settings, x.settings))
+  return parts.join(' · ') || 'on'
+}
+
+// settingsText is an exposure's settings in words: a flag by its name, a
+// list with its entries.
+function settingsText(fields, cfg) {
+  return (fields || []).flatMap((f) => {
+    const v = cfg?.[f.key]
+    const name = f.key.replaceAll('_', ' ')
+    if (v === true) return [name]
+    if (v === false) return ['no ' + name]
+    if (Array.isArray(v)) return v.length ? [`${name} ${v.join(', ')}`] : []
+    return v != null && v !== '' ? [`${name} ${v}`] : []
+  })
+}
+
+// flipService is a service's switch: on, it turns it off (asking); off, it
+// turns on at once what has nothing to choose, and opens the form of the
+// rest.
+async function flipService(i, s, x, key) {
+  if (x.enabled) return turnOff(i, s)
+  if (s.fields?.length) return openForm(key)
+  await guarded(async () => {
+    await api('PUT', `/v1/isolations/${enc(i.name)}/services/${enc(s.name)}`, { envs: [], settings: { set: {}, clear: [] } })
+    toast(`${s.name} is on for ${i.name}; agents pick it up at their next idle moment`)
+    await refreshIsolations()
+  })
+}
+
+async function turnOff(i, s) {
+  if (!await ask({
+    title: `Turn ${s.name} off for ${i.name}?`,
+    body: s.replaces ? 'Its container is replaced without the shared folders: running agents end and start again on their next message.'
+      : s.forwards ? 'The Mac stops listening for its ports, and connections through them end.'
+        : 'Its files and variables are removed there.',
+    ok: 'Turn off', danger: true,
+  })) return
+  await guarded(async () => {
+    await api('DELETE', `/v1/isolations/${enc(i.name)}/services/${enc(s.name)}`)
+    S.openForm = null
+    toast(`${s.name} is off for ${i.name}`)
+    await refreshIsolations()
+    renderIsolations()
+  })
+}
+
+function isoLogins(i) {
+  return [
+    h('p', { class: 'note' }, 'What Claude Code and Codex log in with here. The shared accounts are on ',
+      navLink(setupHash('iso', i.name), null, 'Accounts'), '.'),
+    cliCards(i),
+  ]
+}
+
+function cliCards(i) {
+  const cs = S.clis[i.name]
+  if (cs == null) return h('p', { class: 'note' }, 'Reading the logins from inside the isolation…')
+  if (!Array.isArray(cs)) return h('p', { class: 'form-error' }, cs.error)
+  return h('div', { class: 'cli-cards' }, cs.map((c) => cliRow(i, c)))
+}
+
+function isoEnvironment(i) {
+  const keys = i.env_keys || []
+  const key = `envvar:${i.name}`
+  return [
+    h('p', { class: 'note' }, 'Variables every agent in the isolation starts with. Their values are never shown; idle agents restart with a change.'),
+    keys.length ? h('div', { class: 'list' }, keys.map((k) => h('div', { class: 'list-row' },
+      h('code', { class: 'list-main' }, k),
+      h('button', {
+        class: 'btn ghost', onclick: async () => {
+          if (!await ask({ title: `Remove ${k} from ${i.name}?`, body: 'Idle agents restart without it.', ok: 'Remove', danger: true })) return
+          await setIsoEnv(i, k, null)
+        },
+      }, 'Remove'))))
+      : h('p', { class: 'note' }, 'None set.'),
+    S.openForm === key ? envVarForm(i) : h('div', { class: 'actions' }, h('button', { class: 'btn', onclick: () => openForm(key) }, '+ Add variable')),
+  ]
+}
+
+function envVarForm(i) {
+  const name = h('input', { placeholder: 'VARIABLE', autocomplete: 'off' })
+  const value = h('input', { type: 'password', autocomplete: 'new-password' })
+  const set = h('button', { class: 'btn primary' }, 'Set')
+  set.addEventListener('click', async () => {
+    const k = name.value.trim()
+    if (!k) return
+    if (await setIsoEnv(i, k, value.value)) closeForm()
+  })
+  return h('div', { class: 'subform' },
+    h('div', { class: 'row' },
+      h('div', { class: 'field' }, h('label', null, 'Variable'), name),
+      h('div', { class: 'field' }, h('label', null, 'Value'), value, h('span', { class: 'hint' }, 'Setting one that is there replaces its value.'))),
+    h('div', { class: 'actions' }, set, h('button', { class: 'btn', onclick: closeForm }, 'Cancel')))
+}
+
+async function setIsoEnv(i, k, v) {
+  let ok = false
+  await guarded(async () => {
+    await api('PATCH', `/v1/isolations/${enc(i.name)}/env`, { [k]: v === '' ? null : v })
+    toast(v == null || v === '' ? `${k} removed; idle agents restart without it` : `${k} saved; idle agents restart with it`)
+    ok = true
+    await refreshIsolations()
+  })
+  return ok
+}
+
+function isoSettings(i) {
+  const key = `settings:${i.name}`
+  return [
+    block('Name and size', S.openForm === key ? isoSettingsForm(i) : [
+      kv([['Name', i.name], ['CPUs', i.cpus ? String(i.cpus) : 'container’s default'], ['Memory', i.memory || 'container’s default']]),
+      h('div', { class: 'actions' }, h('button', { class: 'btn', onclick: () => openForm(key) }, 'Edit')),
+    ]),
+    block('Delete', h('p', { class: 'note' }, 'The isolation and its container go; its volumes are kept.'),
+      h('div', { class: 'actions' }, h('button', { class: 'btn danger', onclick: () => deleteIsolation(i) }, 'Delete isolation'))),
+  ]
+}
+
+async function upgradeIsolation(i) {
+  if (!await ask({ title: `Upgrade ${i.name} to the current image?`, body: 'Running agents restart; sessions are kept.', ok: 'Upgrade' })) return
+  toast('Upgrading…')
+  await guarded(async () => { await api('POST', `/v1/isolations/${enc(i.name)}/upgrade`); toast(`${i.name} upgraded`); await refreshIsolations() })
+}
+
+async function deleteIsolation(i) {
+  if (!await ask({ title: `Delete isolation ${i.name}?`, body: 'Its volumes are kept.', ok: 'Delete', danger: true })) return
+  await guarded(async () => {
+    await api('DELETE', `/v1/isolations/${enc(i.name)}`)
+    toast(`${i.name} deleted`)
+    go('#/isolations')
+  })
+}
+
+// newIsolationView makes one. What is typed, and the one being created,
+// live in S, since polling redraws this page: drawn from the DOM it came
+// back empty two seconds after Create, as if nothing had happened.
+function newIsolationView() {
   const d = S.isoDraft
   const busy = !!S.isoCreating
   const name = h('input', { placeholder: 'name', autocomplete: 'off', value: d.name, disabled: busy })
@@ -2940,10 +3260,12 @@ function renderIsolations() {
     S.isoCreating = n
     S.isoCreateError = null
     renderIsolations()
+    let made = false
     try {
       await api('POST', '/v1/isolations', { name: n, memory: d.memory.trim(), fence: d.fence ? 'on' : 'off' })
       S.isoDraft = { name: '', memory: '4G', fence: true }
       toast(`Isolation ${n} created`)
+      made = true
     } catch (x) {
       if (x instanceof Unauthorized) { S.authed = false; render(); return }
       S.isoCreateError = x.message
@@ -2952,20 +3274,20 @@ function renderIsolations() {
       S.isoCreating = null
     }
     await guarded(refreshIsolations)
-    renderIsolations()
+    if (made && S.view === 'isolations') go(isoHash(n))
+    else renderIsolations()
   })
-  page.replaceChildren(h('div', { class: 'page-inner' },
-    h('h2', null, 'Isolations'),
-    h('p', { class: 'lead' }, 'Each runs in its own VM, fenced off the Mac and the LAN, with internet access.'),
-    S.isolations.map(card),
-    h('div', { class: 'card' },
-      h('div', { class: 'head' }, h('h3', null, 'New isolation')),
-      h('div', { class: 'row spaced' },
-        h('div', { class: 'field' }, h('label', null, 'Name'), name),
-        h('div', { class: 'field' }, h('label', null, 'Memory'), memory)),
-      h('label', { class: 'check' }, fence, 'Network fence (agents start only behind a verified fence)'),
-      S.isoCreateError ? h('p', { class: 'form-error' }, S.isoCreateError) : null,
-      h('div', { class: 'actions' }, create))))
+  return [
+    S.isolations.length ? backLink('#/isolations', 'Isolations') : null,
+    h('div', { class: 'detail-head' }, h('h2', null, 'New isolation')),
+    h('p', { class: 'note' }, 'Each runs in its own VM, fenced off the Mac and the LAN, with internet access.'),
+    h('div', { class: 'row spaced' },
+      h('div', { class: 'field' }, h('label', null, 'Name'), name),
+      h('div', { class: 'field' }, h('label', null, 'Memory'), memory)),
+    h('label', { class: 'check' }, fence, 'Network fence (agents start only behind a verified fence)'),
+    S.isoCreateError ? h('p', { class: 'form-error' }, S.isoCreateError) : null,
+    h('div', { class: 'actions' }, create),
+  ]
 }
 
 // NO_KERNEL is container refusing to start a VM before a Linux kernel is
@@ -3018,6 +3340,12 @@ function isoSettingsForm(i) {
     try {
       const v = await api('PATCH', `/v1/isolations/${enc(i.name)}`, body)
       S.openForm = null
+      // The page stays on it under its new name.
+      if (v.name !== i.name && S.isoSel === i.name) {
+        S.isoSel = v.name
+        history.replaceState(null, '', isoHash(v.name, S.isoTab))
+        S.routed = location.hash
+      }
       toast(!resize ? `${i.name} is now ${v.name}; its agents kept running`
         : body.name ? `${i.name} is now ${v.name}, resized; sessions and workspaces were kept`
           : `${v.name} resized; sessions and workspaces were kept`)
@@ -3273,28 +3601,64 @@ function lookupPick(s, f, v, lookupRequest) {
   return { el: box, load, read: (p) => { const t = input.value.trim(); if (t) p.set[f.key] = t } }
 }
 
-function compactConfig(cfg) {
-  return Object.keys(cfg || {}).sort().map((k) => `${k}=${Array.isArray(cfg[k]) ? cfg[k].join(',') : cfg[k]}`).join(' ')
-}
+// shownService is the service the detail shows: the address's, or the
+// first.
+const shownService = () => S.services.find((s) => s.name === S.svcSel) || S.services[0] || null
 
 function renderServices() {
   const page = document.getElementById('services')
   if (!page) return
-  page.replaceChildren(h('div', { class: 'page-inner' },
-    h('h2', null, 'Services'),
-    h('p', { class: 'lead' }, 'Credentials stay on the Mac; isolations get proxies that use them within an allowlist. Define an environment here, then turn it on for an isolation on the Isolations page.'),
-    S.services.length ? S.services.map(serviceCard) : h('div', { class: 'empty' }, 'Loading…')))
+  if (!S.services.length) {
+    page.classList.remove('chosen')
+    page.replaceChildren(h('div', { class: 'empty' }, 'Loading…'))
+    return
+  }
+  const shown = shownService()
+  const chosen = !!S.svcSel && shown?.name === S.svcSel
+  split(page, chosen, 'Services', grouped(S.services).map((g) => [
+    h('div', { class: 'master-group label' }, g.name),
+    g.services.map((s) => masterItem(svcHash(s.name), s === shown,
+      h('span', { class: 'item-line' }, h('span', { class: 'item-name' }, s.name), h('span', { class: 'item-side' }, serviceCount(s))))),
+  ]), serviceDetail(shown))
 }
 
-function serviceCard(s) {
+// serviceCount is what a service has defined: how many environments, or
+// that it has none to define.
+function serviceCount(s) {
+  if (!s.fields?.length) return 'built in'
+  const n = S.envs.filter((e) => e.service === s.name).length
+  return n ? String(n) : '—'
+}
+
+function serviceDetail(s) {
   const envs = S.envs.filter((e) => e.service === s.name)
   const key = 'new:' + s.name
-  return h('div', { class: 'card' },
-    h('div', { class: 'head' }, h('h3', null, s.name), h('span', { class: 'note' }, s.summary)),
-    envs.map((e) => envRow(s, e)),
-    // A service with nothing to define (mail) is only turned on.
-    !s.fields?.length ? h('p', { class: 'note' }, 'Nothing to define here: turn it on for an isolation on the Isolations page.')
-      : S.openForm === key ? envForm(s, null) : h('div', { class: 'actions' }, h('button', { class: 'btn', onclick: () => openForm(key) }, '+ New environment')))
+  return [
+    backLink('#/services', 'Services'),
+    h('div', { class: 'detail-head' },
+      h('div', { class: 'grow' }, h('div', { class: 'label' }, SERVICE_GROUPS[serviceGroup(s)].name), h('h2', null, s.name)),
+      s.fields?.length && S.openForm !== key ? h('button', { class: 'btn primary', onclick: () => openForm(key) }, '+ New environment') : null),
+    h('p', { class: 'lead' }, cap(s.summary) + '.'),
+    S.openForm === key ? block('New environment', envForm(s, null)) : null,
+    s.fields?.length
+      ? block(`Environments · ${envs.length}`, envs.length ? envs.map((e) => envCard(s, e)) : h('p', { class: 'note' }, 'None yet: an isolation turns this service on with one.'))
+      : h('p', { class: 'note' }, 'Nothing to define: turn it on for an isolation.'),
+    block('In isolations', serviceUse(s)),
+  ]
+}
+
+// serviceUse is each isolation with what the service serves there; one
+// opens the isolation's services.
+function serviceUse(s) {
+  if (!S.isolations.length) return h('p', { class: 'note' }, 'No isolations yet.')
+  return h('div', { class: 'list' }, S.isolations.map((i) => {
+    const x = (S.exposures[i.name] || []).find((x) => x.service === s.name) || { service: s.name, enabled: false, envs: [] }
+    const what = !x.enabled ? 'off' : exposureText(s, x) || (x.forwards || []).map((f) => f.url).join(', ') || 'on'
+    return navLink(isoHash(i.name, 'services'), 'list-row link',
+      h('span', { class: 'list-main' }, h('strong', null, i.name), h('span', { class: 'list-sub' }, what)),
+      h('span', { class: 'chip' + (x.enabled ? ' ok' : '') }, x.enabled ? 'On' : 'Off'),
+      icon('chevron-right'))
+  }))
 }
 
 function secretChip(s, e) {
@@ -3305,7 +3669,7 @@ function secretChip(s, e) {
   return h('span', { class: 'chip' }, s.login ? 'logged in' : 'secret set')
 }
 
-function envRow(s, e) {
+function envCard(s, e) {
   const k = (what) => `${what}:${s.name}:${e.name}`
   let open = null
   if (S.openForm === k('edit')) open = envForm(s, e)
@@ -3316,10 +3680,13 @@ function envRow(s, e) {
       h('pre', null, (S.checkOut.output || '') + (S.checkOut.error ? '✗ ' + S.checkOut.error : '')),
       h('button', { class: 'btn', onclick: closeForm }, 'Close'))
   }
-  const exposed = e.exposed_to?.length ? 'on for ' + e.exposed_to.join(', ') : 'not on for any isolation'
-  return h('div', { class: 'env' },
-    h('div', { class: 'head' }, h('strong', null, e.name), secretChip(s, e), h('span', { class: 'note' }, exposed)),
-    h('div', { class: 'facts' }, compactConfig(e.config) || '—'),
+  return h('div', { class: 'env-card' },
+    h('div', { class: 'env-head' },
+      h('strong', null, e.name), secretChip(s, e),
+      e.exposed_to?.length
+        ? [h('span', { class: 'note' }, 'on for'), e.exposed_to.map((n) => navLink(isoHash(n, 'services'), 'chip accent', n))]
+        : h('span', { class: 'note' }, 'not on for any isolation')),
+    envConfig(s, e.config),
     open || h('div', { class: 'actions' },
       h('button', { class: 'btn', onclick: () => openForm(k('edit')) }, 'Edit'),
       s.secrets?.length ? h('button', {
@@ -3327,7 +3694,7 @@ function envRow(s, e) {
       }, s.login ? 'Log in' : 'Secret') : null,
       h('button', { class: 'btn', onclick: () => checkEnv(s, e, k('check')) }, 'Check'),
       h('button', {
-        class: 'btn danger', onclick: async () => {
+        class: 'btn ghost danger', onclick: async () => {
           const on = !e.exposed_to?.length ? ''
             : s.replaces ? ` ${e.exposed_to.join(', ')} restart without it; running agents end.`
               : ` ${e.exposed_to.join(', ')} stop serving it.`
@@ -3339,6 +3706,23 @@ function envRow(s, e) {
           })
         },
       }, 'Remove')))
+}
+
+// envConfig is an env's definition in words, field by field in the
+// service's order: a list as its entries, a flag as yes or no.
+function envConfig(s, cfg) {
+  const fields = s.fields || []
+  const known = new Set(fields.map((f) => f.key))
+  const shown = (f, v) => {
+    if (typeof v === 'boolean') return v ? 'yes' : 'no'
+    if (Array.isArray(v)) return f.kind === 'list' ? h('span', { class: 'tags' }, v.map((x) => h('code', { class: 'tag' }, x))) : h('code', null, v.join(' '))
+    if (v && typeof v === 'object') return h('code', null, JSON.stringify(v))
+    return typeof v === 'string' && /^[~/]/.test(v) ? h('code', null, v) : String(v)
+  }
+  const pairs = [...fields.map((f) => [f, cfg?.[f.key]]), ...Object.keys(cfg || {}).filter((k) => !known.has(k)).map((k) => [{ key: k }, cfg[k]])]
+    .filter(([, v]) => v != null && v !== '' && !(Array.isArray(v) && !v.length))
+    .map(([f, v]) => [f.key.replaceAll('_', ' '), shown(f, v)])
+  return pairs.length ? kv(pairs) : h('p', { class: 'note' }, 'Nothing set: the service’s defaults.')
 }
 
 function envForm(s, e) {
@@ -3522,31 +3906,6 @@ function verifyView(v) {
 
 // ---- An isolation's services
 
-function exposuresView(i) {
-  const xs = S.exposures[i.name]
-  if (!xs || !S.services.length) return null
-  const byName = Object.fromEntries(xs.map((x) => [x.service, x]))
-  return h('div', { class: 'svc-list' },
-    h('div', { class: 'svc-title' }, 'Services', h('span', { class: 'note' }, ' — the credentials stay on the Mac')),
-    S.services.map((s) => {
-      const x = byName[s.name] || { service: s.name, enabled: false, envs: [] }
-      const key = `expose:${i.name}:${s.name}`
-      const detail = !x.enabled ? 'off'
-        : !s.fields?.length ? compactConfig(x.settings) || 'on'
-          : s.replaces ? (x.envs || []).map((n) => '/shared/' + n).join(', ') || 'no folder'
-            : s.forwards ? (x.forwards?.length ? forwardLinks(x.forwards) : 'no port')
-              : [(x.envs || []).join(', ') || 'no env', x.default_env && !s.one_env ? `(default ${x.default_env})` : '', compactConfig(x.settings)].filter(Boolean).join(' ')
-      return h('div', { class: 'svc-row' },
-        h('div', { class: 'svc-line' },
-          h('span', { class: 'dot' + (x.enabled ? ' on' : '') }),
-          h('strong', null, s.name), h('span', { class: 'facts' }, detail),
-          x.missing?.length ? h('span', { class: 'chip error' }, 'missing ' + x.missing.join(',')) : null,
-          (x.forwards || []).filter((f) => f.error).map((f) => h('span', { class: 'chip error', title: f.error }, `${f.env} not listening`)),
-          S.openForm === key ? null : h('button', { class: 'btn small', onclick: () => openForm(key) }, x.enabled ? 'Change' : 'Turn on')),
-        S.openForm === key ? exposeForm(i, s, x) : null)
-    }))
-}
-
 // forwardLinks is where a forwarded port is on the Mac, as a link where a
 // browser opens it. noopener: the isolation's page gets no hold on this tab.
 function forwardLinks(fs) {
@@ -3612,7 +3971,7 @@ function exposeForm(i, s, x) {
   return h('div', { class: 'subform' },
     noEnvs ? null : h('div', { class: 'field' }, h('label', null, 'Environments'),
       names.length ? h('div', { class: 'ticks' }, boxes.map(({ n, el }) => h('label', { class: 'check' }, el, n, envNote(n))))
-        : h('span', { class: 'hint' }, 'none defined yet — ', h('a', { href: '#/services', onclick: (ev) => { ev.preventDefault(); show('services') } }, 'define one')),
+        : h('span', { class: 'hint' }, 'none defined yet — ', navLink(svcHash(s.name), null, 'define one')),
       h('span', { class: 'hint' }, s.replaces ? 'Each ticked folder is at /shared/NAME in the isolation.'
         : s.name === 'skill' ? 'Each ticked skill is in Claude Code’s and Codex’s skills there; an untick removes it.'
         : s.forwards ? "Each ticked port is on the Mac's 127.0.0.1, never the LAN. The container stays."
@@ -3621,24 +3980,7 @@ function exposeForm(i, s, x) {
     !noEnvs && !s.replaces && !s.forwards && !s.one_env && s.name !== 'skill' && names.length > 1 ? h('div', { class: 'field' }, h('label', null, 'Default'), def, h('span', { class: 'hint' }, 'what the plain variables point at')) : null,
     ctl.rows, err,
     h('div', { class: 'actions' }, apply,
-      x.enabled ? h('button', {
-        class: 'btn danger', onclick: async () => {
-          if (!await ask({
-            title: `Turn ${s.name} off for ${i.name}?`,
-            body: s.replaces ? 'Its container is replaced without the shared folders: running agents end and start again on their next message.'
-              : s.forwards ? 'The Mac stops listening for its ports, and connections through them end.'
-                : 'Its files and variables are removed there.',
-            ok: 'Turn off', danger: true,
-          })) return
-          await guarded(async () => {
-            await api('DELETE', `/v1/isolations/${enc(i.name)}/services/${enc(s.name)}`)
-            S.openForm = null
-            toast(`${s.name} is off for ${i.name}`)
-            await refreshIsolations()
-            renderIsolations()
-          })
-        },
-      }, 'Turn off') : null,
+      x.enabled ? h('button', { class: 'btn danger', onclick: () => turnOff(i, s) }, 'Turn off') : null,
       h('button', { class: 'btn', onclick: closeForm }, 'Cancel')))
 }
 
@@ -3678,12 +4020,12 @@ async function refreshAccounts() {
   const [accounts, kinds] = await Promise.all([api('GET', '/v1/accounts'), S.accountKinds.length ? S.accountKinds : api('GET', '/v1/account-kinds')])
   S.accounts = accounts || []
   S.accountKinds = kinds || []
-  if (S.view === 'setup' && !editing('setup')) renderSetup()
+  if (!editing(S.view)) rerender()
 }
 
 async function refreshCLIs(names) {
   for (const n of names) S.clis[n] = null
-  if (S.view === 'setup' && !editing('setup')) renderSetup()
+  if (!editing(S.view)) rerender()
   await Promise.all(names.map(async (n) => {
     try {
       S.clis[n] = await api('GET', `/v1/isolations/${enc(n)}/clis`)
@@ -3699,7 +4041,7 @@ async function refreshCLIs(names) {
       if (c) { showCLILogin(iso, c.tool, c.login); break }
     }
   }
-  if (S.view === 'setup' && !editing('setup')) renderSetup()
+  if (!editing(S.view)) rerender()
 }
 
 function showCLILogin(iso, tool, login) {
@@ -3723,7 +4065,7 @@ async function pollCLILogin(iso, tool) {
     const was = S.cliLogin.login.state
     S.cliLogin.login = l
     if (!liveLogin(l)) { cliLoginEnded(iso, tool, l); return }
-    if (l.state !== was && S.view === 'setup') renderSetup()
+    if (l.state !== was) rerender()
   }
 }
 
@@ -3732,35 +4074,35 @@ function cliLoginEnded(iso, tool, l) {
   S.cliLogin = null
   if (l.state === 'done') toast(`${cliName(tool)} is logged in in ${iso}; its idle agents restart with it`)
   else toast(`${cliName(tool)} login: ${l.message || l.state}`, true)
-  if (S.view === 'setup') renderSetup()
+  rerender()
   guarded(() => refreshCLIs([iso]))
 }
 
 async function startCLILogin(iso, tool) {
   if (S.cliLogin) await cancelCLILogin()
   S.cliBusy = `${iso}/${tool}`
-  renderSetup()
+  rerender()
   await guarded(async () => {
     const l = await api('POST', cliPath(iso, tool) + '/login')
     if (liveLogin(l)) showCLILogin(iso, tool, l)
     else toast(`${cliName(tool)} login: ${l.message || l.state}`, true)
   })
   S.cliBusy = null
-  renderSetup()
+  rerender()
 }
 
 async function cancelCLILogin() {
   const cur = S.cliLogin
   if (!cur) return
   S.cliLogin = null
-  renderSetup()
+  rerender()
   await guarded(() => api('DELETE', cliPath(cur.iso, cur.tool) + '/login'))
 }
 
 async function cliLogout(iso, tool) {
   if (!await ask({ title: `Log ${cliName(tool)} out in ${iso}?`, body: 'Its agents there stop working until it logs in again.', ok: 'Log out', danger: true })) return
   S.cliBusy = `${iso}/${tool}`
-  renderSetup()
+  rerender()
   await guarded(async () => {
     await api('POST', cliPath(iso, tool) + '/logout')
     toast(`${cliName(tool)} is logged out in ${iso}`)
@@ -3779,27 +4121,94 @@ function copyButton(text, label) {
 
 const clock = (t) => new Date(t).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
 
+// shownSetup is what the Accounts detail shows: the address's isolation,
+// account or new account, else the first isolation's logins.
+function shownSetup() {
+  const sel = S.setupSel
+  if (sel?.kind === 'new') return sel
+  if (sel?.kind === 'account' && (S.accounts == null || S.accounts.some((a) => a.name === sel.name))) return sel
+  if (sel?.kind === 'iso' && S.isolations.some((i) => i.name === sel.name)) return sel
+  return S.isolations.length ? { kind: 'iso', name: S.isolations[0].name } : null
+}
+
 function renderSetup() {
   const page = document.getElementById('setup')
   if (!page) return
-  page.replaceChildren(h('div', { class: 'page-inner' },
-    h('h2', null, 'Accounts'),
-    h('p', { class: 'lead' }, 'An agent CLI uses an account from the Mac, which any number of isolations can share, or a login inside its isolation. That login runs inside the isolation, so any browser can finish it, a phone’s included.'),
-    accountsCard(),
-    S.isolations.length ? S.isolations.map(setupCard)
-      : h('div', { class: 'empty' }, h('p', null, 'No isolations yet.'),
-        h('a', { href: '#/isolations', onclick: (e) => { e.preventDefault(); show('isolations') } }, 'Create one'))))
+  const shown = shownSetup()
+  const chosen = !!S.setupSel && shown === S.setupSel
+  const is = (kind, name) => shown?.kind === kind && shown.name === name
+  split(page, chosen, 'Accounts', [
+    h('div', { class: 'master-head' }, h('span', { class: 'label' }, 'Logins by isolation')),
+    S.isolations.length
+      ? S.isolations.map((i) => masterItem(setupHash('iso', i.name), is('iso', i.name),
+        h('span', { class: 'item-line' }, h('strong', null, i.name)), cliStates(i)))
+      : h('p', { class: 'note master-note' }, 'No isolations yet.'),
+    h('div', { class: 'master-head' }, h('span', { class: 'label' }, 'Shared accounts'), navLink(setupHash('new'), 'btn small', '+ New')),
+    S.accounts == null ? h('p', { class: 'note master-note' }, 'Reading…')
+      : S.accounts.length ? S.accounts.map((a) => masterItem(setupHash('account', a.name), is('account', a.name),
+        h('span', { class: 'item-line' }, h('strong', null, a.name), h('span', { class: 'item-side' }, a.kind)),
+        h('span', { class: 'item-sub' + (a.secret_error ? ' warn' : '') }, a.secret_error ? 'no secret' : a.used_by?.length ? 'used by ' + a.used_by.join(', ') : 'unused')))
+        : h('p', { class: 'note master-note' }, 'None yet.'),
+  ], setupDetail(shown))
 }
 
-function setupCard(i) {
+// cliStates is how each agent CLI of an isolation is logged in, in a word.
+function cliStates(i) {
   const cs = S.clis[i.name]
-  let body
-  if (cs == null) body = h('p', { class: 'note' }, 'Reading the logins from inside the isolation…')
-  else if (!Array.isArray(cs)) body = h('p', { class: 'form-error' }, cs.error)
-  else body = cs.map((c) => cliRow(i, c))
-  return h('div', { class: 'card' },
-    h('div', { class: 'head' }, h('h3', null, i.name), h('span', { class: 'chip ' + (i.state === 'running' ? '' : 'blocked') }, i.state)),
-    body)
+  if (cs == null) return h('span', { class: 'item-sub' }, 'reading…')
+  if (!Array.isArray(cs)) return h('span', { class: 'item-sub warn' }, cs.error)
+  return h('span', { class: 'item-sub states' }, cs.map((c) => {
+    const ok = c.logged_in && !c.error
+    return h('span', { class: 'state' + (ok ? '' : ' warn') }, h('span', { class: 'dot' + (ok ? ' on' : ' bad') }),
+      cliName(c.tool) + (c.error ? ' unknown' : ok ? '' : ' not logged in'))
+  }))
+}
+
+function setupDetail(sel) {
+  if (!sel) {
+    return [h('div', { class: 'detail-head' }, h('h2', null, 'Accounts')),
+      h('p', { class: 'note' }, 'No isolations yet. ', navLink('#/isolations/' + NEW, null, 'Create one'), '.')]
+  }
+  if (sel.kind === 'new') {
+    return [backLink('#/setup', 'Accounts'),
+      h('div', { class: 'detail-head' }, h('h2', null, 'New account')),
+      h('p', { class: 'lead' }, 'Defined once, on the Mac; any number of isolations can use one. A ChatGPT login cannot be shared this way (its refresh token is single-use), so Codex logs in inside each isolation.'),
+      newAccountForm()]
+  }
+  if (sel.kind === 'account') return accountDetail(sel.name)
+  const i = S.isolations.find((i) => i.name === sel.name)
+  return [backLink('#/setup', 'Accounts'),
+    h('div', { class: 'detail-head' }, h('h2', null, i.name),
+      h('span', { class: 'chip ' + (i.state === 'running' ? 'ok' : 'blocked') }, cap(i.state))),
+    h('p', { class: 'lead' }, 'What Claude Code and Codex log in with here: an account kept on the Mac, or a login made inside the isolation, which any browser can finish, a phone’s included.'),
+    cliCards(i)]
+}
+
+function accountDetail(name) {
+  if (S.accounts == null) return [backLink('#/setup', 'Accounts'), h('p', { class: 'note' }, 'Reading the accounts…')]
+  const a = S.accounts.find((a) => a.name === name)
+  const kind = S.accountKinds.find((k) => k.name === a.kind)
+  return [backLink('#/setup', 'Accounts'),
+    h('div', { class: 'detail-head' }, h('h2', null, a.name), h('span', { class: 'chip' }, a.kind),
+      a.secret_error ? h('span', { class: 'chip error' }, 'no secret') : null),
+    kind?.summary ? h('p', { class: 'lead' }, cap(kind.summary)) : null,
+    kv([['Used by', a.used_by?.length
+      ? h('span', { class: 'tags' }, a.used_by.map((n) => navLink(setupHash('iso', n), 'chip accent', n)))
+      : 'No isolation: choose it for a CLI on an isolation’s logins']]),
+    S.openForm === 'acct-secret:' + a.name ? accountSecretForm(a) : h('div', { class: 'actions' },
+      h('button', { class: 'btn', onclick: () => openForm('acct-secret:' + a.name) }, 'Replace secret'),
+      h('button', {
+        class: 'btn ghost danger', onclick: async () => {
+          const used = a.used_by?.length ? ` ${a.used_by.join(', ')} go back to a login inside.` : ''
+          if (!await ask({ title: `Remove account ${a.name}?`, body: `Its secret is deleted.${used}`, ok: 'Remove', danger: true })) return
+          let gone = false
+          await guarded(async () => { await api('DELETE', `/v1/accounts/${enc(a.name)}?force=1`); toast(`Account ${a.name} removed`); gone = true })
+          if (!gone) return
+          for (const n of a.used_by || []) delete S.clis[n]
+          await guarded(refreshAccounts)
+          go('#/setup')
+        },
+      }, 'Remove'))]
 }
 
 function cliRow(i, c) {
@@ -3836,7 +4245,7 @@ function accountPicker(i, c, busy) {
   sel.addEventListener('change', async () => {
     const account = sel.value
     S.cliBusy = `${i.name}/${c.tool}`
-    renderSetup()
+    rerender()
     await guarded(async () => {
       await api('PUT', cliPath(i.name, c.tool) + '/account', { account })
       toast(account ? `${cliName(c.tool)} in ${i.name} uses ${account}; its idle agents restart with it` : `${cliName(c.tool)} in ${i.name} goes back to a login inside`)
@@ -3849,53 +4258,34 @@ function accountPicker(i, c, busy) {
     mine.length ? null : h('span', { class: 'hint' }, 'No account of its kind yet; add one above.'))
 }
 
-function accountsCard() {
-  if (S.accounts == null) return h('div', { class: 'card' }, h('p', { class: 'note' }, 'Reading the accounts…'))
-  const usedBy = (a) => a.used_by?.length ? 'used by ' + a.used_by.join(', ') : 'unused'
-  const rows = S.accounts.map((a) => h('div', { class: 'cli' },
-    h('div', { class: 'head' }, h('span', { class: 'cli-name' }, a.name), h('span', { class: 'ver' }, a.kind),
-      a.secret_error ? h('span', { class: 'chip error' }, 'no secret') : null),
-    h('div', { class: 'facts' }, usedBy(a)),
-    S.openForm === 'acct-secret:' + a.name ? accountSecretForm(a)
-      : h('div', { class: 'actions' },
-        h('button', { class: 'btn', onclick: () => { S.openForm = 'acct-secret:' + a.name; renderSetup() } }, 'Replace secret'),
-        h('button', {
-          class: 'btn danger', onclick: async () => {
-            const used = a.used_by?.length ? ` ${a.used_by.join(', ')} go back to a login inside.` : ''
-            if (!await ask({ title: `Remove account ${a.name}?`, body: `Its secret is deleted.${used}`, ok: 'Remove', danger: true })) return
-            await guarded(async () => { await api('DELETE', `/v1/accounts/${enc(a.name)}?force=1`); toast(`Account ${a.name} removed`) })
-            await guarded(refreshAccounts)
-            if (a.used_by?.length) await guarded(() => refreshCLIs(a.used_by))
-          },
-        }, 'Remove'))))
-  return h('div', { class: 'card' },
-    h('div', { class: 'head' }, h('h3', null, 'Shared accounts'),
-      S.openForm === 'acct-new' ? null : h('button', { class: 'btn', onclick: () => { S.openForm = 'acct-new'; renderSetup() } }, 'New account')),
-    h('p', { class: 'note' }, 'Defined once, on the Mac; any number of isolations can use one. A ChatGPT login cannot be shared this way (its refresh token is single-use), so Codex logs in inside each isolation.'),
-    S.openForm === 'acct-new' ? newAccountForm() : null,
-    rows.length ? rows : null)
-}
-
+// newAccountForm adds one. What is typed lives in S, as polling redraws
+// the page, until it is added or the page left.
 function newAccountForm() {
-  const name = h('input', { autocomplete: 'off', placeholder: 'e.g. claude' })
-  const kind = dropdown(S.accountKinds.map((k) => k.name), { label: 'Kind' })
+  const d = S.acctDraft
+  const name = h('input', { autocomplete: 'off', placeholder: 'e.g. claude', value: d.name })
+  const kind = dropdown(S.accountKinds.map((k) => k.name), { label: 'Kind', value: d.kind || undefined })
   const hint = h('span', { class: 'hint' })
   const showHint = () => { hint.textContent = S.accountKinds.find((k) => k.name === kind.value)?.summary || '' }
-  kind.addEventListener('change', showHint)
+  kind.addEventListener('change', () => { d.kind = kind.value; showHint() })
   showHint()
-  const secret = h('input', { type: 'password', autocomplete: 'new-password', placeholder: 'sk-ant-…' })
-  const err = h('p', { class: 'form-error' })
+  const secret = h('input', { type: 'password', autocomplete: 'new-password', placeholder: 'sk-ant-…', value: d.secret })
+  name.addEventListener('input', () => { d.name = name.value })
+  secret.addEventListener('input', () => { d.secret = secret.value })
+  const err = h('p', { class: 'form-error' }, d.error || '')
   const save = h('button', { class: 'btn primary' }, 'Add account')
   save.addEventListener('click', async () => {
+    d.error = ''
     err.textContent = ''
     try {
-      await api('POST', `/v1/accounts/${enc(name.value.trim())}`, { kind: kind.value, secret: secret.value.trim() })
-      S.openForm = null
-      toast(`Account ${name.value.trim()} added; choose it for a CLI below`)
+      const n = name.value.trim()
+      await api('POST', `/v1/accounts/${enc(n)}`, { kind: kind.value, secret: secret.value.trim() })
+      S.acctDraft = { name: '', kind: null, secret: '' }
+      toast(`Account ${n} added; choose it for a CLI in an isolation's logins`)
       await refreshAccounts()
-      renderSetup()
+      go(setupHash('account', n))
     } catch (x) {
       if (x instanceof Unauthorized) { S.authed = false; render(); return }
+      d.error = x.message
       err.textContent = x.message
     }
   })
@@ -3904,7 +4294,7 @@ function newAccountForm() {
     h('div', { class: 'field' }, h('label', null, 'Secret'), secret,
       h('span', { class: 'hint' }, 'A token from ', h('code', null, 'claude setup-token'), ' (run it on any machine with a browser), or an API key. Stored in the Mac’s credentials file (0600), never shown again.')),
     err,
-    h('div', { class: 'actions' }, save, h('button', { class: 'btn', onclick: () => { S.openForm = null; renderSetup() } }, 'Cancel')))
+    h('div', { class: 'actions' }, save, navLink('#/setup', 'btn', 'Cancel')))
 }
 
 // accountSecretForm replaces an account's secret.
@@ -3919,14 +4309,14 @@ function accountSecretForm(a) {
       S.openForm = null
       toast(`Replaced the secret of ${a.name}` + (a.used_by?.length ? `; idle agents in ${a.used_by.join(', ')} restart with it` : ''))
       await refreshAccounts()
-      renderSetup()
+      rerender()
     } catch (x) {
       if (x instanceof Unauthorized) { S.authed = false; render(); return }
       err.textContent = x.message
     }
   })
   return h('div', { class: 'subform' }, h('div', { class: 'field' }, secret), err,
-    h('div', { class: 'actions' }, save, h('button', { class: 'btn', onclick: () => { S.openForm = null; renderSetup() } }, 'Cancel')))
+    h('div', { class: 'actions' }, save, h('button', { class: 'btn', onclick: closeForm }, 'Cancel')))
 }
 
 function cliLoginForm(iso, tool, l) {
@@ -3954,7 +4344,7 @@ function cliLoginForm(iso, tool, l) {
     finish.textContent = 'Checking…'
     try {
       const r = await api('POST', cliPath(iso, tool) + '/login/code', { code: v })
-      if (liveLogin(r)) { if (onScreen(iso, tool)) { S.cliLogin.login = r; renderSetup() } }
+      if (liveLogin(r)) { if (onScreen(iso, tool)) { S.cliLogin.login = r; rerender() } }
       else cliLoginEnded(iso, tool, r)
     } catch (x) {
       if (x instanceof Unauthorized) { S.authed = false; render(); return }
@@ -4027,9 +4417,9 @@ document.addEventListener('keydown', (e) => {
   if (t.closest?.('input, textarea, select, [contenteditable]') || document.querySelector('dialog[open]')) return
   const key = e.code?.startsWith('Key') ? e.code.slice(3).toLowerCase() : e.key
   const a = S.view === 'agent' ? agentById(S.sel) : null
-  const go = Date.now() - goPending < 1500
+  const going = Date.now() - goPending < 1500
   goPending = 0
-  const act = go ? { i: () => show('isolations'), s: () => show('services'), a: () => show('setup') }[key]
+  const act = going ? { i: () => show('isolations'), s: () => show('services'), a: () => show('setup') }[key]
     : e.key === '?' ? showShortcuts
     : e.shiftKey ? null
     : {

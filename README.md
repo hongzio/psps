@@ -129,7 +129,14 @@ bin/gero web          # opens http://127.0.0.1:4376 signed in
 The same agents, conversations, approvals, isolation settings, accounts
 (what Claude and Codex log in with) and credential proxies (the Services page, and each isolation's
 services), laid out for a
-desktop browser or a phone. In the sidebar an idle agent's grey dot means it
+desktop browser or a phone. Isolations, Services and Accounts are each a list
+and one of it: an isolation's overview, its services (a switch each), its
+logins, environment variables and settings; a service's environments and the
+isolations that have it; an isolation's logins or a shared account. On a phone
+or in a narrow window the list is the page and one of it replaces it, with
+the way back on top. Each has an address of its own
+(`#/isolations/dev/services`), so a page can be bookmarked and the back
+gesture goes where it should. In the sidebar an idle agent's grey dot means it
 wants a look; tapping it parks the agent (a dimmer grey: it needs none), and
 tapping again undoes that. Its next turn takes it out of being parked. A team
 (an agent's Edit, or New agent, names it; a new name makes one) is a group
@@ -766,7 +773,7 @@ refuses a lead without a budget, and its agents of that kind.
 Some of what you do with the gero command can be opened to an isolation's
 agents: an agent that keeps others going lists them, makes them, writes to
 them, sets them crons. What is opened is an env, a set of gero commands ticked
-one by one (checkboxes in the web's env dialog), and an isolation has one:
+one by one (checkboxes in the web's environment form), and an isolation has one:
 
 ```sh
 gero env add control ops --allow agent.ls,agent.log,agent.new,agent.send --max-live 3
@@ -986,4 +993,4 @@ the agent, with curl or psql, and that each env still answers from the Mac
 (`gero env check`). Then that the credentials file is owner-only and the
 internet is still reachable. FAIL lines are broken guarantees, WARN lines
 setup; a leak found here stops agents like any other measurement. The TUI
-has it on `v` in the isolations page, the web on each isolation card.
+has it on `v` in the isolations page, the web as Verify on an isolation's page.
