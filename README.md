@@ -645,7 +645,11 @@ gero tells the lead, as a message of its own whenever it is idle:
   report is the news;
 - what the eval scored: with an eval set, gero runs it once the lead's agents
   have all ended their turns, and holds their news until then, so the lead
-  hears of a round once, with its score;
+  hears of a round once, with its score. It scores what is there then: a
+  result the lead writes after reading their answers waits for the next
+  eval, so the skill tells it to have an agent put the result in place. An
+  eval set or changed scores no round that ended before it: its first comes
+  after the next round, or when asked;
 - that nothing runs any more, once after each eval, if the lead let its
   team end without making the next (and not while a plan window is past
   the ceiling, when it could make none).
@@ -658,8 +662,8 @@ at most (20), in one of two places:
   directory by default). The agents can change the eval, what it reads and
   what it runs with; a read-only shared folder (see Shared folders) keeps
   its files from them, not its home or its processes.
-- In an eval isolation (`--eval-iso`), one with no agents and no services,
-  which the agents never reach. For each eval gero ends what the last one
+- In an eval isolation (`--eval-iso`), one with no services but control,
+  which the team's agents never reach. For each eval gero ends what the last one
   left running there, copies `--eval-dir` from the lead's isolation to
   `/eval/work`, and runs the eval there as a user of its own (uid 1001, its
   home `/eval/home`, both made anew: `~` in the eval is that empty home, so
@@ -677,6 +681,12 @@ at most (20), in one of two places:
 A grader for an eval isolation, say `grader`, lives in its agent user's home:
 make it in `gero iso shell grader`, where `~` is `/home/agent` (clone it,
 or write it there). The eval user reads and runs it and cannot change it.
+An agent of yours may work there too, to set the isolation up or read the
+results, but it runs as the agent user, the grader's owner: what it reads of
+what the eval leaves (`/eval`, the output) is the work's to write, so set it
+to read only, by hand. Control is the one service it may have there: its
+address is in each agent's process alone, which the eval's user cannot
+read, so long as the agent does not write it to a file.
 Run with `--eval-iso grader --eval 'sh /home/agent/grader/run.sh'`:
 
 ```sh
@@ -751,13 +761,13 @@ The actions: `agent.ls`, `agent.log` (a conversation), `agent.new`,
 `agent.send`, `agent.interrupt`, `agent.archive`, `agent.restore`,
 `agent.fork`, `agent.rename`, `agent.team`, `agent.set` (model and effort),
 `agent.cron`, `agent.inbox`, `iso.ls`, `iso.services`, `team.ls`,
-`team.show`, `team.new`, `team.rename`, `team.rm` and `team.eval`. An env
-made without `--allow` opens the reads alone. Nothing that is credentials
-or rights is among them, so no env opens it: accounts, envs and their
-secrets, services, an isolation's environment and logins, approvals (an
-agent's mode, and approving or answering), a lead and its eval (a command
-that runs elsewhere), making, resizing, upgrading and removing isolations,
-removing agents, resuming a run gero stopped, the fence and the daemon.
+`team.show`, `team.new`, `team.rename`, `team.rm`, `team.eval` and
+`team.evalset`. An env made without `--allow` opens the reads alone. Nothing
+that is credentials or rights is among them, so no env opens it: accounts,
+envs and their secrets, services, an isolation's environment and logins,
+approvals (an agent's mode, and approving or answering), a lead and its
+terms, making, resizing, upgrading and removing isolations, removing agents,
+resuming a run gero stopped, the fence and the daemon.
 
 Inside the isolation, `GERO_CONTROL_URL` is each agent's own address for it
 (on mail's port, so no `gero iso upgrade` is needed), and the `gero-control`
@@ -789,6 +799,15 @@ as that agent:
 - **A team is its to change only whole.** It renames or removes a team only
   when it reaches all its agents, and sees a run or runs an eval where it
   reaches the lead.
+- **An eval it sets runs in its own isolation.** `team.evalset` sets a
+  team's eval command and its limit, where it reaches the lead, to run in the
+  setting agent's isolation as the eval isolation, on a copy of the lead's
+  working directory or one in it: never in the lead's isolation, where an
+  eval runs as the agents, and on nothing else of it. The rest of the run's
+  terms stay yours, a stopped run stays stopped, and `gero team show`, the
+  team's dialog and page say which agent set the eval, until you change it.
+  The `gero-control` skill says what an eval is wherever its env touches
+  one.
 
 Turning control off for an isolation, or editing its env, takes effect on the
 next request; its agents' processes start again when idle, with the address

@@ -213,3 +213,73 @@ func TestControlOpensWhatItsEnvTicksOnTheAgentsItReaches(t *testing.T) {
 }
 
 func itoa(n int64) string { b, _ := json.Marshal(n); return string(b) }
+
+// An agent sets a team's eval through the control service to run in its
+// own isolation, on a copy of a directory in the lead's: never in the
+// lead's isolation, on nothing else of it, and nothing else of the run.
+func TestControlSetsATeamsEvalToRunInItsOwnIsolation(t *testing.T) {
+	e := newTestEnv(t)
+	m, stop := e.daemon()
+	defer stop()
+	ctx := context.Background()
+	if _, err := m.CreateIsolation(ctx, api.CreateIsolation{Name: "ev"}, nil); err != nil {
+		t.Fatal(err)
+	}
+	boss, team := withTeams(t, e, m, api.PutLead{Budget: ptr(int64(1_000_000))})
+	helper, err := m.CreateAgent(ctx, api.CreateAgent{Isolation: "ev", Kind: driver.Codex, Handle: "helper"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	e.waitFor("helper", func() bool { return status(m, helper.ID) == event.StatusIdle })
+	if _, err := m.PutEnv(ctx, "control", "grade", proxy.Patch{Set: map[string]any{"allow": []string{"team.show", "team.evalset"}}}, true); err != nil {
+		t.Fatal(err)
+	}
+	for _, iso := range []string{"ev", "dev"} {
+		if _, err := m.Expose(ctx, iso, "control", api.Expose{Envs: []string{"grade"}, Settings: proxy.Patch{Set: map[string]any{"reach": []string{map[string]string{"ev": "dev", "dev": "ev"}[iso]}}}}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	set := func(from store.Agent, body string) (int, string) {
+		t.Helper()
+		return mailAs(t, m, from.IsolationID, from.ID, "PUT", "/control/teams/lab/eval", body)
+	}
+	if code, out := set(helper, `{"eval": "sh /home/agent/grader/run.sh", "eval_dir": "/home/agent"}`); code != http.StatusForbidden || !strings.Contains(out, "the lead's working directory") {
+		t.Fatalf("a directory outside the lead's: %d %s", code, out)
+	}
+	if code, out := set(helper, `{"eval": "x", "eval_dir": "`+boss.Workdir+`/../.."}`); code != http.StatusForbidden {
+		t.Fatalf("out by ..: %d %s", code, out)
+	}
+	if code, out := set(helper, `{"eval": "x", "eval_isolation": "dev"}`); code != http.StatusBadRequest {
+		t.Fatalf("an isolation of its choice: %d %s", code, out)
+	}
+	if code, out := set(boss, `{"eval": "x"}`); code != http.StatusForbidden || !strings.Contains(out, "which is the lead's") {
+		t.Fatalf("from the lead's isolation: %d %s", code, out)
+	}
+
+	// A run gero stopped stays stopped; a round that ended before the eval
+	// is not its to score.
+	if err := m.store.SetLeadStopped(team.ID, "the budget is used"); err != nil {
+		t.Fatal(err)
+	}
+	if err := m.store.SetLeadDirty(team.ID, true); err != nil {
+		t.Fatal(err)
+	}
+	code, out := set(helper, `{"eval": "sh /home/agent/grader/run.sh", "eval_dir": "`+boss.Workdir+`/app", "eval_minutes": 5}`)
+	if code != 200 {
+		t.Fatalf("%d %s", code, out)
+	}
+	run, _ := m.TeamRun("lab")
+	s := run.Settings
+	if s.Eval != "sh /home/agent/grader/run.sh" || s.EvalDir != boss.Workdir+"/app" || s.EvalMinutes != 5 || run.EvalIsolation != "ev" ||
+		s.EvalSetBy != "helper in isolation ev" || s.Budget != 1_000_000 || run.Stopped != "the budget is used" {
+		t.Fatalf("%+v", run)
+	}
+	if l, _ := m.store.Lead(team.ID); l.Dirty {
+		t.Fatal("a round that ended before the eval is still to score")
+	}
+
+	// Changed by the operator, it is theirs again.
+	if run, err = m.SetLead(ctx, "lab", api.PutLead{Agent: "boss", Eval: ptr("make score")}); err != nil || run.Settings.EvalSetBy != "" {
+		t.Fatalf("%+v %v", run.Settings, err)
+	}
+}

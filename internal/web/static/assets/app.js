@@ -1244,12 +1244,14 @@ async function editTeam(t) {
   const evalCmd = input(st.eval, 'none')
   const evalDir = input(st.eval_dir, "the lead's directory")
   S.isolations ||= await api('GET', '/v1/isolations').catch(() => [])
-  // An eval isolation has no agent, so not the lead's either; the one
-  // chosen before stays, to be seen.
-  const busy = new Set(S.agents.filter((a) => !a.archived_at).map((a) => a.isolation))
-  const fit = S.isolations.map((i) => i.name).filter((n) => !busy.has(n) || n === run?.eval_isolation)
-  const evalIso = dropdown([{ value: '', label: "The lead's own" }, ...fit.map((n) => ({ value: n, label: busy.has(n) ? `${n} (has agents)` : n }))],
-    { value: run?.eval_isolation || '', label: 'Eval isolation' })
+  // An eval isolation is another than the lead's, so the choice follows
+  // the lead chosen.
+  const evalIsos = () => {
+    const own = S.agents.find((a) => a.id === lead.value)?.isolation
+    return [{ value: '', label: "The lead's own" }, ...S.isolations.map((i) => i.name).filter((n) => n !== own)]
+  }
+  const evalIso = dropdown(evalIsos(), { value: run?.eval_isolation || '', label: 'Eval isolation' })
+  lead.addEventListener('change', () => evalIso.setOptions(evalIsos()))
   const evalMin = input(st.eval_minutes, '20', 'numeric')
   const target = input(st.target, 'none', 'decimal')
   const patience = input(st.patience, '3', 'numeric')
@@ -1272,8 +1274,9 @@ async function editTeam(t) {
     h('div', { class: 'lead-grid' },
       field('Budget (tokens)', budget), field('Live at most', maxLive), field('Turn limit (min)', turn), field('Plan ceiling (%)', ceiling)),
     noBudget,
-    field('Eval', evalCmd, 'A shell command; its last "SCORE: x" line is the score, higher better. In the lead\'s isolation it runs as the agents, who can change it and what it reads.'),
-    field('Eval isolation', evalIso, 'Another isolation, with no agents or services, scores a copy of the eval directory made for each eval, as a user who can change nothing else there: out of the agents\' reach. Keep the grader and its data there, and take only what is scored from the copy; ~ in the eval is then an empty home, so give the grader\'s path in full. The lead hears only the score.'),
+    field('Eval', evalCmd, 'A shell command; its last "SCORE: x" line is the score, higher better. In the lead\'s isolation it runs as the agents, who can change it and what it reads.' +
+      (st.eval_set_by ? ` Agent ${st.eval_set_by} set it, through control; saved changed, it is yours.` : '')),
+    field('Eval isolation', evalIso, 'Another isolation, with no services but control, scores a copy of the eval directory made for each eval, as a user who can change nothing else there: out of the agents\' reach. Keep the grader and its data there, and take only what is scored from the copy; ~ in the eval is then an empty home, so give the grader\'s path in full. The lead hears only the score. An agent of yours there runs as the grader\'s owner: keep it from what the eval leaves.'),
     h('div', { class: 'lead-grid' },
       field('Eval directory', evalDir), field('Eval limit (min)', evalMin), field('Target', target, 'ends the run once reached'), field('Patience (evals)', patience, 'without a new best, end the run')),
     teamsOff)

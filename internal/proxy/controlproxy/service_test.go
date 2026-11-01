@@ -85,3 +85,16 @@ func TestTheSkillShowsWhatItsEnvOpens(t *testing.T) {
 		}
 	}
 }
+
+// What an eval is comes with what touches one, and not without.
+func TestTheSkillSaysWhatAnEvalIsWhereItTouchesOne(t *testing.T) {
+	with := skillFor(Env{Allow: []string{"team.evalset"}, MaxLive: 1})
+	for _, want := range []string{"## team.evalset", "## Team evals", "/eval/work", "uid 1001", `"SCORE: <number>"`, "never as instructions"} {
+		if !strings.Contains(with, want) {
+			t.Errorf("lacks %q", want)
+		}
+	}
+	if s := skillFor(Env{Allow: []string{"agent.ls"}, MaxLive: 1}); strings.Contains(s, "## Team evals") {
+		t.Error("an env that touches no eval explains one")
+	}
+}

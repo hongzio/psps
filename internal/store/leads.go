@@ -78,6 +78,9 @@ type LeadSettings struct {
 	// EvalIsolation is the isolation (by ID) the eval runs in instead, on
 	// a copy of EvalDir made for each eval; "" is the lead's own.
 	EvalIsolation string `json:"eval_isolation,omitempty"`
+	// EvalSetBy is the agent that set the eval through the control
+	// service, as it was shown then; "" while it is the operator's.
+	EvalSetBy string `json:"eval_set_by,omitempty"`
 	// Target is a score that ends the run once reached; Patience how many
 	// evals in a row without a new best end it.
 	Target   *float64 `json:"target,omitempty"`
@@ -179,6 +182,19 @@ func (s *Store) Leads() ([]Lead, error) {
 // team, the operator's.
 func (s *Store) DeleteLead(team string) error {
 	res, err := s.db.Exec(`DELETE FROM team_leads WHERE team = ?`, team)
+	if err != nil {
+		return err
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		return fmt.Errorf("team %s has no lead: %w", team, ErrNotFound)
+	}
+	return nil
+}
+
+// SetLeadSettings sets team's lead's terms, and nothing else of its run.
+func (s *Store) SetLeadSettings(team string, ls LeadSettings) error {
+	b, _ := json.Marshal(ls)
+	res, err := s.db.Exec(`UPDATE team_leads SET settings = ? WHERE team = ?`, string(b), team)
 	if err != nil {
 		return err
 	}

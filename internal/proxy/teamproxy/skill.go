@@ -87,6 +87,11 @@ When the agents of yours that were working have all ended their turns, gero runs
 the eval before it tells you, so the score comes with their answers. News that
 comes while you work waits, and arrives together once you are idle.
 
+The eval scores what is in its directory at that moment. So have an agent put
+the result in place, as part of its work: what you write yourself after reading
+their answers is scored only at the next eval, or when you ask for one. The
+first eval after your operator sets or changes it comes after the next round.
+
 So do not poll and do not wait in a loop: end your turn, and the next news wakes
 you. Their answers come to you; they need not mail you.
 
