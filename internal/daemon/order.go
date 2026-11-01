@@ -42,7 +42,11 @@ func (m *Manager) Order() (api.AgentOrders, error) {
 	if err != nil {
 		return api.AgentOrders{}, err
 	}
-	return api.AgentOrders{Live: ls[store.LiveList], Archived: ls[store.ArchivedList], Teams: teams}, nil
+	runs, err := m.teamsWithRuns(teams)
+	if err != nil {
+		return api.AgentOrders{}, err
+	}
+	return api.AgentOrders{Live: ls[store.LiveList], Archived: ls[store.ArchivedList], Teams: runs}, nil
 }
 
 // orderAgents puts the lines the operator ordered first in each list, in

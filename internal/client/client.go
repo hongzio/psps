@@ -278,6 +278,33 @@ func (c *Client) DeleteTeam(ctx context.Context, team string) error {
 	return c.do(ctx, "DELETE", "/v1/teams/"+url.PathEscape(team), nil, nil)
 }
 
+// AgentOrder is the sidebar's lists, with the teams and their runs.
+func (c *Client) AgentOrder(ctx context.Context) (api.AgentOrders, error) {
+	var v api.AgentOrders
+	return v, c.do(ctx, "GET", "/v1/agent-order", nil, &v)
+}
+
+// TeamRun is a team's lead and its run, by the team's name or ID.
+func (c *Client) TeamRun(ctx context.Context, team string) (api.TeamRun, error) {
+	var v api.TeamRun
+	return v, c.do(ctx, "GET", "/v1/teams/"+url.PathEscape(team)+"/run", nil, &v)
+}
+
+// SetLead makes an agent a team's lead, or sets its terms.
+func (c *Client) SetLead(ctx context.Context, team string, req api.PutLead) (api.TeamRun, error) {
+	var v api.TeamRun
+	return v, c.do(ctx, "PUT", "/v1/teams/"+url.PathEscape(team)+"/lead", req, &v)
+}
+
+func (c *Client) ClearLead(ctx context.Context, team string) error {
+	return c.do(ctx, "DELETE", "/v1/teams/"+url.PathEscape(team)+"/lead", nil, nil)
+}
+
+// EvalTeam has a team's eval run now; its result is news for the lead.
+func (c *Client) EvalTeam(ctx context.Context, team string) error {
+	return c.do(ctx, "POST", "/v1/teams/"+url.PathEscape(team)+"/eval", nil, nil)
+}
+
 // Inbox is the mail waiting for an agent, in the order it will read it.
 func (c *Client) Inbox(ctx context.Context, id string) ([]api.Mail, error) {
 	var v []api.Mail

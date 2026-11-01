@@ -47,10 +47,10 @@ func TestMain(m *testing.M) {
 
 // fakeCodex answers just enough of the app-server protocol: one thread whose
 // id survives restarts (a fork's is named for the one it forks), and turns
-// that echo. A turn whose text is "hang", or
-// a mail that says only that, starts and ends only when interrupted;
-// "recall" answers with the thread's earlier messages, which thread/revert
-// cuts.
+// that echo, each spending 1000 tokens of input and 100 of output. A turn
+// whose text is "hang", or a message that ends with it, starts and ends
+// only when interrupted; "recall" answers with the thread's earlier
+// messages, which thread/revert cuts.
 func fakeCodex() {
 	in := bufio.NewScanner(os.Stdin)
 	in.Buffer(make([]byte, 1<<20), 1<<20)
@@ -59,6 +59,15 @@ func fakeCodex() {
 	notify := func(method string, params any) { enc.Encode(map[string]any{"method": method, "params": params}) }
 	thread := "th-fake"
 	turns := 0
+	spent := 0
+	usage := func(tid string) {
+		spent += 1000
+		count := func(in int) map[string]any {
+			return map[string]any{"inputTokens": in, "cachedInputTokens": 0, "outputTokens": in / 10, "reasoningOutputTokens": 0, "totalTokens": in + in/10}
+		}
+		notify("thread/tokenUsage/updated", map[string]any{"threadId": thread, "turnId": tid,
+			"tokenUsage": map[string]any{"total": count(spent), "last": count(1000), "modelContextWindow": 200000}})
+	}
 	type turn struct{ id, text string }
 	var history []turn
 	for in.Scan() {
@@ -128,6 +137,7 @@ func fakeCodex() {
 			notify("item/agentMessage/delta", map[string]any{"itemId": "m-" + tid, "delta": "echo", "turnId": tid})
 			notify("item/completed", map[string]any{"turnId": tid,
 				"item": map[string]any{"type": "agentMessage", "id": "m-" + tid, "text": "echo: " + text}})
+			usage(tid)
 			notify("turn/completed", map[string]any{"threadId": thread, "turn": map[string]any{"id": tid, "status": "completed"}})
 		}
 	}

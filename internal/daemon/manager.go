@@ -120,6 +120,15 @@ type Manager struct {
 	// cronWake tells RunCrons one may be due sooner.
 	cronMu   sync.Mutex
 	cronWake chan struct{}
+	// teamMu keeps the decisions about one lead's run from crossing
+	// another's; teamsDue are the teams RunTeams looks at next, teamWake
+	// tells it there are some. evaluating are the teams whose eval runs,
+	// and busy the agents each lead's line made that are at work.
+	teamMu     sync.Mutex
+	teamsDue   map[string]bool
+	teamWake   chan struct{}
+	evaluating map[string]bool
+	busy       map[string]map[string]bool
 }
 
 // fenceState is whether an isolation's network fence was measured to hold.
@@ -148,7 +157,8 @@ func NewManager(ctx context.Context, st *store.Store, cli Containers, fence Fenc
 		runtimes: map[string]*runtime{}, isos: map[string]*isoState{}, fences: map[string]*fenceState{},
 		tunnelPort: func(p int) int { return p }, instances: map[string]map[string]proxy.Instance{},
 		tunnels: map[string]*tunnelState{}, synced: map[string]string{}, versions: map[string]string{}, lastEnv: map[string]string{},
-		mailBuckets: map[string]*proxy.TokenBucket{}, cronWake: make(chan struct{}, 1)}
+		mailBuckets: map[string]*proxy.TokenBucket{}, cronWake: make(chan struct{}, 1),
+		teamsDue: map[string]bool{}, teamWake: make(chan struct{}, 1), evaluating: map[string]bool{}, busy: map[string]map[string]bool{}}
 	m.loops.Add(1)
 	go func() {
 		defer m.loops.Done()
@@ -793,6 +803,12 @@ func (m *Manager) newAgentID() (string, error) {
 // it has a name by then. Given no ID of its own, it goes by an
 // adjective-noun no other agent has.
 func (m *Manager) CreateAgent(ctx context.Context, req api.CreateAgent) (store.Agent, error) {
+	return m.createAgent(ctx, req, store.Agent{})
+}
+
+// createAgent is CreateAgent with what gero alone sets of an agent, from
+// own: the lead that makes it, and its turn limit.
+func (m *Manager) createAgent(ctx context.Context, req api.CreateAgent, own store.Agent) (store.Agent, error) {
 	name := nameFrom(req.Prompt)
 	if strings.TrimSpace(req.Name) != "" {
 		var err error
@@ -861,7 +877,7 @@ func (m *Manager) CreateAgent(ctx context.Context, req api.CreateAgent) (store.A
 		return store.Agent{}, err
 	}
 	a := store.Agent{ID: id, Handle: handle, Name: name, Kind: req.Kind, IsolationID: iso.ID, Workdir: workdir, Repo: req.Repo,
-		Options: req.Options, SessionID: drv.State().SessionID, CreatedAt: time.Now().UTC()}
+		Options: req.Options, SessionID: drv.State().SessionID, CreatedAt: time.Now().UTC(), MadeBy: own.MadeBy, TurnMinutes: own.TurnMinutes}
 	if a, err = m.storeNamed(a, picked); err != nil {
 		return store.Agent{}, err
 	}
@@ -914,6 +930,9 @@ func (m *Manager) Agents() ([]api.Agent, error) {
 	if err := m.withTeams(out); err != nil {
 		return nil, err
 	}
+	if err := m.withRuns(out); err != nil {
+		return nil, err
+	}
 	sortAgents(out)
 	orderAgents(out, order, teams)
 	return out, nil
@@ -946,7 +965,10 @@ func (m *Manager) viewOf(a store.Agent) (api.Agent, error) {
 		return api.Agent{}, err
 	}
 	v := []api.Agent{m.view(a, inbox, crons, todos)}
-	return v[0], m.withTeams(v)
+	if err := m.withTeams(v); err != nil {
+		return v[0], err
+	}
+	return v[0], m.withRuns(v)
 }
 
 func (m *Manager) Agent(idOrPrefix string) (api.Agent, error) {
@@ -1128,7 +1150,7 @@ func (m *Manager) Renew(ctx context.Context, id string) (store.Agent, error) {
 	}
 	now := time.Now().UTC()
 	a := store.Agent{ID: key, Kind: old.Kind, IsolationID: old.IsolationID, Workdir: old.Workdir, Repo: old.Repo,
-		Options: old.Options, SessionID: drv.State().SessionID, CreatedAt: now}
+		Options: old.Options, SessionID: drv.State().SessionID, CreatedAt: now, MadeBy: old.MadeBy, TurnMinutes: old.TurnMinutes}
 	m.swap.Lock()
 	defer m.swap.Unlock()
 	if err := m.store.Renew(old.ID, a, now); err != nil {

@@ -1,0 +1,298 @@
+package daemon
+
+import (
+	"context"
+	"encoding/json"
+	"net/http"
+	"os"
+	"path/filepath"
+	"strings"
+	"testing"
+	"time"
+
+	"github.com/hongzio/gero/internal/api"
+	"github.com/hongzio/gero/internal/creds"
+	"github.com/hongzio/gero/internal/driver"
+	"github.com/hongzio/gero/internal/event"
+	"github.com/hongzio/gero/internal/proxy"
+	"github.com/hongzio/gero/internal/proxy/mailproxy"
+	"github.com/hongzio/gero/internal/proxy/teamproxy"
+	"github.com/hongzio/gero/internal/store"
+)
+
+// withTeams gives the manager the team service, on for dev, and a lead:
+// boss, idle, leading team lab on terms.
+func withTeams(t *testing.T, e *testEnv, m *Manager, terms api.PutLead) (store.Agent, store.Team) {
+	t.Helper()
+	ctx := context.Background()
+	m.SetProxies(proxy.NewRegistry(mailproxy.Service{}, teamproxy.Service{}), &creds.Store{Path: filepath.Join(t.TempDir(), "credentials")})
+	m.tunnelPort = func(int) int { return freePort(t) }
+	if _, err := m.Expose(ctx, "dev", "team", api.Expose{}); err != nil {
+		t.Fatal(err)
+	}
+	boss, err := m.CreateAgent(ctx, api.CreateAgent{Isolation: "dev", Kind: driver.Codex, Handle: "boss", Options: driver.Options{Approvals: driver.ApprovalsAuto}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	e.waitFor("the lead", func() bool { return status(m, boss.ID) == event.StatusIdle })
+	team, err := m.CreateTeam("lab")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if code, out := teamAs(t, m, boss.ID, "GET", "", ""); code != http.StatusForbidden || !strings.Contains(out, "you lead no team") {
+		t.Fatalf("an agent that leads nothing: %d %s", code, out)
+	}
+	terms.Agent = "boss"
+	if _, err := m.SetLead("lab", terms); err != nil {
+		t.Fatal(err)
+	}
+	return boss, team
+}
+
+func teamAs(t *testing.T, m *Manager, from, method, path, body string) (int, string) {
+	t.Helper()
+	return mailAs(t, m, testIsoID, from, method, "/team"+path, body)
+}
+
+// makeAgent has from make an agent of its own, and says which.
+func makeAgent(t *testing.T, m *Manager, from string, req api.TeamAgentNew) api.TeamAgent {
+	t.Helper()
+	b, _ := json.Marshal(req)
+	code, out := teamAs(t, m, from, "POST", "/agents", string(b))
+	if code != http.StatusCreated {
+		t.Fatalf("made no agent: %d %s", code, out)
+	}
+	var a api.TeamAgent
+	json.Unmarshal([]byte(out), &a)
+	return a
+}
+
+// news is what boss was told of its team, message by message.
+func news(e *testEnv, boss string) []string {
+	var out []string
+	for _, u := range users(e, boss) {
+		if strings.HasPrefix(u, "[gero team news for you as lead of team ") {
+			out = append(out, u)
+		}
+	}
+	return out
+}
+
+func TestALeadMakesAgentsOfItsOwnAndHearsOfTheirTurns(t *testing.T) {
+	e := newTestEnv(t)
+	m, stop := e.daemon()
+	defer stop()
+	if _, err := m.CreateTeam("lab"); err != nil {
+		t.Fatal(err)
+	}
+	ctx := context.Background()
+	if _, err := m.CreateAgent(ctx, api.CreateAgent{Isolation: "dev", Kind: driver.Codex, Handle: "temp"}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := m.SetLead("lab", api.PutLead{Agent: "temp"}); err == nil || !strings.Contains(err.Error(), "needs a budget") {
+		t.Fatalf("a lead without a budget: %v", err)
+	}
+	m.DeleteTeam("lab")
+	boss, _ := withTeams(t, e, m, api.PutLead{Budget: ptr(int64(1_000_000)), MaxLive: ptr(1)})
+	other, _ := m.CreateAgent(ctx, api.CreateAgent{Isolation: "dev", Kind: driver.Codex, Handle: "other"})
+
+	a := makeAgent(t, m, boss.ID, api.TeamAgentNew{Role: "Prof iler!", Kind: driver.Codex, Prompt: "hello"})
+	if !strings.HasPrefix(a.ID, "prof-iler-") || a.Role != "Prof iler!" {
+		t.Fatalf("%+v", a)
+	}
+	made, err := m.storedAgent(a.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if made.MadeBy != boss.ID || made.TurnMinutes != leadTurnMinutes || made.Options.Approvals != driver.ApprovalsAuto || made.Workdir != boss.Workdir {
+		t.Fatalf("%+v", made)
+	}
+	if v, _ := m.Agent(made.ID); v.Team != "lab" {
+		t.Fatalf("made in team %q", v.Team)
+	}
+	// Its turn's end is the lead's news, with its answer.
+	e.waitFor("the lead's news", func() bool { return len(news(e, boss.ID)) == 1 })
+	n := news(e, boss.ID)[0]
+	for _, want := range []string{`team "lab": 1 item(s)`, a.ID + ` ("Prof iler!", codex) ended its turn: idle, after `, "It has used 1.1k tokens.",
+		"Its last answer:\n\necho: [gero team: you are \"Prof iler!\" in team \"lab\", an agent its lead boss made.", "]\n\nhello"} {
+		if !strings.Contains(n, want) {
+			t.Fatalf("news lacks %q:\n%s", want, n)
+		}
+	}
+
+	// Only what it made is its own; only one at a time is live.
+	if code, _ := teamAs(t, m, boss.ID, "GET", "/agents/other", ""); code != http.StatusNotFound {
+		t.Fatalf("another's agent: %d", code)
+	}
+	if code, out := teamAs(t, m, other.ID, "GET", "", ""); code != http.StatusForbidden {
+		t.Fatalf("not a lead: %d %s", code, out)
+	}
+	if code, out := teamAs(t, m, boss.ID, "POST", "/agents", `{"role":"two","kind":"codex","prompt":"hi"}`); code != http.StatusTooManyRequests || !strings.Contains(out, "1 agents of yours are live") {
+		t.Fatalf("past max live: %d %s", code, out)
+	}
+	code, out := teamAs(t, m, boss.ID, "GET", "/agents/"+a.ID, "")
+	var one api.TeamAgent
+	json.Unmarshal([]byte(out), &one)
+	if code != 200 || one.Status != event.StatusIdle || one.Spent.New() != 1100 || !strings.HasSuffix(one.Answer, "]\n\nhello") {
+		t.Fatalf("%d %s", code, out)
+	}
+
+	// What it writes reaches the agent as its lead's.
+	if code, out := teamAs(t, m, boss.ID, "POST", "/agents/"+a.ID+"/send", "again"); code != http.StatusAccepted {
+		t.Fatalf("%d %s", code, out)
+	}
+	e.waitFor("the lead's message", func() bool { return e.hasAssistant(made.ID, "echo: [gero team: from your lead boss]\n\nagain") })
+	e.waitFor("the second news", func() bool { return len(news(e, boss.ID)) == 2 })
+	e.waitFor("the lead's turn", func() bool { return status(m, boss.ID) == event.StatusIdle && len(e.events(boss.ID)) > 0 })
+	time.Sleep(100 * time.Millisecond)
+
+	// The lead's own turns count toward the budget too.
+	var run api.TeamRun
+	_, out = teamAs(t, m, boss.ID, "GET", "", "")
+	json.Unmarshal([]byte(out), &run)
+	if run.Lead != "boss" || len(run.Agents) != 1 || run.Agents[0].ID != a.ID || run.Spent.New() != 2*1100+2*1100 || run.Settings.MaxLive != 1 {
+		t.Fatalf("%s", out)
+	}
+
+	// Archived, it is live no more.
+	if code, out := teamAs(t, m, boss.ID, "POST", "/agents/"+a.ID+"/archive", ""); code != 200 {
+		t.Fatalf("%d %s", code, out)
+	}
+	b := makeAgent(t, m, boss.ID, api.TeamAgentNew{Role: "two", Kind: driver.Codex, Prompt: "hi", TurnMinutes: 5})
+	e.waitFor("its news", func() bool { return len(news(e, boss.ID)) == 3 })
+
+	// The budget used, gero stops the run until the operator resumes it.
+	if _, err := m.SetLead("lab", api.PutLead{Agent: "boss", Budget: ptr(int64(3000))}); err != nil {
+		t.Fatal(err)
+	}
+	m.teamCheck(run.Team.ID)
+	if r, _ := m.TeamRun("lab"); !strings.HasPrefix(r.Stopped, "the budget is used: ") || !strings.HasSuffix(r.Stopped, " of 3.0k tokens") {
+		t.Fatalf("%+v", r)
+	}
+	e.waitFor("the stop's news", func() bool { return len(news(e, boss.ID)) == 4 })
+	if n := news(e, boss.ID)[3]; !strings.Contains(n, "gero stopped the run: the budget is used") {
+		t.Fatal(n)
+	}
+	if code, out := teamAs(t, m, boss.ID, "POST", "/agents/"+b.ID+"/send", "more"); code != http.StatusConflict {
+		t.Fatalf("a stopped run wrote: %d %s", code, out)
+	}
+	if _, err := m.SetLead("lab", api.PutLead{Agent: "boss", Budget: ptr(int64(1_000_000))}); err != nil {
+		t.Fatal(err)
+	}
+	if code, out := teamAs(t, m, boss.ID, "POST", "/agents/"+b.ID+"/send", "more"); code != http.StatusAccepted {
+		t.Fatalf("resumed: %d %s", code, out)
+	}
+
+	// Without a lead, its agents are the operator's: their turns are no
+	// one's news.
+	if err := m.ClearLead("lab"); err != nil {
+		t.Fatal(err)
+	}
+	if code, _ := teamAs(t, m, boss.ID, "GET", "", ""); code != http.StatusForbidden {
+		t.Fatalf("a former lead: %d", code)
+	}
+}
+
+// fakeTimeout puts a timeout(1) on PATH that runs its command as it is,
+// as the isolation's does within its limit.
+func fakeTimeout(t *testing.T) {
+	bin := t.TempDir()
+	os.WriteFile(filepath.Join(bin, "timeout"), []byte("#!/bin/sh\nshift 2\nexec \"$@\"\n"), 0o755)
+	t.Setenv("PATH", bin+":"+os.Getenv("PATH"))
+}
+
+func TestARoundEndsWithTheEvalAndARunWithoutProgressStops(t *testing.T) {
+	fakeTimeout(t)
+	e := newTestEnv(t)
+	m, stop := e.daemon()
+	defer stop()
+	dir := t.TempDir()
+	score := func(s string) { os.WriteFile(filepath.Join(dir, "score"), []byte("measuring\nSCORE: "+s+"\n"), 0o644) }
+	score("1.5")
+	boss, team := withTeams(t, e, m, api.PutLead{Budget: ptr(int64(1_000_000)), Eval: ptr("cat score"), EvalDir: ptr(dir), Patience: ptr(2)})
+
+	a := makeAgent(t, m, boss.ID, api.TeamAgentNew{Role: "one", Kind: driver.Codex, Prompt: "hello"})
+	b := makeAgent(t, m, boss.ID, api.TeamAgentNew{Role: "two", Kind: driver.Codex, Prompt: "hello"})
+	e.waitFor("both turns' ends", func() bool {
+		l, _ := m.store.Lead(team.ID)
+		return l.Dirty && m.childrenBusy(boss.ID) == 0
+	})
+	// The round is told once, with the score.
+	time.Sleep(200 * time.Millisecond)
+	if n := news(e, boss.ID); len(n) != 0 {
+		t.Fatalf("news before the eval: %q", n)
+	}
+	m.teamCheck(team.ID)
+	e.waitFor("the round's news", func() bool { return len(news(e, boss.ID)) == 1 })
+	n := news(e, boss.ID)[0]
+	for _, want := range []string{"3 item(s)", a.ID + ` ("one", codex) ended its turn`, b.ID + ` ("two", codex) ended its turn`,
+		"3. Eval #1 (the turns of your agents ended) took ", "SCORE 1.5, a new best."} {
+		if !strings.Contains(n, want) {
+			t.Fatalf("news lacks %q:\n%s", want, n)
+		}
+	}
+
+	// Nothing runs after it: the lead is told, once.
+	e.waitFor("the lead idle", func() bool { return status(m, boss.ID) == event.StatusIdle })
+	m.teamCheck(team.ID)
+	e.waitFor("the nudge", func() bool { return len(news(e, boss.ID)) == 2 })
+	if n := news(e, boss.ID)[1]; !strings.Contains(n, "Nothing of your team is running. SCORE 1.5, a new best. The team has used ") {
+		t.Fatal(n)
+	}
+	e.waitFor("the lead idle", func() bool { return status(m, boss.ID) == event.StatusIdle })
+	m.teamCheck(team.ID)
+	time.Sleep(200 * time.Millisecond)
+	if len(news(e, boss.ID)) != 2 {
+		t.Fatalf("nudged twice: %q", news(e, boss.ID))
+	}
+
+	// Evals without a new best, as many as its patience, stop the run.
+	score("1.2")
+	for i, want := range []string{"SCORE 1.2; the best is 1.5, at eval #1. 1 of 2 evals without a new best.", "2 of 2 evals without a new best."} {
+		if code, out := teamAs(t, m, boss.ID, "POST", "/eval", ""); code != http.StatusAccepted {
+			t.Fatalf("%d %s", code, out)
+		}
+		e.waitFor("the eval's news", func() bool { return len(news(e, boss.ID)) == 3+i })
+		if n := news(e, boss.ID)[2+i]; !strings.Contains(n, want) {
+			t.Fatalf("news lacks %q:\n%s", want, n)
+		}
+		e.waitFor("the lead idle", func() bool { return status(m, boss.ID) == event.StatusIdle })
+	}
+	if n := news(e, boss.ID)[3]; !strings.Contains(n, "gero stopped the run: 2 evals in a row came without a new best") {
+		t.Fatal(n)
+	}
+	if code, out := teamAs(t, m, boss.ID, "POST", "/agents", `{"role":"three","kind":"codex","prompt":"hi"}`); code != http.StatusConflict {
+		t.Fatalf("a stopped run made an agent: %d %s", code, out)
+	}
+	run, _ := m.TeamRun("lab")
+	if len(run.Evals) != 3 || run.Best == nil || run.Best.ID != 1 || run.Stale != 2 || !strings.HasPrefix(run.Status, "stopped: ") {
+		t.Fatalf("%+v", run)
+	}
+	// Resumed, the evals so far no longer count.
+	if run, _ = m.SetLead("lab", api.PutLead{Agent: "boss"}); run.Stopped != "" || run.Stale != 0 {
+		t.Fatalf("%+v", run)
+	}
+}
+
+func TestATurnPastItsLimitIsStoppedForAFinalReport(t *testing.T) {
+	e := newTestEnv(t)
+	m, stop := e.daemon()
+	defer stop()
+	boss, _ := withTeams(t, e, m, api.PutLead{Budget: ptr(int64(1_000_000))})
+	a := makeAgent(t, m, boss.ID, api.TeamAgentNew{Role: "slow", Kind: driver.Codex, Prompt: "hang", TurnMinutes: 1})
+	e.waitFor("its turn", func() bool { return status(m, a.ID) == event.StatusWorking })
+	m.turnLimits(time.Now().Add(30 * time.Second))
+	time.Sleep(200 * time.Millisecond)
+	if status(m, a.ID) != event.StatusWorking {
+		t.Fatal("stopped within its limit")
+	}
+	m.turnLimits(time.Now().Add(2 * time.Minute))
+	e.waitFor("its report's news", func() bool { return len(news(e, boss.ID)) == 1 })
+	n := news(e, boss.ID)[0]
+	for _, want := range []string{"ended its turn: idle", "gero stopped its turn at its 1-minute limit and asked for a final report; this is it.",
+		"echo: [gero team: your turn ran past its 1 minutes, and gero stopped it.]"} {
+		if !strings.Contains(n, want) {
+			t.Fatalf("news lacks %q:\n%s", want, n)
+		}
+	}
+}

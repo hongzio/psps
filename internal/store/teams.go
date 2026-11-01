@@ -188,7 +188,7 @@ func teamLines(tx *sql.Tx, id string) ([]string, error) {
 }
 
 // SetTeam puts line in team, at its bottom, or in none for "": it is then
-// in the live list just under the team it leaves.
+// in the live list just under the team it leaves, and leads it no more.
 func (s *Store) SetTeam(line, team string) error {
 	tx, err := s.db.Begin()
 	if err != nil {
@@ -213,6 +213,10 @@ func (s *Store) SetTeam(line, team string) error {
 		}
 	}
 	if _, err := tx.Exec(`DELETE FROM team_lines WHERE line = ?`, line); err != nil {
+		return err
+	}
+	// A lead leads the team it is in, and leaves it as a line like any.
+	if _, err := tx.Exec(`DELETE FROM team_leads WHERE line = ?`, line); err != nil {
 		return err
 	}
 	if was != "" {

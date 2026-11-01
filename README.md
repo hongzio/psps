@@ -87,7 +87,8 @@ bin/gero agent cron <id> --add "0 9 * * 1-5" "check CI"  # a message on a schedu
 bin/gero agent rename <id> login bug      # only the name changes; a turn carries on
 bin/gero agent id <id> login              # an ID of your own (--clear gives it back)
 bin/gero agent team <id> backend          # its team: a group in the sidebar it moves within;
-                                          # a new name makes one (--clear: none; gero team ls|rename|rm)
+                                          # a new name makes one (--clear: none; gero team ls|rename|rm;
+                                          # a lead that makes agents of its own: see Teams)
 bin/gero agent archive <id>               # stops it; its history is kept
 bin/gero agent fork <id>                  # live or archived: a new agent, <id>-xxxx, in its
                                           # directory, knowing its conversation; no crons or mail
@@ -567,6 +568,72 @@ the agent is busy.
 ```sh
 gero agent cron <id> --add "30 14 3 11 *" --once "deploy the release branch"
 ```
+
+## Teams
+
+A team is a named group of agents in the sidebar (`gero agent team <id>
+NAME`, an agent's Edit in the web, `t` in the TUI), from any isolations. A
+team can have a lead: one of its agents, which makes agents of its own in the
+team, in its isolation, for the roles the work needs, follows them, and
+designs the next team when they are done. The way of working comes from EAT
+(Evolving Agent Teams, [arXiv 2610.36848](https://arxiv.org/abs/2610.36848)),
+whose supervisor improves how a team works rather than the work itself; gero
+keeps the run going and within your terms.
+
+```sh
+gero iso expose dev team                   # dev's agents get a team address
+gero team lead lab tara --budget 5M        # tara leads team lab (it joins it)
+gero team lead lab tara --eval 'make bench | tail -1' --eval-dir ~/work/app --patience 3
+gero team show lab                         # spending, scores, the lead's agents
+gero team eval lab                         # run the eval now
+gero team resume lab                       # go on after gero stopped the run
+gero team lead lab --clear                 # no lead; its agents are yours
+```
+
+Inside the isolation, `GERO_TEAM_URL` is each agent's address for its team
+(on mail's port, so no `gero iso upgrade` is needed); only a lead's answers.
+The `gero-team` skill says how to use it: `GET` the team, `POST
+$GERO_TEAM_URL/agents` an agent of its own (`{"role", "kind", "prompt",
+"model", "effort", "workdir", "turn_minutes"}`), and per agent its last
+answer, `send`, `interrupt` and `archive`. An agent a lead makes is a gero
+agent like any: in the sidebar under its team, marked as the lead's, with the
+lead's approvals and its own session, working in the lead's directory unless
+the lead names another. It makes no agents itself. A lead reaches the agents
+it made, and no other.
+
+gero tells the lead, as a message of its own whenever it is idle:
+
+- when a turn of one of its agents ends, with its last answer, and when one
+  waits for you to approve something;
+- when a turn runs past its limit (`--turn-minutes`, 60 by default, or the
+  lead's for one agent): gero stops it, asks for a final report, and the
+  report is the news;
+- what the eval scored: with an eval set, gero runs it once the lead's agents
+  have all ended their turns, and holds their news until then, so the lead
+  hears of a round once, with its score;
+- that nothing runs any more, once after each eval, if the lead let its
+  team end without making the next.
+
+The eval is a shell command gero runs in the isolation as the agents, in
+`--eval-dir` (the lead's directory by default), for `--eval-minutes` at most
+(20); the last line it prints that reads `SCORE: <number>` is the score,
+higher better. It runs what the agents can change, so keep it and what it
+reads where they cannot: a read-only shared folder (see Shared folders) is
+the one place in an isolation they cannot write to.
+
+gero stops the run, and the lead makes no agent and writes to none until you
+resume it (`gero team resume`, or setting the lead again), when:
+
+- the budget is used: the tokens sent anew and written (reads from the prompt
+  cache not counted) by the lead and its agents since it became the lead, as
+  their CLIs count them (`--budget`, required);
+- the target is reached (`--target`);
+- `--patience` evals in a row (3) came without a new best.
+
+Besides, at most `--max-live` agents of the lead's are live at once (3), and
+none is made on a plan once a window of that plan is used past
+`--plan-ceiling` percent (90): the plan of the account that kind of CLI runs on
+in the isolation, as its agents last said it.
 
 ## Shared folders
 

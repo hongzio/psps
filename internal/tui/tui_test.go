@@ -1097,3 +1097,22 @@ func TestATeamIsAFoldableGroupOfTheSidebar(t *testing.T) {
 		t.Fatalf("after the team is deleted: %s", items)
 	}
 }
+
+func TestALeadsRunShowsUnderItsTeam(t *testing.T) {
+	h := newHarness(t)
+	h.drainFeed()
+	best := 1.5
+	as := h.be.agents
+	for i := range as {
+		as[i].Team, as[i].TeamID = "lab", "t-lab"
+	}
+	as[0].Leads = &api.TeamBrief{Lead: "aaaa", Status: "1 of the lead's agents at work", Spent: 1234, Budget: 5_000_000, Best: &best}
+	as[1].MadeBy = "aaaa"
+	h.send(agentsMsg{agents: as})
+	v := h.m.View()
+	for _, want := range []string{"▾ lab · 2", "1.2k/5.0M · best 1.5 · ", "♛ first", "↳ second"} {
+		if !strings.Contains(v, want) {
+			t.Fatalf("no %q in\n%s", want, v)
+		}
+	}
+}
