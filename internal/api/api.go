@@ -112,7 +112,7 @@ type TeamBrief struct {
 	Lead string `json:"lead"`
 	// Status is a sentence: what the run is doing now.
 	Status string `json:"status"`
-	// Spent is the tokens (driver.Tokens.New) used of Budget.
+	// Spent is the tokens (driver.Tokens.New) used of Budget, 0 for none.
 	Spent  int64    `json:"spent"`
 	Budget int64    `json:"budget"`
 	Best   *float64 `json:"best,omitempty"`

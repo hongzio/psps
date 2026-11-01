@@ -220,6 +220,11 @@ func (m *Manager) leadMake(ctx context.Context, lead store.Agent, l store.Lead, 
 	case len(prompt) > leadPromptMax:
 		return api.TeamAgent{}, httpError{http.StatusRequestEntityTooLarge, fmt.Errorf("team: a prompt is at most %d bytes; put the rest in a file and say where", leadPromptMax)}
 	}
+	// As SetLead asks it of the lead's own CLI, before the lock.
+	perUse := ""
+	if l.Settings.Budget == 0 {
+		perUse = m.perUse(ctx, lead.IsolationID, req.Kind)
+	}
 	m.teamMu.Lock()
 	defer m.teamMu.Unlock()
 	if l, err = m.store.Lead(l.Team); err != nil {
@@ -245,8 +250,11 @@ func (m *Manager) leadMake(ctx context.Context, lead store.Agent, l store.Lead, 
 	if live >= l.Settings.MaxLive {
 		return api.TeamAgent{}, httpError{http.StatusTooManyRequests, fmt.Errorf("team: %d agents of yours are live, as many as your operator allows; archive one you are done with", live)}
 	}
-	if used := teamSpent(l, agents, spent).New(); used >= l.Settings.Budget {
+	if used := teamSpent(l, agents, spent).New(); overBudget(l, used) {
 		return api.TeamAgent{}, httpError{http.StatusTooManyRequests, fmt.Errorf("team: the team has used its budget, %s of %s tokens", tokens(used), tokens(l.Settings.Budget))}
+	}
+	if l.Settings.Budget == 0 && perUse != "" {
+		return api.TeamAgent{}, httpError{http.StatusForbidden, fmt.Errorf("team: your team has no budget, so only the plan ceiling holds it back, and %s; make the other kind, or ask your operator for a budget", perUse)}
 	}
 	if why := m.planFull(lead.IsolationID, req.Kind, l.Settings.PlanCeiling); why != "" {
 		return api.TeamAgent{}, httpError{http.StatusTooManyRequests, errors.New("team: " + why)}
@@ -288,7 +296,7 @@ func (m *Manager) leadSend(lead store.Agent, l store.Lead, id, text string) erro
 	if err != nil {
 		return err
 	}
-	if used := teamSpent(l, agents, spent).New(); used >= l.Settings.Budget {
+	if used := teamSpent(l, agents, spent).New(); overBudget(l, used) {
 		return httpError{http.StatusTooManyRequests, fmt.Errorf("team: the team has used its budget, %s of %s tokens", tokens(used), tokens(l.Settings.Budget))}
 	}
 	return m.Send(a.ID, fmt.Sprintf("[gero team: from your lead %s]\n\n%s", shownID(lead), text))

@@ -43,7 +43,7 @@ func withTeams(t *testing.T, e *testEnv, m *Manager, terms api.PutLead) (store.A
 		t.Fatalf("an agent that leads nothing: %d %s", code, out)
 	}
 	terms.Agent = "boss"
-	if _, err := m.SetLead("lab", terms); err != nil {
+	if _, err := m.SetLead(ctx, "lab", terms); err != nil {
 		t.Fatal(err)
 	}
 	return boss, team
@@ -82,17 +82,7 @@ func TestALeadMakesAgentsOfItsOwnAndHearsOfTheirTurns(t *testing.T) {
 	e := newTestEnv(t)
 	m, stop := e.daemon()
 	defer stop()
-	if _, err := m.CreateTeam("lab"); err != nil {
-		t.Fatal(err)
-	}
 	ctx := context.Background()
-	if _, err := m.CreateAgent(ctx, api.CreateAgent{Isolation: "dev", Kind: driver.Codex, Handle: "temp"}); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := m.SetLead("lab", api.PutLead{Agent: "temp"}); err == nil || !strings.Contains(err.Error(), "needs a budget") {
-		t.Fatalf("a lead without a budget: %v", err)
-	}
-	m.DeleteTeam("lab")
 	boss, _ := withTeams(t, e, m, api.PutLead{Budget: ptr(int64(1_000_000)), MaxLive: ptr(1)})
 	other, _ := m.CreateAgent(ctx, api.CreateAgent{Isolation: "dev", Kind: driver.Codex, Handle: "other"})
 
@@ -162,7 +152,7 @@ func TestALeadMakesAgentsOfItsOwnAndHearsOfTheirTurns(t *testing.T) {
 	e.waitFor("its news", func() bool { return len(news(e, boss.ID)) == 3 })
 
 	// The budget used, gero stops the run until the operator resumes it.
-	if _, err := m.SetLead("lab", api.PutLead{Agent: "boss", Budget: ptr(int64(3000))}); err != nil {
+	if _, err := m.SetLead(context.Background(), "lab", api.PutLead{Agent: "boss", Budget: ptr(int64(3000))}); err != nil {
 		t.Fatal(err)
 	}
 	m.teamCheck(run.Team.ID)
@@ -176,7 +166,7 @@ func TestALeadMakesAgentsOfItsOwnAndHearsOfTheirTurns(t *testing.T) {
 	if code, out := teamAs(t, m, boss.ID, "POST", "/agents/"+b.ID+"/send", "more"); code != http.StatusConflict {
 		t.Fatalf("a stopped run wrote: %d %s", code, out)
 	}
-	if _, err := m.SetLead("lab", api.PutLead{Agent: "boss", Budget: ptr(int64(1_000_000))}); err != nil {
+	if _, err := m.SetLead(context.Background(), "lab", api.PutLead{Agent: "boss", Budget: ptr(int64(1_000_000))}); err != nil {
 		t.Fatal(err)
 	}
 	if code, out := teamAs(t, m, boss.ID, "POST", "/agents/"+b.ID+"/send", "more"); code != http.StatusAccepted {
@@ -199,6 +189,50 @@ func fakeTimeout(t *testing.T) {
 	bin := t.TempDir()
 	os.WriteFile(filepath.Join(bin, "timeout"), []byte("#!/bin/sh\nshift 2\nexec \"$@\"\n"), 0o755)
 	t.Setenv("PATH", bin+":"+os.Getenv("PATH"))
+}
+
+// A lead without a budget is held back only by the plan ceiling, so it
+// leads, and makes agents, only where their CLI runs on a subscription.
+func TestALeadWithoutABudgetRunsOnlyOnASubscription(t *testing.T) {
+	e, m, home := cliEnv(t)
+	ctx := context.Background()
+	loggedInCodex(t, home, "ChatGPT")
+	boss, team := withTeams(t, e, m, api.PutLead{})
+	run, err := m.TeamRun("lab")
+	if err != nil || run.Settings.Budget != 0 {
+		t.Fatalf("%+v %v", run, err)
+	}
+	a := makeAgent(t, m, boss.ID, api.TeamAgentNew{Role: "one", Kind: driver.Codex, Prompt: "hello"})
+	e.waitFor("its news", func() bool { return len(news(e, boss.ID)) == 1 })
+	m.teamCheck(team.ID)
+	if run, _ = m.TeamRun("lab"); run.Stopped != "" || run.Spent.New() == 0 {
+		t.Fatalf("a run without a budget stopped, or spent nothing: %+v", run)
+	}
+	if code, out := teamAs(t, m, boss.ID, "POST", "/agents/"+a.ID+"/send", "more"); code != http.StatusAccepted {
+		t.Fatalf("%d %s", code, out)
+	}
+
+	// Claude on an API key: no claude agent without a budget.
+	key := "sk-ant-api03-test"
+	if err := m.SetEnv("dev", api.SetEnv{"ANTHROPIC_API_KEY": &key}); err != nil {
+		t.Fatal(err)
+	}
+	b, _ := json.Marshal(api.TeamAgentNew{Role: "two", Kind: driver.Claude, Prompt: "hello"})
+	if code, out := teamAs(t, m, boss.ID, "POST", "/agents", string(b)); code != http.StatusForbidden || !strings.Contains(out, "claude is logged in there with API key (ANTHROPIC_API_KEY), billed per use") {
+		t.Fatalf("a claude agent on an API key: %d %s", code, out)
+	}
+
+	// The lead's own Codex on an API key: it leads only with a budget.
+	loggedInCodex(t, home, "an API key - sk-proj-***")
+	if _, err := m.SetLead(ctx, "lab", api.PutLead{Agent: "boss"}); err == nil || !strings.Contains(err.Error(), "codex is logged in there with API key, billed per use") {
+		t.Fatalf("a lead on an API key without a budget: %v", err)
+	}
+	if run, err = m.SetLead(ctx, "lab", api.PutLead{Agent: "boss", Budget: ptr(int64(1_000_000))}); err != nil || run.Settings.Budget != 1_000_000 {
+		t.Fatalf("%+v %v", run, err)
+	}
+	if _, err := m.SetLead(ctx, "lab", api.PutLead{Agent: "boss", Budget: ptr(int64(0))}); err == nil {
+		t.Fatal("a budget taken off a lead on an API key")
+	}
 }
 
 func TestARoundEndsWithTheEvalAndARunWithoutProgressStops(t *testing.T) {
@@ -269,7 +303,7 @@ func TestARoundEndsWithTheEvalAndARunWithoutProgressStops(t *testing.T) {
 		t.Fatalf("%+v", run)
 	}
 	// Resumed, the evals so far no longer count.
-	if run, _ = m.SetLead("lab", api.PutLead{Agent: "boss"}); run.Stopped != "" || run.Stale != 0 {
+	if run, _ = m.SetLead(context.Background(), "lab", api.PutLead{Agent: "boss"}); run.Stopped != "" || run.Stale != 0 {
 		t.Fatalf("%+v", run)
 	}
 }

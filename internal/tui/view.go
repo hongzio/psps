@@ -105,7 +105,10 @@ func (m *Model) renderSidebar(w int) string {
 		for _, a := range g.agents {
 			if r := a.Leads; r != nil {
 				// The numbers first: the sidebar is narrow.
-				run := fmt.Sprintf("  %s/%s", tokenCount(r.Spent), tokenCount(r.Budget))
+				run := "  " + tokenCount(r.Spent)
+				if r.Budget > 0 {
+					run += "/" + tokenCount(r.Budget)
+				}
 				if r.Best != nil {
 					run += fmt.Sprintf(" · best %g", *r.Best)
 				}

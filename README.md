@@ -586,7 +586,8 @@ keeps the run going and within your terms.
 
 ```sh
 gero iso expose dev team                   # dev's agents get a team address
-gero team lead lab tara --budget 5M        # tara leads team lab (it joins it)
+gero team lead lab tara                    # tara leads team lab (it joins it)
+gero team lead lab tara --budget 5M        # within 5M tokens
 gero team lead lab tara --eval 'make bench | tail -1' --eval-dir ~/work/app --patience 3
 gero team show lab                         # spending, scores, the lead's agents
 gero team eval lab                         # run the eval now
@@ -620,7 +621,8 @@ gero tells the lead, as a message of its own whenever it is idle:
   have all ended their turns, and holds their news until then, so the lead
   hears of a round once, with its score;
 - that nothing runs any more, once after each eval, if the lead let its
-  team end without making the next.
+  team end without making the next (and not while a plan window is past
+  the ceiling, when it could make none).
 
 The eval is a shell command gero runs in the isolation as the agents, in
 `--eval-dir` (the lead's directory by default), for `--eval-minutes` at most
@@ -632,9 +634,10 @@ the one place in an isolation they cannot write to.
 gero stops the run, and the lead makes no agent and writes to none until you
 resume it (`gero team resume`, or setting the lead again), when:
 
-- the budget is used: the tokens sent anew and written (reads from the prompt
-  cache not counted) by the lead and its agents since it became the lead, as
-  their CLIs count them (`--budget`, required);
+- the budget, if you set one, is used: the tokens sent anew and written
+  (reads from the prompt cache not counted) by the lead and its agents since
+  it became the lead, as their CLIs count them (`--budget`; `none` takes it
+  off);
 - the target is reached (`--target`);
 - `--patience` evals in a row (3) came without a new best.
 
@@ -642,6 +645,15 @@ Besides, at most `--max-live` agents of the lead's are live at once (3), and
 none is made on a plan once a window of that plan is used past
 `--plan-ceiling` percent (90): the plan of the account that kind of CLI runs on
 in the isolation, as its agents last said it.
+
+On a subscription the plan windows are the real limit, so a budget is
+optional; without one, the ceiling is all that holds the run back, and it
+counts the account's whole use, yours on the Mac too, so lower it to keep
+some of the week. Without an eval either, gero neither ends the run nor
+tells the lead that nothing runs: the team spends for as long as the lead
+keeps work going, and stands idle, spending nothing, once it stops. A CLI
+billed per use (an API key) has no plan window: where one is logged in, gero
+refuses a lead without a budget, and its agents of that kind.
 
 ## Shared folders
 

@@ -425,7 +425,7 @@ func (m *Manager) Handler() http.Handler {
 		if !decode(w, r, &req) {
 			return
 		}
-		v, err := m.SetLead(r.PathValue("team"), req)
+		v, err := m.SetLead(r.Context(), r.PathValue("team"), req)
 		reply(w, v, err)
 	})
 	mux.HandleFunc("DELETE /v1/teams/{team}/lead", func(w http.ResponseWriter, r *http.Request) {

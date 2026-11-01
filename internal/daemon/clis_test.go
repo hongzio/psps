@@ -24,7 +24,8 @@ const fakeClaudeCLI = `#!/bin/sh
 case "$1 $2" in
 "--version ") echo "2.1.311 (Claude Code)" ;;
 "auth status")
-  if [ -n "$CLAUDE_CODE_OAUTH_TOKEN" ]; then echo '{"loggedIn": true, "authMethod": "oauth_token"}'
+  if [ -n "$ANTHROPIC_API_KEY" ]; then echo '{"loggedIn": true, "authMethod": "api_key", "apiKeySource": "ANTHROPIC_API_KEY"}'
+  elif [ -n "$CLAUDE_CODE_OAUTH_TOKEN" ]; then echo '{"loggedIn": true, "authMethod": "oauth_token"}'
   elif [ -f "$HOME/.claude-login" ]; then echo '{"loggedIn": true, "authMethod": "claude.ai", "email": "me@example.com", "subscriptionType": "max"}'
   else echo '{"loggedIn": false, "authMethod": "none"}'; exit 1; fi ;;
 "auth login")
