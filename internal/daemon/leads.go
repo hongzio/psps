@@ -338,7 +338,7 @@ func (m *Manager) teamRun(t store.Team, l store.Lead) (api.TeamRun, error) {
 	}
 	best, stale := bestOf(evals, l.StaleFrom)
 	run := api.TeamRun{Team: t, Lead: l.Line, LeadLine: l.Line, Settings: l.Settings, Since: l.Since, Stopped: l.Stopped,
-		Status: m.runStatus(l), Spent: teamSpent(l, agents, spent), Evaluating: m.evalRunning(t.ID), Stale: stale, Evals: []store.Eval{}, Agents: []api.TeamAgent{}}
+		Status: m.runStatus(l), TeamsOff: m.teamsOff(l), Spent: teamSpent(l, agents, spent), Evaluating: m.evalRunning(t.ID), Stale: stale, Evals: []store.Eval{}, Agents: []api.TeamAgent{}}
 	if best != nil {
 		b := cutEval(*best)
 		run.Best = &b
@@ -427,11 +427,36 @@ func cutEval(e store.Eval) store.Eval {
 	return e
 }
 
-// runStatus says what l's run is doing now.
+// runStatus says what l's run is doing now, and that it is paused while
+// its lead's isolation has no teams.
 func (m *Manager) runStatus(l store.Lead) string {
-	switch {
-	case l.Stopped != "":
+	if l.Stopped != "" {
 		return "stopped: " + l.Stopped
+	}
+	if iso := m.teamsOff(l); iso != "" {
+		return "paused, as teams are off in " + iso + "; " + m.runDoing(l)
+	}
+	return m.runDoing(l)
+}
+
+// teamsOff is the name of the isolation of l's lead while it has no team
+// service, and the run is paused: the lead could do nothing of what news
+// is about, so it hears none and is not told to make a team until the
+// service is on again. Its agents finish their turns, and the eval runs.
+func (m *Manager) teamsOff(l store.Lead) string {
+	r := m.lineRuntime(l.Line)
+	if r == nil {
+		return ""
+	}
+	lead, _, _ := r.view()
+	if on, err := m.teamOn(lead.IsolationID); err == nil && on {
+		return ""
+	}
+	return m.isoName(lead.IsolationID)
+}
+
+func (m *Manager) runDoing(l store.Lead) string {
+	switch {
 	case m.evalRunning(l.Team):
 		return "running the eval"
 	}
@@ -651,6 +676,9 @@ func (m *Manager) teamCheck(team string) {
 		return
 	}
 	lead, _, _ := r.view()
+	if on, err := m.teamOn(lead.IsolationID); err != nil || !on {
+		return // paused (teamsOff): the step after the service is on again looks
+	}
 	if why := m.planFull(lead.IsolationID, lead.Kind, l.Settings.PlanCeiling); why != "" {
 		return // the next step looks again, the window may have started over
 	}
@@ -1043,7 +1071,9 @@ func (r *runtime) newsChanged() {
 // deliverNewsLocked moves all its team's waiting news into its outbox, as
 // one message. With an eval to run, news waits for the round to end: until
 // the lead's agents have ended their turns and the eval has run, so the
-// lead hears of a round once, with its score.
+// lead hears of a round once, with its score. It waits too while the
+// lead's isolation has no teams (teamsOff), and comes once they are on:
+// the change of service starts the lead anew, and that kicks it.
 func (r *runtime) deliverNewsLocked() {
 	l, err := r.m.store.LeadOfLine(cmp.Or(r.agent.Line, r.agent.ID))
 	if err != nil {
@@ -1051,6 +1081,9 @@ func (r *runtime) deliverNewsLocked() {
 		return
 	}
 	if l.Settings.Eval != "" && l.Stopped == "" && (l.Dirty || r.m.evalRunning(l.Team)) {
+		return
+	}
+	if on, err := r.m.teamOn(r.agent.IsolationID); err != nil || !on {
 		return
 	}
 	t, err := r.m.store.Team(l.Team)

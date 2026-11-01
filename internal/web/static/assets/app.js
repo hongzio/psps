@@ -1212,7 +1212,7 @@ function teamGroup(t, members, row) {
 // its spending (of its budget, if it has one), and its best score.
 function teamRunLine(run, open) {
   const text = `${run.status} · ${tokens(run.spent)}` + (run.budget ? ` of ${tokens(run.budget)}` : '') + (run.best != null ? ` · best ${run.best}` : '')
-  return h('button', { type: 'button', class: 'team-run' + (run.status.startsWith('stopped') ? ' stopped' : ''), title: text, onclick: open }, text)
+  return h('button', { type: 'button', class: 'team-run' + (run.status.startsWith('stopped') ? ' stopped' : run.status.startsWith('paused') ? ' paused' : ''), title: text, onclick: open }, text)
 }
 
 // editTeam is a team's dialog: its name, its lead and the lead's terms,

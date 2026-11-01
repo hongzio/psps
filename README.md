@@ -628,6 +628,14 @@ gero tells the lead, as a message of its own whenever it is idle:
 The eval is a shell command; the last line it prints that reads
 `SCORE: <number>` is the score, higher better. It runs for `--eval-minutes`
 at most (20), in one of two places:
+Turning teams off in the lead's isolation (`gero iso unexpose dev team`)
+pauses its run: the lead's address answers 403, and gero tells it nothing
+and does not ask it for the next team, so it spends no turn on what it
+could not act on. Its agents finish their turns and the eval runs. Turned
+on again, the lead starts with its address once idle, and what came
+meanwhile reaches it as one message. `gero team show`, the web and the TUI
+say the run is paused.
+
 
 - In the lead's isolation, as the agents, in `--eval-dir` (the lead's
   directory by default). The agents can change the eval, what it reads and

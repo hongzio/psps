@@ -170,7 +170,10 @@ func teamCmd(p paths.Paths, args []string) error {
 		if err != nil {
 			return err
 		}
-		fmt.Printf("%s leads team %q. Its isolation needs the team service for it to act:\n  gero iso expose ISOLATION team\n", run.Lead, run.Team.Name)
+		fmt.Printf("%s leads team %q.\n", run.Lead, run.Team.Name)
+		if run.TeamsOff != "" {
+			fmt.Printf("Its isolation has no teams, so the run is paused until:\n  gero iso expose %s team\n", run.TeamsOff)
+		}
 		return printRun(run)
 
 	case "show":

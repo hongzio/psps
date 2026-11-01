@@ -308,6 +308,78 @@ func TestARoundEndsWithTheEvalAndARunWithoutProgressStops(t *testing.T) {
 	}
 }
 
+// While the lead's isolation has no teams the run is paused: the lead could
+// do nothing, so it hears nothing and is not told to make a team; its
+// agents' turns end and the eval runs, and once teams are on again what
+// came meanwhile reaches it at once.
+func TestARunIsPausedWhileTheLeadsIsolationHasNoTeams(t *testing.T) {
+	fakeTimeout(t)
+	e := newTestEnv(t)
+	m, stop := e.daemon()
+	defer stop()
+	ctx := context.Background()
+	dir := t.TempDir()
+	os.WriteFile(filepath.Join(dir, "score"), []byte("SCORE: 2\n"), 0o644)
+	boss, team := withTeams(t, e, m, api.PutLead{Eval: ptr("cat score"), EvalDir: ptr(dir)})
+
+	makeAgent(t, m, boss.ID, api.TeamAgentNew{Role: "one", Kind: driver.Codex, Prompt: "hello"})
+	e.waitFor("its turn's end", func() bool {
+		l, _ := m.store.Lead(team.ID)
+		return l.Dirty && m.childrenBusy(boss.ID) == 0
+	})
+	if err := m.Unexpose(ctx, "dev", "team"); err != nil {
+		t.Fatal(err)
+	}
+	if code, out := teamAs(t, m, boss.ID, "GET", "", ""); code != http.StatusForbidden || !strings.Contains(out, "isolation dev has no teams") {
+		t.Fatalf("a lead without teams: %d %s", code, out)
+	}
+	m.teamCheck(team.ID)
+	e.waitFor("the eval", func() bool { evals, _ := m.store.Evals(team.ID); return len(evals) == 1 && !m.evalRunning(team.ID) })
+	e.waitFor("the lead idle", func() bool { return status(m, boss.ID) == event.StatusIdle })
+	m.teamCheck(team.ID)
+	time.Sleep(200 * time.Millisecond)
+	if n := news(e, boss.ID); len(n) != 0 {
+		t.Fatalf("a paused lead was told: %q", n)
+	}
+	if n, _ := m.store.TeamNewsWaiting(team.ID); n != 2 {
+		t.Fatalf("%d items wait, not the turn's end and the eval", n)
+	}
+	run, _ := m.TeamRun("lab")
+	if run.TeamsOff != "dev" || !strings.HasPrefix(run.Status, "paused, as teams are off in dev; ") || run.Stopped != "" {
+		t.Fatalf("%+v", run)
+	}
+
+	if _, err := m.Expose(ctx, "dev", "team", api.Expose{}); err != nil {
+		t.Fatal(err)
+	}
+	e.waitFor("the news that waited", func() bool { return len(news(e, boss.ID)) == 1 })
+	if n := news(e, boss.ID)[0]; !strings.Contains(n, "2 item(s)") || !strings.Contains(n, "SCORE 2, a new best.") {
+		t.Fatal(n)
+	}
+	if run, _ = m.TeamRun("lab"); run.TeamsOff != "" || strings.HasPrefix(run.Status, "paused") {
+		t.Fatalf("%+v", run)
+	}
+	e.waitFor("the lead idle", func() bool { return status(m, boss.ID) == event.StatusIdle })
+
+	// Nor is a paused lead told to make the next team.
+	if err := m.Unexpose(ctx, "dev", "team"); err != nil {
+		t.Fatal(err)
+	}
+	e.waitFor("the lead idle", func() bool { return status(m, boss.ID) == event.StatusIdle })
+	time.Sleep(200 * time.Millisecond)
+	m.teamCheck(team.ID)
+	if n, _ := m.store.TeamNewsWaiting(team.ID); n != 0 {
+		t.Fatalf("a paused lead was nudged: %d items wait", n)
+	}
+	if _, err := m.Expose(ctx, "dev", "team", api.Expose{}); err != nil {
+		t.Fatal(err)
+	}
+	e.waitFor("the nudge", func() bool { m.teamCheck(team.ID); return len(news(e, boss.ID)) == 2 })
+	if n := news(e, boss.ID)[1]; !strings.Contains(n, "Nothing of your team is running.") {
+		t.Fatal(n)
+	}
+}
+
 // An eval isolation scores a copy of the work, made for each eval, where
 // no agent is and no service: the agents cannot reach what scores them.
 func TestAnEvalRunsInItsIsolationOnACopyOfTheWork(t *testing.T) {
