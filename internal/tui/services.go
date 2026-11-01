@@ -667,8 +667,9 @@ type exposePage struct {
 	// isolations field offering the other isolations.
 	formSettings []proxy.Field
 	// formEnvs: the form starts with envs and a default. A service with
-	// nothing to define (mail) has none.
-	formEnvs bool
+	// nothing to define (mail) has none. formOne: it starts with one env
+	// alone, the service's only (control).
+	formEnvs, formOne bool
 }
 
 type exposuresMsg struct {
@@ -724,7 +725,13 @@ func (m *Model) handleExposeKey(msg tea.KeyMsg) tea.Cmd {
 		svc, iso := e.formSvc, e.iso
 		var envs []string
 		def, rest := "", e.form.fields
-		if e.formEnvs {
+		switch {
+		case e.formOne:
+			def, rest = e.form.fields[0].value(), e.form.fields[1:]
+			if def != "" {
+				envs = []string{def}
+			}
+		case e.formEnvs:
 			envs, def, rest = e.form.fields[0].values(), e.form.fields[1].value(), e.form.fields[2:]
 			if def == optDefault {
 				def = ""
@@ -820,7 +827,15 @@ func (m *Model) openExposeForm(svc api.Service) {
 		settings = append(settings, f)
 	}
 	var fields []*field
-	if e.formEnvs = len(svc.Fields) > 0; e.formEnvs {
+	e.formEnvs, e.formOne = len(svc.Fields) > 0 && !svc.OneEnv, len(svc.Fields) > 0 && svc.OneEnv
+	if e.formOne {
+		one := selectField("env", names, "one: what its agents may do")
+		if len(x.Envs) > 0 {
+			one.idx = indexOf(one.options, x.Envs[0])
+		}
+		fields = []*field{one}
+	}
+	if e.formEnvs {
 		hint := "space ticks; none: the service with no credential (git: public reads only)"
 		if svc.Replaces {
 			hint = "space ticks; each ticked folder is at /shared/NAME in the isolation"
@@ -858,7 +873,7 @@ func (m *Model) renderExpose(width int) string {
 				envs = "no env"
 			}
 			detail = envs
-			if x.Default != "" && !s.Replaces && !s.Forwards && s.Name != "skill" {
+			if x.Default != "" && !s.Replaces && !s.Forwards && !s.OneEnv && s.Name != "skill" {
 				detail += " (default " + x.Default + ")"
 			}
 			if len(x.Forwards) > 0 {

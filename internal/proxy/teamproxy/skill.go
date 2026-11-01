@@ -127,6 +127,9 @@ a team works rather than the work itself.
 - Spend with care. Every agent spends the team's budget, if it has one, and
   your operator's plan. Make few agents with clear roles, and archive those you
   no longer need.
+- Make and steer your team's agents here, not through gero's control service
+  or mail, even where this isolation has them: only the agents made here count
+  toward your team, report to you and stay within your operator's terms.
 
 ## When something is refused
 

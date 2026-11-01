@@ -351,7 +351,8 @@ tests included. Inside the isolation they are fixed loopback addresses:
 127.0.0.1:3026   GitHub API GITHUB_API_URL points here
 127.0.0.1:3027   Grafana    GRAFANA_URL points here
 127.0.0.1:3028   Notion     NOTION_MCP_URL; every agent gets it as an MCP server
-127.0.0.1:3029   mail       GERO_MAIL_URL, each agent's own (see Mail); GERO_CRON_URL too (see Cron)
+127.0.0.1:3029   mail       GERO_MAIL_URL, each agent's own (see Mail); GERO_CRON_URL, GERO_TEAM_URL
+                            and GERO_CONTROL_URL too (see Cron, Teams, Control)
 127.0.0.1:3030   Linear     LINEAR_MCP_URL; every agent gets it as an MCP server
 ```
 
@@ -487,6 +488,22 @@ mcp_servers.…` — so neither tool's own configuration is touched.
 Isolations created before the proxies need `gero iso upgrade NAME` once;
 `gero iso ls` says so under PROXIES.
 
+## Agents in gero
+
+Four services give an isolation's agents a part in gero itself. Each is a
+different kind of right, turned on apart:
+
+| For agents to… | Turn on | What it is |
+|---|---|---|
+| ask, tell and answer each other | `mail` | a peer's letter: it waits in the inbox and is read, one a turn, when its agent is idle; both isolations take mail |
+| come back to something on a schedule | `cron` | crons an agent sets on itself |
+| work as a team toward an eval, within a budget | `team` | the agent you make a team's lead makes agents of its own, hears of their turns and has the eval run, within your terms |
+| do some of what you do with the gero command | `control` | the actions its env ticks, on the agents of the isolations it reaches, as itself |
+
+Each puts a skill in the isolation, and each skill sends what is another's
+there: a question to a peer to mail, an instruction to control, a lead's own
+agents to its team.
+
 ## Mail
 
 Agents write to each other through gero. Every agent has an inbox; a mail
@@ -611,6 +628,14 @@ lead's approvals and its own session, working in the lead's directory unless
 the lead names another. It makes no agents itself. A lead reaches the agents
 it made, and no other.
 
+Turning teams off in the lead's isolation (`gero iso unexpose dev team`)
+pauses its run: the lead's address answers 403, and gero tells it nothing
+and does not ask it for the next team, so it spends no turn on what it
+could not act on. Its agents finish their turns and the eval runs. Turned
+on again, the lead starts with its address once idle, and what came
+meanwhile reaches it as one message. `gero team show`, the web and the TUI
+say the run is paused.
+
 gero tells the lead, as a message of its own whenever it is idle:
 
 - when a turn of one of its agents ends, with its last answer, and when one
@@ -628,14 +653,6 @@ gero tells the lead, as a message of its own whenever it is idle:
 The eval is a shell command; the last line it prints that reads
 `SCORE: <number>` is the score, higher better. It runs for `--eval-minutes`
 at most (20), in one of two places:
-Turning teams off in the lead's isolation (`gero iso unexpose dev team`)
-pauses its run: the lead's address answers 403, and gero tells it nothing
-and does not ask it for the next team, so it spends no turn on what it
-could not act on. Its agents finish their turns and the eval runs. Turned
-on again, the lead starts with its address once idle, and what came
-meanwhile reaches it as one message. `gero team show`, the web and the TUI
-say the run is paused.
-
 
 - In the lead's isolation, as the agents, in `--eval-dir` (the lead's
   directory by default). The agents can change the eval, what it reads and
@@ -714,6 +731,68 @@ tells the lead that nothing runs: the team spends for as long as the lead
 keeps work going, and stands idle, spending nothing, once it stops. A CLI
 billed per use (an API key) has no plan window: where one is logged in, gero
 refuses a lead without a budget, and its agents of that kind.
+
+## Control
+
+Some of what you do with the gero command can be opened to an isolation's
+agents: an agent that keeps others going lists them, makes them, writes to
+them, sets them crons. What is opened is an env, a set of gero commands ticked
+one by one (checkboxes in the web's env dialog), and an isolation has one:
+
+```sh
+gero env add control ops --allow agent.ls,agent.log,agent.new,agent.send --max-live 3
+gero iso expose dev control ops              # dev's agents act on dev's agents
+gero iso expose dev control ops --reach far  # ...and on far's
+gero env edit control ops --allow agent.ls   # replaces the list
+gero env help control                        # the actions an env can open
+```
+
+The actions: `agent.ls`, `agent.log` (a conversation), `agent.new`,
+`agent.send`, `agent.interrupt`, `agent.archive`, `agent.restore`,
+`agent.fork`, `agent.rename`, `agent.team`, `agent.set` (model and effort),
+`agent.cron`, `agent.inbox`, `iso.ls`, `iso.services`, `team.ls`,
+`team.show`, `team.new`, `team.rename`, `team.rm` and `team.eval`. An env
+made without `--allow` opens the reads alone. Nothing that is credentials
+or rights is among them, so no env opens it: accounts, envs and their
+secrets, services, an isolation's environment and logins, approvals (an
+agent's mode, and approving or answering), a lead and its eval (a command
+that runs elsewhere), making, resizing, upgrading and removing isolations,
+removing agents, resuming a run gero stopped, the fence and the daemon.
+
+Inside the isolation, `GERO_CONTROL_URL` is each agent's own address for it
+(on mail's port, so no `gero iso upgrade` is needed), and the `gero-control`
+skill shows what its env opens, with the request for each: the daemon's own
+API paths, under the agent's address. What an agent does through it is done
+as that agent:
+
+- **It reaches its own isolation's agents, and those of the isolations
+  `--reach` names; to it the others are not there.** Its own isolation's
+  agents share its files and services, so acting on them gives it nothing it
+  does not have. Reaching another isolation is reaching what that one's
+  services open, through its agents: name one only where that is meant.
+- **What it makes, writes or sets reads as its own.** A message arrives as
+  `[gero control: from agent boss in isolation dev, ...]`, an agent it made
+  starts on a prompt that says so, a cron it set says who set it (`gero agent
+  cron` under SET BY), and the sidebar marks an agent made this way with an
+  arrow. The daemon's log has a line for every change.
+- **Approvals stay yours.** An agent it makes in its own isolation takes its
+  maker's approvals mode, as a lead's do; one in another isolation asks you.
+  It cannot set a mode, and `agent.set` changes model and effort only.
+- **It has few made at once, and writes within mail's budget.** `--max-live`
+  (3) agents made through it (`agent.new`, `agent.fork`, restoring one) by
+  the isolation's agents are live at once, and what they write through it
+  spends the isolation's mail budget, 20 a minute, so two agents writing to
+  each other wind down either way.
+- **Crons it changes are the agents'.** It sets crons on the agents it
+  reaches, at most twenty of the agents' each and none more often than every
+  five minutes, and changes and removes those agents set, never yours.
+- **A team is its to change only whole.** It renames or removes a team only
+  when it reaches all its agents, and sees a run or runs an eval where it
+  reaches the lead.
+
+Turning control off for an isolation, or editing its env, takes effect on the
+next request; its agents' processes start again when idle, with the address
+and the skill or without them.
 
 ## Shared folders
 

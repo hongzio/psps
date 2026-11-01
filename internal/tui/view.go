@@ -70,12 +70,13 @@ func (m *Model) renderSidebar(w int) string {
 		if a.Problem != "" {
 			meta = "  " + th.err.Render("! ") + truncate(a.Problem, w-6-len(indent))
 		}
-		// A team's lead wears a crown; an agent it made, an arrow from it.
+		// A team's lead wears a crown; an agent it made, an arrow from it, as
+		// does one an agent made through the control service.
 		mark := ""
 		switch {
 		case a.Leads != nil:
 			mark = "♛ "
-		case a.MadeBy != "":
+		case a.MadeBy != "", a.MadeVia != "":
 			mark = "↳ "
 		}
 		row(a.ID, indent+th.agentIcon(a, m.frame)+" "+mark+title(a), indent+th.dim.Render(meta))

@@ -134,8 +134,10 @@ function letter(text) {
 const CRON = /^\[gero cron #(\d+), on schedule "([^"\n]*)"\. [^\n]*\]\n\n/
 function cronMsg(text) {
   const m = CRON.exec(text)
-  // One the agent set itself says so (cronLetter).
-  return m && { id: m[1], schedule: m[2], self: m[0].includes('You set this message yourself'), body: text.slice(m[0].length) }
+  // One the agent set itself says so, and one another set through the
+  // control service says whose it is (cronLetter).
+  const by = m && /Agent (.+?) set this message, through gero's control service/.exec(m[0])
+  return m && { id: m[1], schedule: m[2], self: m[0].includes('You set this message yourself'), by: by?.[1], body: text.slice(m[0].length) }
 }
 
 // A schedule as the cron form has it: every N minutes or hours, a time on
@@ -986,9 +988,12 @@ function renderSidebar() {
     if (togglable) dot.addEventListener('click', (e) => { e.stopPropagation(); togglePark(a) })
     const meta = a.problem ? h('span', { class: 'problem' }, icon('triangle-alert'), ' ' + a.problem)
       : [`${shownID(a)} · ${a.isolation}`, a.inbox ? [' · ', icon('mail'), ` ${a.inbox}`] : null]
-    // A team's lead wears a crown; an agent it made, an arrow from it.
+    // A team's lead wears a crown; an agent it made, an arrow from it, as
+    // does one an agent made through the control service.
+    const maker = a.made_via && S.agents.find((x) => x.id === a.made_via)
     const mark = a.leads ? h('span', { class: 'mark', title: 'Leads its team' }, icon('crown'))
-      : a.made_by ? h('span', { class: 'mark', title: "Made by its team's lead" }, icon('corner-down-right')) : null
+      : a.made_by ? h('span', { class: 'mark', title: "Made by its team's lead" }, icon('corner-down-right'))
+      : a.made_via ? h('span', { class: 'mark', title: `Made by agent ${maker ? shownID(maker) : a.made_via}, through the control service` }, icon('corner-down-right')) : null
     return h('button', {
       class: 'agent' + (a.id === S.sel && S.view === 'agent' ? ' selected' : '') + (a.archived_at ? ' archived' : ''),
       'data-line': a.line || a.id, onclick: () => select(a.id),
@@ -1702,6 +1707,7 @@ async function openCrons(a) {
       h('span', { class: 'chip ' + (c.enabled ? 'ok' : '') }, c.enabled ? 'on' : 'off'),
       c.waiting_since ? h('span', { class: 'chip waiting', title: `since ${when(c.waiting_since)}` }, 'waiting for idle') : null,
       c.self ? h('span', { class: 'chip', title: 'The agent set this cron itself, with the cron service' }, 'set by the agent') : null,
+      c.set_by ? h('span', { class: 'chip', title: 'An agent set this cron, through the control service' }, `set by ${c.set_by}`) : null,
       c.once ? h('span', { class: 'chip', title: 'Sent the first time it comes, then removed' }, 'once') : null),
     h('div', { class: 'cron-meta' },
       [c.enabled && c.next_at ? `next ${when(c.next_at)}` : null, c.if_busy === 'wait' ? 'waits if busy' : 'skipped if busy'].filter(Boolean).join(' · ')),
@@ -2110,7 +2116,7 @@ function entryView(en, a, frozen) {
       const l = letter(en.text)
       if (l) return h('div', { class: 'msg-mail' }, h('div', { class: 'who' }, icon('mail'), ` Mail #${l.id} from ${l.from} · ${l.iso}`), h('div', { class: 'text' }, markdown(l.body)))
       const cm = cronMsg(en.text)
-      if (cm) return h('div', { class: 'msg-cron' }, h('div', { class: 'who' }, icon('clock'), ` Cron #${cm.id}${cm.self ? ' (the agent\'s own)' : ''} · ${describeSchedule(cm.schedule)}`), h('div', { class: 'text' }, richText(cm.body)))
+      if (cm) return h('div', { class: 'msg-cron' }, h('div', { class: 'who' }, icon('clock'), ` Cron #${cm.id}${cm.self ? ' (the agent\'s own)' : cm.by ? ` (set by ${cm.by})` : ''} · ${describeSchedule(cm.schedule)}`), h('div', { class: 'text' }, richText(cm.body)))
       if (!frozen && S.edit?.agent === a.id && S.edit.id === en.id) return editView(en, a)
       const bubble = h('div', { class: 'msg-user text' }, richText(en.text))
       const edit = !frozen && en.id && rewindable(a)
@@ -3526,7 +3532,7 @@ function exposuresView(i) {
         : !s.fields?.length ? compactConfig(x.settings) || 'on'
           : s.replaces ? (x.envs || []).map((n) => '/shared/' + n).join(', ') || 'no folder'
             : s.forwards ? (x.forwards?.length ? forwardLinks(x.forwards) : 'no port')
-              : [(x.envs || []).join(', ') || 'no env', x.default_env ? `(default ${x.default_env})` : '', compactConfig(x.settings)].filter(Boolean).join(' ')
+              : [(x.envs || []).join(', ') || 'no env', x.default_env && !s.one_env ? `(default ${x.default_env})` : '', compactConfig(x.settings)].filter(Boolean).join(' ')
       return h('div', { class: 'svc-row' },
         h('div', { class: 'svc-line' },
           h('span', { class: 'dot' + (x.enabled ? ' on' : '') }),
@@ -3549,7 +3555,8 @@ function forwardLinks(fs) {
 function exposeForm(i, s, x) {
   const names = S.envs.filter((e) => e.service === s.name).map((e) => e.name)
   const have = new Set(x.envs || [])
-  const boxes = names.map((n) => ({ n, el: h('input', { type: 'checkbox', checked: have.has(n) }) }))
+  // A service an isolation has with one env (control) offers a choice of one.
+  const boxes = names.map((n) => ({ n, el: h('input', s.one_env ? { type: 'radio', name: `env-${i.name}-${s.name}`, checked: have.has(n) } : { type: 'checkbox', checked: have.has(n) }) }))
   const def = dropdown([DEFAULT, ...names], { value: x.default_env || DEFAULT, label: 'Default' })
   const ctl = fieldControls(s.settings, x.settings || {}, !x.enabled, null, i.name)
   const noEnvs = !s.fields?.length
@@ -3606,8 +3613,9 @@ function exposeForm(i, s, x) {
       h('span', { class: 'hint' }, s.replaces ? 'Each ticked folder is at /shared/NAME in the isolation.'
         : s.name === 'skill' ? 'Each ticked skill is in Claude Code’s and Codex’s skills there; an untick removes it.'
         : s.forwards ? "Each ticked port is on the Mac's 127.0.0.1, never the LAN. The container stays."
+        : s.one_env ? 'One: what its agents may do.'
           : 'None ticked: the service with no credential (git: public repositories only).')),
-    !noEnvs && !s.replaces && !s.forwards && s.name !== 'skill' && names.length > 1 ? h('div', { class: 'field' }, h('label', null, 'Default'), def, h('span', { class: 'hint' }, 'what the plain variables point at')) : null,
+    !noEnvs && !s.replaces && !s.forwards && !s.one_env && s.name !== 'skill' && names.length > 1 ? h('div', { class: 'field' }, h('label', null, 'Default'), def, h('span', { class: 'hint' }, 'what the plain variables point at')) : null,
     ctl.rows, err,
     h('div', { class: 'actions' }, apply,
       x.enabled ? h('button', {

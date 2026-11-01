@@ -20,6 +20,7 @@ import (
 	"github.com/hongzio/gero/internal/driver"
 	"github.com/hongzio/gero/internal/isolation"
 	"github.com/hongzio/gero/internal/proxy"
+	"github.com/hongzio/gero/internal/proxy/controlproxy"
 	"github.com/hongzio/gero/internal/proxy/cronproxy"
 	"github.com/hongzio/gero/internal/proxy/mailproxy"
 	"github.com/hongzio/gero/internal/proxy/teamproxy"
@@ -299,6 +300,8 @@ type isoWorkspace struct {
 	cron bool
 	// team: its agents have a team address (teamEnv).
 	team bool
+	// control: its agents have a control address (controlEnv).
+	control bool
 	// skills are the files of the services whose files come and go
 	// (proxy.Pruner), each with its content's hash: an agent CLI lists
 	// skills as it starts, so a change to them wants a new process.
@@ -319,6 +322,9 @@ func (w isoWorkspace) signature() string {
 	}
 	if w.team {
 		sig += "\nteam"
+	}
+	if w.control {
+		sig += "\ncontrol"
 	}
 	for _, f := range w.skills {
 		sig += "\nskill " + f
@@ -350,7 +356,10 @@ func (m *Manager) workspace(iso string) (isoWorkspace, error) {
 		w.mail = w.mail || svc.Name() == mailproxy.Name
 		w.cron = w.cron || svc.Name() == cronproxy.Name
 		w.team = w.team || svc.Name() == teamproxy.Name
-		if _, ok := svc.(proxy.Pruner); ok {
+		w.control = w.control || svc.Name() == controlproxy.Name
+		// Control's skill says what its env opens, in the description a
+		// CLI lists as it starts.
+		if _, ok := svc.(proxy.Pruner); ok || svc.Name() == controlproxy.Name {
 			for _, f := range ws.Files {
 				w.skills = append(w.skills, fmt.Sprintf("%s %x", f.Path, sha256.Sum256([]byte(f.Content))))
 			}
@@ -540,8 +549,9 @@ func (m *Manager) Services() []api.Service {
 	for _, s := range m.registry().All() {
 		_, replaces := s.(proxy.Mounter)
 		_, forwards := s.(proxy.Forwarder)
+		_, one := s.(proxy.OneEnv)
 		out = append(out, api.Service{Name: s.Name(), Summary: s.Summary(), Ports: s.Ports(), Fields: s.Fields(),
-			Settings: s.Settings(), Secrets: creds.Fields[s.Name()], Login: creds.LoginServices[s.Name()], Replaces: replaces, Forwards: forwards})
+			Settings: s.Settings(), Secrets: creds.Fields[s.Name()], Login: creds.LoginServices[s.Name()], Replaces: replaces, Forwards: forwards, OneEnv: one})
 	}
 	return out
 }
