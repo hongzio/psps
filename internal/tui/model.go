@@ -43,6 +43,10 @@ type Backend interface {
 	DeleteAgent(ctx context.Context, id string, purge bool) error
 	RenameTeam(ctx context.Context, team, name string) (store.Team, error)
 	DeleteTeam(ctx context.Context, team string) error
+	TeamRun(ctx context.Context, team string) (api.TeamRun, error)
+	SetLead(ctx context.Context, team string, req api.PutLead) (api.TeamRun, error)
+	ClearLead(ctx context.Context, team string) error
+	EvalTeam(ctx context.Context, team string) error
 	Follow(ctx context.Context, id string, after int64, fn func(event.Event) error) error
 	CreateIsolation(ctx context.Context, req api.CreateIsolation) (api.Isolation, error)
 	UpdateIsolation(ctx context.Context, name string, req api.UpdateIsolation) (api.Isolation, error)
@@ -96,6 +100,7 @@ const (
 	viewNewAgent
 	viewIsolations
 	viewServices
+	viewTeam
 )
 
 const (
@@ -142,6 +147,7 @@ type Model struct {
 	vp       viewport.Model
 	input    textarea.Model
 	newForm  *agentForm
+	teamPage *teamPage
 	settings *settingsForm
 	isoPage  *isoPage
 	svcPage  *svcPage
@@ -759,6 +765,13 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 
+	case teamRunMsg:
+		m.teamRunArrived(msg)
+		return m, nil
+
+	case leadSavedMsg:
+		return m, m.leadSaved(msg)
+
 	case createdMsg:
 		if m.newForm != nil {
 			m.newForm.busy = false
@@ -856,6 +869,9 @@ func (m *Model) handleKey(msg tea.KeyMsg) tea.Cmd {
 	// Pages that take over the main area handle their own keys first.
 	if m.view == viewNewAgent && m.newForm != nil && m.focus == focusMain {
 		return m.handleNewAgentKey(msg)
+	}
+	if m.view == viewTeam && m.teamPage != nil && m.focus == focusMain {
+		return m.handleTeamKey(msg)
 	}
 	if m.view == viewIsolations && m.isoPage != nil && m.focus == focusMain {
 		return m.handleIsoKey(msg)
@@ -1000,6 +1016,24 @@ func (m *Model) handleSidebarKey(msg tea.KeyMsg) tea.Cmd {
 			onYes:  del(false), alt: "p", onAlt: del(true),
 		}
 		return nil
+	case k.Is(msg, "team_lead"):
+		if g, ok := m.selTeam(); ok {
+			return m.openTeam(g)
+		}
+		if a, ok := m.agent(m.sel); ok && a.TeamID != "" {
+			if g, ok := m.team(a.TeamID); ok {
+				return m.openTeam(g)
+			}
+		}
+		m.setFlash("select a team, or an agent in one", false)
+		return nil
+	case k.Is(msg, "team_eval"):
+		g, ok := m.selTeam()
+		if !ok {
+			return nil
+		}
+		be, id := m.be, g.team
+		return m.do(fmt.Sprintf("team %q's eval runs; its result goes to the lead", g.name), true, func(ctx context.Context) error { return be.EvalTeam(ctx, id) })
 	case k.Is(msg, "rename_agent"):
 		if g, ok := m.selTeam(); ok {
 			be, id := m.be, g.team

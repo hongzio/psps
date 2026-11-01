@@ -207,6 +207,10 @@ func (m *Model) renderMain(w, h int) string {
 		if m.svcPage != nil {
 			return m.renderServices(w)
 		}
+	case viewTeam:
+		if m.teamPage != nil {
+			return m.renderTeam(w)
+		}
 	}
 	if _, ok := m.agent(m.openID); ok {
 		return m.renderAgent(w)

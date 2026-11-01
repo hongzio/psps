@@ -106,7 +106,8 @@ bin/gero tui
 
 Agents on the left (status at a glance; archived ones folded at the bottom,
 `r` renames one, `i` gives it an ID of your own, `t` puts it in a team, `d` deletes one;
-a team is a group under its name that `enter` folds to its agents' icons, and on its name `r` and `d` rename and delete it),
+a team is a group under its name that `enter` folds to its agents' icons, and on its name `r` and `d` rename and delete it,
+`l` opens its page, its lead and the terms (see Teams), and `e` runs its eval),
 the selected agent's conversation in the middle, the input at the bottom with
 the agent's settings behind `ctrl+o`. `ctrl+n` makes an agent (its first message, typed in the form or later in the input, starts it and names it; its directory, a workspace of its own unless you type one, offers the isolation's directories as you type, as the web form does), `ctrl+g`
 manages isolations (environment, `s` to rename or resize one, upgrades, `v` to verify one, `l` its accounts
@@ -135,7 +136,10 @@ tapping again undoes that. Its next turn takes it out of being parked. A team
 there that folds to a dot for each of its agents, the ones that want a look
 first. A long press moves an agent within its list: a team's agents within
 the team only, and the team as one row among the rest. A team holds an
-agent's line, so `/new`, a restore and a fork stay in it. The daemon serves it on loopback only, and
+agent's line, so `/new`, a restore and a fork stay in it. The pencil on a
+team's name opens its dialog: its name, its lead and the terms (see Teams),
+and, once it has a lead, how the run goes, with Run eval now and, when gero
+stopped it, Resume. The daemon serves it on loopback only, and
 every API call needs the token `gero web` signs you in with (`--rotate`
 issues a new one and signs every browser out). To use it from a phone,
 expose it to your tailnet yourself — `gero web` prints the exact
@@ -589,6 +593,10 @@ gero team eval lab                         # run the eval now
 gero team resume lab                       # go on after gero stopped the run
 gero team lead lab --clear                 # no lead; its agents are yours
 ```
+
+The same is set in a team's dialog in the web (the pencil on its name, or its
+run's line under it) and on its page in the TUI (`l` on its name), which
+offer to turn teams on in the lead's isolation if they are off.
 
 Inside the isolation, `GERO_TEAM_URL` is each agent's address for its team
 (on mail's port, so no `gero iso upgrade` is needed); only a lead's answers.

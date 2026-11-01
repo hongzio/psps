@@ -60,8 +60,10 @@ type fakeBackend struct {
 	// restored are the agents restored.
 	restored []string
 	// teams are what was done to teams, as "id team=…", "rename T name"
-	// or "delete T".
+	// or "delete T", and to their leads, as "lead T {json}", "clear T" or
+	// "eval T"; run is what TeamRun answers.
 	teams []string
+	run   api.TeamRun
 }
 
 func (f *fakeBackend) Agents(context.Context) ([]api.Agent, error) {
@@ -174,6 +176,30 @@ func (f *fakeBackend) RenameTeam(_ context.Context, team, name string) (store.Te
 		}
 	}
 	return store.Team{ID: team, Name: name}, nil
+}
+func (f *fakeBackend) TeamRun(context.Context, string) (api.TeamRun, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.run, nil
+}
+func (f *fakeBackend) SetLead(_ context.Context, team string, req api.PutLead) (api.TeamRun, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	b, _ := json.Marshal(req)
+	f.teams = append(f.teams, "lead "+team+" "+string(b))
+	return api.TeamRun{Lead: req.Agent}, nil
+}
+func (f *fakeBackend) ClearLead(_ context.Context, team string) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.teams = append(f.teams, "clear "+team)
+	return nil
+}
+func (f *fakeBackend) EvalTeam(_ context.Context, team string) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.teams = append(f.teams, "eval "+team)
+	return nil
 }
 func (f *fakeBackend) DeleteTeam(_ context.Context, team string) error {
 	f.mu.Lock()
@@ -1114,5 +1140,69 @@ func TestALeadsRunShowsUnderItsTeam(t *testing.T) {
 		if !strings.Contains(v, want) {
 			t.Fatalf("no %q in\n%s", want, v)
 		}
+	}
+}
+
+func TestATeamsLeadAndTermsAreSetOnItsPage(t *testing.T) {
+	h := newHarness(t)
+	h.drainFeed()
+	as := h.be.agents
+	for i := range as {
+		as[i].Team, as[i].TeamID = "lab", "t-lab"
+	}
+	h.send(agentsMsg{agents: as})
+	h.m.sel = "team:t-lab"
+	h.key("l")
+	if h.m.view != viewTeam || h.m.teamPage.form == nil {
+		t.Fatalf("no team page: view %v %+v", h.m.view, h.m.teamPage)
+	}
+	if v := h.m.View(); !strings.Contains(v, "Team lab") || !strings.Contains(v, "Lead") || !strings.Contains(v, "none") {
+		t.Fatalf("page\n%s", v)
+	}
+	// Saved without a lead, it says to choose one.
+	h.key("ctrl+s")
+	if !strings.Contains(h.m.teamPage.err, "choose a lead") {
+		t.Fatalf("err %q", h.m.teamPage.err)
+	}
+	h.key("right") // the first agent
+	h.key("tab")
+	h.typeText("5M")
+	for range 4 {
+		h.key("tab")
+	}
+	h.typeText("make bench")
+	h.key("ctrl+s")
+	if h.m.view != viewAgent {
+		t.Fatalf("still on the page: %+v", h.m.teamPage)
+	}
+	got := strings.Join(h.be.teams, " | ")
+	if !strings.Contains(got, `lead t-lab {"agent":"aaaa","budget":5000000,"eval":"make bench","no_target":true}`) {
+		t.Fatalf("teams %s", got)
+	}
+	// Its isolation had no teams: they were turned on.
+	if len(h.be.exposed) != 1 || !strings.HasPrefix(h.be.exposed[0], "dev team ") {
+		t.Fatalf("exposed %v", h.be.exposed)
+	}
+
+	// With a lead, the page shows its run and the form its terms.
+	best := 1.5
+	h.be.run = api.TeamRun{Lead: "aaaa", LeadLine: "aaaa", Status: "the lead is idle, and nothing of its runs", Stopped: "3 evals in a row came without a new best",
+		Settings: store.LeadSettings{Budget: 5_000_000, MaxLive: 3, TurnMinutes: 60, PlanCeiling: 90, Eval: "make bench", EvalDir: "/home/agent/work/a", EvalMinutes: 20, Patience: 3},
+		Evals:    []store.Eval{{ID: 1, Score: &best, Why: "you asked"}}, Best: &store.Eval{ID: 1, Score: &best}}
+	as[0].Leads = &api.TeamBrief{Lead: "aaaa", Status: "stopped"}
+	h.send(agentsMsg{agents: as})
+	h.m.sel = "team:t-lab"
+	h.key("l")
+	v := h.m.View()
+	for _, want := range []string{"aaaa leads it", "eval #1", "best 1.5 at #1", "saving resumes the stopped run", "make bench", "5M"} {
+		if !strings.Contains(v, want) {
+			t.Fatalf("no %q in\n%s", want, v)
+		}
+	}
+	h.key("esc")
+	h.m.sel = "team:t-lab"
+	h.key("e")
+	if got := strings.Join(h.be.teams, " | "); !strings.HasSuffix(got, "eval t-lab") {
+		t.Fatalf("teams %s", got)
 	}
 }
