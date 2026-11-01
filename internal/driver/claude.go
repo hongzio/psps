@@ -386,13 +386,11 @@ type clMessage struct {
 	// transcript of their own.
 	ParentToolUseID *string `json:"parent_tool_use_id"`
 	// Model and Cwd are init's; the cost and the models' usage a result's.
-	Model      string  `json:"model"`
-	Cwd        string  `json:"cwd"`
-	CostUSD    float64 `json:"total_cost_usd"`
-	ModelUsage map[string]struct {
-		ContextWindow int `json:"contextWindow"`
-	} `json:"modelUsage"`
-	RateLimit clRateLimit `json:"rate_limit_info"`
+	Model      string                  `json:"model"`
+	Cwd        string                  `json:"cwd"`
+	CostUSD    float64                 `json:"total_cost_usd"`
+	ModelUsage map[string]clModelUsage `json:"modelUsage"`
+	RateLimit  clRateLimit             `json:"rate_limit_info"`
 	// QueuedTurns is, in a result, how many turns claude still has queued.
 	QueuedTurns *int `json:"queued_turn_count"`
 }

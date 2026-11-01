@@ -2,6 +2,7 @@ package driver
 
 import (
 	"encoding/json"
+	"fmt"
 	"sort"
 )
 
@@ -19,8 +20,32 @@ type Usage struct {
 	Window  int `json:"window,omitempty"`
 	// CostUSD is the conversation's estimated cost so far.
 	CostUSD float64 `json:"cost_usd,omitempty"`
+	// Spent is what the conversation has used so far, a resumed one's
+	// included, as its CLI counts it.
+	Spent Tokens `json:"spent,omitzero"`
 	// Limits are the account's plan windows, five_hour and seven_day.
 	Limits []Limit `json:"limits,omitempty"`
+}
+
+// Tokens are a conversation's tokens: Input sent anew (written to the
+// prompt cache or not), Cached read back from it, and Output written,
+// reasoning included.
+type Tokens struct {
+	Input  int64 `json:"input"`
+	Cached int64 `json:"cached"`
+	Output int64 `json:"output"`
+}
+
+// New is the tokens sent anew and written: what a plan's use goes with,
+// as a read from the prompt cache costs a fraction of either.
+func (t Tokens) New() int64 { return t.Input + t.Output }
+
+func (t Tokens) Plus(o Tokens) Tokens {
+	return Tokens{Input: t.Input + o.Input, Cached: t.Cached + o.Cached, Output: t.Output + o.Output}
+}
+
+func (t Tokens) Minus(o Tokens) Tokens {
+	return Tokens{Input: t.Input - o.Input, Cached: t.Cached - o.Cached, Output: t.Output - o.Output}
 }
 
 // Limit is how much of a plan window is used, and when it starts over.
@@ -32,7 +57,7 @@ type Limit struct {
 
 // shown is u for State: nil while the log has said nothing of it.
 func (u Usage) shown() *Usage {
-	if u.Model == "" && u.Cwd == "" && u.Context == 0 && u.CostUSD == 0 && u.Limits == nil {
+	if u.Model == "" && u.Cwd == "" && u.Context == 0 && u.CostUSD == 0 && u.Spent == (Tokens{}) && u.Limits == nil {
 		return nil
 	}
 	return &u
@@ -70,18 +95,115 @@ func (u *Usage) assistantUsage(raw json.RawMessage) {
 	u.Cached = msg.Usage.CacheRead
 }
 
-// resultUsage takes a result's cost and the window of the model in use.
-// The cost is the conversation's so far, a resumed one's included; an
-// error result may carry zeros, which say nothing.
-func (u *Usage) resultUsage(cost float64, models map[string]struct {
-	ContextWindow int `json:"contextWindow"`
-}) {
+// clModelUsage is a result's account of one model: the conversation's so
+// far, a resumed one's included, as the cost is.
+type clModelUsage struct {
+	ContextWindow int   `json:"contextWindow"`
+	Input         int64 `json:"inputTokens"`
+	Output        int64 `json:"outputTokens"`
+	CacheRead     int64 `json:"cacheReadInputTokens"`
+	CacheCreation int64 `json:"cacheCreationInputTokens"`
+}
+
+// resultUsage takes a result's cost and tokens, and the window of the
+// model in use. Both are the conversation's so far, every model's (a
+// subagent's, the auto mode's classifier) included; an error result may
+// carry zeros, which say nothing.
+func (u *Usage) resultUsage(cost float64, models map[string]clModelUsage) {
 	if cost > 0 {
 		u.CostUSD = cost
+	}
+	var spent Tokens
+	for _, m := range models {
+		spent = spent.Plus(Tokens{Input: m.Input + m.CacheCreation, Cached: m.CacheRead, Output: m.Output})
+	}
+	if spent != (Tokens{}) {
+		u.Spent = spent
 	}
 	if w := models[u.Model].ContextWindow; w > 0 {
 		u.Window = w
 	}
+}
+
+// cxTokens is one of codex's token counts: its input includes what was
+// read from the cache, and its output the reasoning.
+type cxTokens struct {
+	Input  int64 `json:"inputTokens"`
+	Cached int64 `json:"cachedInputTokens"`
+	Output int64 `json:"outputTokens"`
+}
+
+// tokenUsage takes thread/tokenUsage/updated: total is the thread's so
+// far, a resumed one's included, and last its latest request.
+func (u *Usage) tokenUsage(params json.RawMessage) {
+	var p struct {
+		TokenUsage struct {
+			Total  cxTokens `json:"total"`
+			Last   cxTokens `json:"last"`
+			Window *int     `json:"modelContextWindow"`
+		} `json:"tokenUsage"`
+	}
+	if json.Unmarshal(params, &p) != nil {
+		return
+	}
+	t, l := p.TokenUsage.Total, p.TokenUsage.Last
+	u.Spent = Tokens{Input: t.Input - t.Cached, Cached: t.Cached, Output: t.Output}
+	if l.Input > 0 {
+		u.Context, u.Cached = int(l.Input), int(l.Cached)
+	}
+	if w := p.TokenUsage.Window; w != nil && *w > 0 {
+		u.Window = *w
+	}
+}
+
+// cxWindows names codex's plan windows by their length, as claude names
+// its own.
+var cxWindows = map[int64]string{300: "five_hour", 10080: "seven_day"}
+
+// codexRateLimits takes account/rateLimits/updated, which may leave out a
+// window: one left out keeps what was said of it.
+func (u *Usage) codexRateLimits(params json.RawMessage) {
+	type window struct {
+		Used     float64 `json:"usedPercent"`
+		Mins     *int64  `json:"windowDurationMins"`
+		ResetsAt *int64  `json:"resetsAt"`
+	}
+	var p struct {
+		RateLimits struct {
+			Primary   *window `json:"primary"`
+			Secondary *window `json:"secondary"`
+		} `json:"rateLimits"`
+	}
+	if json.Unmarshal(params, &p) != nil {
+		return
+	}
+	byName := map[string]Limit{}
+	for _, l := range u.Limits {
+		byName[l.Window] = l
+	}
+	for _, w := range []*window{p.RateLimits.Primary, p.RateLimits.Secondary} {
+		if w == nil || w.Mins == nil {
+			continue
+		}
+		name := cxWindows[*w.Mins]
+		if name == "" {
+			name = fmt.Sprintf("%dm", *w.Mins)
+		}
+		l := Limit{Window: name, Percent: min(w.Used, 100)}
+		if w.ResetsAt != nil {
+			l.ResetsAt = *w.ResetsAt
+		}
+		byName[name] = l
+	}
+	if len(byName) == 0 {
+		return
+	}
+	ls := make([]Limit, 0, len(byName))
+	for _, l := range byName {
+		ls = append(ls, l)
+	}
+	sort.Slice(ls, func(i, j int) bool { return ls[i].Window < ls[j].Window })
+	u.Limits = ls
 }
 
 func (u *Usage) rateLimits(info clRateLimit) {
