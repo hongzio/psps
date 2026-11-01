@@ -334,6 +334,17 @@ func TestMailCrossesIsolationsOnlyWhereTheOperatorSaid(t *testing.T) {
 	if code != 200 || strings.Join(ids, ",") != "pat@prod-old" {
 		t.Fatalf("directory %d %s", code, out)
 	}
+	// It says who is in which team.
+	ops := "ops"
+	if _, err := m.UpdateAgent("pat", api.UpdateAgent{Team: &ops}); err != nil {
+		t.Fatal(err)
+	}
+	_, out = mailAs(t, m, testIsoID, a.ID, "GET", "/agents", "")
+	dir = mailDirectory{}
+	json.Unmarshal([]byte(out), &dir)
+	if len(dir.Agents) != 1 || dir.Agents[0].Team != "ops" || dir.You.Team != "" {
+		t.Fatalf("directory's teams: %s", out)
+	}
 
 	// An isolation that takes no mail gets none, whoever may write to it.
 	if err := m.Unexpose(ctx, "prod-old", "mail"); err != nil {

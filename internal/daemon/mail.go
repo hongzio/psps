@@ -1,6 +1,7 @@
 package daemon
 
 import (
+	"cmp"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -107,6 +108,8 @@ type mailAgent struct {
 	Isolation string       `json:"isolation"`
 	Status    event.Status `json:"status,omitempty"`
 	Inbox     int          `json:"inbox"`
+	// Team is the name of the team it is in, if any.
+	Team string `json:"team,omitempty"`
 }
 
 type mailDirectory struct {
@@ -223,6 +226,10 @@ func (m *Manager) mailDirectory(from mailSender) (mailDirectory, error) {
 	if err != nil {
 		return mailDirectory{}, err
 	}
+	teams, err := m.teamNames()
+	if err != nil {
+		return mailDirectory{}, err
+	}
 	dir := mailDirectory{Agents: []mailAgent{}}
 	may := map[string]bool{}
 	for _, a := range all {
@@ -240,7 +247,8 @@ func (m *Manager) mailDirectory(from mailSender) (mailDirectory, error) {
 			continue
 		}
 		v := m.view(a, counts[a.ID], 0, 0)
-		ma := mailAgent{ID: shownID(v.Agent), Name: v.Name, Kind: v.Kind, Isolation: v.Isolation, Status: v.State.Status, Inbox: v.Inbox}
+		ma := mailAgent{ID: shownID(v.Agent), Name: v.Name, Kind: v.Kind, Isolation: v.Isolation, Status: v.State.Status, Inbox: v.Inbox,
+			Team: teams[cmp.Or(a.Line, a.ID)]}
 		if a.ID == from.agent.ID {
 			dir.You = ma
 			continue

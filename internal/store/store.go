@@ -641,17 +641,35 @@ func (s *Store) Agents() ([]Agent, error) {
 
 // DeleteAgent removes an agent and everything stored for it, the mail it
 // was sent included (from its senders' histories too: it was its). Mail it
-// wrote stays, in its recipients' histories.
+// wrote stays, in its recipients' histories. A line no agent is on any more
+// goes from the sidebar's lists and its team.
 func (s *Store) DeleteAgent(id string) error {
 	tx, err := s.db.Begin()
 	if err != nil {
 		return err
 	}
 	defer tx.Rollback()
+	var line string
+	if err := tx.QueryRow(`SELECT COALESCE(line, id) FROM agents WHERE id = ?`, id).Scan(&line); err != nil && !errors.Is(err, sql.ErrNoRows) {
+		return err
+	}
 	for _, q := range []string{`DELETE FROM events WHERE agent = ?`, `DELETE FROM outbox WHERE agent = ?`, `DELETE FROM mail WHERE agent = ?`, `DELETE FROM crons WHERE agent = ?`, `DELETE FROM todos WHERE agent = ?`,
 		`DELETE FROM agents WHERE id = ?`} {
 		if _, err := tx.Exec(q, id); err != nil {
 			return err
+		}
+	}
+	if line != "" {
+		var n int
+		if err := tx.QueryRow(`SELECT COUNT(*) FROM agents WHERE COALESCE(line, id) = ?`, line).Scan(&n); err != nil {
+			return err
+		}
+		if n == 0 {
+			for _, q := range []string{`DELETE FROM agent_order WHERE line = ?`, `DELETE FROM team_lines WHERE line = ?`} {
+				if _, err := tx.Exec(q, line); err != nil {
+					return err
+				}
+			}
 		}
 	}
 	return tx.Commit()

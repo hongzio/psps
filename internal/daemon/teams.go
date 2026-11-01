@@ -108,6 +108,27 @@ func (m *Manager) withTeams(as []api.Agent) error {
 	return nil
 }
 
+// teamNames are the names of the teams lines are in, by line.
+func (m *Manager) teamNames() (map[string]string, error) {
+	lines, err := m.store.LineTeams()
+	if err != nil {
+		return nil, err
+	}
+	teams, err := m.store.Teams()
+	if err != nil {
+		return nil, err
+	}
+	names := map[string]string{}
+	for _, t := range teams {
+		names[t.ID] = t.Name
+	}
+	out := map[string]string{}
+	for line, id := range lines {
+		out[line] = names[id]
+	}
+	return out, nil
+}
+
 // teamName is name as a team's, trimmed: one line, not too long for a
 // sidebar.
 func teamName(name string) (string, error) {
