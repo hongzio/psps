@@ -170,6 +170,16 @@ func (m *Manager) leadTerms(was store.LeadSettings, req api.PutLead, lead store.
 	if req.EvalDir != nil {
 		s.EvalDir = *req.EvalDir
 	}
+	if req.EvalIsolation != nil {
+		s.EvalIsolation = ""
+		if name := strings.TrimSpace(*req.EvalIsolation); name != "" {
+			iso, err := m.isolationNamed(name)
+			if err != nil {
+				return s, badRequest(fmt.Errorf("the eval's isolation: %w", err))
+			}
+			s.EvalIsolation = iso.ID
+		}
+	}
 	if req.Target != nil {
 		s.Target = req.Target
 	}
@@ -207,6 +217,11 @@ func (m *Manager) leadTerms(was store.LeadSettings, req api.PutLead, lead store.
 		return s, badRequest(fmt.Errorf("the eval's directory: %w", err))
 	}
 	s.EvalDir = dir
+	if s.EvalIsolation != "" {
+		if why := m.evalIsoUnfit(s.EvalIsolation, lead.IsolationID); why != "" {
+			return s, badRequest(fmt.Errorf("isolation %s cannot run the eval: %s", m.isoName(s.EvalIsolation), why))
+		}
+	}
 	if s.Target != nil && (math.IsNaN(*s.Target) || math.IsInf(*s.Target, 0)) {
 		return s, badRequest(errors.New("the target is a number"))
 	}
@@ -328,6 +343,9 @@ func (m *Manager) teamRun(t store.Team, l store.Lead) (api.TeamRun, error) {
 		b := cutEval(*best)
 		run.Best = &b
 	}
+	if l.Settings.EvalIsolation != "" {
+		run.EvalIsolation = m.isoName(l.Settings.EvalIsolation)
+	}
 	for _, e := range evals[max(len(evals)-10, 0):] {
 		run.Evals = append(run.Evals, cutEval(e))
 	}
@@ -386,6 +404,22 @@ func (m *Manager) teamAgent(a store.Agent, sp store.Spent, answer bool) api.Team
 		v.Answer = said
 	}
 	return v
+}
+
+// leadsView is run as its lead sees it: without the output of the evals
+// whose output is the operator's alone.
+func leadsView(run api.TeamRun) api.TeamRun {
+	for i := range run.Evals {
+		if run.Evals[i].Private {
+			run.Evals[i].Output = ""
+		}
+	}
+	if run.Best != nil && run.Best.Private {
+		b := *run.Best
+		b.Output = ""
+		run.Best = &b
+	}
+	return run
 }
 
 func cutEval(e store.Eval) store.Eval {
@@ -736,11 +770,13 @@ func (m *Manager) startEval(l store.Lead, why string) error {
 
 var scoreLineRe = regexp.MustCompile(`(?m)^SCORE:[ \t]*(\S+)[ \t]*$`)
 
-// runEval runs l's eval in the lead's isolation, as its agents, and tells
-// the lead what came of it; a target reached or patience run out stops
+// runEval runs l's eval, in the lead's isolation as its agents or in its
+// eval isolation on a copy of the work, and tells the lead what came of it; a target reached or patience run out stops
 // the run.
 func (m *Manager) runEval(l store.Lead, why string) {
-	e := store.Eval{Team: l.Team, At: time.Now().UTC(), Why: why}
+	// What is scored in an eval isolation could print the eval, or what it
+	// reads there, for the lead: its output is the operator's alone.
+	e := store.Eval{Team: l.Team, At: time.Now().UTC(), Why: why, Private: l.Settings.EvalIsolation != ""}
 	out, err := m.evalOutput(l)
 	e.Took = time.Since(e.At).Round(time.Second)
 	e.Output = tail(out, evalOutput)
@@ -765,7 +801,13 @@ func (m *Manager) runEval(l store.Lead, why string) {
 	evals, _ := m.store.Evals(l.Team)
 	best, stale := bestOf(evals, l.StaleFrom)
 	msg := fmt.Sprintf("Eval #%d (%s) took %s. %s", e.ID, why, e.Took, scoreLine(e, best, stale, l.Settings.Patience))
-	if e.Score == nil {
+	switch {
+	case e.Score != nil:
+	case e.Private && err != nil:
+		msg += "\nIts output is your operator's alone, as it ran in an isolation of its own. gero says: " + tail(err.Error(), 1500)
+	case e.Private:
+		msg += "\nIts output is your operator's alone, as it ran in an isolation of its own."
+	default:
 		msg += "\nThe end of its output:\n\n" + tail(e.Output, 1500)
 	}
 	m.log.Printf("team %s: eval #%d: %v", l.Team, e.ID, e.Score)
@@ -794,22 +836,90 @@ func (m *Manager) evalOutput(l store.Lead) (string, error) {
 		return "", err
 	}
 	limit := time.Duration(l.Settings.EvalMinutes) * time.Minute
-	ctx, cancel := context.WithTimeout(m.ctx, limit+time.Minute)
+	budget := limit + time.Minute
+	if l.Settings.EvalIsolation != "" {
+		budget += limit // copying the work has as long as the eval
+	}
+	ctx, cancel := context.WithTimeout(m.ctx, budget)
 	defer cancel()
 	iso, err := m.store.Isolation(lead.IsolationID)
 	if err != nil {
 		return "", err
 	}
-	if _, err := m.ensureIsolation(ctx, iso.ID); err != nil {
+	if err := m.readyForEval(ctx, iso); err != nil {
 		return "", err
-	}
-	if ok, why := m.fenceOK(iso.ID); !ok {
-		return "", fmt.Errorf("isolation %s has no verified network fence: %s", iso.Name, why)
 	}
 	// timeout(1) signals the eval's whole process group; ending `container
 	// exec` would leave it running.
-	return m.cli.RunAsAgent(ctx, iso.Container, "timeout", "--kill-after=30", fmt.Sprintf("%ds", int(limit.Seconds())),
-		"sh", "-c", `cd -- "$1" && exec sh -c "$2"`, "gero-eval", l.Settings.EvalDir, l.Settings.Eval)
+	argv := []string{"timeout", "--kill-after=30", fmt.Sprintf("%ds", int(limit.Seconds())), "sh", "-c"}
+	if l.Settings.EvalIsolation == "" {
+		return m.cli.RunAsAgent(ctx, iso.Container, append(argv, `cd -- "$1" && exec sh -c "$2"`, "gero-eval", l.Settings.EvalDir, l.Settings.Eval)...)
+	}
+	ev, err := m.store.Isolation(l.Settings.EvalIsolation)
+	if err != nil {
+		return "", fmt.Errorf("the eval's isolation: %w", err)
+	}
+	if why := m.evalIsoUnfit(ev.ID, iso.ID); why != "" {
+		return "", fmt.Errorf("isolation %s cannot run the eval: %s", ev.Name, why)
+	}
+	if err := m.readyForEval(ctx, ev); err != nil {
+		return "", err
+	}
+	// What the work left running there ends with the eval, whatever it was
+	// in time for.
+	defer func() {
+		ctx, cancel := context.WithTimeout(m.ctx, time.Minute)
+		defer cancel()
+		if err := m.cli.EvalReset(ctx, ev.Container, false); err != nil {
+			m.log.Printf("isolation %s: after the eval: %v", ev.Name, err)
+		}
+	}()
+	if err := m.cli.EvalReset(ctx, ev.Container, true); err != nil {
+		return "", err
+	}
+	if err := m.cli.CopyToEval(ctx, iso.Container, l.Settings.EvalDir, ev.Container); err != nil {
+		return "", fmt.Errorf("copying %s to isolation %s: %w", l.Settings.EvalDir, ev.Name, err)
+	}
+	return m.cli.RunEval(ctx, ev.Container, append(argv, l.Settings.Eval)...)
+}
+
+// readyForEval starts the isolation if it is not running, and refuses it
+// without a verified network fence.
+func (m *Manager) readyForEval(ctx context.Context, iso store.Isolation) error {
+	if _, err := m.ensureIsolation(ctx, iso.ID); err != nil {
+		return err
+	}
+	if ok, why := m.fenceOK(iso.ID); !ok {
+		return fmt.Errorf("isolation %s has no verified network fence: %s", iso.Name, why)
+	}
+	return nil
+}
+
+// evalIsoUnfit says why the isolation (by ID) cannot run the eval of a
+// lead in leadIso; "" if it can. What is scored runs there with the
+// internet at hand, so nothing there may be worth taking or changing: no
+// agent, and no service whose credentials it could use.
+func (m *Manager) evalIsoUnfit(iso, leadIso string) string {
+	if iso == leadIso {
+		return "it is the lead's own; leave the eval's isolation empty to run it there"
+	}
+	agents, err := m.store.Agents()
+	if err != nil {
+		return err.Error()
+	}
+	for _, a := range agents {
+		if a.IsolationID == iso && a.ArchivedAt == nil {
+			return fmt.Sprintf("agent %s is in it, and an eval isolation has none", shownID(a))
+		}
+	}
+	xs, err := m.store.Exposures(iso)
+	if err != nil {
+		return err.Error()
+	}
+	if len(xs) > 0 {
+		return fmt.Sprintf("it has the %s service, and an eval isolation has none: what is scored could use it", xs[0].Service)
+	}
+	return ""
 }
 
 // bestOf is the best scored of evals, and how many evals since it came

@@ -70,7 +70,7 @@ func (m *Manager) teamRoutes(mux *http.ServeMux, iso string) {
 			return
 		}
 		v, err := m.teamRun(t, l)
-		reply(w, v, err)
+		reply(w, leadsView(v), err)
 	})
 	mux.HandleFunc("POST /a/{token}/team/agents", func(w http.ResponseWriter, r *http.Request) {
 		a, l, ok := lead(w, r)

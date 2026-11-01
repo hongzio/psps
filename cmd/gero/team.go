@@ -109,7 +109,8 @@ func teamCmd(p paths.Paths, args []string) error {
 		ceiling := fs.Int("plan-ceiling", 0, "percent of a plan window past which nothing new starts on it (default 90)")
 		turn := fs.Int("turn-minutes", 0, "how long a turn of an agent of the lead's may run, unless it sets one (default 60)")
 		eval := fs.String("eval", "", "a shell command gero runs to score the work; its last \"SCORE: x\" line is the score, higher better")
-		evalDir := fs.String("eval-dir", "", "where in the isolation the eval runs (default: the lead's directory)")
+		evalDir := fs.String("eval-dir", "", "where in the lead's isolation the eval runs, or the work copied to --eval-iso (default: the lead's directory)")
+		evalIso := fs.String("eval-iso", "", "an isolation, with no agents or services, to run the eval in on a copy of --eval-dir (~ in the eval is then an empty home); - for the lead's own")
 		evalMinutes := fs.Int("eval-minutes", 0, "how long the eval may run (default 20)")
 		target := fs.String("target", "", "a score that ends the run once reached")
 		noTarget := fs.Bool("no-target", false, "no target")
@@ -153,6 +154,10 @@ func teamCmd(p paths.Paths, args []string) error {
 		}
 		if set["eval-dir"] {
 			req.EvalDir = evalDir
+		}
+		if set["eval-iso"] {
+			name := strings.TrimPrefix(*evalIso, "-")
+			req.EvalIsolation = &name
 		}
 		if set["target"] {
 			v, err := strconv.ParseFloat(*target, 64)
@@ -224,7 +229,11 @@ func printRun(run api.TeamRun) error {
 	if s.Eval == "" {
 		fmt.Println("  eval   none")
 	} else {
-		fmt.Printf("  eval   %s (in %s, %dm at most), patience %d", s.Eval, s.EvalDir, s.EvalMinutes, s.Patience)
+		where := "in " + s.EvalDir
+		if run.EvalIsolation != "" {
+			where = "in isolation " + run.EvalIsolation + ", on a copy of " + s.EvalDir
+		}
+		fmt.Printf("  eval   %s (%s, %dm at most), patience %d", s.Eval, where, s.EvalMinutes, s.Patience)
 		if s.Target != nil {
 			fmt.Printf(", target %g", *s.Target)
 		}
@@ -236,6 +245,13 @@ func printRun(run api.TeamRun) error {
 			score = strconv.FormatFloat(*e.Score, 'g', -1, 64)
 		}
 		fmt.Printf("  #%-4d %s  %-10s %s, %s\n", e.ID, e.At.Local().Format("Jan 2 15:04"), score, e.Why, e.Took.Round(time.Second))
+	}
+	if n := len(run.Evals); n > 0 && run.Evals[n-1].Score == nil && run.Evals[n-1].Output != "" {
+		e := run.Evals[n-1]
+		fmt.Printf("  the end of #%d's output:\n", e.ID)
+		for _, l := range strings.Split(e.Output, "\n") {
+			fmt.Println("    " + l)
+		}
 	}
 	if run.Best != nil {
 		fmt.Printf("  best   %g at #%d; %d since without a new one\n", *run.Best.Score, run.Best.ID, run.Stale)

@@ -127,17 +127,20 @@ type PutTeam struct {
 // out keeps what it was, or its default. Setting it again resumes a run
 // gero stopped.
 type PutLead struct {
-	Agent       string   `json:"agent"`
-	Budget      *int64   `json:"budget,omitempty"`
-	MaxLive     *int     `json:"max_live,omitempty"`
-	PlanCeiling *int     `json:"plan_ceiling,omitempty"`
-	TurnMinutes *int     `json:"turn_minutes,omitempty"`
-	Eval        *string  `json:"eval,omitempty"`
-	EvalDir     *string  `json:"eval_dir,omitempty"`
-	EvalMinutes *int     `json:"eval_minutes,omitempty"`
-	Target      *float64 `json:"target,omitempty"`
-	NoTarget    bool     `json:"no_target,omitempty"`
-	Patience    *int     `json:"patience,omitempty"`
+	Agent       string  `json:"agent"`
+	Budget      *int64  `json:"budget,omitempty"`
+	MaxLive     *int    `json:"max_live,omitempty"`
+	PlanCeiling *int    `json:"plan_ceiling,omitempty"`
+	TurnMinutes *int    `json:"turn_minutes,omitempty"`
+	Eval        *string `json:"eval,omitempty"`
+	EvalDir     *string `json:"eval_dir,omitempty"`
+	EvalMinutes *int    `json:"eval_minutes,omitempty"`
+	// EvalIsolation names the isolation the eval runs in, on a copy of
+	// EvalDir; "" is the lead's own.
+	EvalIsolation *string  `json:"eval_isolation,omitempty"`
+	Target        *float64 `json:"target,omitempty"`
+	NoTarget      bool     `json:"no_target,omitempty"`
+	Patience      *int     `json:"patience,omitempty"`
 }
 
 // TeamRun is a team with a lead, as its operator and its lead see it.
@@ -147,9 +150,11 @@ type TeamRun struct {
 	Lead     string             `json:"lead"`
 	LeadLine string             `json:"lead_line"`
 	Settings store.LeadSettings `json:"settings"`
-	Since    time.Time          `json:"since"`
-	Stopped  string             `json:"stopped,omitempty"`
-	Status   string             `json:"status"`
+	// EvalIsolation is the name of Settings.EvalIsolation.
+	EvalIsolation string    `json:"eval_isolation,omitempty"`
+	Since         time.Time `json:"since"`
+	Stopped       string    `json:"stopped,omitempty"`
+	Status        string    `json:"status"`
 	// Spent is what the lead and its agents used since it became the lead.
 	Spent driver.Tokens `json:"spent"`
 	// Plan are the plan windows of the CLIs its agents run on.

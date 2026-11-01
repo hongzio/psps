@@ -308,6 +308,90 @@ func TestARoundEndsWithTheEvalAndARunWithoutProgressStops(t *testing.T) {
 	}
 }
 
+// An eval isolation scores a copy of the work, made for each eval, where
+// no agent is and no service: the agents cannot reach what scores them.
+func TestAnEvalRunsInItsIsolationOnACopyOfTheWork(t *testing.T) {
+	fakeTimeout(t)
+	e := newTestEnv(t)
+	m, stop := e.daemon()
+	defer stop()
+	ctx := context.Background()
+	ev, err := m.CreateIsolation(ctx, api.CreateIsolation{Name: "ev"}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	dir := t.TempDir()
+	os.WriteFile(filepath.Join(dir, "score"), []byte("SCORE: 2.5\n"), 0o644)
+	boss, _ := withTeams(t, e, m, api.PutLead{Budget: ptr(int64(1_000_000)), Eval: ptr("cat score; touch made"), EvalDir: ptr(dir), EvalIsolation: ptr("ev")})
+	if run, _ := m.TeamRun("lab"); run.EvalIsolation != "ev" || run.Settings.EvalIsolation != ev.ID {
+		t.Fatalf("%+v", run)
+	}
+	if err := m.EvalTeam("lab"); err != nil {
+		t.Fatal(err)
+	}
+	e.waitFor("the eval's news", func() bool { return len(news(e, boss.ID)) == 1 })
+	run, _ := m.TeamRun("lab")
+	if len(run.Evals) != 1 || run.Evals[0].Score == nil || *run.Evals[0].Score != 2.5 {
+		t.Fatalf("%+v", run.Evals)
+	}
+	work := filepath.Join(e.fc.evalRoot(ev.Container), "work")
+	if _, err := os.Stat(filepath.Join(work, "made")); err != nil {
+		t.Fatal("the eval did not run on the copy:", err)
+	}
+	if _, err := os.Stat(filepath.Join(dir, "made")); err == nil {
+		t.Fatal("the eval ran on the work itself")
+	}
+	e.fc.mu.Lock()
+	resets := strings.Join(e.fc.evalResets, ", ")
+	e.fc.mu.Unlock()
+	if resets != ev.Container+" true, "+ev.Container+" false" {
+		t.Fatalf("resets %s", resets)
+	}
+
+	// What it prints is the operator's alone: what is scored could print
+	// the eval, or what it reads, for the lead.
+	if _, err := m.SetLead(ctx, "lab", api.PutLead{Agent: "boss", Eval: ptr("printf 'the-%s-says' grader; exit 3")}); err != nil {
+		t.Fatal(err)
+	}
+	m.EvalTeam("lab")
+	e.waitFor("the unscored eval's news", func() bool { return len(news(e, boss.ID)) == 2 })
+	if n := news(e, boss.ID)[1]; strings.Contains(n, "the-grader-says") || !strings.Contains(n, "Its output is your operator's alone, as it ran in an isolation of its own. gero says: the eval: exit status 3") {
+		t.Fatal(n)
+	}
+	if _, out := teamAs(t, m, boss.ID, "GET", "", ""); strings.Contains(out, "the-grader-says") || !strings.Contains(out, `"private":true`) {
+		t.Fatalf("the lead's view: %s", out)
+	}
+	if run, _ := m.TeamRun("lab"); !strings.Contains(run.Evals[1].Output, "the-grader-says") || !run.Evals[1].Private {
+		t.Fatalf("the operator's view: %+v", run.Evals)
+	}
+
+	// Not the lead's own, and none with an agent or a service in it.
+	if _, err := m.SetLead(ctx, "lab", api.PutLead{Agent: "boss", EvalIsolation: ptr("dev")}); err == nil || !strings.Contains(err.Error(), "it is the lead's own") {
+		t.Fatalf("the lead's own: %v", err)
+	}
+	if _, err := m.Expose(ctx, "ev", "team", api.Expose{}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := m.SetLead(ctx, "lab", api.PutLead{Agent: "boss"}); err == nil || !strings.Contains(err.Error(), "it has the team service") {
+		t.Fatalf("with a service: %v", err)
+	}
+	if err := m.Unexpose(ctx, "ev", "team"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := m.CreateAgent(ctx, api.CreateAgent{Isolation: "ev", Kind: driver.Codex, Handle: "stray"}); err != nil {
+		t.Fatal(err)
+	}
+	// One that came after the lead was set fails the eval, which says why.
+	m.EvalTeam("lab")
+	e.waitFor("the failed eval's news", func() bool { return len(news(e, boss.ID)) == 3 })
+	if n := news(e, boss.ID)[2]; !strings.Contains(n, "gero says: isolation ev cannot run the eval: agent stray is in it") {
+		t.Fatal(n)
+	}
+	if _, err := m.SetLead(ctx, "lab", api.PutLead{Agent: "boss", EvalIsolation: ptr("")}); err != nil {
+		t.Fatal("back to the lead's own:", err)
+	}
+}
+
 func TestATurnPastItsLimitIsStoppedForAFinalReport(t *testing.T) {
 	e := newTestEnv(t)
 	m, stop := e.daemon()

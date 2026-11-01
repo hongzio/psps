@@ -589,6 +589,7 @@ gero iso expose dev team                   # dev's agents get a team address
 gero team lead lab tara                    # tara leads team lab (it joins it)
 gero team lead lab tara --budget 5M        # within 5M tokens
 gero team lead lab tara --eval 'make bench | tail -1' --eval-dir ~/work/app --patience 3
+gero team lead lab tara --eval-iso grader  # the eval runs in grader, on a copy
 gero team show lab                         # spending, scores, the lead's agents
 gero team eval lab                         # run the eval now
 gero team resume lab                       # go on after gero stopped the run
@@ -624,12 +625,63 @@ gero tells the lead, as a message of its own whenever it is idle:
   team end without making the next (and not while a plan window is past
   the ceiling, when it could make none).
 
-The eval is a shell command gero runs in the isolation as the agents, in
-`--eval-dir` (the lead's directory by default), for `--eval-minutes` at most
-(20); the last line it prints that reads `SCORE: <number>` is the score,
-higher better. It runs what the agents can change, so keep it and what it
-reads where they cannot: a read-only shared folder (see Shared folders) is
-the one place in an isolation they cannot write to.
+The eval is a shell command; the last line it prints that reads
+`SCORE: <number>` is the score, higher better. It runs for `--eval-minutes`
+at most (20), in one of two places:
+
+- In the lead's isolation, as the agents, in `--eval-dir` (the lead's
+  directory by default). The agents can change the eval, what it reads and
+  what it runs with; a read-only shared folder (see Shared folders) keeps
+  its files from them, not its home or its processes.
+- In an eval isolation (`--eval-iso`), one with no agents and no services,
+  which the agents never reach. For each eval gero ends what the last one
+  left running there, copies `--eval-dir` from the lead's isolation to
+  `/eval/work`, and runs the eval there as a user of its own (uid 1001, its
+  home `/eval/home`, both made anew: `~` in the eval is that empty home, so
+  give the grader's path in full), who can read but not change what you
+  put in the isolation: the agent user's files (`gero iso shell`) and the
+  image's. It has the internet, as any isolation does, and not the Mac or
+  the LAN. Keep the grader and its data there, and take only what is
+  scored from the copy: an eval that runs the copy's own benchmark or tests
+  is the agents' to change. Before each eval gero also removes whatever
+  that user left anywhere it can write, System V IPC included, so nothing
+  passes from one eval to the next. The lead hears only the score: what the
+  eval printed, which what is scored could fill with the grader, is yours
+  (`gero team show`, the team's dialog and page).
+
+A grader for an eval isolation, say `grader`, lives in its agent user's home:
+make it in `gero iso shell grader`, where `~` is `/home/agent` (clone it,
+or write it there). The eval user reads and runs it and cannot change it.
+Run with `--eval-iso grader --eval 'sh /home/agent/grader/run.sh'`:
+
+```sh
+#!/bin/sh
+# /home/agent/grader/run.sh. It starts in /eval/work, the copy of --eval-dir;
+# $HOME is /eval/home, empty.
+set -e
+G=/home/agent/grader                   # yours: the eval reads it, cannot change it
+npm ci >"$HOME/build.log" 2>&1         # the work's own build, its output kept apart
+pass=0 total=0
+for c in "$G"/cases/*.in; do           # your cases, never the copy's
+  total=$((total + 1))
+  timeout 10 node ./main.js <"$c" >"$HOME/out" 2>/dev/null || continue
+  cmp -s "$HOME/out" "${c%.in}.out" && pass=$((pass + 1))
+done
+echo "SCORE: $((100 * pass / total))"  # last, after all the work printed
+```
+
+What it measures with (the cases, the expected output, the benchmark) is
+the grader's; only what is measured comes from the copy. The work's build
+may be the work's own, as it is part of the work. The eval user's `PATH` is
+the image's: a tool you installed in the agent's home (mise,
+`~/.local/bin`) needs its path in full, and with `~` empty each eval fetches
+its caches anew. While the eval runs, the work runs as the same user as the
+grader, so a work bent on it can still reach what the grader writes then
+(`$HOME`, `/tmp`) and what it prints; it cannot reach the grader's files,
+or anything the next eval starts from.
+
+Either way the eval runs the agents' work, which can print a `SCORE:` line
+of its own: print the score after the work's output, or keep the two apart.
 
 gero stops the run, and the lead makes no agent and writes to none until you
 resume it (`gero team resume`, or setting the lead again), when:

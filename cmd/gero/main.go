@@ -82,7 +82,7 @@ const usage = `gero — run coding agents in isolated containers
   gero team new NAME...
   gero team rename TEAM NAME...
   gero team rm TEAM             its agents stay, in no team, where it was
-  gero team lead TEAM AGENT [--budget N] [--eval CMD] [--eval-dir DIR] [--target X] [--patience N] [--max-live N] [--turn-minutes N] [--plan-ceiling PCT]
+  gero team lead TEAM AGENT [--budget N] [--eval CMD] [--eval-dir DIR] [--eval-iso ISO] [--target X] [--patience N] [--max-live N] [--turn-minutes N] [--plan-ceiling PCT]
                                 its lead: makes agents of its own in the team and hears when their turns end; --clear: none
   gero team show TEAM [--json]  its run: spending, the eval's scores, the lead's agents
   gero team eval TEAM           run its eval now; the result goes to the lead

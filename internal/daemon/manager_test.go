@@ -175,6 +175,8 @@ type fakeContainers struct {
 	// makes container fail.
 	shares      map[string][]isolation.Mount
 	refuseShare string
+	// evalResets are the EvalResets, as "container wipe".
+	evalResets []string
 	// dial is what the tunnel connects the daemon to inside: the isolation's
 	// loopback, as the shim allows; nil is a shim from before forwards.
 	dial tunnel.Allow
@@ -403,6 +405,45 @@ func (f *fakeContainers) StartAsAgent(ctx context.Context, name string, env []st
 	cmd.Env = append(os.Environ(), "PATH="+bin+":"+os.Getenv("PATH"), "HOME="+home)
 	cmd.Env = append(cmd.Env, env...)
 	return isolation.StartProc(cmd)
+}
+
+// evalRoot is the container's isolation.EvalRoot.
+func (f *fakeContainers) evalRoot(name string) string { return filepath.Join(f.base, name, "eval") }
+
+func (f *fakeContainers) EvalReset(_ context.Context, name string, wipe bool) error {
+	f.mu.Lock()
+	f.evalResets = append(f.evalResets, fmt.Sprintf("%s %v", name, wipe))
+	f.mu.Unlock()
+	if !wipe {
+		return nil
+	}
+	root := f.evalRoot(name)
+	os.RemoveAll(root)
+	for _, d := range []string{"work", "home"} {
+		if err := os.MkdirAll(filepath.Join(root, d), 0o755); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// CopyToEval copies dir on this Mac, which stands in for the isolation.
+func (f *fakeContainers) CopyToEval(ctx context.Context, from, dir, to string) error {
+	if out, err := exec.CommandContext(ctx, "cp", "-R", dir+"/.", filepath.Join(f.evalRoot(to), "work")).CombinedOutput(); err != nil {
+		return fmt.Errorf("%w: %s", err, out)
+	}
+	return nil
+}
+
+func (f *fakeContainers) RunEval(ctx context.Context, name string, argv ...string) (string, error) {
+	cmd := exec.CommandContext(ctx, argv[0], argv[1:]...)
+	cmd.Dir = filepath.Join(f.evalRoot(name), "work")
+	cmd.Env = append(os.Environ(), "HOME="+filepath.Join(f.evalRoot(name), "home"))
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		err = fmt.Errorf("the eval: %w", err)
+	}
+	return strings.TrimSpace(string(out)), err
 }
 
 func (f *fakeContainers) ShimDialer(name string) shim.Dialer {

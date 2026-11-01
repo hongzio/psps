@@ -1176,7 +1176,7 @@ func TestATeamsLeadAndTermsAreSetOnItsPage(t *testing.T) {
 		t.Fatalf("still on the page: %+v", h.m.teamPage)
 	}
 	got := strings.Join(h.be.teams, " | ")
-	if !strings.Contains(got, `lead t-lab {"agent":"aaaa","budget":5000000,"eval":"make bench","no_target":true}`) {
+	if !strings.Contains(got, `lead t-lab {"agent":"aaaa","budget":5000000,"eval":"make bench","eval_isolation":"","no_target":true}`) {
 		t.Fatalf("teams %s", got)
 	}
 	// Its isolation had no teams: they were turned on.
@@ -1206,15 +1206,17 @@ func TestATeamsLeadAndTermsAreSetOnItsPage(t *testing.T) {
 		t.Fatalf("teams %s", got)
 	}
 
-	// Without a budget the field is empty, and saved so: none.
+	// Without a budget the field is empty, and saved so: none. The eval's
+	// isolation is chosen as it was.
 	h.be.run.Settings.Budget = 0
+	h.be.run.EvalIsolation = "dev"
 	h.m.sel = "team:t-lab"
 	h.key("l")
 	if v := h.m.View(); !strings.Contains(v, "spent 0 tokens, no budget") {
 		t.Fatalf("page\n%s", v)
 	}
 	h.key("ctrl+s")
-	if got := strings.Join(h.be.teams, " | "); !strings.Contains(got, `lead t-lab {"agent":"aaaa","budget":0,`) {
+	if got := strings.Join(h.be.teams, " | "); !strings.Contains(got, `lead t-lab {"agent":"aaaa","budget":0,`) || !strings.Contains(got, `"eval_isolation":"dev"`) {
 		t.Fatalf("teams %s", got)
 	}
 }
