@@ -58,7 +58,8 @@ CREATE TABLE IF NOT EXISTS spent (
 // LeadSettings are the operator's terms for a lead.
 type LeadSettings struct {
 	// Budget is the tokens (driver.Tokens.New) the lead and the agents it
-	// makes may use, counted from when it became the lead.
+	// makes may use, counted from when it became the lead; 0 is none, and
+	// only the plan ceiling holds them back.
 	Budget int64 `json:"budget"`
 	// MaxLive is how many agents of its own may be live at once.
 	MaxLive int `json:"max_live"`

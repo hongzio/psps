@@ -61,7 +61,7 @@ func teamCmd(p paths.Paths, args []string) error {
 		for _, t := range order.Teams {
 			run := "-"
 			if t.Run != nil {
-				run = fmt.Sprintf("%s; %s of %s tokens", t.Run.Status, tokenCount(t.Run.Spent), tokenCount(t.Run.Budget))
+				run = t.Run.Status + "; " + spentOf(t.Run.Spent, t.Run.Budget)
 				if t.Run.Best != nil {
 					run += fmt.Sprintf("; best %g", *t.Run.Best)
 				}
@@ -104,7 +104,7 @@ func teamCmd(p paths.Paths, args []string) error {
 
 	case "lead":
 		clear := fs.Bool("clear", false, "leave the team without a lead; the agents it made stay, yours")
-		budget := fs.String("budget", "", "the tokens the lead and its agents may use, sent anew and written (5M, 800k)")
+		budget := fs.String("budget", "", "the tokens the lead and its agents may use, sent anew and written (5M, 800k); none (the default) leaves only the plan ceiling")
 		maxLive := fs.Int("max-live", 0, "how many agents of the lead's may be live at once (default 3)")
 		ceiling := fs.Int("plan-ceiling", 0, "percent of a plan window past which nothing new starts on it (default 90)")
 		turn := fs.Int("turn-minutes", 0, "how long a turn of an agent of the lead's may run, unless it sets one (default 60)")
@@ -126,7 +126,7 @@ func teamCmd(p paths.Paths, args []string) error {
 			return nil
 		}
 		if len(pos) != 2 {
-			return errors.New("usage: gero team lead TEAM AGENT --budget N [--eval CMD] [...]; gero team lead TEAM --clear")
+			return errors.New("usage: gero team lead TEAM AGENT [--budget N] [--eval CMD] [...]; gero team lead TEAM --clear")
 		}
 		req := api.PutLead{Agent: pos[1], NoTarget: *noTarget}
 		set := map[string]bool{}
@@ -216,7 +216,7 @@ func teamCmd(p paths.Paths, args []string) error {
 func printRun(run api.TeamRun) error {
 	s := run.Settings
 	fmt.Printf("team %q, led by %s since %s: %s\n", run.Team.Name, run.Lead, run.Since.Local().Format("Jan 2 15:04"), run.Status)
-	fmt.Printf("  spent  %s of %s tokens (%s more read from cache)\n", tokenCount(run.Spent.New()), tokenCount(s.Budget), tokenCount(run.Spent.Cached))
+	fmt.Printf("  spent  %s (%s more read from cache)\n", spentOf(run.Spent.New(), s.Budget), tokenCount(run.Spent.Cached))
 	fmt.Printf("  terms  %d live at most, turns of %dm, nothing new past %d%% of a plan window\n", s.MaxLive, s.TurnMinutes, s.PlanCeiling)
 	for _, w := range run.Plan {
 		fmt.Printf("  plan   %s %s %.0f%%\n", w.Kind, w.Window, w.Percent)
@@ -263,9 +263,12 @@ func printRun(run api.TeamRun) error {
 	return tw.Flush()
 }
 
-// parseTokens reads a count of tokens: 5000000, 5M, 800k.
+// parseTokens reads a budget: 5000000, 5M, 800k, or none (0).
 func parseTokens(s string) (int64, error) {
 	t := strings.TrimSpace(strings.ToLower(s))
+	if t == "none" {
+		return 0, nil
+	}
 	mult := 1.0
 	switch {
 	case strings.HasSuffix(t, "m"):
@@ -274,10 +277,18 @@ func parseTokens(s string) (int64, error) {
 		mult, t = 1e3, strings.TrimSuffix(t, "k")
 	}
 	v, err := strconv.ParseFloat(t, 64)
-	if err != nil || v <= 0 {
-		return 0, fmt.Errorf("--budget %q is not a count of tokens (5M, 800k, 2000000)", s)
+	if err != nil || v < 0 {
+		return 0, fmt.Errorf("--budget %q is not a count of tokens (5M, 800k, 2000000, none)", s)
 	}
 	return int64(v * mult), nil
+}
+
+// spentOf is spent tokens, of budget if there is one.
+func spentOf(spent, budget int64) string {
+	if budget <= 0 {
+		return tokenCount(spent) + " tokens, no budget"
+	}
+	return fmt.Sprintf("%s of %s tokens", tokenCount(spent), tokenCount(budget))
 }
 
 // tokenCount is n as people read it: 950, 12.3k, 4.1M.

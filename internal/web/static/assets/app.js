@@ -1209,9 +1209,9 @@ function teamGroup(t, members, row) {
 }
 
 // teamRunLine is what a team's head says of its lead's run: what it does,
-// its spending of its budget, and its best score.
+// its spending (of its budget, if it has one), and its best score.
 function teamRunLine(run, open) {
-  const text = `${run.status} · ${tokens(run.spent)} of ${tokens(run.budget)}` + (run.best != null ? ` · best ${run.best}` : '')
+  const text = `${run.status} · ${tokens(run.spent)}` + (run.budget ? ` of ${tokens(run.budget)}` : '') + (run.best != null ? ` · best ${run.best}` : '')
   return h('button', { type: 'button', class: 'team-run' + (run.status.startsWith('stopped') ? ' stopped' : ''), title: text, onclick: open }, text)
 }
 
@@ -1232,7 +1232,7 @@ async function editTeam(t) {
   { value: leading?.id || gone[0]?.value || '', label: 'Lead' })
   const st = run?.settings || {}
   const input = (value, placeholder, mode) => h('input', { class: 'dialog-input', value: value ?? '', placeholder, autocomplete: 'off', inputmode: mode || null })
-  const budget = input(st.budget ? budgetText(st.budget) : '', 'required: 5M, 800k')
+  const budget = input(st.budget ? budgetText(st.budget) : '', 'none; or 5M, 800k')
   const maxLive = input(st.max_live, '3', 'numeric')
   const turn = input(st.turn_minutes, '60', 'numeric')
   const ceiling = input(st.plan_ceiling, '90', 'numeric')
@@ -1242,6 +1242,16 @@ async function editTeam(t) {
   const target = input(st.target, 'none', 'decimal')
   const patience = input(st.patience, '3', 'numeric')
   const field = (label, el, hint) => h('label', { class: 'dialog-field' }, label, el, hint ? h('span', { class: 'field-hint' }, hint) : null)
+  // Without a budget, what holds the run back, and what ends it.
+  const noBudget = h('p', { class: 'field-hint' })
+  const warn = () => {
+    noBudget.hidden = parseTokens(budget.value) !== 0
+    noBudget.textContent = "No budget: only the plan ceiling holds the run back, and it counts the account's whole use, yours too; lower it to keep some of the week." +
+      (evalCmd.value.trim() ? '' : ' With no eval either, gero never ends the run or wakes the lead: the team spends while the lead keeps work going, and stands idle once it stops.')
+  }
+  budget.addEventListener('input', warn)
+  evalCmd.addEventListener('input', warn)
+  warn()
   const turnOn = h('input', { type: 'checkbox', checked: true })
   const offIn = h('span')
   const teamsOff = h('label', { class: 'check lead-teams', hidden: true }, turnOn, h('span', null, 'Turn teams on in ', offIn,
@@ -1249,6 +1259,7 @@ async function editTeam(t) {
   const terms = h('div', { class: 'lead-terms' },
     h('div', { class: 'lead-grid' },
       field('Budget (tokens)', budget), field('Live at most', maxLive), field('Turn limit (min)', turn), field('Plan ceiling (%)', ceiling)),
+    noBudget,
     field('Eval', evalCmd, 'A shell command gero runs in the isolation as the agents; its last "SCORE: x" line is the score, higher better. Keep it, and what it reads, in a read-only shared folder.'),
     h('div', { class: 'lead-grid' },
       field('Eval directory', evalDir), field('Eval limit (min)', evalMin), field('Target', target, 'ends the run once reached'), field('Patience (evals)', patience, 'without a new best, end the run')),
@@ -1276,12 +1287,9 @@ async function editTeam(t) {
   // what it was, or its default.
   const asked = () => {
     const req = { agent: lead.value }
-    const b = budget.value.trim()
-    if (b) {
-      const n = parseTokens(b)
-      if (!n) throw new Error(`The budget "${b}" is not a count of tokens (5M, 800k, 2000000).`)
-      req.budget = n
-    }
+    const n = parseTokens(budget.value)
+    if (n == null) throw new Error(`The budget "${budget.value.trim()}" is not a count of tokens (5M, 800k, 2000000), or none.`)
+    req.budget = n
     for (const [k, el, what] of [['max_live', maxLive, 'Live at most'], ['turn_minutes', turn, 'The turn limit'], ['plan_ceiling', ceiling, 'The plan ceiling'],
       ['eval_minutes', evalMin, 'The eval limit'], ['patience', patience, 'The patience']]) {
       const v = el.value.trim()
@@ -1300,7 +1308,7 @@ async function editTeam(t) {
   const before = run ? JSON.stringify(asked()) : null
   const runView = run && h('div', { class: 'lead-run' + (run.stopped ? ' stopped' : '') },
     h('div', null, h('strong', null, `${run.lead} leads it: `), run.status),
-    h('div', null, `Spent ${tokens(run.spent.input + run.spent.output)} of ${tokens(run.settings.budget)} tokens` +
+    h('div', null, `Spent ${tokens(run.spent.input + run.spent.output)}` + (run.settings.budget ? ` of ${tokens(run.settings.budget)} tokens` : ' tokens, no budget') +
       (run.best ? ` · best ${run.best.score} at eval #${run.best.id}, ${run.stale} since without a new one` : '')),
     run.evals.length ? h('div', { class: 'lead-evals' }, run.evals.slice(-5).map((e) =>
       h('span', { title: e.why }, `#${e.id} ${e.score ?? 'no score'}`))) : null,
@@ -1360,10 +1368,13 @@ async function editTeam(t) {
   if (ok) await guarded(refreshAgents)
 }
 
-// parseTokens reads a count of tokens: 5000000, 5M, 800k; 0 if it is none.
+// parseTokens reads a budget: 5000000, 5M, 800k, or 0 for nothing or
+// none; null if it is none of these.
 function parseTokens(s) {
-  const m = /^(\d+(?:\.\d+)?)\s*([km]?)$/i.exec(s.trim())
-  if (!m) return 0
+  s = s.trim()
+  if (!s || /^none$/i.test(s)) return 0
+  const m = /^(\d+(?:\.\d+)?)\s*([km]?)$/i.exec(s)
+  if (!m) return null
   return Math.round(Number(m[1]) * ({ k: 1e3, m: 1e6 }[m[2].toLowerCase()] || 1))
 }
 

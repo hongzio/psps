@@ -117,10 +117,10 @@ func (m *Model) leadForm(g liveGroup, run *api.TeamRun) *form {
 	}
 	fields := []*field{
 		lead,
-		text("Budget", "required: tokens, as 5M or 800k", "sent anew and written by the lead and its agents, from when it became the lead", s.budget),
+		text("Budget", "none", "tokens sent anew and written by the lead and its agents, as 5M or 800k; none leaves only the plan ceiling", s.budget),
 		text("Live at most", "3", "agents of the lead's live at once", num(s.live)),
 		text("Turn limit", "60", "minutes a turn of one of them runs before gero stops it and asks for a report", num(s.turn)),
-		text("Plan ceiling", "90", "percent of a plan window past which nothing new starts on it", num(s.ceiling)),
+		text("Plan ceiling", "90", "percent of a plan window, the account's whole use (yours too), past which nothing new starts on it", num(s.ceiling)),
 		text("Eval", "none", `a shell command; its last "SCORE: x" line is the score, higher better`, s.eval),
 		text("Eval directory", "the lead's directory", "where in the isolation the eval runs", s.dir),
 		text("Eval limit", "20", "minutes the eval may run", num(s.evalMin)),
@@ -175,14 +175,12 @@ func (m *Model) saveLead() tea.Cmd {
 		}
 	}
 	req := api.PutLead{Agent: lead}
-	if b := fs[1].value(); b != "" {
-		n, err := parseBudget(b)
-		if err != nil {
-			p.err = err.Error()
-			return nil
-		}
-		req.Budget = &n
+	n, err := parseBudget(fs[1].value())
+	if err != nil {
+		p.err = err.Error()
+		return nil
 	}
+	req.Budget = &n
 	for i, to := range []**int{&req.MaxLive, &req.TurnMinutes, &req.PlanCeiling} {
 		if err := setNumber(fs[2+i], to); err != nil {
 			p.err = err.Error()
@@ -269,9 +267,13 @@ func setNumber(f *field, to **int) error {
 	return nil
 }
 
-// parseBudget reads a count of tokens: 5000000, 5M, 800k.
+// parseBudget reads a count of tokens: 5000000, 5M, 800k; nothing or
+// none is 0, no budget.
 func parseBudget(s string) (int64, error) {
 	t := strings.ToLower(strings.TrimSpace(s))
+	if t == "" || t == "none" {
+		return 0, nil
+	}
 	mult := 1.0
 	switch {
 	case strings.HasSuffix(t, "m"):
@@ -280,21 +282,32 @@ func parseBudget(s string) (int64, error) {
 		mult, t = 1e3, strings.TrimSuffix(t, "k")
 	}
 	v, err := strconv.ParseFloat(t, 64)
-	if err != nil || v <= 0 {
-		return 0, fmt.Errorf("the budget %q is not a count of tokens (5M, 800k, 2000000)", s)
+	if err != nil || v < 0 {
+		return 0, fmt.Errorf("the budget %q is not a count of tokens (5M, 800k, 2000000, none)", s)
 	}
 	return int64(v * mult), nil
 }
 
-// budgetText is a budget as it is typed back: 5M, 800k, or the number.
+// budgetText is a budget as it is typed back: 5M, 800k, the number, or
+// nothing for none.
 func budgetText(n int64) string {
 	switch {
+	case n <= 0:
+		return ""
 	case n > 0 && n%1_000_000 == 0:
 		return strconv.FormatInt(n/1_000_000, 10) + "M"
 	case n > 0 && n%1_000 == 0:
 		return strconv.FormatInt(n/1_000, 10) + "k"
 	}
 	return strconv.FormatInt(n, 10)
+}
+
+// spentOf is spent tokens, of budget if there is one.
+func spentOf(spent, budget int64) string {
+	if budget <= 0 {
+		return tokenCount(spent) + " tokens, no budget"
+	}
+	return fmt.Sprintf("%s of %s tokens", tokenCount(spent), tokenCount(budget))
 }
 
 func (m *Model) renderTeam(w int) string {
@@ -304,7 +317,7 @@ func (m *Model) renderTeam(w int) string {
 	if r := p.run; r != nil {
 		line := func(s string) { b.WriteString("  " + truncate(s, w-4) + "\n") }
 		line(fmt.Sprintf("%s leads it: %s", r.Lead, r.Status))
-		line(fmt.Sprintf("spent %s of %s tokens (%s more read from cache)", tokenCount(r.Spent.New()), tokenCount(r.Settings.Budget), tokenCount(r.Spent.Cached)))
+		line(fmt.Sprintf("spent %s (%s more read from cache)", spentOf(r.Spent.New(), r.Settings.Budget), tokenCount(r.Spent.Cached)))
 		for _, pw := range r.Plan {
 			line(fmt.Sprintf("plan  %s %s %.0f%%", pw.Kind, pw.Window, pw.Percent))
 		}

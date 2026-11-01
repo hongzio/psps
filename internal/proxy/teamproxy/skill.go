@@ -18,8 +18,10 @@ Your operator can make an agent the lead of a team. A lead makes agents of its
 own in the team, in this isolation: each a Claude Code or Codex session of its
 own, with a context of its own, working in the isolation's files. gero tells the
 lead when a turn of one of them ends, runs the team's eval, and keeps the team
-within the operator's terms: a budget of tokens, how many agents may be live at
-once, how long a turn may run, and how full a plan window may get.
+within the operator's terms: a budget of tokens if they set one, how many agents
+may be live at once, how long a turn may run, and how full a plan window may get.
+Without a budget, the plan windows, which your operator's own work shares, are
+all that holds the team back.
 
 GERO_TEAM_URL is your own address for it. It carries a token that names you:
 use it as it is, and do not pass it on. If you lead no team, it answers 403 and
@@ -27,8 +29,8 @@ this skill is not for you.
 
 ## The team
 
-Where your team stands (JSON): the terms, what the team has spent of its budget,
-the plan windows, the eval's scores, and each agent of yours with its role,
+Where your team stands (JSON): the terms, what the team has spent (of its budget,
+0 when there is none), the plan windows, the eval's scores, and each agent of yours with its role,
 status, how long its turn has run and what it waits for:
 
     curl -sS "$GERO_TEAM_URL"
@@ -122,13 +124,15 @@ a team works rather than the work itself.
 - Keep a history in the working directory (EVOLUTION.md): each round's
   diagnosis, the team you made and why, and what came of it. Read it first when
   you start as lead in a new session.
-- Spend with care. Every agent spends the team's budget and your operator's
-  plan. Make few agents with clear roles, and archive those you no longer need.
+- Spend with care. Every agent spends the team's budget, if it has one, and
+  your operator's plan. Make few agents with clear roles, and archive those you
+  no longer need.
 
 ## When something is refused
 
 The refusal says why, in a sentence: too many agents of yours live (archive
-one), the budget used, a plan window too full, the run stopped by gero (a target
+one), the budget used, a plan window too full, a CLI billed per use where the
+team has no budget, the run stopped by gero (a target
 reached, or no new best for a while). Tell your operator rather than working
 around it; only they change the terms or resume the run.
 

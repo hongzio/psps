@@ -31,9 +31,9 @@ import (
 //     eval, and the lead hears of the round once, with the score;
 //   - nothing of the team runs after that: the lead is told so, once per
 //     eval;
-//   - the budget is used, the target reached, or no new best has come
-//     for Patience evals: gero stops the run, and makes no more agents of
-//     the lead's until the operator resumes it.
+//   - the budget (if it has one) is used, the target reached, or no new
+//     best has come for Patience evals: gero stops the run, and makes no
+//     more agents of the lead's until the operator resumes it.
 //
 // News waits in the store and goes to the lead's live session in one
 // message whenever it is free, as mail does. RunTeams makes the decisions,
@@ -64,7 +64,7 @@ const (
 // joins the team if it is in another, unless it leads that one. A new lead
 // counts its spending from now, and the run, stopped or not, starts over:
 // evals so far count no more toward its patience.
-func (m *Manager) SetLead(teamRef string, req api.PutLead) (api.TeamRun, error) {
+func (m *Manager) SetLead(ctx context.Context, teamRef string, req api.PutLead) (api.TeamRun, error) {
 	t, err := m.store.Team(teamRef)
 	if err != nil {
 		return api.TeamRun{}, err
@@ -80,6 +80,14 @@ func (m *Manager) SetLead(teamRef string, req api.PutLead) (api.TeamRun, error) 
 		return api.TeamRun{}, badRequest(fmt.Errorf("agent %s was made by a lead; it leads nothing", shownID(a)))
 	}
 	line := cmp.Or(a.Line, a.ID)
+	// Without a budget only the plan ceiling holds the run back, and a CLI
+	// billed per use has no plan. Asked before the lock: it takes a moment.
+	perUse := ""
+	if req.Budget == nil || *req.Budget == 0 {
+		if was, err := m.store.Lead(t.ID); req.Budget != nil || err != nil || was.Settings.Budget == 0 {
+			perUse = m.perUse(ctx, a.IsolationID, a.Kind)
+		}
+	}
 	m.teamMu.Lock()
 	defer m.teamMu.Unlock()
 	if other, err := m.store.LeadOfLine(line); err == nil && other.Team != t.ID {
@@ -101,6 +109,9 @@ func (m *Manager) SetLead(teamRef string, req api.PutLead) (api.TeamRun, error) 
 	if l.Settings, err = m.leadTerms(l.Settings, req, a); err != nil {
 		return api.TeamRun{}, err
 	}
+	if l.Settings.Budget == 0 && perUse != "" {
+		return api.TeamRun{}, badRequest(fmt.Errorf("without a budget only the plan ceiling holds a lead back, and %s; give it a budget (`--budget 5M`)", perUse))
+	}
 	evals, err := m.store.Evals(t.ID)
 	if err != nil {
 		return api.TeamRun{}, err
@@ -120,7 +131,11 @@ func (m *Manager) SetLead(teamRef string, req api.PutLead) (api.TeamRun, error) 
 	if err := m.store.PutLead(l); err != nil {
 		return api.TeamRun{}, err
 	}
-	m.log.Printf("team %s: %s leads it (budget %d tokens)", t.ID, line, l.Settings.Budget)
+	budget := "none"
+	if l.Settings.Budget > 0 {
+		budget = tokens(l.Settings.Budget) + " tokens"
+	}
+	m.log.Printf("team %s: %s leads it (budget %s)", t.ID, line, budget)
 	go m.teamNewsChanged(t.ID)
 	m.teamChanged(t.ID)
 	return m.teamRun(t, l)
@@ -167,8 +182,8 @@ func (m *Manager) leadTerms(was store.LeadSettings, req api.PutLead, lead store.
 		}
 		return nil
 	}
-	if s.Budget <= 0 {
-		return s, badRequest(errors.New("a lead needs a budget: the tokens it and its agents may use, sent anew and written (`--budget 5M`)"))
+	if s.Budget < 0 {
+		return s, badRequest(fmt.Errorf("a budget is a count of tokens, or 0 for none, not %d", s.Budget))
 	}
 	for _, c := range []struct {
 		what      string
@@ -218,7 +233,7 @@ func (m *Manager) TeamRun(teamRef string) (api.TeamRun, error) {
 	}
 	l, err := m.store.Lead(t.ID)
 	if errors.Is(err, store.ErrNotFound) {
-		return api.TeamRun{}, fmt.Errorf("team %q has no lead (`gero team lead %q AGENT --budget N`): %w", t.Name, t.Name, store.ErrNotFound)
+		return api.TeamRun{}, fmt.Errorf("team %q has no lead (`gero team lead %q AGENT`): %w", t.Name, t.Name, store.ErrNotFound)
 	}
 	if err != nil {
 		return api.TeamRun{}, err
@@ -460,6 +475,38 @@ func planOf(iso string, kind driver.Kind, agents []store.Agent, spent map[string
 	return out
 }
 
+// overBudget is whether l has a budget and used has reached it.
+func overBudget(l store.Lead, used int64) bool {
+	return l.Settings.Budget > 0 && used >= l.Settings.Budget
+}
+
+// spentText is used tokens, against budget if there is one.
+func spentText(used, budget int64) string {
+	if budget <= 0 {
+		return tokens(used) + " tokens, with no budget"
+	}
+	return fmt.Sprintf("%s of %s tokens", tokens(used), tokens(budget))
+}
+
+// perUse says why kind's CLI in the isolation (by ID) needs a budget: it
+// is logged in with something billed per use, which no plan window holds
+// back, or gero cannot tell how it is. "" when it runs on a subscription,
+// or is logged in to nothing and runs nothing.
+func (m *Manager) perUse(ctx context.Context, isoID string, kind driver.Kind) string {
+	iso, err := m.store.Isolation(isoID)
+	if err != nil {
+		return fmt.Sprintf("gero cannot tell how %s is logged in there (%v)", kind, err)
+	}
+	c := m.cliStatus(ctx, iso, kind)
+	switch {
+	case c.Error != "":
+		return fmt.Sprintf("gero cannot tell how %s is logged in there (%s)", kind, c.Error)
+	case !c.LoggedIn, c.Method == "ChatGPT", c.Method == "CLAUDE_CODE_OAUTH_TOKEN", strings.HasPrefix(c.Method, "Claude subscription"):
+		return ""
+	}
+	return fmt.Sprintf("%s is logged in there with %s, billed per use", kind, c.Method)
+}
+
 // planFull says why nothing new starts on kind's plan in iso: a window
 // used past ceiling percent; "" if none is.
 func (m *Manager) planFull(iso string, kind driver.Kind, ceiling int) string {
@@ -545,7 +592,7 @@ func (m *Manager) teamCheck(team string) {
 		m.log.Printf("team %s: %v", team, err)
 		return
 	}
-	if used := teamSpent(l, agents, spent).New(); used >= l.Settings.Budget {
+	if used := teamSpent(l, agents, spent).New(); overBudget(l, used) {
 		m.stopRunLocked(l, fmt.Sprintf("the budget is used: %s of %s tokens", tokens(used), tokens(l.Settings.Budget)))
 		return
 	}
@@ -576,7 +623,7 @@ func (m *Manager) teamCheck(team string) {
 	last := evals[len(evals)-1]
 	best, stale := bestOf(evals, l.StaleFrom)
 	msg := "Nothing of your team is running. " + scoreLine(last, best, stale, l.Settings.Patience) +
-		fmt.Sprintf(" The team has used %s of %s tokens.", tokens(teamSpent(l, agents, spent).New()), tokens(l.Settings.Budget)) +
+		" The team has used " + spentText(teamSpent(l, agents, spent).New(), l.Settings.Budget) + "." +
 		" Design the next team, or say why you stop."
 	if err := m.store.AddTeamNews(team, msg); err != nil {
 		m.log.Printf("team %s: %v", team, err)

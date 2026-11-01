@@ -1205,4 +1205,16 @@ func TestATeamsLeadAndTermsAreSetOnItsPage(t *testing.T) {
 	if got := strings.Join(h.be.teams, " | "); !strings.HasSuffix(got, "eval t-lab") {
 		t.Fatalf("teams %s", got)
 	}
+
+	// Without a budget the field is empty, and saved so: none.
+	h.be.run.Settings.Budget = 0
+	h.m.sel = "team:t-lab"
+	h.key("l")
+	if v := h.m.View(); !strings.Contains(v, "spent 0 tokens, no budget") {
+		t.Fatalf("page\n%s", v)
+	}
+	h.key("ctrl+s")
+	if got := strings.Join(h.be.teams, " | "); !strings.Contains(got, `lead t-lab {"agent":"aaaa","budget":0,`) {
+		t.Fatalf("teams %s", got)
+	}
 }
