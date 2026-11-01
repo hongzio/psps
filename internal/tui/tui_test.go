@@ -59,6 +59,9 @@ type fakeBackend struct {
 	renamed []string
 	// restored are the agents restored.
 	restored []string
+	// teams are what was done to teams, as "id team=…", "rename T name"
+	// or "delete T".
+	teams []string
 }
 
 func (f *fakeBackend) Agents(context.Context) ([]api.Agent, error) {
@@ -137,6 +140,13 @@ func (f *fakeBackend) UpdateAgent(_ context.Context, id string, req api.UpdateAg
 			f.renamed = append(f.renamed, id+" id="+*req.Handle)
 			f.agents[i].Handle = *req.Handle
 		}
+		if req.Team != nil {
+			f.teams = append(f.teams, id+" team="+*req.Team)
+			f.agents[i].Team, f.agents[i].TeamID = *req.Team, ""
+			if *req.Team != "" {
+				f.agents[i].TeamID = "t-" + *req.Team
+			}
+		}
 		return f.agents[i], nil
 	}
 	return api.Agent{}, store.ErrNotFound
@@ -152,6 +162,28 @@ func (f *fakeBackend) DeleteAgent(_ context.Context, id string, purge bool) erro
 		}
 	}
 	f.agents = keep
+	return nil
+}
+func (f *fakeBackend) RenameTeam(_ context.Context, team, name string) (store.Team, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.teams = append(f.teams, "rename "+team+" "+name)
+	for i, a := range f.agents {
+		if a.TeamID == team {
+			f.agents[i].Team = name
+		}
+	}
+	return store.Team{ID: team, Name: name}, nil
+}
+func (f *fakeBackend) DeleteTeam(_ context.Context, team string) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.teams = append(f.teams, "delete "+team)
+	for i, a := range f.agents {
+		if a.TeamID == team {
+			f.agents[i].Team, f.agents[i].TeamID = "", ""
+		}
+	}
 	return nil
 }
 func (f *fakeBackend) Follow(ctx context.Context, id string, after int64, fn func(event.Event) error) error {
@@ -1013,5 +1045,55 @@ func TestAForkIsOpenedOnceMade(t *testing.T) {
 	h.drainFeed()
 	if h.m.sel != "ffff" || !strings.Contains(h.m.flash, "forked as bbbb-x1y2") {
 		t.Fatalf("sel %q, flash %q", h.m.sel, h.m.flash)
+	}
+}
+
+// A team's agents are one group under its head, which folds them to their
+// icons; t puts an agent in a team, and r and d on a head rename and
+// delete the team.
+func TestATeamIsAFoldableGroupOfTheSidebar(t *testing.T) {
+	h := newHarness(t)
+	h.drainFeed()
+	h.m.sel = "aaaa"
+	h.key("t")
+	if h.m.prompt == nil || !strings.Contains(h.m.View(), `team for "first"`) {
+		t.Fatalf("prompt %+v\n%s", h.m.prompt, h.m.View())
+	}
+	h.typeText("backend")
+	h.key("enter")
+	if len(h.be.teams) != 1 || h.be.teams[0] != "aaaa team=backend" {
+		t.Fatalf("teams %v", h.be.teams)
+	}
+	h.m.sel = "bbbb"
+	h.key("t")
+	h.typeText("backend")
+	h.key("enter")
+	items := strings.Join(h.m.items(), " ")
+	if !strings.HasPrefix(items, "new team:t-backend aaaa bbbb archived") {
+		t.Fatalf("items %s", items)
+	}
+	if v := h.m.View(); !strings.Contains(v, "▾ backend · 2") || !strings.Contains(v, "codex · dev · bbbb · team backend") {
+		t.Fatalf("no team in\n%s", v)
+	}
+
+	h.m.sel = "team:t-backend"
+	h.key("enter")
+	if items := strings.Join(h.m.items(), " "); !strings.HasPrefix(items, "new team:t-backend archived") {
+		t.Fatalf("folded items %s", items)
+	}
+	if v := h.m.View(); !strings.Contains(v, "▸ backend · 2 ○○") {
+		t.Fatalf("no folded team in\n%s", v)
+	}
+
+	h.key("r")
+	h.m.prompt.in.SetValue("api")
+	h.key("enter")
+	h.key("d")
+	h.key("y")
+	if got := strings.Join(h.be.teams[2:], ", "); got != "rename t-backend api, delete t-backend" {
+		t.Fatalf("teams %s", got)
+	}
+	if items := strings.Join(h.m.items(), " "); !strings.HasPrefix(items, "new aaaa bbbb archived") {
+		t.Fatalf("after the team is deleted: %s", items)
 	}
 }

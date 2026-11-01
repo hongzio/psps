@@ -810,6 +810,11 @@ func (m *Manager) CreateAgent(ctx context.Context, req api.CreateAgent) (store.A
 	if err := req.Options.Check(); err != nil {
 		return store.Agent{}, badRequest(err)
 	}
+	if strings.TrimSpace(req.Team) != "" {
+		if _, err := teamName(req.Team); err != nil {
+			return store.Agent{}, err
+		}
+	}
 	var ownDir string
 	if strings.TrimSpace(req.Workdir) != "" {
 		if ownDir, err = m.isoPath(req.Workdir); err != nil {
@@ -860,6 +865,11 @@ func (m *Manager) CreateAgent(ctx context.Context, req api.CreateAgent) (store.A
 	if a, err = m.storeNamed(a, picked); err != nil {
 		return store.Agent{}, err
 	}
+	// The agent is made by now; a team it could not join is no reason to
+	// say it was not.
+	if err := m.setTeam(a, req.Team); err != nil {
+		m.log.Printf("agent %s: team %q: %v", a.ID, req.Team, err)
+	}
 	r, err := m.ensureRuntime(a)
 	if err != nil {
 		return a, err
@@ -893,12 +903,19 @@ func (m *Manager) Agents() ([]api.Agent, error) {
 	if err != nil {
 		return nil, err
 	}
+	teams, err := m.store.LineTeams()
+	if err != nil {
+		return nil, err
+	}
 	out := make([]api.Agent, 0, len(all))
 	for _, a := range all {
 		out = append(out, m.view(a, counts[a.ID], crons[a.ID], todos[a.ID]))
 	}
+	if err := m.withTeams(out); err != nil {
+		return nil, err
+	}
 	sortAgents(out)
-	orderAgents(out, order)
+	orderAgents(out, order, teams)
 	return out, nil
 }
 
@@ -928,7 +945,8 @@ func (m *Manager) viewOf(a store.Agent) (api.Agent, error) {
 	if err != nil {
 		return api.Agent{}, err
 	}
-	return m.view(a, inbox, crons, todos), nil
+	v := []api.Agent{m.view(a, inbox, crons, todos)}
+	return v[0], m.withTeams(v)
 }
 
 func (m *Manager) Agent(idOrPrefix string) (api.Agent, error) {
@@ -1027,6 +1045,11 @@ func (m *Manager) UpdateAgent(idOrPrefix string, req api.UpdateAgent) (api.Agent
 		}
 		handle = &h
 	}
+	if req.Team != nil && strings.TrimSpace(*req.Team) != "" {
+		if _, err := teamName(*req.Team); err != nil {
+			return api.Agent{}, err
+		}
+	}
 	a, err := m.storedAgent(idOrPrefix)
 	if err != nil {
 		return api.Agent{}, err
@@ -1058,6 +1081,11 @@ func (m *Manager) UpdateAgent(idOrPrefix string, req api.UpdateAgent) (api.Agent
 			return api.Agent{}, err
 		}
 		a.Parked = *req.Parked
+	}
+	if req.Team != nil {
+		if err := m.setTeam(a, *req.Team); err != nil {
+			return api.Agent{}, err
+		}
 	}
 	return m.viewOf(a)
 }
@@ -1216,6 +1244,15 @@ func (m *Manager) Fork(ctx context.Context, id string) (api.Agent, error) {
 		return api.Agent{}, err
 	}
 	m.log.Printf("agent %s: forked from %s", a.ID, from.ID)
+	// A fork is of its agent's team: its work is the same work's.
+	if team, err := m.store.LineTeam(cmp.Or(from.Line, from.ID)); err != nil || team != "" {
+		if err == nil {
+			err = m.store.SetTeam(cmp.Or(a.Line, a.ID), team)
+		}
+		if err != nil {
+			m.log.Printf("agent %s: its team: %v", a.ID, err)
+		}
+	}
 	if _, err := m.ensureRuntime(a); err != nil {
 		return api.Agent{}, err
 	}

@@ -70,6 +70,9 @@ const S = {
   showArchived: false,
   // Lines whose archived sessions are unfolded, by line.
   openLines: new Set(),
+  // Teams folded to their heads in the sidebar, by ID: this browser's,
+  // kept across visits.
+  foldedTeams: new Set((() => { try { return JSON.parse(localStorage.getItem('gero.foldedTeams') || '[]') } catch { return [] } })()),
   // A sidebar row is held or being moved: the sidebar is not redrawn under
   // it, but once it is let go.
   sorting: false,
@@ -1019,8 +1022,9 @@ function renderSidebar() {
 }
 
 // sortable is a sidebar list whose rows, a line each, move by a long press
-// (a long click with a mouse) and a drag, within the list only. The order
-// is kept by the daemon, so every page has it.
+// (a long click with a mouse) and a drag, within the list only: a team is
+// one row of the live list, its agents rows of its own list alone. The
+// order is kept by the daemon, so every page has it.
 function sortable(list, items) {
   const box = h('div', { class: 'sortable' }, items)
   const scroller = () => box.closest('.agent-list')
@@ -1085,7 +1089,9 @@ function sortable(list, items) {
     renderSidebar()
   }
   box.addEventListener('pointerdown', (e) => {
-    if (e.button !== 0 || box.children.length < 2) return
+    // A team's own list is a sortable inside this one: what is held there
+    // moves there, not the team.
+    if (e.button !== 0 || box.children.length < 2 || e.target.closest('.sortable') !== box) return
     let item = e.target
     while (item && item.parentElement !== box) item = item.parentElement
     if (!item?.dataset.line) return
@@ -1119,16 +1125,35 @@ function sortable(list, items) {
 
 const isDivider = (line) => line.startsWith('divider:')
 
-// liveRows are the live agents' rows with the dividers where the order
-// has them; agents it has not placed come after, as the daemon sorts them.
+// liveRows are the live agents' rows with the dividers and the teams where
+// the order has them; agents it has not placed come after, as the daemon
+// sorts them, and so do teams, an empty one at the bottom. A team's agents
+// are drawn in it, in the daemon's order.
 function liveRows(live, row) {
-  const byLine = new Map(live.map((a) => [a.line || a.id, a]))
+  const teams = new Map((S.order?.teams || []).map((t) => [t.id, t]))
+  const inTeam = (a) => !!a.team_id && teams.has(a.team_id)
+  const members = new Map()
+  for (const a of live.filter(inTeam)) {
+    if (!members.has(a.team_id)) members.set(a.team_id, [])
+    members.get(a.team_id).push(a)
+  }
+  const byLine = new Map(live.filter((a) => !inTeam(a)).map((a) => [a.line || a.id, a]))
   const out = [], drawn = new Set()
+  const team = (id) => {
+    if (drawn.has(id)) return
+    drawn.add(id)
+    out.push(teamGroup(teams.get(id), members.get(id) || [], row))
+  }
   for (const l of S.order?.live || []) {
     if (isDivider(l)) out.push(dividerRow(l))
-    else if (byLine.has(l)) { out.push(row(byLine.get(l))); drawn.add(l) }
+    else if (isTeam(l)) { if (teams.has(teamOf(l))) team(teamOf(l)) }
+    else if (byLine.has(l) && !drawn.has(l)) { out.push(row(byLine.get(l))); drawn.add(l) }
   }
-  for (const a of live) if (!drawn.has(a.line || a.id)) out.push(row(a))
+  for (const a of live) {
+    if (inTeam(a)) team(a.team_id)
+    else if (!drawn.has(a.line || a.id)) { out.push(row(a)); drawn.add(a.line || a.id) }
+  }
+  for (const id of teams.keys()) team(id)
   return out
 }
 
@@ -1140,9 +1165,87 @@ function dividerRow(line) {
     }, icon('x')))
 }
 
+// ---- Teams: named groups of live agents, each one row of the live list
+// ("team:<id>") that folds to its head, its agents moved within it alone.
+
+const isTeam = (line) => line.startsWith('team:')
+const teamOf = (line) => line.slice('team:'.length)
+
+// teamRank is how much an agent's state wants a look, for a folded team's
+// head to show its agents by: the most first.
+const teamRank = { blocked: 0, error: 1, interrupted: 2, idle: 3, starting: 4, working: 4, parked: 5 }
+const agentState = (a) => { const st = a.state?.status || 'idle'; return st === 'idle' && a.parked ? 'parked' : st }
+
+function teamGroup(t, members, row) {
+  const folded = S.foldedTeams.has(t.id)
+  const toggle = () => {
+    folded ? S.foldedTeams.delete(t.id) : S.foldedTeams.add(t.id)
+    try { localStorage.setItem('gero.foldedTeams', JSON.stringify([...S.foldedTeams])) } catch {}
+    renderSidebar()
+  }
+  // Folded, the head has a dot for each of its agents, those that want a
+  // look first, so none is out of sight.
+  const dots = folded ? members.map(agentState).sort((x, y) => (teamRank[x] ?? 9) - (teamRank[y] ?? 9)) : []
+  const holdsOpen = folded && S.view === 'agent' && members.some((a) => a.id === S.sel)
+  return h('div', { class: 'team' + (folded ? ' folded' : ''), 'data-line': 'team:' + t.id },
+    h('div', { class: 'team-head' + (holdsOpen ? ' selected' : '') },
+      h('button', { class: 'team-toggle', 'aria-expanded': String(!folded), title: folded ? 'Unfold' : 'Fold', onclick: toggle },
+        h('span', { class: 'caret' }, icon(folded ? 'chevron-right' : 'chevron-down')),
+        h('span', { class: 'name' }, t.name),
+        h('span', { class: 'count' }, String(members.length)),
+        dots.length ? h('span', { class: 'team-dots', 'aria-label': dots.join(', ') },
+          dots.slice(0, 8).map((st) => h('span', { class: 'dot ' + st })),
+          dots.length > 8 ? h('span', { class: 'more' }, `+${dots.length - 8}`) : null) : null),
+      h('button', { class: 'team-edit', title: 'Rename or delete the team', 'aria-label': `Edit team ${t.name}`, onclick: () => editTeam(t) },
+        icon('pencil'))),
+    folded ? null : members.length
+      ? sortable('team:' + t.id, members.map(row))
+      : h('div', { class: 'team-empty' }, 'No agents; an agent joins in Edit.'))
+}
+
+// editTeam renames a team or deletes it, its agents left where it was.
+async function editTeam(t) {
+  const name = h('input', { class: 'dialog-input', value: t.name, autocomplete: 'off' })
+  const del = h('button', {
+    type: 'button', class: 'btn danger', onclick: async (e) => {
+      e.target.closest('dialog').close('cancel')
+      if (!await ask({ title: `Delete team "${t.name}"?`, body: 'Its agents stay where it was in the sidebar, in no team. Nothing else about them changes.', ok: 'Delete', danger: true })) return
+      await guarded(async () => {
+        await api('DELETE', `/v1/teams/${enc(t.id)}`)
+        S.foldedTeams.delete(t.id)
+        toast(`Team "${t.name}" deleted`)
+        await refreshAgents()
+      })
+    },
+  }, icon('trash-2'), ' Delete team')
+  const ok = await ask({
+    title: 'Team',
+    body: 'A team groups agents in the sidebar; they move within it.',
+    fields: [h('label', { class: 'dialog-field' }, 'Name', name), h('div', { class: 'team-delete' }, del)],
+    ok: 'Save',
+    onOk: async () => {
+      const n = name.value.trim()
+      if (!n) throw new Error('A name is required.')
+      if (n !== t.name) await api('PATCH', `/v1/teams/${enc(t.id)}`, { name: n })
+    },
+  })
+  if (ok) await guarded(refreshAgents)
+}
+
+// teamInput is a text field for a team's name that offers the teams
+// there are; a name no team has makes one.
+function teamInput(value) {
+  const id = 'teams-' + ++teamInput.n
+  return [
+    h('input', { class: 'dialog-input', value: value || '', list: id, autocomplete: 'off', placeholder: 'none' }),
+    h('datalist', { id }, (S.order?.teams || []).map((t) => h('option', { value: t.name }))),
+  ]
+}
+teamInput.n = 0
+
 // liveLines are the live list as it is drawn, from the top.
 function liveLines() {
-  const box = document.querySelector('#sidebar .sortable')
+  const box = document.querySelector('#sidebar .agent-list > .sortable')
   return box ? [...box.children].map((c) => c.dataset.line) : []
 }
 
@@ -1162,7 +1265,7 @@ function setLiveOrder(lines) {
 // reorderAgents puts one sidebar list's agents in the order of its lines at
 // once, in the places they had among all agents, before the daemon answers.
 function reorderAgents(list, order) {
-  const inList = (a) => !!a.archived_at === (list === 'archived')
+  const inList = isTeam(list) ? (a) => !a.archived_at && a.team_id === teamOf(list) : (a) => !!a.archived_at === (list === 'archived')
   const rank = new Map(order.map((l, i) => [l, i]))
   const mine = S.agents.filter(inList)
     .map((a, i) => [rank.get(a.line || a.id) ?? order.length + i, a])
@@ -1227,7 +1330,7 @@ function renderTopbar() {
   const working = st === 'working'
   // replaceChildren turns null into the text "null"; keep only nodes.
   slot.replaceChildren(...[
-    topbar(agentTitle(a), `${a.kind} · ${a.isolation} · ${shownID(a)}` + (forkedFrom(a) ? ` · fork of ${forkedFrom(a)}` : ''),
+    topbar(agentTitle(a), `${a.kind} · ${a.isolation} · ${shownID(a)}` + (a.team ? ` · team ${a.team}` : '') + (forkedFrom(a) ? ` · fork of ${forkedFrom(a)}` : ''),
       h('span', { class: 'chip ' + st }, st),
       h('div', { class: 'actions' },
         working ? h('button', { class: 'btn stop', onclick: () => guarded(() => api('POST', `/v1/agents/${a.id}/interrupt`)) }, icon('square'), h('span', { class: 'label' }, ' Stop')) : null,
@@ -1237,7 +1340,7 @@ function renderTopbar() {
           icon('clock'), h('span', { class: 'label' }, ' Cron'), a.crons ? h('span', { class: 'badge' }, String(a.crons)) : null),
         a.archived_at ? null : h('button', { class: 'btn ghost', title: 'TODO: prompts put aside to send it later', onclick: () => openTodos(a) },
           icon('list-todo'), h('span', { class: 'label' }, ' TODO'), a.todos ? h('span', { class: 'badge' }, String(a.todos)) : null),
-        h('button', { class: 'btn ghost', title: 'Name and ID', onclick: () => editAgent(a) }, icon('pencil'), h('span', { class: 'label' }, ' Name & ID')),
+        h('button', { class: 'btn ghost', title: 'Name, ID and team', onclick: () => editAgent(a) }, icon('pencil'), h('span', { class: 'label' }, ' Edit')),
         h('button', {
           class: 'btn ghost', title: 'Fork: a new agent in its directory that knows its conversation so far', onclick: async () => {
             if (!await ask({
@@ -1381,31 +1484,35 @@ async function openMail(a) {
   await guarded(refreshAgents)
 }
 
-// editAgent changes what an agent is called: its name, and its own ID,
-// which the daemon checks against every agent's.
+// editAgent changes what an agent is called, its name and its own ID,
+// which the daemon checks against every agent's, and its team.
 async function editAgent(a) {
   const name = h('input', { class: 'dialog-input', value: a.name, autocomplete: 'off', placeholder: 'from its first message' })
   const id = h('input', { class: 'dialog-input', value: a.handle || '', autocomplete: 'off', autocapitalize: 'off', spellcheck: 'false', placeholder: a.id })
+  const [team, teams] = teamInput(a.team)
   let saved = null
   const ok = await ask({
-    title: 'Name and ID',
-    body: `Only what it is called changes; a running turn carries on. Its ID is unique among all agents; left empty, it goes by ${a.id}, the one gero gave it.`,
-    fields: [h('label', { class: 'dialog-field' }, 'Name', name), h('label', { class: 'dialog-field' }, 'ID', id)],
+    title: 'Name, ID and team',
+    body: `Only what it is called changes; a running turn carries on. Its ID is unique among all agents; left empty, it goes by ${a.id}, the one gero gave it. A team groups agents in the sidebar; a name no team has makes one.`,
+    fields: [h('label', { class: 'dialog-field' }, 'Name', name), h('label', { class: 'dialog-field' }, 'ID', id),
+      h('label', { class: 'dialog-field' }, 'Team', team, teams)],
     ok: 'Save',
     onOk: async () => {
       const body = {}
       const n = name.value.trim()
       const i = id.value.trim()
+      const tm = team.value.trim()
       if (n !== a.name) {
         if (!n) throw new Error('A name is required.')
         body.name = n
       }
       if (i !== (a.handle || '')) body.handle = i
+      if (tm !== (a.team || '')) body.team = tm
       if (Object.keys(body).length) saved = await api('PATCH', `/v1/agents/${enc(a.id)}`, body)
     },
   })
   if (!ok || !saved) return
-  toast(`"${agentTitle(saved)}" goes by ${shownID(saved)}`)
+  toast(`"${agentTitle(saved)}" goes by ${shownID(saved)}` + (saved.team ? `, in team ${saved.team}` : ''))
   await guarded(refreshAgents)
 }
 
@@ -2520,6 +2627,9 @@ function newAgentView() {
   fillIsos()
   S.refillIsolations = fillIsos
   const handle = h('input', { placeholder: 'optional; like brave-otter otherwise', autocomplete: 'off', autocapitalize: 'off', spellcheck: 'false' })
+  const [team, teams] = teamInput('')
+  team.className = ''
+  team.placeholder = 'optional; in none otherwise'
   const workdir = h('input', { placeholder: 'optional; ~/work/<its ID> otherwise', autocomplete: 'off', autocapitalize: 'off', spellcheck: 'false' })
   const effort = dropdown([], { label: 'Effort' })
   const model = h('input', { placeholder: "optional; the CLI's default otherwise" })
@@ -2550,7 +2660,7 @@ function newAgentView() {
     try {
       const a = await api('POST', '/v1/agents', {
         isolation: iso.value, kind, handle: handle.value.trim() || undefined, prompt: prompt.value.trim() || undefined,
-        workdir: workdir.value.trim() || undefined,
+        workdir: workdir.value.trim() || undefined, team: team.value.trim() || undefined,
         options: { effort: effort.value || undefined, model: model.value.trim() || undefined, approvals: approvals.value },
       })
       if (workdir.value.trim()) rememberDir(iso.value, workdir.value.trim())
@@ -2579,6 +2689,8 @@ function newAgentView() {
       h('div', { class: 'field' }, h('label', null, 'Agent'), seg)),
     h('div', { class: 'field' }, h('label', null, 'ID'), handle,
       h('span', { class: 'hint' }, 'Lowercase letters, digits and dashes; unique among all agents, archived ones too. Left empty, it gets an adjective-noun no agent has.')),
+    h('div', { class: 'field' }, h('label', null, 'Team'), team, teams,
+      h('span', { class: 'hint' }, 'The sidebar groups a team\'s agents, and they move within it. A name no team has makes one.')),
     h('div', { class: 'field' }, h('label', null, 'Working directory'), dirCompleter(workdir, () => iso.value),
       h('span', { class: 'hint' }, 'Where in the isolation it works, like ~/work/trevia; made if it is not there. ~ is the agent\'s home. Left empty, it gets a workspace of its own.')),
     h('div', { class: 'row' },

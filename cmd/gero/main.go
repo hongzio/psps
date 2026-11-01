@@ -60,7 +60,7 @@ const usage = `gero — run coding agents in isolated containers
   gero env choices SERVICE NAME FIELD   what a field can list, looked up with the env's credential (git: repos)
   gero env check SERVICE NAME   exercise it from the host, now
 
-  gero agent new --iso NAME --kind claude|codex [--id ID] [--repo URL] [--workdir DIR] [--model M] [--effort E] [--approvals never|auto|ask|default] [PROMPT...]
+  gero agent new --iso NAME --kind claude|codex [--id ID] [--team TEAM] [--repo URL] [--workdir DIR] [--model M] [--effort E] [--approvals never|auto|ask|default] [PROMPT...]
   gero agent ls [--all]
   gero agent log ID [-f]
   gero agent send ID TEXT...
@@ -72,10 +72,16 @@ const usage = `gero — run coding agents in isolated containers
   gero agent set ID [--model M] [--effort E] [--approvals never|auto|ask|default]
   gero agent rename ID NAME...   only the name changes; a running turn carries on
   gero agent id ID NEW-ID|--clear   an ID of your own, unique among all agents; usable wherever an ID is
+  gero agent team ID TEAM|--clear   its team, the sidebar's group it is in and moves within; a new name makes one
   gero agent archive ID
   gero agent fork ID            a new agent in its directory, its conversation copied; no crons or mail
   gero agent restore ID         an archived one, back where it left off; a live session of its line is archived for it
   gero agent rm ID [--purge]    an archived one; --purge also removes its workspace and session transcript
+
+  gero team ls                  teams: named groups of agents in the sidebar
+  gero team new NAME...
+  gero team rename TEAM NAME...
+  gero team rm TEAM             its agents stay, in no team, where it was
 
   gero tui [--keys]             the terminal UI; --keys prints a keys.toml with every default
   gero web [--url] [--rotate]   open the web UI signed in (and print the phone link via Tailscale)
@@ -121,6 +127,8 @@ func run(args []string) error {
 		return envCmd(p, args[1:])
 	case "account":
 		return accountCmd(p, args[1:])
+	case "team":
+		return teamCmd(p, args[1:])
 	case "pf":
 		return pfCmd(args[1:])
 	case "pfd":
