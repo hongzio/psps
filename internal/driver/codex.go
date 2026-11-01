@@ -1,6 +1,7 @@
 package driver
 
 import (
+	"cmp"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -88,6 +89,7 @@ type codex struct {
 	listed bool
 	skills []Command
 	models []Choice
+	usage  Usage
 }
 
 // cxCompact is the command the driver runs itself, with thread/compact/start:
@@ -111,7 +113,8 @@ func newCodex(agentID, threadID string, opts Options) *codex {
 func (c *codex) Command() []string { return []string{"codex", "app-server"} }
 
 func (c *codex) State() State {
-	return State{Status: c.status, Alive: c.alive, Busy: c.busy, SessionID: c.threadID, Error: c.errText, Restart: c.restart, Queued: len(c.queue)}
+	return State{Status: c.status, Alive: c.alive, Busy: c.busy, SessionID: c.threadID, Error: c.errText, Restart: c.restart, Queued: len(c.queue),
+		Usage: c.usage.shown()}
 }
 
 func (c *codex) Send(text string) {
@@ -598,11 +601,15 @@ func (c *codex) response(rec shimproto.Record, method string, m rpcMsg) []event.
 			Thread struct {
 				ID string `json:"id"`
 			} `json:"thread"`
+			Model string `json:"model"`
+			Cwd   string `json:"cwd"`
 		}
 		json.Unmarshal(m.Result, &r)
 		if r.Thread.ID != "" {
 			c.threadID = r.Thread.ID
 		}
+		c.usage.Model = cmp.Or(r.Model, c.usage.Model)
+		c.usage.Cwd = cmp.Or(r.Cwd, c.usage.Cwd)
 		c.phase, c.starting = cxReady, false
 		return []event.Event{c.text(rec, event.KindNotice, "", method+" "+c.threadID)}
 	case "turn/start":
@@ -882,6 +889,12 @@ func (c *codex) notification(rec shimproto.Record, m rpcMsg) []event.Event {
 
 	case "item/autoApprovalReview/completed":
 		return c.review(rec, m.Params)
+
+	case "thread/tokenUsage/updated":
+		c.usage.tokenUsage(m.Params)
+
+	case "account/rateLimits/updated":
+		c.usage.codexRateLimits(m.Params)
 
 	case "error":
 		var p struct {
