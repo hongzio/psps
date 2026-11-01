@@ -87,6 +87,7 @@ const usage = `gero — run coding agents in isolated containers
   gero team show TEAM [--json]  its run: spending, the eval's scores, the lead's agents
   gero team eval TEAM           run its eval now; the result goes to the lead
   gero team resume TEAM         a run gero stopped (budget, target, no new best) goes on
+  gero team help                how a team and its lead work, from a first team on
 
   gero tui [--keys]             the terminal UI; --keys prints a keys.toml with every default
   gero web [--url] [--rotate]   open the web UI signed in (and print the phone link via Tailscale)

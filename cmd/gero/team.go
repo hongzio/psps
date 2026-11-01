@@ -19,7 +19,12 @@ import (
 // their leads. An agent joins one with `gero agent team`.
 func teamCmd(p paths.Paths, args []string) error {
 	if len(args) == 0 {
-		return errors.New("usage: gero team ls|new|rename|rm|lead|show|eval|resume")
+		return errors.New("usage: gero team ls|new|rename|rm|lead|show|eval|resume  (gero team help: how teams work)")
+	}
+	switch args[0] {
+	case "help", "-h", "--help":
+		fmt.Print(teamHelp)
+		return nil
 	}
 	c, err := connect(p)
 	if err != nil {
@@ -219,6 +224,148 @@ func teamCmd(p paths.Paths, args []string) error {
 	}
 	return fmt.Errorf("unknown team command %q", args[0])
 }
+
+// teamHelp is `gero team help`: how a team and its lead work, from a first
+// team on. The README's Teams section says the same at more length.
+const teamHelp = `gero team — named groups of agents, and a lead that runs one
+
+A team is a named group of agents in the sidebar, from any isolations. It may
+have a lead: an agent of yours that makes agents of its own in the team, one
+for each role the work needs, hears when their turns end, has your eval score
+their work, and designs the next team from what came of it. The lead designs
+and steers; its agents do the work. gero keeps the run going, and within the
+terms you set.
+
+Commands
+
+  gero team ls                      the teams: lead, agents, how each run stands
+  gero team new NAME...             a team (gero agent new --team makes one too)
+  gero team rename TEAM NAME...
+  gero team rm TEAM                 its agents stay, in no team
+  gero team lead TEAM AGENT [flags] AGENT leads TEAM and joins it; the flags are
+                                    its terms, below
+  gero team lead TEAM --clear       no lead; the agents it made stay, yours now
+  gero team show TEAM [--json]      the run: status, spending, plan windows,
+                                    scores, the lead's agents
+  gero team eval TEAM               run the eval now; the score goes to the lead
+  gero team resume TEAM             a run gero stopped goes on
+
+A first team
+
+  gero iso create lab
+  gero iso login lab claude         # or: gero iso account lab claude ACCOUNT
+  gero iso expose lab team          # lab's agents get a team address
+  gero agent new --iso lab --id tara --team calc --workdir '~/work/calc'
+  gero iso shell lab                # put the task's files in ~/work/calc, and
+                                    # score.sh, which prints SCORE: <n>
+  gero team lead calc tara --eval 'sh score.sh' --target 100
+  gero agent send tara '/gero-team Build the calculator SPEC.md describes.'
+  gero team show calc
+
+The lead
+
+  Being made lead tells an agent nothing. How to lead is in the gero-team
+  skill, there while teams are on in its isolation: name it first in the work
+  you give the lead, /gero-team for Claude and $gero-team for Codex, and it
+  reads how to lead before it starts. Without it, an agent given work it could
+  do alone tends to do it alone, and then no round ends and no eval runs. A
+  session that has read the skill needs no reminder for later work; a new
+  session does.
+
+  Inside the isolation GERO_TEAM_URL is the lead's address for its team: how
+  the team stands, and its agents to make, write to, interrupt and archive.
+  An agent a lead makes is a gero agent like yours, in the sidebar under the
+  team and marked as the lead's. It runs in the lead's isolation and, unless
+  the lead names another, the lead's directory, with the lead's approvals (so
+  under ask it waits for you) and a session of its own, and makes no agents.
+  A lead reaches only the agents it made and leads one team at a time; an
+  agent a lead made leads nothing.
+
+News and rounds
+
+  gero writes to the lead whenever it is idle, in a message that starts
+  "[gero team news ...]": an agent of its ended a turn, with its last answer;
+  one waits for you to approve something; one ran past its turn limit, so
+  gero stopped it and asked for a final report, which is the news; the eval
+  ran; gero stopped the run. News that comes while the lead works waits, and
+  arrives as one message.
+
+  With an eval, a round lasts until nothing of the team runs. The news of a
+  round's turns waits while others of them still work, so the lead hears of
+  them together; it may then start the next step, an agent that needs the
+  last one's work, and the round goes on. Once its turn on the news ends with
+  none of its agents at work, gero runs the eval on what is in the eval's
+  directory then, the lead's own changes included, tells the lead the score,
+  and asks it for the next team or why it stops. A team that works in steps
+  is scored once, after the last. Without an eval, the lead hears of each
+  turn as it ends, and only the budget stops the run.
+
+The eval
+
+  --eval is a shell command; the last line it prints that reads
+  "SCORE: <number>" is the score, higher better. It runs for --eval-minutes
+  at most (20), in one of two places:
+
+  - The lead's isolation (the default), as its agents, in --eval-dir (the
+    lead's directory by default). The agents can change the eval and what it
+    reads. The lead hears the score, or the end of what it printed if it
+    printed none.
+  - An eval isolation (--eval-iso ISO), which the team never reaches: it may
+    have agents of yours and the control service, and no other service. For
+    each eval gero copies --eval-dir from the lead's isolation to /eval/work
+    there and runs the eval as a user of its own (uid 1001, its home
+    /eval/home, both made anew), who can read but not change the agent user's
+    files. Keep the grader there (gero iso shell ISO) and give its path in
+    full. The lead hears the score alone; what the eval printed is yours.
+
+  An eval set or changed scores no round that ended before it: its first
+  eval comes after the next round, or with gero team eval. The README's Teams
+  section has a grader to start from.
+
+Terms: gero team lead TEAM AGENT [flags]
+
+  --budget N          tokens the lead and its agents may use from now on, sent
+                      anew and written (5M, 800k; none by default); reads from
+                      cache do not count. Without one only the plan ceiling
+                      holds the team back, so a CLI billed per use (an API key)
+                      needs one.
+  --max-live N        how many of the lead's agents may be live at once (3)
+  --turn-minutes N    how long one of their turns may run before gero stops it
+                      and asks for a final report (60); the lead may set one
+                      per agent
+  --plan-ceiling PCT  how full a plan window may get before nothing new starts
+                      on it (90)
+  --eval CMD, --eval-dir DIR, --eval-iso ISO|-, --eval-minutes N
+                      the eval, above; --eval-iso - runs it in the lead's own
+  --target X          a score that ends the run once reached (--no-target: none)
+  --patience N        evals in a row without a new best that end the run (3)
+
+  Run it again to change them: what you leave out stays. Naming another agent
+  moves the lead and keeps the terms, with spending counted from then.
+
+When gero holds the team back
+
+  gero stops the run when the budget is used, the target is reached, or
+  --patience evals in a row bring no new best, and tells the lead: no agent of
+  its can be made or written to, and those at work finish their turns.
+  gero team resume TEAM lets it go on, with the evals so far no longer
+  counting toward patience. While the run goes on, the lead is refused, with
+  the reason, more live agents than --max-live, and anything new on a plan
+  window past the ceiling; it is told to tell you rather than work around it.
+
+  Turning teams off in the lead's isolation (gero iso unexpose ISO team)
+  pauses the run: the lead hears nothing and can do nothing, while its agents
+  finish their turns and the eval runs. Turned on again, what came meanwhile
+  reaches the lead as one message.
+
+Elsewhere
+
+  The web (the pencil on a team's name, or its run's line) and the TUI (l on a
+  team's name) set the same, and offer to turn teams on in the lead's
+  isolation. Agents with gero's control service can list teams, see a run,
+  run its eval and set one to run where they are, as far as its env allows
+  (gero env help control).
+`
 
 // printRun shows a team's run.
 func printRun(run api.TeamRun) error {
