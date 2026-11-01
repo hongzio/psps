@@ -333,6 +333,18 @@ type Crons struct {
 	Crons []store.Cron `json:"crons"`
 }
 
+// ControlView is what the control service opens to an isolation's agents:
+// its env's actions, on the agents of the isolations it reaches (by name,
+// its own first), and how many agents they made through it are live, of
+// how many they may.
+type ControlView struct {
+	Env     string   `json:"env"`
+	Allow   []string `json:"allow"`
+	Reach   []string `json:"reach"`
+	Live    int      `json:"live"`
+	MaxLive int      `json:"max_live"`
+}
+
 // PutCron sets a cron of an agent's: a cron expression or "@every 30m" for
 // Schedule, the message, and store.CronSkip or store.CronWait for what a
 // run that finds the agent busy does. What is left out stays as it is; a
@@ -391,6 +403,8 @@ type Service struct {
 	// Forwards means its envs are ports of the isolation's on the Mac's
 	// 127.0.0.1 (port), which an Exposure lists with what listens.
 	Forwards bool `json:"forwards,omitempty"`
+	// OneEnv means an isolation has it with exactly one env (control).
+	OneEnv bool `json:"one_env,omitempty"`
 }
 
 // Env is an env definition as clients see it: never the secret, only

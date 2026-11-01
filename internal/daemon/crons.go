@@ -31,8 +31,11 @@ const cronMaxPrompt = 32 << 10
 // cronLetter is a cron's message as its agent gets it.
 func cronLetter(c store.Cron) string {
 	who := "Your operator set this message to be sent on a schedule and may not be watching."
-	if c.Self {
+	switch {
+	case c.Self:
 		who = "You set this message yourself, with the gero-cron skill, to be sent to you on a schedule; your operator may not be watching."
+	case c.SetBy != "":
+		who = "Agent " + c.SetBy + " set this message, through gero's control service, to be sent to you on a schedule; your operator may not be watching."
 	}
 	if c.Once {
 		who += " It comes this once: gero has removed it."

@@ -352,6 +352,13 @@ type Forwarder interface {
 	Forwards(v View) (forwards []Forward, missing []string)
 }
 
+// OneEnv is a service an isolation has with exactly one env (control: the
+// actions its agents may take), which forms offer as a choice of one; its
+// CheckExposure refuses any other number.
+type OneEnv interface {
+	OneEnv()
+}
+
 // Forward is one port of the isolation's, on the Mac's 127.0.0.1:HostPort.
 // An HTTP one goes through an HTTP proxy that keeps gero's own cookies from
 // the isolation; otherwise bytes pass unchanged.

@@ -77,6 +77,8 @@ Change one you set (any of schedule, prompt, if_busy, once, enabled), or remove 
   come again a year on.
 - The crons your operator set are theirs: you see them, and only they change
   or remove them.
+- These are crons on yourself. To set one on another agent, use gero's control
+  service (the gero-control skill), if this isolation has it.
 
 ## When it is refused
 

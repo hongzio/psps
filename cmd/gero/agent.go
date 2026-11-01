@@ -419,8 +419,11 @@ func agentCmd(p paths.Paths, args []string) error {
 				last = cr.LastAt.Local().Format("Jan 2 15:04") + " " + cr.LastResult
 			}
 			by := "you"
-			if cr.Self {
+			switch {
+			case cr.Self:
 				by = "the agent"
+			case cr.SetBy != "":
+				by = cr.SetBy
 			}
 			busy := cr.IfBusy
 			if cr.Once {

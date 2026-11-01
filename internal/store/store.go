@@ -84,6 +84,9 @@ type Agent struct {
 	// run before gero stops it, 0 for as long as it likes.
 	MadeBy      string `json:"made_by,omitempty"`
 	TurnMinutes int    `json:"turn_minutes,omitempty"`
+	// MadeVia is the agent that made it through the control service, if
+	// one did.
+	MadeVia string `json:"made_via,omitempty"`
 	// LastSrc is the newest shim log Seq whose events are committed.
 	LastSrc int64 `json:"-"`
 }
@@ -123,7 +126,8 @@ CREATE TABLE IF NOT EXISTS agents (
 	forked_from TEXT NOT NULL DEFAULT '',
 	fork_of     TEXT NOT NULL DEFAULT '',
 	made_by     TEXT NOT NULL DEFAULT '',
-	turn_minutes INTEGER NOT NULL DEFAULT 0
+	turn_minutes INTEGER NOT NULL DEFAULT 0,
+	made_via    TEXT NOT NULL DEFAULT ''
 );
 CREATE TABLE IF NOT EXISTS outbox (
 	id         INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -199,6 +203,8 @@ var added = []struct{ table, column, def string }{
 	{"agents", "made_by", "TEXT NOT NULL DEFAULT ''"},
 	{"agents", "turn_minutes", "INTEGER NOT NULL DEFAULT 0"},
 	{"team_evals", "private", "INTEGER NOT NULL DEFAULT 0"},
+	{"agents", "made_via", "TEXT NOT NULL DEFAULT ''"},
+	{"crons", "set_by", "TEXT NOT NULL DEFAULT ''"},
 }
 
 func hasColumn(db interface {
@@ -450,10 +456,10 @@ func (s *Store) CreateAgent(a Agent) error {
 
 func insertAgent(tx *sql.Tx, a Agent) error {
 	opts, _ := json.Marshal(a.Options)
-	_, err := tx.Exec(`INSERT INTO agents (id, handle, name, kind, isolation, workdir, repo, options, session_id, created_at, line, forked_from, fork_of, made_by, turn_minutes)
-		VALUES (?, NULLIF(?, ''), ?, ?, ?, ?, ?, ?, ?, ?, NULLIF(?, ''), ?, ?, ?, ?)`,
+	_, err := tx.Exec(`INSERT INTO agents (id, handle, name, kind, isolation, workdir, repo, options, session_id, created_at, line, forked_from, fork_of, made_by, turn_minutes, made_via)
+		VALUES (?, NULLIF(?, ''), ?, ?, ?, ?, ?, ?, ?, ?, NULLIF(?, ''), ?, ?, ?, ?, ?)`,
 		a.ID, a.Handle, a.Name, string(a.Kind), a.IsolationID, a.Workdir, a.Repo, string(opts), a.SessionID, ts(a.CreatedAt), a.Line, a.ForkedFrom, a.ForkOf,
-		a.MadeBy, a.TurnMinutes)
+		a.MadeBy, a.TurnMinutes, a.MadeVia)
 	return err
 }
 
@@ -608,14 +614,14 @@ func (s *Store) AgentByHandle(handle string) (Agent, error) {
 	return scanAgent(s.db.QueryRow(`SELECT `+agentCols+` FROM agents WHERE handle = ?`, handle))
 }
 
-const agentCols = `id, COALESCE(handle, ''), name, kind, isolation, workdir, repo, options, session_id, last_src, created_at, archived_at, parked, COALESCE(line, id), was_handle, forked_from, fork_of, made_by, turn_minutes`
+const agentCols = `id, COALESCE(handle, ''), name, kind, isolation, workdir, repo, options, session_id, last_src, created_at, archived_at, parked, COALESCE(line, id), was_handle, forked_from, fork_of, made_by, turn_minutes, made_via`
 
 func scanAgent(row interface{ Scan(...any) error }) (Agent, error) {
 	var a Agent
 	var kind, opts, created string
 	var archived sql.NullString
 	err := row.Scan(&a.ID, &a.Handle, &a.Name, &kind, &a.IsolationID, &a.Workdir, &a.Repo, &opts, &a.SessionID,
-		&a.LastSrc, &created, &archived, &a.Parked, &a.Line, &a.Was, &a.ForkedFrom, &a.ForkOf, &a.MadeBy, &a.TurnMinutes)
+		&a.LastSrc, &created, &archived, &a.Parked, &a.Line, &a.Was, &a.ForkedFrom, &a.ForkOf, &a.MadeBy, &a.TurnMinutes, &a.MadeVia)
 	if errors.Is(err, sql.ErrNoRows) {
 		return a, ErrNotFound
 	}
@@ -695,6 +701,13 @@ func (s *Store) SetParked(id string, parked bool) error {
 func (s *Store) SetOptions(id string, o driver.Options) error {
 	b, _ := json.Marshal(o)
 	_, err := s.db.Exec(`UPDATE agents SET options = ? WHERE id = ?`, string(b), id)
+	return err
+}
+
+// SetMadeVia says the agent that made agent id through the control
+// service.
+func (s *Store) SetMadeVia(id, via string) error {
+	_, err := s.db.Exec(`UPDATE agents SET made_via = ? WHERE id = ?`, via, id)
 	return err
 }
 

@@ -133,6 +133,9 @@ type Manager struct {
 	teamWake   chan struct{}
 	evaluating map[string]bool
 	busy       map[string]map[string]bool
+	// controlMu keeps counting the agents made through the control service
+	// and making one from crossing another such pair.
+	controlMu sync.Mutex
 }
 
 // fenceState is whether an isolation's network fence was measured to hold.
@@ -811,7 +814,8 @@ func (m *Manager) CreateAgent(ctx context.Context, req api.CreateAgent) (store.A
 }
 
 // createAgent is CreateAgent with what gero alone sets of an agent, from
-// own: the lead that makes it, and its turn limit.
+// own: the lead that makes it, its turn limit, and the agent that makes it
+// through the control service.
 func (m *Manager) createAgent(ctx context.Context, req api.CreateAgent, own store.Agent) (store.Agent, error) {
 	name := nameFrom(req.Prompt)
 	if strings.TrimSpace(req.Name) != "" {
@@ -881,7 +885,7 @@ func (m *Manager) createAgent(ctx context.Context, req api.CreateAgent, own stor
 		return store.Agent{}, err
 	}
 	a := store.Agent{ID: id, Handle: handle, Name: name, Kind: req.Kind, IsolationID: iso.ID, Workdir: workdir, Repo: req.Repo,
-		Options: req.Options, SessionID: drv.State().SessionID, CreatedAt: time.Now().UTC(), MadeBy: own.MadeBy, TurnMinutes: own.TurnMinutes}
+		Options: req.Options, SessionID: drv.State().SessionID, CreatedAt: time.Now().UTC(), MadeBy: own.MadeBy, TurnMinutes: own.TurnMinutes, MadeVia: own.MadeVia}
 	if a, err = m.storeNamed(a, picked); err != nil {
 		return store.Agent{}, err
 	}
@@ -1154,7 +1158,7 @@ func (m *Manager) Renew(ctx context.Context, id string) (store.Agent, error) {
 	}
 	now := time.Now().UTC()
 	a := store.Agent{ID: key, Kind: old.Kind, IsolationID: old.IsolationID, Workdir: old.Workdir, Repo: old.Repo,
-		Options: old.Options, SessionID: drv.State().SessionID, CreatedAt: now, MadeBy: old.MadeBy, TurnMinutes: old.TurnMinutes}
+		Options: old.Options, SessionID: drv.State().SessionID, CreatedAt: now, MadeBy: old.MadeBy, TurnMinutes: old.TurnMinutes, MadeVia: old.MadeVia}
 	m.swap.Lock()
 	defer m.swap.Unlock()
 	if err := m.store.Renew(old.ID, a, now); err != nil {
@@ -1227,6 +1231,12 @@ func (m *Manager) Restore(ctx context.Context, id string) (api.Agent, error) {
 // crons or mail; it is an agent of its own, on a line of its own, going by
 // the ID of the one it forks with a random suffix.
 func (m *Manager) Fork(ctx context.Context, id string) (api.Agent, error) {
+	return m.fork(ctx, id, "")
+}
+
+// fork is Fork, via the agent that forks it through the control service
+// if one does.
+func (m *Manager) fork(ctx context.Context, id, via string) (api.Agent, error) {
 	from, err := m.storedAgent(id)
 	if err != nil {
 		return api.Agent{}, err
@@ -1251,7 +1261,7 @@ func (m *Manager) Fork(ctx context.Context, id string) (api.Agent, error) {
 		return api.Agent{}, err
 	}
 	a := store.Agent{ID: key, Name: from.Name, Kind: from.Kind, IsolationID: from.IsolationID, Workdir: from.Workdir, Repo: from.Repo,
-		Options: from.Options, SessionID: drv.State().SessionID, CreatedAt: time.Now().UTC(), ForkedFrom: from.ID, ForkOf: session}
+		Options: from.Options, SessionID: drv.State().SessionID, CreatedAt: time.Now().UTC(), ForkedFrom: from.ID, ForkOf: session, MadeVia: via}
 	if a.Name != "" {
 		a.Name += " (fork)"
 	}

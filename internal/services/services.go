@@ -8,6 +8,7 @@ import (
 	"github.com/hongzio/gero/internal/proxy"
 	"github.com/hongzio/gero/internal/proxy/awsproxy"
 	"github.com/hongzio/gero/internal/proxy/chproxy"
+	"github.com/hongzio/gero/internal/proxy/controlproxy"
 	"github.com/hongzio/gero/internal/proxy/cronproxy"
 	"github.com/hongzio/gero/internal/proxy/ddproxy"
 	"github.com/hongzio/gero/internal/proxy/gitproxy"
@@ -41,5 +42,6 @@ func Registry() *proxy.Registry {
 		mailproxy.Service{},
 		cronproxy.Service{},
 		teamproxy.Service{},
+		controlproxy.Service{},
 	)
 }
