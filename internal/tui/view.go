@@ -70,7 +70,15 @@ func (m *Model) renderSidebar(w int) string {
 		if a.Problem != "" {
 			meta = "  " + th.err.Render("! ") + truncate(a.Problem, w-6-len(indent))
 		}
-		row(a.ID, indent+th.agentIcon(a, m.frame)+" "+title(a), indent+th.dim.Render(meta))
+		// A team's lead wears a crown; an agent it made, an arrow from it.
+		mark := ""
+		switch {
+		case a.Leads != nil:
+			mark = "♛ "
+		case a.MadeBy != "":
+			mark = "↳ "
+		}
+		row(a.ID, indent+th.agentIcon(a, m.frame)+" "+mark+title(a), indent+th.dim.Render(meta))
 	}
 	for _, g := range m.liveGroups() {
 		if g.team == "" {
@@ -93,7 +101,18 @@ func (m *Model) renderSidebar(w int) string {
 			}
 			head += " " + icons.String()
 		}
-		row(teamItem+g.team, head)
+		lines := []string{head}
+		for _, a := range g.agents {
+			if r := a.Leads; r != nil {
+				// The numbers first: the sidebar is narrow.
+				run := fmt.Sprintf("  %s/%s", tokenCount(r.Spent), tokenCount(r.Budget))
+				if r.Best != nil {
+					run += fmt.Sprintf(" · best %g", *r.Best)
+				}
+				lines = append(lines, th.dim.Render(run+" · "+r.Status))
+			}
+		}
+		row(teamItem+g.team, lines...)
 		if !folded {
 			for _, a := range g.agents {
 				agentRow(a, "  ")
@@ -365,4 +384,15 @@ func (m *Model) renderHelp(w int) string {
 		b.WriteString(fmt.Sprintf("  %-22s %s\n", th.key.Render(truncate(keys, 22)), bd.help))
 	}
 	return b.String()
+}
+
+// tokenCount is n as people read it: 950, 12.3k, 4.1M.
+func tokenCount(n int64) string {
+	switch {
+	case n >= 1_000_000:
+		return fmt.Sprintf("%.1fM", float64(n)/1e6)
+	case n >= 1_000:
+		return fmt.Sprintf("%.1fk", float64(n)/1e3)
+	}
+	return fmt.Sprint(n)
 }

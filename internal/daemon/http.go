@@ -415,6 +415,25 @@ func (m *Manager) Handler() http.Handler {
 	mux.HandleFunc("DELETE /v1/teams/{team}", func(w http.ResponseWriter, r *http.Request) {
 		reply(w, nil, m.DeleteTeam(r.PathValue("team")))
 	})
+	// A team's lead and its run (leads.go).
+	mux.HandleFunc("GET /v1/teams/{team}/run", func(w http.ResponseWriter, r *http.Request) {
+		v, err := m.TeamRun(r.PathValue("team"))
+		reply(w, v, err)
+	})
+	mux.HandleFunc("PUT /v1/teams/{team}/lead", func(w http.ResponseWriter, r *http.Request) {
+		var req api.PutLead
+		if !decode(w, r, &req) {
+			return
+		}
+		v, err := m.SetLead(r.PathValue("team"), req)
+		reply(w, v, err)
+	})
+	mux.HandleFunc("DELETE /v1/teams/{team}/lead", func(w http.ResponseWriter, r *http.Request) {
+		reply(w, nil, m.ClearLead(r.PathValue("team")))
+	})
+	mux.HandleFunc("POST /v1/teams/{team}/eval", func(w http.ResponseWriter, r *http.Request) {
+		reply(w, nil, m.EvalTeam(r.PathValue("team")))
+	})
 	mux.HandleFunc("POST /v1/agents/{id}/archive", func(w http.ResponseWriter, r *http.Request) {
 		reply(w, nil, m.Archive(r.Context(), r.PathValue("id")))
 	})

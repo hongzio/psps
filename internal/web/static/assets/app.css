@@ -187,6 +187,10 @@ body.resizing { cursor: col-resize; user-select: none; -webkit-user-select: none
 .team > .sortable, .team-empty { margin-left: 14px; padding-left: 4px; border-left: 1px solid var(--border); }
 .team-empty { padding: 6px 10px; color: var(--faint); font-size: 12.5px; }
 .team-delete { margin-top: 14px; }
+.team-run { margin: -2px 0 2px 18px; color: var(--faint); font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.team-run.stopped { color: var(--warn); }
+.agent .name .mark { color: var(--faint); margin-right: 4px; }
+.agent .name .mark .icon { width: 13px; height: 13px; vertical-align: -2px; }
 .fold {
   display: block;
   width: 100%;

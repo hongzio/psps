@@ -22,6 +22,7 @@ import (
 	"github.com/hongzio/gero/internal/proxy"
 	"github.com/hongzio/gero/internal/proxy/cronproxy"
 	"github.com/hongzio/gero/internal/proxy/mailproxy"
+	"github.com/hongzio/gero/internal/proxy/teamproxy"
 	"github.com/hongzio/gero/internal/shimproto"
 	"github.com/hongzio/gero/internal/store"
 	"github.com/hongzio/gero/internal/tunnel"
@@ -296,6 +297,8 @@ type isoWorkspace struct {
 	mail bool
 	// cron: its agents set crons, each at its own address (cronEnv).
 	cron bool
+	// team: its agents have a team address (teamEnv).
+	team bool
 	// skills are the files of the services whose files come and go
 	// (proxy.Pruner), each with its content's hash: an agent CLI lists
 	// skills as it starts, so a change to them wants a new process.
@@ -313,6 +316,9 @@ func (w isoWorkspace) signature() string {
 	}
 	if w.cron {
 		sig += "\ncron"
+	}
+	if w.team {
+		sig += "\nteam"
 	}
 	for _, f := range w.skills {
 		sig += "\nskill " + f
@@ -343,6 +349,7 @@ func (m *Manager) workspace(iso string) (isoWorkspace, error) {
 		}
 		w.mail = w.mail || svc.Name() == mailproxy.Name
 		w.cron = w.cron || svc.Name() == cronproxy.Name
+		w.team = w.team || svc.Name() == teamproxy.Name
 		if _, ok := svc.(proxy.Pruner); ok {
 			for _, f := range ws.Files {
 				w.skills = append(w.skills, fmt.Sprintf("%s %x", f.Path, sha256.Sum256([]byte(f.Content))))

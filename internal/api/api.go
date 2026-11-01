@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/hongzio/gero/internal/driver"
+	"github.com/hongzio/gero/internal/event"
 	"github.com/hongzio/gero/internal/proxy"
 	"github.com/hongzio/gero/internal/store"
 )
@@ -79,6 +80,8 @@ type Agent struct {
 	// sidebar groups a team's live agents.
 	Team   string `json:"team,omitempty"`
 	TeamID string `json:"team_id,omitempty"`
+	// Leads is the run of the team it leads, if it leads one.
+	Leads *TeamBrief `json:"leads,omitempty"`
 }
 
 // AgentOrder is a sidebar list's lines, from the top.
@@ -91,14 +94,109 @@ type AgentOrder struct {
 // ("team:<id>"), every one of which is in Teams. A team's agents come in
 // /v1/agents in its order, where it is in the live list.
 type AgentOrders struct {
-	Live     []string     `json:"live"`
-	Archived []string     `json:"archived"`
-	Teams    []store.Team `json:"teams"`
+	Live     []string `json:"live"`
+	Archived []string `json:"archived"`
+	Teams    []Team   `json:"teams"`
+}
+
+// Team is a team as the sidebar draws it, with its lead's run if it has a
+// lead.
+type Team struct {
+	store.Team
+	Run *TeamBrief `json:"run,omitempty"`
+}
+
+// TeamBrief is what a team's head says of its run.
+type TeamBrief struct {
+	// Lead is the lead's line.
+	Lead string `json:"lead"`
+	// Status is a sentence: what the run is doing now.
+	Status string `json:"status"`
+	// Spent is the tokens (driver.Tokens.New) used of Budget.
+	Spent  int64    `json:"spent"`
+	Budget int64    `json:"budget"`
+	Best   *float64 `json:"best,omitempty"`
 }
 
 // PutTeam makes a team, or renames one.
 type PutTeam struct {
 	Name string `json:"name"`
+}
+
+// PutLead makes an agent its team's lead, or sets its terms; a term left
+// out keeps what it was, or its default. Setting it again resumes a run
+// gero stopped.
+type PutLead struct {
+	Agent       string   `json:"agent"`
+	Budget      *int64   `json:"budget,omitempty"`
+	MaxLive     *int     `json:"max_live,omitempty"`
+	PlanCeiling *int     `json:"plan_ceiling,omitempty"`
+	TurnMinutes *int     `json:"turn_minutes,omitempty"`
+	Eval        *string  `json:"eval,omitempty"`
+	EvalDir     *string  `json:"eval_dir,omitempty"`
+	EvalMinutes *int     `json:"eval_minutes,omitempty"`
+	Target      *float64 `json:"target,omitempty"`
+	NoTarget    bool     `json:"no_target,omitempty"`
+	Patience    *int     `json:"patience,omitempty"`
+}
+
+// TeamRun is a team with a lead, as its operator and its lead see it.
+type TeamRun struct {
+	Team store.Team `json:"team"`
+	// Lead is the ID the lead goes by, LeadLine its line.
+	Lead     string             `json:"lead"`
+	LeadLine string             `json:"lead_line"`
+	Settings store.LeadSettings `json:"settings"`
+	Since    time.Time          `json:"since"`
+	Stopped  string             `json:"stopped,omitempty"`
+	Status   string             `json:"status"`
+	// Spent is what the lead and its agents used since it became the lead.
+	Spent driver.Tokens `json:"spent"`
+	// Plan are the plan windows of the CLIs its agents run on.
+	Plan       []PlanWindow `json:"plan,omitempty"`
+	Evaluating bool         `json:"evaluating,omitempty"`
+	// Evals are the latest, oldest first; Best the best of all, and Stale
+	// how many have come since without a new one.
+	Evals []store.Eval `json:"evals"`
+	Best  *store.Eval  `json:"best,omitempty"`
+	Stale int          `json:"stale"`
+	// Agents are the lead's live agents; Archived counts the rest.
+	Agents   []TeamAgent `json:"agents"`
+	Archived int         `json:"archived"`
+}
+
+// PlanWindow is a plan window of the account a kind of CLI runs on in an
+// isolation.
+type PlanWindow struct {
+	Kind driver.Kind `json:"kind"`
+	driver.Limit
+}
+
+// TeamAgent is an agent a lead made, as the run shows it.
+type TeamAgent struct {
+	ID          string        `json:"id"`
+	Role        string        `json:"role"`
+	Kind        driver.Kind   `json:"kind"`
+	Model       string        `json:"model,omitempty"`
+	Status      event.Status  `json:"status"`
+	TurnSince   *time.Time    `json:"turn_since,omitempty"`
+	TurnMinutes int           `json:"turn_minutes,omitempty"`
+	Spent       driver.Tokens `json:"spent"`
+	// Waits is what it waits for the operator to approve.
+	Waits string `json:"waits,omitempty"`
+	// Answer is its last answer, in the view of it alone.
+	Answer string `json:"answer,omitempty"`
+}
+
+// TeamAgentNew is an agent a lead makes.
+type TeamAgentNew struct {
+	Role        string      `json:"role"`
+	Kind        driver.Kind `json:"kind"`
+	Prompt      string      `json:"prompt"`
+	Model       string      `json:"model,omitempty"`
+	Effort      string      `json:"effort,omitempty"`
+	Workdir     string      `json:"workdir,omitempty"`
+	TurnMinutes int         `json:"turn_minutes,omitempty"`
 }
 
 // Mail is one agent's mail to another. From and To are the two agents as

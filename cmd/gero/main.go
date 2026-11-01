@@ -82,6 +82,11 @@ const usage = `gero — run coding agents in isolated containers
   gero team new NAME...
   gero team rename TEAM NAME...
   gero team rm TEAM             its agents stay, in no team, where it was
+  gero team lead TEAM AGENT --budget N [--eval CMD] [--eval-dir DIR] [--target X] [--patience N] [--max-live N] [--turn-minutes N] [--plan-ceiling PCT]
+                                its lead: makes agents of its own in the team and hears when their turns end; --clear: none
+  gero team show TEAM [--json]  its run: spending, the eval's scores, the lead's agents
+  gero team eval TEAM           run its eval now; the result goes to the lead
+  gero team resume TEAM         a run gero stopped (budget, target, no new best) goes on
 
   gero tui [--keys]             the terminal UI; --keys prints a keys.toml with every default
   gero web [--url] [--rotate]   open the web UI signed in (and print the phone link via Tailscale)

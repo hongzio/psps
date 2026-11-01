@@ -60,7 +60,32 @@ type runtime struct {
 	// oldest auto todo is sent, ahead of mail and crons. Another turn, an
 	// approval or a failure clears it.
 	todoDue bool
+
+	// news is how much of its team's news waits for it, as its lead: all
+	// of it goes in one message whenever it is free.
+	news int
+	// turnSince is when the turn it is in began, answer the last thing it
+	// said in it, and waits the approval it waits for: what its lead hears
+	// of it. overtime is how far gero is in stopping a turn at its limit.
+	turnSince time.Time
+	answer    string
+	waits     string
+	overtime  overtime
+	// spent is what was last kept of what it spent (store.PutSpent).
+	spent store.Spent
 }
+
+// overtime is where an agent's turn stopped at its limit is: asked to stop
+// (its end is not news yet), asked for its final report, and that stopped
+// too.
+type overtime int
+
+const (
+	overNone overtime = iota
+	overStopping
+	overReporting
+	overStopped
+)
 
 func (m *Manager) newRuntime(a store.Agent) (*runtime, error) {
 	drv, err := driver.New(a.Kind, a.ID, a.SessionID, a.Options)
@@ -80,9 +105,17 @@ func (m *Manager) newRuntime(a store.Agent) (*runtime, error) {
 	if err != nil {
 		return nil, err
 	}
+	news, err := m.leadNewsWaiting(a)
+	if err != nil {
+		return nil, err
+	}
+	spent, err := m.store.SpentOf()
+	if err != nil {
+		return nil, err
+	}
 	ctx, cancel := context.WithCancel(m.ctx)
 	return &runtime{m: m, ctx: ctx, cancel: cancel, agent: a, drv: drv, outbox: outbox,
-		decisions: map[string]decision{}, inbox: inbox, crons: crons}, nil
+		decisions: map[string]decision{}, inbox: inbox, crons: crons, news: news, spent: spent[a.ID]}, nil
 }
 
 func (r *runtime) loop() {
@@ -155,6 +188,40 @@ func (r *runtime) observe(rec shimproto.Record, liveAfter int64) {
 	r.lastSeen = rec.Seq
 	was := r.drv.State().Status
 	evs := r.drv.Observe(rec)
+	// Not on a replay: what happened then was told then.
+	live := rec.Seq > r.agent.LastSrc
+	var ended event.Status
+	waited := ""
+
+	cur := was
+	for _, e := range evs {
+		switch e.Kind {
+		case event.KindAssistant:
+			r.answer = e.Text
+		case event.KindApproval:
+			if e.Approval != nil {
+				r.waits = e.Approval.Summary
+				if live {
+					waited = cmp.Or(e.Approval.Summary, e.Approval.Kind)
+				}
+			}
+		case event.KindApprovalDone:
+			r.waits = ""
+		case event.KindStatus:
+			from := cur
+			cur = e.Status
+			inTurn := from == event.StatusWorking || from == event.StatusBlocked
+			switch {
+			case e.Status == event.StatusWorking && !inTurn:
+				r.turnSince, r.answer = rec.Time, ""
+			case inTurn && (e.Status == event.StatusIdle || e.Status == event.StatusError || e.Status == event.StatusInterrupted):
+				r.waits = ""
+				if live {
+					ended = e.Status
+				}
+			}
+		}
+	}
 
 	for _, e := range evs {
 		switch e.Kind {
@@ -223,6 +290,14 @@ func (r *runtime) observe(rec shimproto.Record, liveAfter int64) {
 		r.stopping = false
 	}
 
+	if ended != "" || waited != "" {
+		r.teamTurnLocked(ended, waited, rec.Time)
+	}
+	r.noteBusyLocked()
+	if r.caughtUp {
+		r.keepSpentLocked()
+	}
+
 	if !r.caughtUp && rec.Seq >= liveAfter {
 		r.catchUpLocked()
 		return
@@ -234,6 +309,7 @@ func (r *runtime) observe(rec shimproto.Record, liveAfter int64) {
 // log: it re-applies what the user asked for that the log does not show yet.
 func (r *runtime) catchUpLocked() {
 	r.caughtUp = true
+	r.keepSpentLocked()
 	for _, m := range r.outbox {
 		// A rewind the log already shows (or one no longer possible)
 		// leaves the message to go as it is.
@@ -280,6 +356,10 @@ func (r *runtime) kickLocked() {
 		r.sendTodoLocked()
 		st = r.drv.State()
 	}
+	if fenced && r.news > 0 && r.freeLocked(st) {
+		r.deliverNewsLocked()
+		st = r.drv.State()
+	}
 	if fenced && r.mailDueLocked(st) {
 		r.deliverMailLocked()
 		st = r.drv.State()
@@ -314,6 +394,7 @@ func (r *runtime) kickLocked() {
 		env, mcp := r.m.launchEnv(r.agent.IsolationID)
 		env = append(env, r.m.mailEnv(r.agent)...)
 		env = append(env, r.m.cronEnv(r.agent)...)
+		env = append(env, r.m.teamEnv(r.agent)...)
 		shares, _ := r.m.mountsFor(r.agent.IsolationID)
 		if d, ok := r.drv.(driver.Rooted); ok {
 			var roots []string
@@ -356,6 +437,10 @@ func (r *runtime) setProblem(err error) {
 func (r *runtime) send(text string) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
+	return r.sendLocked(text)
+}
+
+func (r *runtime) sendLocked(text string) error {
 	// Before catch-up lastSeen trails the log; LastSrc is the furthest this
 	// daemon's store has read, which keeps an old identical message in the
 	// replay from being mistaken for this one.
@@ -365,6 +450,7 @@ func (r *runtime) send(text string) error {
 		return err
 	}
 	r.outbox = append(r.outbox, store.Pending{ID: id, Text: text, After: after})
+	r.noteBusyLocked()
 	r.nameLocked(text)
 	if r.caughtUp {
 		r.drv.Send(text)
@@ -581,6 +667,9 @@ func (r *runtime) stop(ctx context.Context) {
 		client.Signal(ctx, r.agent.ID, "TERM")
 	}
 	r.cancel()
+	if r.agent.MadeBy != "" {
+		r.m.setChildBusy(r.agent.MadeBy, r.agent.ID, false)
+	}
 }
 
 // sortAgents puts agents in the order they were made, a line where its

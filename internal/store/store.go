@@ -79,6 +79,11 @@ type Agent struct {
 	// of.
 	ForkedFrom string `json:"forked_from,omitempty"`
 	ForkOf     string `json:"fork_of,omitempty"`
+	// MadeBy is the line of the team lead that made it, if one did: its
+	// turns' ends go to that lead. TurnMinutes is how long a turn of its may
+	// run before gero stops it, 0 for as long as it likes.
+	MadeBy      string `json:"made_by,omitempty"`
+	TurnMinutes int    `json:"turn_minutes,omitempty"`
 	// LastSrc is the newest shim log Seq whose events are committed.
 	LastSrc int64 `json:"-"`
 }
@@ -116,7 +121,9 @@ CREATE TABLE IF NOT EXISTS agents (
 	line        TEXT,
 	was_handle  TEXT NOT NULL DEFAULT '',
 	forked_from TEXT NOT NULL DEFAULT '',
-	fork_of     TEXT NOT NULL DEFAULT ''
+	fork_of     TEXT NOT NULL DEFAULT '',
+	made_by     TEXT NOT NULL DEFAULT '',
+	turn_minutes INTEGER NOT NULL DEFAULT 0
 );
 CREATE TABLE IF NOT EXISTS outbox (
 	id         INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -142,7 +149,7 @@ func Open(path string) (*Store, error) {
 	// One writer is all SQLite allows anyway; a single connection turns
 	// contention into queueing instead of SQLITE_BUSY.
 	db.SetMaxOpenConns(1)
-	if _, err := db.Exec(schema + envSchema + accountSchema + mailSchema + cronSchema + todoSchema + orderSchema + teamSchema); err != nil {
+	if _, err := db.Exec(schema + envSchema + accountSchema + mailSchema + cronSchema + todoSchema + orderSchema + teamSchema + leadSchema); err != nil {
 		db.Close()
 		return nil, fmt.Errorf("store: schema: %w", err)
 	}
@@ -189,6 +196,8 @@ var added = []struct{ table, column, def string }{
 	{"todos", "auto", "INTEGER NOT NULL DEFAULT 0"},
 	{"crons", "self", "INTEGER NOT NULL DEFAULT 0"},
 	{"crons", "once", "INTEGER NOT NULL DEFAULT 0"},
+	{"agents", "made_by", "TEXT NOT NULL DEFAULT ''"},
+	{"agents", "turn_minutes", "INTEGER NOT NULL DEFAULT 0"},
 }
 
 func hasColumn(db interface {
@@ -440,9 +449,10 @@ func (s *Store) CreateAgent(a Agent) error {
 
 func insertAgent(tx *sql.Tx, a Agent) error {
 	opts, _ := json.Marshal(a.Options)
-	_, err := tx.Exec(`INSERT INTO agents (id, handle, name, kind, isolation, workdir, repo, options, session_id, created_at, line, forked_from, fork_of)
-		VALUES (?, NULLIF(?, ''), ?, ?, ?, ?, ?, ?, ?, ?, NULLIF(?, ''), ?, ?)`,
-		a.ID, a.Handle, a.Name, string(a.Kind), a.IsolationID, a.Workdir, a.Repo, string(opts), a.SessionID, ts(a.CreatedAt), a.Line, a.ForkedFrom, a.ForkOf)
+	_, err := tx.Exec(`INSERT INTO agents (id, handle, name, kind, isolation, workdir, repo, options, session_id, created_at, line, forked_from, fork_of, made_by, turn_minutes)
+		VALUES (?, NULLIF(?, ''), ?, ?, ?, ?, ?, ?, ?, ?, NULLIF(?, ''), ?, ?, ?, ?)`,
+		a.ID, a.Handle, a.Name, string(a.Kind), a.IsolationID, a.Workdir, a.Repo, string(opts), a.SessionID, ts(a.CreatedAt), a.Line, a.ForkedFrom, a.ForkOf,
+		a.MadeBy, a.TurnMinutes)
 	return err
 }
 
@@ -597,14 +607,14 @@ func (s *Store) AgentByHandle(handle string) (Agent, error) {
 	return scanAgent(s.db.QueryRow(`SELECT `+agentCols+` FROM agents WHERE handle = ?`, handle))
 }
 
-const agentCols = `id, COALESCE(handle, ''), name, kind, isolation, workdir, repo, options, session_id, last_src, created_at, archived_at, parked, COALESCE(line, id), was_handle, forked_from, fork_of`
+const agentCols = `id, COALESCE(handle, ''), name, kind, isolation, workdir, repo, options, session_id, last_src, created_at, archived_at, parked, COALESCE(line, id), was_handle, forked_from, fork_of, made_by, turn_minutes`
 
 func scanAgent(row interface{ Scan(...any) error }) (Agent, error) {
 	var a Agent
 	var kind, opts, created string
 	var archived sql.NullString
 	err := row.Scan(&a.ID, &a.Handle, &a.Name, &kind, &a.IsolationID, &a.Workdir, &a.Repo, &opts, &a.SessionID,
-		&a.LastSrc, &created, &archived, &a.Parked, &a.Line, &a.Was, &a.ForkedFrom, &a.ForkOf)
+		&a.LastSrc, &created, &archived, &a.Parked, &a.Line, &a.Was, &a.ForkedFrom, &a.ForkOf, &a.MadeBy, &a.TurnMinutes)
 	if errors.Is(err, sql.ErrNoRows) {
 		return a, ErrNotFound
 	}
@@ -642,7 +652,7 @@ func (s *Store) Agents() ([]Agent, error) {
 // DeleteAgent removes an agent and everything stored for it, the mail it
 // was sent included (from its senders' histories too: it was its). Mail it
 // wrote stays, in its recipients' histories. A line no agent is on any more
-// goes from the sidebar's lists and its team.
+// goes from the sidebar's lists and its team, and leads none.
 func (s *Store) DeleteAgent(id string) error {
 	tx, err := s.db.Begin()
 	if err != nil {
@@ -654,7 +664,7 @@ func (s *Store) DeleteAgent(id string) error {
 		return err
 	}
 	for _, q := range []string{`DELETE FROM events WHERE agent = ?`, `DELETE FROM outbox WHERE agent = ?`, `DELETE FROM mail WHERE agent = ?`, `DELETE FROM crons WHERE agent = ?`, `DELETE FROM todos WHERE agent = ?`,
-		`DELETE FROM agents WHERE id = ?`} {
+		`DELETE FROM spent WHERE agent = ?`, `DELETE FROM agents WHERE id = ?`} {
 		if _, err := tx.Exec(q, id); err != nil {
 			return err
 		}
@@ -665,7 +675,7 @@ func (s *Store) DeleteAgent(id string) error {
 			return err
 		}
 		if n == 0 {
-			for _, q := range []string{`DELETE FROM agent_order WHERE line = ?`, `DELETE FROM team_lines WHERE line = ?`} {
+			for _, q := range []string{`DELETE FROM agent_order WHERE line = ?`, `DELETE FROM team_lines WHERE line = ?`, `DELETE FROM team_leads WHERE line = ?`} {
 				if _, err := tx.Exec(q, line); err != nil {
 					return err
 				}

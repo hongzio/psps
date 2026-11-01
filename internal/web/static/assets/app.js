@@ -985,10 +985,13 @@ function renderSidebar() {
     if (togglable) dot.addEventListener('click', (e) => { e.stopPropagation(); togglePark(a) })
     const meta = a.problem ? h('span', { class: 'problem' }, icon('triangle-alert'), ' ' + a.problem)
       : [`${shownID(a)} · ${a.isolation}`, a.inbox ? [' · ', icon('mail'), ` ${a.inbox}`] : null]
+    // A team's lead wears a crown; an agent it made, an arrow from it.
+    const mark = a.leads ? h('span', { class: 'mark', title: 'Leads its team' }, icon('crown'))
+      : a.made_by ? h('span', { class: 'mark', title: "Made by its team's lead" }, icon('corner-down-right')) : null
     return h('button', {
       class: 'agent' + (a.id === S.sel && S.view === 'agent' ? ' selected' : '') + (a.archived_at ? ' archived' : ''),
       'data-line': a.line || a.id, onclick: () => select(a.id),
-    }, dot, h('span', { class: 'name' }, agentTitle(a)), h('span', { class: 'meta' }, meta))
+    }, dot, h('span', { class: 'name' }, mark, agentTitle(a)), h('span', { class: 'meta' }, meta))
   }
   // An agent's archived sessions are one folded line, under the ID it goes
   // by now; a lone one is a row of its own.
@@ -1198,9 +1201,17 @@ function teamGroup(t, members, row) {
           dots.length > 8 ? h('span', { class: 'more' }, `+${dots.length - 8}`) : null) : null),
       h('button', { class: 'team-edit', title: 'Rename or delete the team', 'aria-label': `Edit team ${t.name}`, onclick: () => editTeam(t) },
         icon('pencil'))),
+    t.run ? teamRunLine(t.run) : null,
     folded ? null : members.length
       ? sortable('team:' + t.id, members.map(row))
       : h('div', { class: 'team-empty' }, 'No agents; an agent joins in Edit.'))
+}
+
+// teamRunLine is what a team's head says of its lead's run: what it does,
+// its spending of its budget, and its best score.
+function teamRunLine(run) {
+  const text = `${run.status} · ${tokens(run.spent)} of ${tokens(run.budget)}` + (run.best != null ? ` · best ${run.best}` : '')
+  return h('div', { class: 'team-run' + (run.status.startsWith('stopped') ? ' stopped' : ''), title: text }, text)
 }
 
 // editTeam renames a team or deletes it, its agents left where it was.
