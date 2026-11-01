@@ -101,6 +101,9 @@ func (m *Manager) SetLead(ctx context.Context, teamRef string, req api.PutLead) 
 	if err != nil && !errors.Is(err, store.ErrNotFound) {
 		return api.TeamRun{}, err
 	}
+	// A run gero stopped goes on, and its lead hears so, unless it is
+	// another lead's now.
+	stopped, resumes := l.Stopped, had && l.Stopped != "" && l.Line == line
 	if !had || l.Line != line {
 		agents, spent, err := m.spentNow()
 		if err != nil {
@@ -122,6 +125,15 @@ func (m *Manager) SetLead(ctx context.Context, teamRef string, req api.PutLead) 
 	if err != nil {
 		return api.TeamRun{}, err
 	}
+	if stopped != "" {
+		why, err := m.stopsAgain(l, evals)
+		if err != nil {
+			return api.TeamRun{}, err
+		}
+		if why != "" {
+			return api.TeamRun{}, httpError{http.StatusConflict, errors.New(why)}
+		}
+	}
 	var last int64
 	if n := len(evals); n > 0 {
 		last = evals[n-1].ID
@@ -137,6 +149,9 @@ func (m *Manager) SetLead(ctx context.Context, teamRef string, req api.PutLead) 
 	if err := m.store.PutLead(l); err != nil {
 		return api.TeamRun{}, err
 	}
+	if resumes {
+		m.resumedNews(l, stopped, evals)
+	}
 	budget := "none"
 	if l.Settings.Budget > 0 {
 		budget = tokens(l.Settings.Budget) + " tokens"
@@ -145,6 +160,44 @@ func (m *Manager) SetLead(ctx context.Context, teamRef string, req api.PutLead) 
 	go m.teamNewsChanged(t.ID)
 	m.teamChanged(t.ID)
 	return m.teamRun(t, l)
+}
+
+// stopsAgain says why l's run, which gero stopped, would stop again under
+// its terms now, so resuming it would only stop it; "" if it would not.
+// Patience never does: a resumed run counts no eval before it.
+func (m *Manager) stopsAgain(l store.Lead, evals []store.Eval) (string, error) {
+	agents, spent, err := m.spentNow()
+	if err != nil {
+		return "", err
+	}
+	if used := teamSpent(l, agents, spent).New(); overBudget(l, used) {
+		return fmt.Sprintf("the run would stop again at once: the team has used %s of its %s tokens; give it a larger budget (`--budget`)", tokens(used), tokens(l.Settings.Budget)), nil
+	}
+	if best, _ := bestOf(evals, 0); best != nil && l.Settings.Target != nil && *best.Score >= *l.Settings.Target {
+		return fmt.Sprintf("the run would stop again at its next eval: eval #%d scored %g, which reaches the target %g; raise the target (`--target`), or take it off (`--no-target`)", best.ID, *best.Score, *l.Settings.Target), nil
+	}
+	return "", nil
+}
+
+// resumedNews tells l's lead its operator resumed the run gero had stopped
+// for why, and, with nothing of its team at work, asks for the next team:
+// without it the lead would wait, told only that the run stopped.
+func (m *Manager) resumedNews(l store.Lead, why string, evals []store.Eval) {
+	msg := "Your operator resumed the run, which gero had stopped (" + why + ")."
+	if l.Settings.Eval != "" {
+		msg += " The evals so far count no more toward its patience."
+		if best, _ := bestOf(evals, 0); best != nil {
+			msg += fmt.Sprintf(" The best is %g, at eval #%d.", *best.Score, best.ID)
+		}
+	}
+	if m.childrenBusy(l.Line) == 0 {
+		if nudge := m.nudgeText(l); nudge != "" {
+			msg += " " + nudge
+		}
+	}
+	if err := m.store.AddTeamNews(l.Team, msg); err != nil {
+		m.log.Printf("team %s: %v", l.Team, err)
+	}
 }
 
 // leadTerms are was with req's terms, each checked; a term never set is

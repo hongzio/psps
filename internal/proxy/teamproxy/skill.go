@@ -82,7 +82,8 @@ gero tells you of your team in a message that starts with a line like
 
 when an agent of yours ends a turn (with its last answer), waits for your
 operator to approve something, or is stopped at its turn limit; when the eval
-has run; when nothing of your team runs any more; and when gero stops the run.
+has run; when nothing of your team runs any more; when gero stops the run;
+and when your operator resumes it.
 The news of your agents' turns waits while others of them still work, so you
 hear of a round's turns together; news that comes while you work waits too,
 and arrives together once you are idle.

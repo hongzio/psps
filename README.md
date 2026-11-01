@@ -663,7 +663,8 @@ gero tells the lead, as a message of its own whenever it is idle:
 - that nothing runs any more, once after an eval it or you asked for (a
   round's eval says so itself), if it let its team end without making the
   next (and not while a plan window is past the ceiling, when it could
-  make none).
+  make none);
+- that gero stopped the run, and that you resumed it.
 
 The eval is a shell command; the last line it prints that reads
 `SCORE: <number>` is the score, higher better. It runs for `--eval-minutes`
@@ -738,6 +739,13 @@ resume it (`gero team resume`, or setting the lead again), when:
   off);
 - the target is reached (`--target`);
 - `--patience` evals in a row (3) came without a new best.
+
+Resuming tells the lead, and asks it for the next team if nothing of its
+team works, as it would otherwise wait, told only that the run stopped. The
+evals before count no more toward the patience, so a run out of it can always
+go on; one stopped by its budget or its target cannot while that still
+holds: give it a larger budget, or a higher target or none (`--no-target`),
+in the same `gero team lead` (or the dialog), which resumes it.
 
 Besides, at most `--max-live` agents of the lead's are live at once (3), and
 none is made on a plan once a window of that plan is used past
