@@ -174,8 +174,34 @@ func TestALeadMakesAgentsOfItsOwnAndHearsOfTheirTurns(t *testing.T) {
 	if code, out := teamAs(t, m, boss.ID, "POST", "/agents/"+b.ID+"/send", "more"); code != http.StatusConflict {
 		t.Fatalf("a stopped run wrote: %d %s", code, out)
 	}
+	// Resumed on the same budget, it would stop again at once.
+	if _, err := m.SetLead(context.Background(), "lab", api.PutLead{Agent: "boss"}); err == nil ||
+		!strings.Contains(err.Error(), "the run would stop again at once: the team has used ") || !strings.Contains(err.Error(), " of its 3.0k tokens; give it a larger budget") {
+		t.Fatalf("resumed with its budget used: %v", err)
+	}
+	if r, _ := m.TeamRun("lab"); r.Stopped == "" {
+		t.Fatal("a refused resume resumed the run")
+	}
 	if _, err := m.SetLead(context.Background(), "lab", api.PutLead{Agent: "boss", Budget: ptr(int64(1_000_000))}); err != nil {
 		t.Fatal(err)
+	}
+	// The lead hears it goes on, and is asked for the next team.
+	e.waitFor("the resume's news", func() bool {
+		return strings.Contains(strings.Join(news(e, boss.ID), "\n"), "Your operator resumed the run")
+	})
+	for _, n := range news(e, boss.ID)[4:] {
+		if i := strings.Index(n, "Your operator resumed the run"); i >= 0 {
+			n = n[i:]
+			for _, want := range []string{"Your operator resumed the run, which gero had stopped (the budget is used: ", " of 3.0k tokens). Nothing of your team is running. The team has used ",
+				" of 1.0M tokens. Design the next team, or say why you stop."} {
+				if !strings.Contains(n, want) {
+					t.Fatalf("news lacks %q:\n%s", want, n)
+				}
+			}
+			if strings.Contains(n, "patience") {
+				t.Fatalf("a run without an eval told of patience:\n%s", n)
+			}
+		}
 	}
 	if code, out := teamAs(t, m, boss.ID, "POST", "/agents/"+b.ID+"/send", "more"); code != http.StatusAccepted {
 		t.Fatalf("resumed: %d %s", code, out)
@@ -310,9 +336,22 @@ func TestARoundEndsWithTheEvalAndARunWithoutProgressStops(t *testing.T) {
 	if len(run.Evals) != 3 || run.Best == nil || run.Best.ID != 1 || run.Stale != 2 || !strings.HasPrefix(run.Status, "stopped: ") {
 		t.Fatalf("%+v", run)
 	}
-	// Resumed, the evals so far no longer count.
-	if run, _ = m.SetLead(context.Background(), "lab", api.PutLead{Agent: "boss"}); run.Stopped != "" || run.Stale != 0 {
+	// A target its best reaches would stop it again at its next eval.
+	if _, err := m.SetLead(context.Background(), "lab", api.PutLead{Agent: "boss", Target: ptr(1.5)}); err == nil ||
+		!strings.Contains(err.Error(), "the run would stop again at its next eval: eval #1 scored 1.5, which reaches the target 1.5; raise the target") {
+		t.Fatalf("resumed past its target: %v", err)
+	}
+	// Resumed, the evals so far no longer count, and the lead hears so.
+	if run, _ = m.SetLead(context.Background(), "lab", api.PutLead{Agent: "boss"}); run.Stopped != "" || run.Stale != 0 || run.Settings.Target != nil {
 		t.Fatalf("%+v", run)
+	}
+	e.waitFor("the resume's news", func() bool { return len(news(e, boss.ID)) == before+4 })
+	n = news(e, boss.ID)[before+3]
+	for _, want := range []string{"1 item(s)", "Your operator resumed the run, which gero had stopped (2 evals in a row came without a new best). The evals so far count no more toward its patience. The best is 1.5, at eval #1. Nothing of your team is running. The team has used ",
+		"Design the next team, or say why you stop."} {
+		if !strings.Contains(n, want) {
+			t.Fatalf("news lacks %q:\n%s", want, n)
+		}
 	}
 }
 

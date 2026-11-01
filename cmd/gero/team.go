@@ -219,7 +219,7 @@ func teamCmd(p paths.Paths, args []string) error {
 		if run, err = c.SetLead(ctx, args[1], api.PutLead{Agent: run.Lead}); err != nil {
 			return err
 		}
-		fmt.Printf("team %q runs again; evals so far count no more toward its patience\n", run.Team.Name)
+		fmt.Printf("team %q runs again; evals so far count no more toward its patience, and its lead is told\n", run.Team.Name)
 		return nil
 	}
 	return fmt.Errorf("unknown team command %q", args[0])
@@ -349,9 +349,14 @@ When gero holds the team back
   --patience evals in a row bring no new best, and tells the lead: no agent of
   its can be made or written to, and those at work finish their turns.
   gero team resume TEAM lets it go on, with the evals so far no longer
-  counting toward patience. While the run goes on, the lead is refused, with
-  the reason, more live agents than --max-live, and anything new on a plan
-  window past the ceiling; it is told to tell you rather than work around it.
+  counting toward patience, and tells the lead, which it asks for the next
+  team. Changing the terms with gero team lead resumes it too. Neither does
+  while what stopped the run still holds: a budget used needs a larger one
+  (--budget), a target reached a higher one or none (--target, --no-target).
+
+  While the run goes on, the lead is refused, with the reason, more live
+  agents than --max-live, and anything new on a plan window past the
+  ceiling; it is told to tell you rather than work around it.
 
   Turning teams off in the lead's isolation (gero iso unexpose ISO team)
   pauses the run: the lead hears nothing and can do nothing, while its agents
