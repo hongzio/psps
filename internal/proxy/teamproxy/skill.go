@@ -133,8 +133,10 @@ a team works rather than the work itself.
 The refusal says why, in a sentence: too many agents of yours live (archive
 one), the budget used, a plan window too full, a CLI billed per use where the
 team has no budget, the run stopped by gero (a target
-reached, or no new best for a while). Tell your operator rather than working
-around it; only they change the terms or resume the run.
+reached, or no new best for a while), or teams turned off in this isolation
+(the run is paused; news of your team waits for them to be on). Tell your
+operator rather than working around it; only they change the terms or
+resume the run.
 
 The eval is your operator's. Do not change the eval, the files it reads or its
 rules; if you think it measures the wrong thing, say so. Your operator may run

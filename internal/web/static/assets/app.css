@@ -192,7 +192,7 @@ body.resizing { cursor: col-resize; user-select: none; -webkit-user-select: none
   color: var(--faint); font: inherit; font-size: 12px; text-align: left; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
 .team-run:hover { color: var(--muted); }
-.team-run.stopped { color: var(--warn); }
+.team-run.stopped, .team-run.paused { color: var(--warn); }
 .lead-terms[hidden], .lead-teams[hidden] { display: none; }
 .lead-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 0 12px; }
 .dialog-field > .dropdown { min-width: 0; }

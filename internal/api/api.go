@@ -154,7 +154,10 @@ type TeamRun struct {
 	EvalIsolation string    `json:"eval_isolation,omitempty"`
 	Since         time.Time `json:"since"`
 	Stopped       string    `json:"stopped,omitempty"`
-	Status        string    `json:"status"`
+	// TeamsOff is the lead's isolation while it has no team service: the
+	// run is paused, and news waits for the lead.
+	TeamsOff string `json:"teams_off,omitempty"`
+	Status   string `json:"status"`
 	// Spent is what the lead and its agents used since it became the lead.
 	Spent driver.Tokens `json:"spent"`
 	// Plan are the plan windows of the CLIs its agents run on.
