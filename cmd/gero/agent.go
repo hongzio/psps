@@ -17,7 +17,7 @@ import (
 
 func agentCmd(p paths.Paths, args []string) error {
 	if len(args) == 0 {
-		return errors.New("usage: gero agent new|ls|log|send|inbox|mail|cron|approve|interrupt|set|rename|id|archive|restore|fork|rm")
+		return errors.New("usage: gero agent new|ls|log|send|inbox|mail|cron|approve|interrupt|set|rename|id|team|archive|restore|fork|rm")
 	}
 	c, err := connect(p)
 	if err != nil {
@@ -44,13 +44,14 @@ func agentCmd(p paths.Paths, args []string) error {
 		workdir := fs.String("workdir", "", "where in the isolation it works, made if missing; ~ is the agent's home (default: a workspace of its own under ~/work)")
 		name := fs.String("name", "", "display name (default: the first line of its first message)")
 		handle := fs.String("id", "", "an ID of your own for it, unique among all agents (default: an adjective-noun no agent has, like brave-otter)")
+		team := fs.String("team", "", "the team it is in, made if there is none")
 		opts := optFlags()
 		prompt := strings.Join(parse(fs, args[1:]), " ")
 		if *iso == "" {
-			return errors.New("usage: gero agent new --iso NAME --kind claude|codex [--id ID] [--repo URL] [--workdir DIR] [PROMPT...]")
+			return errors.New("usage: gero agent new --iso NAME --kind claude|codex [--id ID] [--team TEAM] [--repo URL] [--workdir DIR] [PROMPT...]")
 		}
 		a, err := c.CreateAgent(ctx, api.CreateAgent{Isolation: *iso, Kind: driver.Kind(*kind), Prompt: prompt,
-			Name: *name, Handle: *handle, Repo: *repo, Workdir: *workdir, Options: opts()})
+			Name: *name, Handle: *handle, Repo: *repo, Workdir: *workdir, Options: opts(), Team: *team})
 		if err != nil {
 			return err
 		}
@@ -70,7 +71,7 @@ func agentCmd(p paths.Paths, args []string) error {
 			return err
 		}
 		tw := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
-		fmt.Fprintln(tw, "ID\tSTATUS\tKIND\tISOLATION\tMAIL\tNAME")
+		fmt.Fprintln(tw, "ID\tSTATUS\tKIND\tISOLATION\tTEAM\tMAIL\tNAME")
 		for _, a := range agents {
 			status := string(a.State.Status)
 			switch {
@@ -86,7 +87,7 @@ func agentCmd(p paths.Paths, args []string) error {
 			if a.Inbox > 0 {
 				mail = fmt.Sprint(a.Inbox)
 			}
-			fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\t%s\n", shownID(a), status, a.Kind, a.Isolation, mail, orDash(a.Name))
+			fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\t%s\t%s\n", shownID(a), status, a.Kind, a.Isolation, orDash(a.Team), mail, orDash(a.Name))
 		}
 		return tw.Flush()
 
@@ -231,6 +232,27 @@ func agentCmd(p paths.Paths, args []string) error {
 			fmt.Printf("agent %s goes by %s again\n", pos[0], a.ID)
 		} else {
 			fmt.Printf("agent %s is now %s\n", a.ID, a.Handle)
+		}
+		return nil
+
+	case "team":
+		clear := fs.Bool("clear", false, "take it out of its team")
+		pos := parse(fs, args[1:])
+		if len(pos) < 2 && !(len(pos) == 1 && *clear) {
+			return errors.New("usage: gero agent team AGENT TEAM... | gero agent team AGENT --clear")
+		}
+		team := ""
+		if !*clear {
+			team = strings.Join(pos[1:], " ")
+		}
+		a, err := c.UpdateAgent(ctx, pos[0], api.UpdateAgent{Team: &team})
+		if err != nil {
+			return err
+		}
+		if a.Team == "" {
+			fmt.Printf("agent %s is in no team\n", shownID(a))
+		} else {
+			fmt.Printf("agent %s is in team %q\n", shownID(a), a.Team)
 		}
 		return nil
 

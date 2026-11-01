@@ -377,7 +377,8 @@ func (m *Manager) Handler() http.Handler {
 		v, err := m.TakeTodo(r.PathValue("id"), id)
 		reply(w, v, err)
 	})
-	// The sidebar's order of a list, live or archived: its lines from the top.
+	// The sidebar's order of a list, live, archived or a team's
+	// ("team:<id>"): its lines from the top.
 	mux.HandleFunc("GET /v1/agent-order", func(w http.ResponseWriter, r *http.Request) {
 		v, err := m.Order()
 		reply(w, v, err)
@@ -388,6 +389,31 @@ func (m *Manager) Handler() http.Handler {
 			return
 		}
 		reply(w, nil, m.SetOrder(r.PathValue("list"), req.Lines))
+	})
+	// Teams group the sidebar's live agents; one is named by its name or
+	// its ID.
+	mux.HandleFunc("GET /v1/teams", func(w http.ResponseWriter, r *http.Request) {
+		v, err := m.Teams()
+		reply(w, v, err)
+	})
+	mux.HandleFunc("POST /v1/teams", func(w http.ResponseWriter, r *http.Request) {
+		var req api.PutTeam
+		if !decode(w, r, &req) {
+			return
+		}
+		v, err := m.CreateTeam(req.Name)
+		reply(w, v, err)
+	})
+	mux.HandleFunc("PATCH /v1/teams/{team}", func(w http.ResponseWriter, r *http.Request) {
+		var req api.PutTeam
+		if !decode(w, r, &req) {
+			return
+		}
+		v, err := m.RenameTeam(r.PathValue("team"), req.Name)
+		reply(w, v, err)
+	})
+	mux.HandleFunc("DELETE /v1/teams/{team}", func(w http.ResponseWriter, r *http.Request) {
+		reply(w, nil, m.DeleteTeam(r.PathValue("team")))
 	})
 	mux.HandleFunc("POST /v1/agents/{id}/archive", func(w http.ResponseWriter, r *http.Request) {
 		reply(w, nil, m.Archive(r.Context(), r.PathValue("id")))

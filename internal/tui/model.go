@@ -23,6 +23,7 @@ import (
 	"github.com/hongzio/gero/internal/driver"
 	"github.com/hongzio/gero/internal/event"
 	"github.com/hongzio/gero/internal/proxy"
+	"github.com/hongzio/gero/internal/store"
 )
 
 // Backend is the daemon API the TUI uses; *client.Client implements it.
@@ -40,6 +41,8 @@ type Backend interface {
 	Fork(ctx context.Context, id string) (api.Agent, error)
 	UpdateAgent(ctx context.Context, id string, req api.UpdateAgent) (api.Agent, error)
 	DeleteAgent(ctx context.Context, id string, purge bool) error
+	RenameTeam(ctx context.Context, team, name string) (store.Team, error)
+	DeleteTeam(ctx context.Context, team string) error
 	Follow(ctx context.Context, id string, after int64, fn func(event.Event) error) error
 	CreateIsolation(ctx context.Context, req api.CreateIsolation) (api.Isolation, error)
 	UpdateIsolation(ctx context.Context, name string, req api.UpdateIsolation) (api.Isolation, error)
@@ -110,10 +113,12 @@ type Model struct {
 	width, height int
 	agents        []api.Agent
 	isolations    []api.Isolation
-	sel           string // selNew, selArchived, selIsolations, a lineItem or an agent id
+	sel           string // selNew, selArchived, selIsolations, a lineItem, a teamItem or an agent id
 	showArchived  bool
 	// openLines are the lines whose archived sessions are unfolded.
-	openLines    map[string]bool
+	openLines map[string]bool
+	// foldedTeams are the teams folded to their heads, by ID.
+	foldedTeams  map[string]bool
 	focus        focus
 	view         view
 	approving    bool
@@ -285,8 +290,14 @@ func (m *Model) convo(id string) *convo {
 // items is the sidebar, top to bottom.
 func (m *Model) items() []string {
 	out := []string{selNew}
-	for _, a := range m.agents {
-		if a.ArchivedAt == nil {
+	for _, g := range m.liveGroups() {
+		if g.team != "" {
+			out = append(out, teamItem+g.team)
+			if m.foldedTeams[g.team] {
+				continue
+			}
+		}
+		for _, a := range g.agents {
 			out = append(out, a.ID)
 		}
 	}
@@ -307,8 +318,52 @@ func (m *Model) items() []string {
 	return append(out, selIsolations, selServices)
 }
 
-// lineItem prefixes the sidebar entry of a line's archived sessions.
-const lineItem = "line:"
+// lineItem prefixes the sidebar entry of a line's archived sessions, and
+// teamItem a team's head.
+const (
+	lineItem = "line:"
+	teamItem = "team:"
+)
+
+// liveGroup is a team's live agents, or a live agent in none.
+type liveGroup struct {
+	team, name string
+	agents     []api.Agent
+}
+
+// liveGroups are the live agents as the sidebar has them: a team's together
+// where its first is, which the daemon's order makes where the team is.
+func (m *Model) liveGroups() []liveGroup {
+	var out []liveGroup
+	at := map[string]int{}
+	for _, a := range m.agents {
+		if a.ArchivedAt != nil {
+			continue
+		}
+		if a.TeamID == "" {
+			out = append(out, liveGroup{agents: []api.Agent{a}})
+			continue
+		}
+		i, ok := at[a.TeamID]
+		if !ok {
+			i = len(out)
+			at[a.TeamID] = i
+			out = append(out, liveGroup{team: a.TeamID, name: a.Team})
+		}
+		out[i].agents = append(out[i].agents, a)
+	}
+	return out
+}
+
+// team is the live group of the team id.
+func (m *Model) team(id string) (liveGroup, bool) {
+	for _, g := range m.liveGroups() {
+		if g.team == id {
+			return g, true
+		}
+	}
+	return liveGroup{}, false
+}
 
 type archivedLine struct {
 	line     string
@@ -505,6 +560,9 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		if strings.HasPrefix(m.sel, lineItem) && !slices.Contains(m.items(), m.sel) {
 			m.sel = selArchived
+		}
+		if strings.HasPrefix(m.sel, teamItem) && !slices.Contains(m.items(), m.sel) {
+			m.sel = selNew
 		}
 		if m.openID == "" && m.sel == selNew {
 			// First load: land on the most recent live agent, if any.
@@ -746,7 +804,8 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 }
 
 func isFixed(sel string) bool {
-	return sel == selNew || sel == selArchived || sel == selIsolations || sel == selServices || strings.HasPrefix(sel, lineItem)
+	return sel == selNew || sel == selArchived || sel == selIsolations || sel == selServices ||
+		strings.HasPrefix(sel, lineItem) || strings.HasPrefix(sel, teamItem)
 }
 
 func (m *Model) setFocus(f focus) {
@@ -896,11 +955,28 @@ func (m *Model) handleSidebarKey(msg tea.KeyMsg) tea.Cmd {
 			m.openLines[line] = !m.openLines[line]
 			return nil
 		}
+		if team, ok := strings.CutPrefix(m.sel, teamItem); ok {
+			if m.foldedTeams == nil {
+				m.foldedTeams = map[string]bool{}
+			}
+			m.foldedTeams[team] = !m.foldedTeams[team]
+			return nil
+		}
 		if a, ok := m.agent(m.sel); ok && a.ArchivedAt == nil {
 			m.setFocus(focusInput)
 		}
 		return nil
 	case k.Is(msg, "delete_agent"):
+		if g, ok := m.selTeam(); ok {
+			be, id := m.be, g.team
+			m.confirm = &confirmation{
+				prompt: fmt.Sprintf("delete team %q? its agents stay where it is, in no team (y/n)", g.name),
+				onYes: func() tea.Cmd {
+					return m.do(fmt.Sprintf("deleted team %q", g.name), true, func(ctx context.Context) error { return be.DeleteTeam(ctx, id) })
+				},
+			}
+			return nil
+		}
 		a, ok := m.agent(m.sel)
 		if !ok {
 			return nil
@@ -925,6 +1001,24 @@ func (m *Model) handleSidebarKey(msg tea.KeyMsg) tea.Cmd {
 		}
 		return nil
 	case k.Is(msg, "rename_agent"):
+		if g, ok := m.selTeam(); ok {
+			be, id := m.be, g.team
+			m.openPrompt(fmt.Sprintf("rename team %q:", g.name), g.name, func(name string) tea.Cmd {
+				switch name {
+				case "":
+					m.setFlash("a team name is required", true)
+					return nil
+				case g.name:
+					m.setFlash("name unchanged", false)
+					return nil
+				}
+				return m.do(fmt.Sprintf("renamed team %q to %q", g.name, name), true, func(ctx context.Context) error {
+					_, err := be.RenameTeam(ctx, id, name)
+					return err
+				})
+			})
+			return nil
+		}
 		a, ok := m.agent(m.sel)
 		if !ok {
 			return nil
@@ -962,6 +1056,27 @@ func (m *Model) handleSidebarKey(msg tea.KeyMsg) tea.Cmd {
 			}
 			return m.do(done, true, func(ctx context.Context) error {
 				_, err := be.UpdateAgent(ctx, id, api.UpdateAgent{Handle: &handle})
+				return err
+			})
+		})
+		return nil
+	case k.Is(msg, "team"):
+		a, ok := m.agent(m.sel)
+		if !ok {
+			return nil
+		}
+		be, id := m.be, a.ID
+		m.openPrompt(fmt.Sprintf("team for %q (a new name makes one; empty: none):", title(a)), a.Team, func(team string) tea.Cmd {
+			if team == a.Team {
+				m.setFlash("team unchanged", false)
+				return nil
+			}
+			done := fmt.Sprintf("%q is in team %q", title(a), team)
+			if team == "" {
+				done = fmt.Sprintf("%q is in no team", title(a))
+			}
+			return m.do(done, true, func(ctx context.Context) error {
+				_, err := be.UpdateAgent(ctx, id, api.UpdateAgent{Team: &team})
 				return err
 			})
 		})
@@ -1021,6 +1136,15 @@ func (m *Model) handleSidebarKey(msg tea.KeyMsg) tea.Cmd {
 		return nil
 	}
 	return nil
+}
+
+// selTeam is the team whose head is selected.
+func (m *Model) selTeam() (liveGroup, bool) {
+	id, ok := strings.CutPrefix(m.sel, teamItem)
+	if !ok {
+		return liveGroup{}, false
+	}
+	return m.team(id)
 }
 
 // openPrompt asks for one line in the status bar, starting from value.

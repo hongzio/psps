@@ -75,6 +75,10 @@ type Agent struct {
 	Crons int `json:"crons,omitempty"`
 	// Todos is how many prompts are put aside for it.
 	Todos int `json:"todos,omitempty"`
+	// Team is the name of the team its line is in, TeamID its ID; the
+	// sidebar groups a team's live agents.
+	Team   string `json:"team,omitempty"`
+	TeamID string `json:"team_id,omitempty"`
 }
 
 // AgentOrder is a sidebar list's lines, from the top.
@@ -83,10 +87,18 @@ type AgentOrder struct {
 }
 
 // AgentOrders are both sidebar lists' lines, from the top, with the
-// dividers ("divider:<id>") among them.
+// dividers ("divider:<id>") among them and, in the live one, the teams
+// ("team:<id>"), every one of which is in Teams. A team's agents come in
+// /v1/agents in its order, where it is in the live list.
 type AgentOrders struct {
-	Live     []string `json:"live"`
-	Archived []string `json:"archived"`
+	Live     []string     `json:"live"`
+	Archived []string     `json:"archived"`
+	Teams    []store.Team `json:"teams"`
+}
+
+// PutTeam makes a team, or renames one.
+type PutTeam struct {
+	Name string `json:"name"`
 }
 
 // Mail is one agent's mail to another. From and To are the two agents as
@@ -132,6 +144,9 @@ type UpdateAgent struct {
 	// Parked parks an idle agent: it needs no look until it does something
 	// again, which takes it out of being parked.
 	Parked *bool `json:"parked,omitempty"`
+	// Team puts its line, every session of it, in the team of that name,
+	// made if there is none; "" takes it out of its team.
+	Team *string `json:"team,omitempty"`
 }
 
 type CreateAgent struct {
@@ -148,6 +163,8 @@ type CreateAgent struct {
 	// workspace of its own under ~/work.
 	Workdir string         `json:"workdir,omitempty"`
 	Options driver.Options `json:"options"`
+	// Team is the name of the team it starts in, made if there is none.
+	Team string `json:"team,omitempty"`
 }
 
 // Dirs are the directories in an isolation a typed path could go on to:

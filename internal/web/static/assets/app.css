@@ -159,6 +159,34 @@ body.resizing { cursor: col-resize; user-select: none; -webkit-user-select: none
 .line-head .caret { color: var(--faint); text-align: center; }
 .line-head .name { color: var(--muted); font-weight: 400; }
 .line-sessions { margin-left: 14px; padding-left: 4px; border-left: 1px solid var(--border); }
+/* A team: a head that folds it, over its agents, indented on a rule. */
+.team { border-radius: var(--radius); }
+.team-head { display: flex; align-items: center; border-radius: var(--radius); }
+.team-head:hover { background: color-mix(in srgb, var(--accent-soft) 60%, transparent); }
+.team-head.selected { background: var(--accent-soft); }
+.team-toggle {
+  flex: 1; min-width: 0;
+  display: flex; align-items: center; gap: 6px;
+  padding: 7px 4px 7px 10px; border: 0; background: transparent; text-align: left;
+  color: var(--muted); font-size: 12.5px; font-weight: 600; letter-spacing: .02em;
+}
+.team-toggle .caret { flex: none; width: 18px; color: var(--faint); text-align: center; }
+.team-toggle .name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.team-toggle .count { flex: none; color: var(--faint); font-weight: 400; }
+.team-dots { flex: none; display: inline-flex; align-items: center; gap: 3px; margin-left: auto; padding-right: 2px; }
+.team-dots .dot { width: 7px; height: 7px; margin-top: 0; }
+.team-dots .dot.parked, .team-dots .dot.interrupted { border-width: 1.5px; }
+.team-dots .more { color: var(--faint); font-size: 11px; font-weight: 400; }
+.team-edit {
+  flex: none; width: 26px; height: 26px; margin-right: 4px; padding: 0; border: 0; border-radius: 6px;
+  display: grid; place-items: center; background: transparent; color: var(--faint); font-size: 12px; opacity: 0;
+}
+.team-head:hover .team-edit, .team-edit:focus-visible { opacity: 1; }
+.team-edit:hover { color: var(--text); background: var(--border); }
+@media (hover: none) { .team-edit { opacity: .6; } }
+.team > .sortable, .team-empty { margin-left: 14px; padding-left: 4px; border-left: 1px solid var(--border); }
+.team-empty { padding: 6px 10px; color: var(--faint); font-size: 12.5px; }
+.team-delete { margin-top: 14px; }
 .fold {
   display: block;
   width: 100%;

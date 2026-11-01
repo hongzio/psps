@@ -2,12 +2,14 @@ package tui
 
 import (
 	"fmt"
+	"slices"
 	"strings"
 	"time"
 
 	"github.com/charmbracelet/lipgloss"
 	"github.com/charmbracelet/x/ansi"
 
+	"github.com/hongzio/gero/internal/api"
 	"github.com/hongzio/gero/internal/event"
 )
 
@@ -58,16 +60,45 @@ func (m *Model) renderSidebar(w int) string {
 	for _, a := range m.agents {
 		if a.ArchivedAt != nil {
 			archived++
-			continue
 		}
+	}
+	agentRow := func(a api.Agent, indent string) {
 		meta := fmt.Sprintf("  %s · %s", shownID(a), a.Isolation)
 		if a.Inbox > 0 {
 			meta += fmt.Sprintf(" · ✉ %d", a.Inbox)
 		}
 		if a.Problem != "" {
-			meta = "  " + th.err.Render("! ") + truncate(a.Problem, w-6)
+			meta = "  " + th.err.Render("! ") + truncate(a.Problem, w-6-len(indent))
 		}
-		row(a.ID, th.agentIcon(a, m.frame)+" "+title(a), th.dim.Render(meta))
+		row(a.ID, indent+th.agentIcon(a, m.frame)+" "+title(a), indent+th.dim.Render(meta))
+	}
+	for _, g := range m.liveGroups() {
+		if g.team == "" {
+			agentRow(g.agents[0], "")
+			continue
+		}
+		arrow, folded := "▾", m.foldedTeams[g.team]
+		if folded {
+			arrow = "▸"
+		}
+		head := th.dim.Render(arrow+" ") + th.title.Render(g.name) + th.dim.Render(fmt.Sprintf(" · %d", len(g.agents)))
+		if folded {
+			// Folded, a team shows each agent's icon, those that want a
+			// look first, so none is out of sight.
+			as := slices.Clone(g.agents)
+			slices.SortStableFunc(as, func(x, y api.Agent) int { return lookRank(x) - lookRank(y) })
+			var icons strings.Builder
+			for _, a := range as {
+				icons.WriteString(th.agentIcon(a, m.frame))
+			}
+			head += " " + icons.String()
+		}
+		row(teamItem+g.team, head)
+		if !folded {
+			for _, a := range g.agents {
+				agentRow(a, "  ")
+			}
+		}
 	}
 	b.WriteString("\n")
 	arrow := "▸"
@@ -99,6 +130,25 @@ func (m *Model) renderSidebar(w int) string {
 	row(selIsolations, "⚙ Isolations")
 	row(selServices, "⚿ Services")
 	return b.String()
+}
+
+// lookRank is how much an agent wants a look, the most first: asking,
+// failed, interrupted, idle, working, parked.
+func lookRank(a api.Agent) int {
+	switch a.State.Status {
+	case event.StatusBlocked:
+		return 0
+	case event.StatusError:
+		return 1
+	case event.StatusInterrupted:
+		return 2
+	case event.StatusWorking, event.StatusStarting:
+		return 4
+	}
+	if a.Parked {
+		return 5
+	}
+	return 3
 }
 
 func (m *Model) renderMain(w, h int) string {
@@ -176,7 +226,11 @@ func (m *Model) renderAgent(w int) string {
 	if a.Inbox > 0 {
 		status = th.dim.Render(fmt.Sprintf("✉ %d waiting  ", a.Inbox)) + status
 	}
-	left := th.title.Render(truncate(title(a), w/2)) + "  " + th.dim.Render(fmt.Sprintf("%s · %s · %s", a.Kind, a.Isolation, shownID(a)))
+	facts := fmt.Sprintf("%s · %s · %s", a.Kind, a.Isolation, shownID(a))
+	if a.Team != "" {
+		facts += " · team " + a.Team
+	}
+	left := th.title.Render(truncate(title(a), w/2)) + "  " + th.dim.Render(facts)
 	gap := max(w-lipgloss.Width(left)-lipgloss.Width(status)-1, 1)
 	header := left + strings.Repeat(" ", gap) + status
 	ruleStyle := th.rule

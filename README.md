@@ -86,6 +86,8 @@ bin/gero agent inbox <id> [--rm N|--clear] # mail other agents sent it (see Mail
 bin/gero agent cron <id> --add "0 9 * * 1-5" "check CI"  # a message on a schedule (see Cron)
 bin/gero agent rename <id> login bug      # only the name changes; a turn carries on
 bin/gero agent id <id> login              # an ID of your own (--clear gives it back)
+bin/gero agent team <id> backend          # its team: a group in the sidebar it moves within;
+                                          # a new name makes one (--clear: none; gero team ls|rename|rm)
 bin/gero agent archive <id>               # stops it; its history is kept
 bin/gero agent fork <id>                  # live or archived: a new agent, <id>-xxxx, in its
                                           # directory, knowing its conversation; no crons or mail
@@ -102,7 +104,8 @@ bin/gero tui
 ```
 
 Agents on the left (status at a glance; archived ones folded at the bottom,
-`r` renames one, `i` gives it an ID of your own, `d` deletes one),
+`r` renames one, `i` gives it an ID of your own, `t` puts it in a team, `d` deletes one;
+a team is a group under its name that `enter` folds to its agents' icons, and on its name `r` and `d` rename and delete it),
 the selected agent's conversation in the middle, the input at the bottom with
 the agent's settings behind `ctrl+o`. `ctrl+n` makes an agent (its first message, typed in the form or later in the input, starts it and names it; its directory, a workspace of its own unless you type one, offers the isolation's directories as you type, as the web form does), `ctrl+g`
 manages isolations (environment, `s` to rename or resize one, upgrades, `v` to verify one, `l` its accounts
@@ -126,7 +129,12 @@ The same agents, conversations, approvals, isolation settings, accounts
 services), laid out for a
 desktop browser or a phone. In the sidebar an idle agent's grey dot means it
 wants a look; tapping it parks the agent (a dimmer grey: it needs none), and
-tapping again undoes that. Its next turn takes it out of being parked. The daemon serves it on loopback only, and
+tapping again undoes that. Its next turn takes it out of being parked. A team
+(an agent's Edit, or New agent, names it; a new name makes one) is a group
+there that folds to a dot for each of its agents, the ones that want a look
+first. A long press moves an agent within its list: a team's agents within
+the team only, and the team as one row among the rest. A team holds an
+agent's line, so `/new`, a restore and a fork stay in it. The daemon serves it on loopback only, and
 every API call needs the token `gero web` signs you in with (`--rotate`
 issues a new one and signs every browser out). To use it from a phone,
 expose it to your tailnet yourself — `gero web` prints the exact

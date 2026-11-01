@@ -1,11 +1,16 @@
 package store
 
-import "fmt"
+import (
+	"database/sql"
+	"fmt"
+)
 
 // The operator's order of the sidebar: lines, not agents, so a new session
 // stays where its line is. The live agents and the archived ones are two
-// lists, each ordered on its own. A list may hold the sidebar's dividers
-// too, which the web UI names "divider:<id>"; they are no agent's line.
+// lists, each ordered on its own, and each team's lines a list of its own
+// (see TeamLine). A list may hold the sidebar's dividers too, which the
+// web UI names "divider:<id>", and the live list its teams; they are no
+// agent's line.
 const (
 	LiveList     = "live"
 	ArchivedList = "archived"
@@ -23,14 +28,29 @@ CREATE TABLE IF NOT EXISTS agent_order (
 // SetOrder makes lines the order of list, from the top; what it leaves out
 // goes back to where it would be without one.
 func (s *Store) SetOrder(list string, lines []string) error {
-	if list != LiveList && list != ArchivedList {
-		return fmt.Errorf("there is no list %q: %w", list, ErrNotFound)
-	}
 	tx, err := s.db.Begin()
 	if err != nil {
 		return err
 	}
 	defer tx.Rollback()
+	if team, ok := TeamOf(list); ok {
+		var n int
+		if err := tx.QueryRow(`SELECT COUNT(*) FROM teams WHERE id = ?`, team).Scan(&n); err != nil {
+			return err
+		}
+		if n == 0 {
+			return fmt.Errorf("there is no team %s: %w", team, ErrNotFound)
+		}
+	} else if list != LiveList && list != ArchivedList {
+		return fmt.Errorf("there is no list %q: %w", list, ErrNotFound)
+	}
+	if err := setOrder(tx, list, lines); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
+func setOrder(tx *sql.Tx, list string, lines []string) error {
 	if _, err := tx.Exec(`DELETE FROM agent_order WHERE list = ?`, list); err != nil {
 		return err
 	}
@@ -39,11 +59,28 @@ func (s *Store) SetOrder(list string, lines []string) error {
 			return err
 		}
 	}
-	return tx.Commit()
+	return nil
+}
+
+func listLines(tx *sql.Tx, list string) ([]string, error) {
+	rows, err := tx.Query(`SELECT line FROM agent_order WHERE list = ? ORDER BY pos`, list)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []string
+	for rows.Next() {
+		var l string
+		if err := rows.Scan(&l); err != nil {
+			return nil, err
+		}
+		out = append(out, l)
+	}
+	return out, rows.Err()
 }
 
 // Lists are each list's lines from the top: lines of agents, and the
-// sidebar's dividers between them.
+// sidebar's dividers and teams between them.
 func (s *Store) Lists() (map[string][]string, error) {
 	rows, err := s.db.Query(`SELECT list, line FROM agent_order ORDER BY list, pos`)
 	if err != nil {
@@ -56,9 +93,7 @@ func (s *Store) Lists() (map[string][]string, error) {
 		if err := rows.Scan(&list, &line); err != nil {
 			return nil, err
 		}
-		if _, ok := out[list]; ok {
-			out[list] = append(out[list], line)
-		}
+		out[list] = append(out[list], line)
 	}
 	return out, rows.Err()
 }
@@ -77,9 +112,10 @@ func (s *Store) Order() (map[string]map[string]int, error) {
 		if err := rows.Scan(&list, &line, &pos); err != nil {
 			return nil, err
 		}
-		if out[list] != nil {
-			out[list][line] = pos
+		if out[list] == nil {
+			out[list] = map[string]int{}
 		}
+		out[list][line] = pos
 	}
 	return out, rows.Err()
 }

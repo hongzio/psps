@@ -257,6 +257,27 @@ func (c *Client) DeleteAgent(ctx context.Context, id string, purge bool) error {
 	return c.do(ctx, "DELETE", "/v1/agents/"+url.PathEscape(id)+q, nil, nil)
 }
 
+func (c *Client) Teams(ctx context.Context) ([]store.Team, error) {
+	var v []store.Team
+	return v, c.do(ctx, "GET", "/v1/teams", nil, &v)
+}
+
+func (c *Client) CreateTeam(ctx context.Context, name string) (store.Team, error) {
+	var v store.Team
+	return v, c.do(ctx, "POST", "/v1/teams", api.PutTeam{Name: name}, &v)
+}
+
+// RenameTeam renames a team, by name or ID.
+func (c *Client) RenameTeam(ctx context.Context, team, name string) (store.Team, error) {
+	var v store.Team
+	return v, c.do(ctx, "PATCH", "/v1/teams/"+url.PathEscape(team), api.PutTeam{Name: name}, &v)
+}
+
+// DeleteTeam forgets a team, by name or ID; its agents are in none then.
+func (c *Client) DeleteTeam(ctx context.Context, team string) error {
+	return c.do(ctx, "DELETE", "/v1/teams/"+url.PathEscape(team), nil, nil)
+}
+
 // Inbox is the mail waiting for an agent, in the order it will read it.
 func (c *Client) Inbox(ctx context.Context, id string) ([]api.Mail, error) {
 	var v []api.Mail
