@@ -5,6 +5,8 @@ import (
 	"slices"
 	"testing"
 	"time"
+
+	"github.com/hongzio/gero/internal/driver"
 )
 
 func TestATeamIsALineOfTheLiveListAndAListOfItsOwn(t *testing.T) {
@@ -89,5 +91,51 @@ func TestATeamIsALineOfTheLiveListAndAListOfItsOwn(t *testing.T) {
 	}
 	if err := s.DeleteTeam("t1"); !errors.Is(err, ErrNotFound) {
 		t.Fatalf("%v", err)
+	}
+}
+
+func TestADeletedLineLeavesItsTeamAndItsLists(t *testing.T) {
+	s := open(t)
+	now := time.Now()
+	s.PutIsolation(Isolation{ID: "i1", Name: "dev", Container: "gero-i1", Image: "img", CreatedAt: now})
+	for _, id := range []string{"a1", "b1"} {
+		if err := s.CreateAgent(Agent{ID: id, Name: id, Kind: driver.Claude, IsolationID: "i1", Workdir: "/w", CreatedAt: now}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	// b1's line goes on in b2, a new session of it.
+	if err := s.Renew("b1", Agent{ID: "b2", Name: "b", Kind: driver.Claude, IsolationID: "i1", Workdir: "/w", CreatedAt: now}, now); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.CreateTeam(Team{ID: "t1", Name: "backend", CreatedAt: now}); err != nil {
+		t.Fatal(err)
+	}
+	for _, l := range []string{"a1", "b1"} {
+		if err := s.SetTeam(l, "t1"); err != nil {
+			t.Fatal(err)
+		}
+	}
+	s.SetArchived("a1", &now)
+	if err := s.SetOrder(ArchivedList, []string{"a1"}); err != nil {
+		t.Fatal(err)
+	}
+
+	// A session of a line that goes on keeps it in its team.
+	if err := s.DeleteAgent("b1"); err != nil {
+		t.Fatal(err)
+	}
+	if teams, _ := s.LineTeams(); teams["b1"] != "t1" {
+		t.Fatalf("b1's line left its team with b2 on it: %v", teams)
+	}
+	// The last one takes it out of every list.
+	if err := s.DeleteAgent("a1"); err != nil {
+		t.Fatal(err)
+	}
+	if teams, _ := s.LineTeams(); len(teams) != 1 {
+		t.Fatalf("a1's line outlived it in its team: %v", teams)
+	}
+	ls, _ := s.Lists()
+	if slices.Contains(ls[ArchivedList], "a1") || slices.Contains(ls["team:t1"], "a1") {
+		t.Fatalf("a1's line outlived it in a list: %v", ls)
 	}
 }

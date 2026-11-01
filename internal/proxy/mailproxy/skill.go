@@ -27,8 +27,8 @@ It is the only way to another gero agent. Claude Code's SendMessage and
 ListAgents reach other Claude Code sessions, never gero's agents, and a mail
 here is not email: when asked to mail an agent by its id, this is what is meant.
 
-Who you can write to (JSON: each agent's id, name, kind, isolation, status and
-the mail waiting for it):
+Who you can write to (JSON: each agent's id, name, kind, isolation, status, the
+mail waiting for it, and the team it is in, if any; "you" is yourself):
 
     curl -sS "$GERO_MAIL_URL/agents"
 
