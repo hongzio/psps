@@ -643,16 +643,18 @@ gero tells the lead, as a message of its own whenever it is idle:
 - when a turn runs past its limit (`--turn-minutes`, 60 by default, or the
   lead's for one agent): gero stops it, asks for a final report, and the
   report is the news;
-- what the eval scored: with an eval set, gero runs it once the lead's agents
-  have all ended their turns, and holds their news until then, so the lead
-  hears of a round once, with its score. It scores what is there then: a
-  result the lead writes after reading their answers waits for the next
-  eval, so the skill tells it to have an agent put the result in place. An
-  eval set or changed scores no round that ended before it: its first comes
-  after the next round, or when asked;
-- that nothing runs any more, once after each eval, if the lead let its
-  team end without making the next (and not while a plan window is past
-  the ceiling, when it could make none).
+- what the eval scored, once a round is over: with an eval set, the lead
+  hears of its agents' turns together, once none of them works, and may go
+  on with the round's next step, one that needs the last one's work. When
+  its turn on that news ends with none of its agents at work, gero runs the
+  eval, on what is there then (the lead's own changes included), and tells
+  it the score and that nothing runs. A team that works in steps is scored
+  once, after the last. An eval set or changed scores no round that ended
+  before it: its first comes after the next round, or when asked;
+- that nothing runs any more, once after an eval it or you asked for (a
+  round's eval says so itself), if it let its team end without making the
+  next (and not while a plan window is past the ceiling, when it could
+  make none).
 
 The eval is a shell command; the last line it prints that reads
 `SCORE: <number>` is the score, higher better. It runs for `--eval-minutes`
