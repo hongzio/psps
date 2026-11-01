@@ -354,6 +354,101 @@ func (m *Manager) controlTeam(c controlCall, ref string) (store.Team, bool, bool
 	return t, every, lead, nil
 }
 
+// controlEval is a team's eval as an agent sets it through the control
+// service.
+type controlEval struct {
+	Eval        *string `json:"eval"`
+	EvalDir     *string `json:"eval_dir"`
+	EvalMinutes *int    `json:"eval_minutes"`
+}
+
+// controlEvalSet sets the eval of team ref, as c's: the command and how
+// long it may run, run in c's own isolation as its eval isolation (where
+// c may already run what it likes, and the eval's user changes nothing),
+// on a copy of a directory in the lead's working directory. In the lead's
+// own isolation an eval runs as the agents, so that is the operator's to
+// set, and so are the run's other terms; a run gero stopped stays stopped.
+func (m *Manager) controlEvalSet(c controlCall, ref string, req controlEval) (api.TeamRun, error) {
+	t, _, reached, err := m.controlTeam(c, ref)
+	if err == nil && !reached {
+		err = httpError{http.StatusNotFound, fmt.Errorf("control: team %q has no lead you reach", t.Name)}
+	}
+	if err != nil {
+		return api.TeamRun{}, err
+	}
+	m.teamMu.Lock()
+	defer m.teamMu.Unlock()
+	l, err := m.store.Lead(t.ID)
+	if err != nil {
+		return api.TeamRun{}, err
+	}
+	var lead store.Agent
+	all, err := m.store.Agents()
+	if err != nil {
+		return api.TeamRun{}, err
+	}
+	for _, a := range all {
+		if cmp.Or(a.Line, a.ID) == l.Line && a.ArchivedAt == nil {
+			lead = a
+		}
+	}
+	if lead.ID == "" {
+		return api.TeamRun{}, httpError{http.StatusNotFound, fmt.Errorf("control: team %q has no lead you reach", t.Name)}
+	}
+	if lead.IsolationID == c.s.iso {
+		return api.TeamRun{}, httpError{http.StatusForbidden, fmt.Errorf("control: the eval would run in isolation %s, which is the lead's, as its agents; only your operator sets that", c.s.name)}
+	}
+	s := l.Settings
+	if req.Eval != nil {
+		s.Eval = strings.TrimSpace(*req.Eval)
+	}
+	switch {
+	case s.Eval == "":
+		return api.TeamRun{}, badRequest(errors.New(`control: say the eval, a shell command, as "eval"`))
+	case strings.ContainsRune(s.Eval, 0):
+		return api.TeamRun{}, badRequest(errors.New("control: the eval is a shell command, without NUL"))
+	}
+	if req.EvalMinutes != nil {
+		if *req.EvalMinutes < 1 || *req.EvalMinutes > 4*60 {
+			return api.TeamRun{}, badRequest(fmt.Errorf("control: the eval's limit is 1 to %d minutes, not %d", 4*60, *req.EvalMinutes))
+		}
+		s.EvalMinutes = *req.EvalMinutes
+	}
+	s.EvalMinutes = cmp.Or(s.EvalMinutes, leadEvalMinutes)
+	// What is copied is the team's work: a directory in the lead's working
+	// directory, not whatever else of the lead's isolation the agent user
+	// reads.
+	dir := cmp.Or(s.EvalDir, lead.Workdir)
+	if req.EvalDir != nil {
+		if dir, err = m.isoPath(cmp.Or(strings.TrimSpace(*req.EvalDir), lead.Workdir)); err != nil {
+			return api.TeamRun{}, badRequest(fmt.Errorf("control: the eval's directory: %w", err))
+		}
+	}
+	if dir != lead.Workdir && !strings.HasPrefix(dir, lead.Workdir+"/") {
+		return api.TeamRun{}, httpError{http.StatusForbidden, fmt.Errorf("control: the eval's directory is the lead's working directory, %s, or one in it, not %s", lead.Workdir, dir)}
+	}
+	s.EvalDir = dir
+	if why := m.evalIsoUnfit(c.s.iso, lead.IsolationID); why != "" {
+		return api.TeamRun{}, httpError{http.StatusForbidden, fmt.Errorf("control: isolation %s cannot run the eval: %s", c.s.name, why)}
+	}
+	s.EvalIsolation = c.s.iso
+	s.EvalSetBy = c.by()
+	if err := m.store.SetLeadSettings(t.ID, s); err != nil {
+		return api.TeamRun{}, err
+	}
+	if evalChanged(l.Settings, s) && l.Dirty {
+		if err := m.store.SetLeadDirty(t.ID, false); err != nil {
+			return api.TeamRun{}, err
+		}
+		l.Dirty = false
+	}
+	l.Settings = s
+	m.did(c, "team.evalset", fmt.Sprintf("%q: %q in %s, %dm at most, in isolation %s", t.Name, s.Eval, s.EvalDir, s.EvalMinutes, c.s.name))
+	m.teamChanged(t.ID)
+	v, err := m.teamRun(t, l)
+	return leadsView(v), err
+}
+
 // controlRoutes adds the control service to isolation iso's mail port: the
 // paths of the daemon's own API, under the agent's address.
 func (m *Manager) controlRoutes(mux *http.ServeMux, iso string) {
@@ -854,5 +949,14 @@ func (m *Manager) controlRoutes(mux *http.ServeMux, iso string) {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusAccepted)
 		reply(w, map[string]string{"eval": "running; its result goes to the team's lead"}, nil)
+	})
+	route("PUT /teams/{team}/eval", "team.evalset", func(w http.ResponseWriter, r *http.Request, c controlCall) {
+		var req controlEval
+		if err := controlJSON(r, &req, `{"eval": "sh /home/agent/grader/run.sh", "eval_dir": "...", "eval_minutes": 20}`); err != nil {
+			reply(w, nil, err)
+			return
+		}
+		v, err := m.controlEvalSet(c, r.PathValue("team"), req)
+		reply(w, v, err)
 	})
 }

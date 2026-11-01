@@ -93,32 +93,21 @@ func (m *Model) leadForm(g liveGroup, run *api.TeamRun) *form {
 	}
 	lead := selectField("Lead", options, "makes agents of its own in the team, in its isolation, and hears when their turns end")
 	lead.idx = pick
-	// An eval isolation has no agent, so not the lead's either; the one
-	// chosen before stays, to be seen.
-	busy := map[string]bool{}
-	for _, a := range m.agents {
-		if a.ArchivedAt == nil {
-			busy[a.Isolation] = true
-		}
-	}
+	// An eval isolation is another than the lead's: the one it has as the
+	// form opens.
 	p.evalIsos = []string{""}
 	evalIn := []string{"the lead's own"}
 	evalPick := 0
 	for _, iso := range m.isolations {
-		was := run != nil && iso.Name == run.EvalIsolation
-		if busy[iso.Name] && !was {
+		if iso.Name == p.isos[pick] {
 			continue
 		}
-		if was {
+		if run != nil && iso.Name == run.EvalIsolation {
 			evalPick = len(evalIn)
 		}
-		label := iso.Name
-		if busy[iso.Name] {
-			label += " (has agents)"
-		}
-		p.evalIsos, evalIn = append(p.evalIsos, iso.Name), append(evalIn, label)
+		p.evalIsos, evalIn = append(p.evalIsos, iso.Name), append(evalIn, iso.Name)
 	}
-	evalIso := selectField("Eval isolation", evalIn, "another, with no agents or services, scores a copy of the eval directory as a user who can change nothing else there; keep the grader there (its path in full: ~ is an empty home), take only the work from the copy; the lead hears only the score")
+	evalIso := selectField("Eval isolation", evalIn, "another, with no services but control, scores a copy of the eval directory as a user who can change nothing else there; keep the grader there (its path in full: ~ is an empty home), take only the work from the copy; the lead hears only the score; an agent of yours there runs as the grader's owner")
 	evalIso.idx = evalPick
 	text := func(label, placeholder, hint, value string) *field {
 		f := textField(label, placeholder, hint)
@@ -351,6 +340,9 @@ func (m *Model) renderTeam(w int) string {
 		line(fmt.Sprintf("spent %s (%s more read from cache)", spentOf(r.Spent.New(), r.Settings.Budget), tokenCount(r.Spent.Cached)))
 		for _, pw := range r.Plan {
 			line(fmt.Sprintf("plan  %s %s %.0f%%", pw.Kind, pw.Window, pw.Percent))
+		}
+		if r.Settings.EvalSetBy != "" {
+			line(fmt.Sprintf("the eval was set by agent %s, through control; saving it changed makes it yours", r.Settings.EvalSetBy))
 		}
 		for _, e := range r.Evals[max(len(r.Evals)-5, 0):] {
 			score := "no score"

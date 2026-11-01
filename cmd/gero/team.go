@@ -110,7 +110,7 @@ func teamCmd(p paths.Paths, args []string) error {
 		turn := fs.Int("turn-minutes", 0, "how long a turn of an agent of the lead's may run, unless it sets one (default 60)")
 		eval := fs.String("eval", "", "a shell command gero runs to score the work; its last \"SCORE: x\" line is the score, higher better")
 		evalDir := fs.String("eval-dir", "", "where in the lead's isolation the eval runs, or the work copied to --eval-iso (default: the lead's directory)")
-		evalIso := fs.String("eval-iso", "", "an isolation, with no agents or services, to run the eval in on a copy of --eval-dir (~ in the eval is then an empty home); - for the lead's own")
+		evalIso := fs.String("eval-iso", "", "an isolation, with no services but control, to run the eval in on a copy of --eval-dir (~ in the eval is then an empty home); - for the lead's own")
 		evalMinutes := fs.Int("eval-minutes", 0, "how long the eval may run (default 20)")
 		target := fs.String("target", "", "a score that ends the run once reached")
 		noTarget := fs.Bool("no-target", false, "no target")
@@ -239,6 +239,9 @@ func printRun(run api.TeamRun) error {
 		fmt.Printf("  eval   %s (%s, %dm at most), patience %d", s.Eval, where, s.EvalMinutes, s.Patience)
 		if s.Target != nil {
 			fmt.Printf(", target %g", *s.Target)
+		}
+		if s.EvalSetBy != "" {
+			fmt.Printf("; set by agent %s, through control", s.EvalSetBy)
 		}
 		fmt.Println()
 	}

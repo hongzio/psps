@@ -15,6 +15,7 @@ import (
 	"github.com/hongzio/gero/internal/driver"
 	"github.com/hongzio/gero/internal/event"
 	"github.com/hongzio/gero/internal/proxy"
+	"github.com/hongzio/gero/internal/proxy/controlproxy"
 	"github.com/hongzio/gero/internal/proxy/mailproxy"
 	"github.com/hongzio/gero/internal/proxy/teamproxy"
 	"github.com/hongzio/gero/internal/store"
@@ -25,7 +26,7 @@ import (
 func withTeams(t *testing.T, e *testEnv, m *Manager, terms api.PutLead) (store.Agent, store.Team) {
 	t.Helper()
 	ctx := context.Background()
-	m.SetProxies(proxy.NewRegistry(mailproxy.Service{}, teamproxy.Service{}), &creds.Store{Path: filepath.Join(t.TempDir(), "credentials")})
+	m.SetProxies(proxy.NewRegistry(mailproxy.Service{}, teamproxy.Service{}, controlproxy.Service{}), &creds.Store{Path: filepath.Join(t.TempDir(), "credentials")})
 	m.tunnelPort = func(int) int { return freePort(t) }
 	if _, err := m.Expose(ctx, "dev", "team", api.Expose{}); err != nil {
 		t.Fatal(err)
@@ -380,8 +381,47 @@ func TestARunIsPausedWhileTheLeadsIsolationHasNoTeams(t *testing.T) {
 	}
 }
 
+// An eval set after a round ended does not score that round: its first
+// eval comes after the next round, or when asked.
+func TestAnEvalSetAfterARoundScoresNoneBefore(t *testing.T) {
+	fakeTimeout(t)
+	e := newTestEnv(t)
+	m, stop := e.daemon()
+	defer stop()
+	ctx := context.Background()
+	dir := t.TempDir()
+	os.WriteFile(filepath.Join(dir, "score"), []byte("SCORE: 1\n"), 0o644)
+	boss, team := withTeams(t, e, m, api.PutLead{})
+	makeAgent(t, m, boss.ID, api.TeamAgentNew{Role: "one", Kind: driver.Codex, Prompt: "hello"})
+	e.waitFor("the round's end", func() bool {
+		l, _ := m.store.Lead(team.ID)
+		return l.Dirty && m.childrenBusy(boss.ID) == 0
+	})
+	e.waitFor("its news", func() bool { return len(news(e, boss.ID)) == 1 })
+	if _, err := m.SetLead(ctx, "lab", api.PutLead{Agent: "boss", Eval: ptr("cat score"), EvalDir: ptr(dir)}); err != nil {
+		t.Fatal(err)
+	}
+	if l, _ := m.store.Lead(team.ID); l.Dirty {
+		t.Fatal("a round that ended before the eval is still to score")
+	}
+	m.teamCheck(team.ID)
+	time.Sleep(200 * time.Millisecond)
+	if evals, _ := m.store.Evals(team.ID); len(evals) != 0 || m.evalRunning(team.ID) {
+		t.Fatalf("an eval ran on a round before it: %+v", evals)
+	}
+	// Unchanged, setting it keeps a round that ended for it.
+	m.store.SetLeadDirty(team.ID, true)
+	if _, err := m.SetLead(ctx, "lab", api.PutLead{Agent: "boss", MaxLive: ptr(2)}); err != nil {
+		t.Fatal(err)
+	}
+	if l, _ := m.store.Lead(team.ID); !l.Dirty {
+		t.Fatal("a term other than the eval forgot the round")
+	}
+}
+
 // An eval isolation scores a copy of the work, made for each eval, where
-// no agent is and no service: the agents cannot reach what scores them.
+// no service is and the team's agents are not: they cannot reach what
+// scores them.
 func TestAnEvalRunsInItsIsolationOnACopyOfTheWork(t *testing.T) {
 	fakeTimeout(t)
 	e := newTestEnv(t)
@@ -437,7 +477,7 @@ func TestAnEvalRunsInItsIsolationOnACopyOfTheWork(t *testing.T) {
 		t.Fatalf("the operator's view: %+v", run.Evals)
 	}
 
-	// Not the lead's own, and none with an agent or a service in it.
+	// Not the lead's own, and none with a service in it but control.
 	if _, err := m.SetLead(ctx, "lab", api.PutLead{Agent: "boss", EvalIsolation: ptr("dev")}); err == nil || !strings.Contains(err.Error(), "it is the lead's own") {
 		t.Fatalf("the lead's own: %v", err)
 	}
@@ -450,13 +490,25 @@ func TestAnEvalRunsInItsIsolationOnACopyOfTheWork(t *testing.T) {
 	if err := m.Unexpose(ctx, "ev", "team"); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := m.CreateAgent(ctx, api.CreateAgent{Isolation: "ev", Kind: driver.Codex, Handle: "stray"}); err != nil {
+	if _, err := m.PutEnv(ctx, "control", "reads", proxy.Patch{}, true); err != nil {
 		t.Fatal(err)
 	}
-	// One that came after the lead was set fails the eval, which says why.
+	if _, err := m.Expose(ctx, "ev", "control", api.Expose{Envs: []string{"reads"}}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := m.SetLead(ctx, "lab", api.PutLead{Agent: "boss", EvalIsolation: ptr("ev")}); err != nil {
+		t.Fatal("with control:", err)
+	}
+	// An agent of the operator's may work there: the eval runs as ever.
+	if _, err := m.CreateAgent(ctx, api.CreateAgent{Isolation: "ev", Kind: driver.Codex, Handle: "helper"}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := m.SetLead(ctx, "lab", api.PutLead{Agent: "boss", EvalIsolation: ptr("ev")}); err != nil {
+		t.Fatal("with an agent in it:", err)
+	}
 	m.EvalTeam("lab")
-	e.waitFor("the failed eval's news", func() bool { return len(news(e, boss.ID)) == 3 })
-	if n := news(e, boss.ID)[2]; !strings.Contains(n, "gero says: isolation ev cannot run the eval: agent stray is in it") {
+	e.waitFor("the eval's news", func() bool { return len(news(e, boss.ID)) == 3 })
+	if n := news(e, boss.ID)[2]; strings.Contains(n, "cannot run the eval") || !strings.Contains(n, "gero says: the eval: exit status 3") {
 		t.Fatal(n)
 	}
 	if _, err := m.SetLead(ctx, "lab", api.PutLead{Agent: "boss", EvalIsolation: ptr("")}); err != nil {

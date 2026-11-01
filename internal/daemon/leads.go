@@ -16,6 +16,7 @@ import (
 	"github.com/hongzio/gero/internal/api"
 	"github.com/hongzio/gero/internal/driver"
 	"github.com/hongzio/gero/internal/event"
+	"github.com/hongzio/gero/internal/proxy/controlproxy"
 	"github.com/hongzio/gero/internal/store"
 )
 
@@ -106,8 +107,12 @@ func (m *Manager) SetLead(ctx context.Context, teamRef string, req api.PutLead) 
 		}
 		l = store.Lead{Team: t.ID, Line: line, Settings: l.Settings, Since: time.Now().UTC(), Base: lineSpent(line, agents, spent)}
 	}
+	was := l.Settings
 	if l.Settings, err = m.leadTerms(l.Settings, req, a); err != nil {
 		return api.TeamRun{}, err
+	}
+	if evalChanged(was, l.Settings) {
+		l.Dirty = false
 	}
 	if l.Settings.Budget == 0 && perUse != "" {
 		return api.TeamRun{}, badRequest(fmt.Errorf("without a budget only the plan ceiling holds a lead back, and %s; give it a budget (`--budget 5M`)", perUse))
@@ -225,7 +230,19 @@ func (m *Manager) leadTerms(was store.LeadSettings, req api.PutLead, lead store.
 	if s.Target != nil && (math.IsNaN(*s.Target) || math.IsInf(*s.Target, 0)) {
 		return s, badRequest(errors.New("the target is a number"))
 	}
+	// An eval the operator changes is theirs again.
+	if evalChanged(was, s) {
+		s.EvalSetBy = ""
+	}
 	return s, nil
+}
+
+// evalChanged is whether b's eval is another than a's. A round that ended
+// under no eval, or another, is not the new one's to score: setting it
+// forgets that a round ended, so its first eval comes after the next
+// round, or when asked.
+func evalChanged(a, b store.LeadSettings) bool {
+	return a.Eval != b.Eval || a.EvalDir != b.EvalDir || a.EvalIsolation != b.EvalIsolation || a.EvalMinutes != b.EvalMinutes
 }
 
 // ClearLead leaves a team without a lead. The agents it made stay, the
@@ -925,27 +942,24 @@ func (m *Manager) readyForEval(ctx context.Context, iso store.Isolation) error {
 
 // evalIsoUnfit says why the isolation (by ID) cannot run the eval of a
 // lead in leadIso; "" if it can. What is scored runs there with the
-// internet at hand, so nothing there may be worth taking or changing: no
-// agent, and no service whose credentials it could use.
+// internet at hand, so no service whose credentials it could use may be
+// there. Agents may: the operator's own, set to work there by hand, which
+// run as the agent user, the grader's owner, and are the operator's to
+// keep from what the eval leaves. So may control, theirs: its address is
+// each agent's own, in its process's environment, which the eval's user
+// cannot read, and nothing of it is in a file there.
 func (m *Manager) evalIsoUnfit(iso, leadIso string) string {
 	if iso == leadIso {
 		return "it is the lead's own; leave the eval's isolation empty to run it there"
-	}
-	agents, err := m.store.Agents()
-	if err != nil {
-		return err.Error()
-	}
-	for _, a := range agents {
-		if a.IsolationID == iso && a.ArchivedAt == nil {
-			return fmt.Sprintf("agent %s is in it, and an eval isolation has none", shownID(a))
-		}
 	}
 	xs, err := m.store.Exposures(iso)
 	if err != nil {
 		return err.Error()
 	}
-	if len(xs) > 0 {
-		return fmt.Sprintf("it has the %s service, and an eval isolation has none: what is scored could use it", xs[0].Service)
+	for _, x := range xs {
+		if x.Service != controlproxy.Name {
+			return fmt.Sprintf("it has the %s service, and an eval isolation has none but control: what is scored could use it", x.Service)
+		}
 	}
 	return ""
 }

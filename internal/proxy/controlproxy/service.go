@@ -17,7 +17,9 @@
 // envs, services, an isolation's environment and logins, approvals (an
 // agent's mode, and approving), a lead's eval (a command run elsewhere),
 // making, changing and removing isolations, removing agents, and the Mac's
-// own (the fence, the daemon).
+// own (the fence, the daemon). A team's eval is one only as team.evalset
+// has it: run in the isolation of the agent that sets it, never the
+// lead's, on a copy of a directory in the lead's.
 package controlproxy
 
 import (
@@ -71,6 +73,7 @@ var Actions = []Action{
 	{"team.rename", "rename a team", true},
 	{"team.rm", "remove a team", true},
 	{"team.eval", "run a team's eval", true},
+	{"team.evalset", "set a team's eval, to run in its own isolation", true},
 }
 
 // Reads are what an env opens when it is made without saying.
