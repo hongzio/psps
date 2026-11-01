@@ -59,6 +59,10 @@ type Containers interface {
 	DialTunnel(ctx context.Context, container string) (isolation.TunnelConn, error)
 	Sync(ctx context.Context, container string, req shimproto.SyncRequest) (shimproto.SyncResult, error)
 	StartAsAgent(ctx context.Context, container string, env []string, argv ...string) (isolation.Proc, error)
+	// An eval isolation's (isolation/eval.go).
+	EvalReset(ctx context.Context, container string, wipe bool) error
+	CopyToEval(ctx context.Context, from, dir, to string) error
+	RunEval(ctx context.Context, container string, argv ...string) (string, error)
 }
 
 // Fence is the root helper that keeps isolation networks off the Mac and its

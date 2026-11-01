@@ -43,7 +43,8 @@ CREATE TABLE IF NOT EXISTS team_evals (
 	took_ms INTEGER NOT NULL,
 	score   REAL,
 	why     TEXT NOT NULL,
-	output  TEXT NOT NULL
+	output  TEXT NOT NULL,
+	private INTEGER NOT NULL DEFAULT 0
 );
 CREATE TABLE IF NOT EXISTS spent (
 	agent  TEXT PRIMARY KEY REFERENCES agents(id),
@@ -74,6 +75,9 @@ type LeadSettings struct {
 	Eval        string `json:"eval,omitempty"`
 	EvalDir     string `json:"eval_dir,omitempty"`
 	EvalMinutes int    `json:"eval_minutes"`
+	// EvalIsolation is the isolation (by ID) the eval runs in instead, on
+	// a copy of EvalDir made for each eval; "" is the lead's own.
+	EvalIsolation string `json:"eval_isolation,omitempty"`
 	// Target is a score that ends the run once reached; Patience how many
 	// evals in a row without a new best end it.
 	Target   *float64 `json:"target,omitempty"`
@@ -270,11 +274,14 @@ type Eval struct {
 	Score  *float64      `json:"score,omitempty"`
 	Why    string        `json:"why"`
 	Output string        `json:"output"`
+	// Private says the output is the operator's alone: the eval ran in an
+	// eval isolation, and what is scored there could write anything in it.
+	Private bool `json:"private,omitempty"`
 }
 
 func (s *Store) AddEval(e Eval) (Eval, error) {
-	res, err := s.db.Exec(`INSERT INTO team_evals (team, at, took_ms, score, why, output) VALUES (?, ?, ?, ?, ?, ?)`,
-		e.Team, ts(e.At), e.Took.Milliseconds(), e.Score, e.Why, e.Output)
+	res, err := s.db.Exec(`INSERT INTO team_evals (team, at, took_ms, score, why, output, private) VALUES (?, ?, ?, ?, ?, ?, ?)`,
+		e.Team, ts(e.At), e.Took.Milliseconds(), e.Score, e.Why, e.Output, e.Private)
 	if err != nil {
 		return e, err
 	}
@@ -284,7 +291,7 @@ func (s *Store) AddEval(e Eval) (Eval, error) {
 
 // Evals are team's evals, oldest first.
 func (s *Store) Evals(team string) ([]Eval, error) {
-	rows, err := s.db.Query(`SELECT id, team, at, took_ms, score, why, output FROM team_evals WHERE team = ? ORDER BY id`, team)
+	rows, err := s.db.Query(`SELECT id, team, at, took_ms, score, why, output, private FROM team_evals WHERE team = ? ORDER BY id`, team)
 	if err != nil {
 		return nil, err
 	}
@@ -295,7 +302,7 @@ func (s *Store) Evals(team string) ([]Eval, error) {
 		var at string
 		var took int64
 		var score sql.NullFloat64
-		if err := rows.Scan(&e.ID, &e.Team, &at, &took, &score, &e.Why, &e.Output); err != nil {
+		if err := rows.Scan(&e.ID, &e.Team, &at, &took, &score, &e.Why, &e.Output, &e.Private); err != nil {
 			return nil, err
 		}
 		e.At, e.Took = parseTS(at), time.Duration(took)*time.Millisecond

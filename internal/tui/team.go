@@ -20,10 +20,11 @@ type teamPage struct {
 	run        *api.TeamRun
 	form       *form
 	// leads are the agents the Lead field's options stand for, "" for
-	// none; isos their isolations.
-	leads, isos []string
-	busy        bool
-	err         string
+	// none; isos their isolations. evalIsos are the isolations the eval's
+	// isolation field's options name, "" for the lead's own.
+	leads, isos, evalIsos []string
+	busy                  bool
+	err                   string
 }
 
 type teamRunMsg struct {
@@ -92,6 +93,33 @@ func (m *Model) leadForm(g liveGroup, run *api.TeamRun) *form {
 	}
 	lead := selectField("Lead", options, "makes agents of its own in the team, in its isolation, and hears when their turns end")
 	lead.idx = pick
+	// An eval isolation has no agent, so not the lead's either; the one
+	// chosen before stays, to be seen.
+	busy := map[string]bool{}
+	for _, a := range m.agents {
+		if a.ArchivedAt == nil {
+			busy[a.Isolation] = true
+		}
+	}
+	p.evalIsos = []string{""}
+	evalIn := []string{"the lead's own"}
+	evalPick := 0
+	for _, iso := range m.isolations {
+		was := run != nil && iso.Name == run.EvalIsolation
+		if busy[iso.Name] && !was {
+			continue
+		}
+		if was {
+			evalPick = len(evalIn)
+		}
+		label := iso.Name
+		if busy[iso.Name] {
+			label += " (has agents)"
+		}
+		p.evalIsos, evalIn = append(p.evalIsos, iso.Name), append(evalIn, label)
+	}
+	evalIso := selectField("Eval isolation", evalIn, "another, with no agents or services, scores a copy of the eval directory as a user who can change nothing else there; keep the grader there (its path in full: ~ is an empty home), take only the work from the copy; the lead hears only the score")
+	evalIso.idx = evalPick
 	text := func(label, placeholder, hint, value string) *field {
 		f := textField(label, placeholder, hint)
 		f.text.SetValue(value)
@@ -122,7 +150,8 @@ func (m *Model) leadForm(g liveGroup, run *api.TeamRun) *form {
 		text("Turn limit", "60", "minutes a turn of one of them runs before gero stops it and asks for a report", num(s.turn)),
 		text("Plan ceiling", "90", "percent of a plan window, the account's whole use (yours too), past which nothing new starts on it", num(s.ceiling)),
 		text("Eval", "none", `a shell command; its last "SCORE: x" line is the score, higher better`, s.eval),
-		text("Eval directory", "the lead's directory", "where in the isolation the eval runs", s.dir),
+		text("Eval directory", "the lead's directory", "where in the lead's isolation the eval runs, or what is copied to the eval isolation", s.dir),
+		evalIso,
 		text("Eval limit", "20", "minutes the eval may run", num(s.evalMin)),
 		text("Target", "none", "a score that ends the run once reached", s.target),
 		text("Patience", "3", "evals in a row without a new best that end the run", num(s.patience)),
@@ -192,11 +221,13 @@ func (m *Model) saveLead() tea.Cmd {
 	if d := fs[6].value(); d != "" {
 		req.EvalDir = &d
 	}
-	if err := setNumber(fs[7], &req.EvalMinutes); err != nil {
+	evalIn := p.evalIsos[fs[7].idx]
+	req.EvalIsolation = &evalIn
+	if err := setNumber(fs[8], &req.EvalMinutes); err != nil {
 		p.err = err.Error()
 		return nil
 	}
-	if t := fs[8].value(); t == "" {
+	if t := fs[9].value(); t == "" {
 		req.NoTarget = true
 	} else if v, err := strconv.ParseFloat(t, 64); err != nil {
 		p.err = fmt.Sprintf("the target %q is not a number", t)
@@ -204,11 +235,11 @@ func (m *Model) saveLead() tea.Cmd {
 	} else {
 		req.Target = &v
 	}
-	if err := setNumber(fs[9], &req.Patience); err != nil {
+	if err := setNumber(fs[10], &req.Patience); err != nil {
 		p.err = err.Error()
 		return nil
 	}
-	turnOn := fs[10].idx == 0
+	turnOn := fs[11].idx == 0
 	p.busy, p.err = true, ""
 	return func() tea.Msg {
 		ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
@@ -327,6 +358,12 @@ func (m *Model) renderTeam(w int) string {
 				score = strconv.FormatFloat(*e.Score, 'g', -1, 64)
 			}
 			line(fmt.Sprintf("eval #%d %s  %s  (%s)", e.ID, e.At.Local().Format("Jan 2 15:04"), score, e.Why))
+		}
+		if n := len(r.Evals); n > 0 && r.Evals[n-1].Score == nil && r.Evals[n-1].Output != "" {
+			out := strings.Split(r.Evals[n-1].Output, "\n")
+			for _, l := range out[max(len(out)-4, 0):] {
+				b.WriteString(th.dim.Render("    "+truncate(l, w-6)) + "\n")
+			}
 		}
 		if r.Best != nil {
 			line(fmt.Sprintf("best %g at #%d; %d since without a new one", *r.Best.Score, r.Best.ID, r.Stale))

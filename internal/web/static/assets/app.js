@@ -1238,6 +1238,13 @@ async function editTeam(t) {
   const ceiling = input(st.plan_ceiling, '90', 'numeric')
   const evalCmd = input(st.eval, 'none')
   const evalDir = input(st.eval_dir, "the lead's directory")
+  S.isolations ||= await api('GET', '/v1/isolations').catch(() => [])
+  // An eval isolation has no agent, so not the lead's either; the one
+  // chosen before stays, to be seen.
+  const busy = new Set(S.agents.filter((a) => !a.archived_at).map((a) => a.isolation))
+  const fit = S.isolations.map((i) => i.name).filter((n) => !busy.has(n) || n === run?.eval_isolation)
+  const evalIso = dropdown([{ value: '', label: "The lead's own" }, ...fit.map((n) => ({ value: n, label: busy.has(n) ? `${n} (has agents)` : n }))],
+    { value: run?.eval_isolation || '', label: 'Eval isolation' })
   const evalMin = input(st.eval_minutes, '20', 'numeric')
   const target = input(st.target, 'none', 'decimal')
   const patience = input(st.patience, '3', 'numeric')
@@ -1260,7 +1267,8 @@ async function editTeam(t) {
     h('div', { class: 'lead-grid' },
       field('Budget (tokens)', budget), field('Live at most', maxLive), field('Turn limit (min)', turn), field('Plan ceiling (%)', ceiling)),
     noBudget,
-    field('Eval', evalCmd, 'A shell command gero runs in the isolation as the agents; its last "SCORE: x" line is the score, higher better. Keep it, and what it reads, in a read-only shared folder.'),
+    field('Eval', evalCmd, 'A shell command; its last "SCORE: x" line is the score, higher better. In the lead\'s isolation it runs as the agents, who can change it and what it reads.'),
+    field('Eval isolation', evalIso, 'Another isolation, with no agents or services, scores a copy of the eval directory made for each eval, as a user who can change nothing else there: out of the agents\' reach. Keep the grader and its data there, and take only what is scored from the copy; ~ in the eval is then an empty home, so give the grader\'s path in full. The lead hears only the score.'),
     h('div', { class: 'lead-grid' },
       field('Eval directory', evalDir), field('Eval limit (min)', evalMin), field('Target', target, 'ends the run once reached'), field('Patience (evals)', patience, 'without a new best, end the run')),
     teamsOff)
@@ -1299,6 +1307,7 @@ async function editTeam(t) {
     }
     req.eval = evalCmd.value.trim()
     if (evalDir.value.trim()) req.eval_dir = evalDir.value.trim()
+    req.eval_isolation = evalIso.value
     const tv = target.value.trim()
     if (!tv) req.no_target = true
     else if (Number.isFinite(Number(tv))) req.target = Number(tv)
@@ -1311,7 +1320,7 @@ async function editTeam(t) {
     h('div', null, `Spent ${tokens(run.spent.input + run.spent.output)}` + (run.settings.budget ? ` of ${tokens(run.settings.budget)} tokens` : ' tokens, no budget') +
       (run.best ? ` · best ${run.best.score} at eval #${run.best.id}, ${run.stale} since without a new one` : '')),
     run.evals.length ? h('div', { class: 'lead-evals' }, run.evals.slice(-5).map((e) =>
-      h('span', { title: e.why }, `#${e.id} ${e.score ?? 'no score'}`))) : null,
+      h('span', { title: e.why + (e.output ? '\n\n' + e.output : '') }, `#${e.id} ${e.score ?? 'no score'}`))) : null,
     h('div', { class: 'lead-actions' },
       run.settings.eval ? h('button', {
         type: 'button', class: 'btn small', onclick: async (e) => {

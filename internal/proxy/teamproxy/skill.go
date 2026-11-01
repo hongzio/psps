@@ -137,5 +137,8 @@ reached, or no new best for a while). Tell your operator rather than working
 around it; only they change the terms or resume the run.
 
 The eval is your operator's. Do not change the eval, the files it reads or its
-rules; if you think it measures the wrong thing, say so.
+rules; if you think it measures the wrong thing, say so. Your operator may run
+it in an isolation of its own, on a copy of the eval directory made as each eval
+starts: then only what is in that directory then counts, and you hear the score
+alone, not what the eval printed.
 `
