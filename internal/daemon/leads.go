@@ -28,10 +28,11 @@ import (
 //     that is news for the lead, with the agent's last answer;
 //   - a turn runs past its limit: gero stops it and asks for a final
 //     report, whose end is the news;
-//   - the lead's agents have all ended their turns: gero runs the team's
-//     eval, and the lead hears of the round once, with the score;
-//   - nothing of the team runs after that: the lead is told so, once per
-//     eval;
+//   - the lead's agents have all ended their turns: the lead hears of
+//     them together, and may go on with the round's next step;
+//   - its turn on them ended with none of its agents at work, the round is
+//     over: gero runs the team's eval and tells the lead the score, and
+//     that nothing of the team runs (once per eval);
 //   - the budget (if it has one) is used, the target reached, or no new
 //     best has come for Patience evals: gero stops the run, and makes no
 //     more agents of the lead's until the operator resumes it.
@@ -675,8 +676,24 @@ func (m *Manager) teamCheck(team string) {
 	if l.Settings.Eval == "" || m.evalRunning(team) || m.childrenBusy(l.Line) > 0 {
 		return
 	}
+	// A round is over once its lead has heard of it and started nothing
+	// more: its news delivered, its turn on it ended, and none of its agents
+	// at work. Until then the lead may go on with the round's next step, one
+	// that needs the last one's work. A lead whose isolation has no teams
+	// can start nothing, nor one with no session: theirs is over when their
+	// agents' turns are.
+	r := m.lineRuntime(l.Line)
+	paused := m.teamsOff(l) != ""
+	if r != nil && !paused {
+		if n, err := m.store.TeamNewsWaiting(team); err != nil || n > 0 {
+			return
+		}
+		if !r.free() {
+			return
+		}
+	}
 	if l.Dirty {
-		if err := m.startEval(l, "the turns of your agents ended"); err != nil {
+		if err := m.startEval(l, whyRound); err != nil {
 			m.log.Printf("team %s: eval: %v", team, err)
 		}
 		return
@@ -685,17 +702,16 @@ func (m *Manager) teamCheck(team string) {
 	if err != nil || len(evals) == 0 || evals[len(evals)-1].ID <= l.Nudged {
 		return
 	}
+	if r == nil || paused {
+		return // paused (teamsOff): the step after the service is on again looks
+	}
 	if n, err := m.store.TeamNewsWaiting(team); err != nil || n > 0 {
 		return
 	}
-	r := m.lineRuntime(l.Line)
-	if r == nil || !r.free() {
+	if !r.free() {
 		return
 	}
 	lead, _, _ := r.view()
-	if on, err := m.teamOn(lead.IsolationID); err != nil || !on {
-		return // paused (teamsOff): the step after the service is on again looks
-	}
 	if why := m.planFull(lead.IsolationID, lead.Kind, l.Settings.PlanCeiling); why != "" {
 		return // the next step looks again, the window may have started over
 	}
@@ -855,19 +871,51 @@ func (m *Manager) runEval(l store.Lead, why string) {
 	default:
 		msg += "\nThe end of its output:\n\n" + tail(e.Output, 1500)
 	}
+	stop := ""
+	switch {
+	case l.Stopped != "":
+	case best != nil && l.Settings.Target != nil && *best.Score >= *l.Settings.Target:
+		stop = fmt.Sprintf("the target %g is reached, with %g at eval #%d", *l.Settings.Target, *best.Score, best.ID)
+	case stale >= l.Settings.Patience:
+		stop = fmt.Sprintf("%d evals in a row came without a new best", stale)
+	}
+	// A round's eval runs when nothing of the team does: the same news
+	// asks for the next team, unless the run stops or nothing may start.
+	if why == whyRound && stop == "" && l.Stopped == "" && m.childrenBusy(l.Line) == 0 {
+		if nudge := m.nudgeText(l); nudge != "" {
+			msg += "\n\n" + nudge
+			m.store.SetLeadNudged(l.Team, e.ID)
+		}
+	}
 	m.log.Printf("team %s: eval #%d: %v", l.Team, e.ID, e.Score)
 	if err := m.store.AddTeamNews(l.Team, msg); err != nil {
 		m.log.Printf("team %s: %v", l.Team, err)
 	}
-	if l.Stopped != "" {
-		return
+	if stop != "" {
+		m.stopRunLocked(l, stop)
 	}
-	switch {
-	case best != nil && l.Settings.Target != nil && *best.Score >= *l.Settings.Target:
-		m.stopRunLocked(l, fmt.Sprintf("the target %g is reached, with %g at eval #%d", *l.Settings.Target, *best.Score, best.ID))
-	case stale >= l.Settings.Patience:
-		m.stopRunLocked(l, fmt.Sprintf("%d evals in a row came without a new best", stale))
+}
+
+// whyRound is why an eval runs when a round has ended.
+const whyRound = "the round ended"
+
+// nudgeText asks l's lead for the next team, saying what the team has
+// spent; "" while its plan is past the ceiling, when it could make none.
+func (m *Manager) nudgeText(l store.Lead) string {
+	r := m.lineRuntime(l.Line)
+	if r == nil {
+		return ""
 	}
+	lead, _, _ := r.view()
+	if why := m.planFull(lead.IsolationID, lead.Kind, l.Settings.PlanCeiling); why != "" {
+		return ""
+	}
+	agents, spent, err := m.spentNow()
+	if err != nil {
+		return ""
+	}
+	return "Nothing of your team is running. The team has used " + spentText(teamSpent(l, agents, spent).New(), l.Settings.Budget) + "." +
+		" Design the next team, or say why you stop."
 }
 
 // evalOutput runs l's eval and says what it printed.
@@ -1083,18 +1131,19 @@ func (r *runtime) newsChanged() {
 }
 
 // deliverNewsLocked moves all its team's waiting news into its outbox, as
-// one message. With an eval to run, news waits for the round to end: until
-// the lead's agents have ended their turns and the eval has run, so the
-// lead hears of a round once, with its score. It waits too while the
-// lead's isolation has no teams (teamsOff), and comes once they are on:
-// the change of service starts the lead anew, and that kicks it.
+// one message. With an eval to run, the news of a round's turns waits while
+// some of its agents still work, so the lead hears of them together, and
+// while the eval runs, so the score comes with what came meanwhile. It
+// waits too while the lead's isolation has no teams (teamsOff), and comes
+// once they are on: the change of service starts the lead anew, and that
+// kicks it.
 func (r *runtime) deliverNewsLocked() {
 	l, err := r.m.store.LeadOfLine(cmp.Or(r.agent.Line, r.agent.ID))
 	if err != nil {
 		r.news = 0
 		return
 	}
-	if l.Settings.Eval != "" && l.Stopped == "" && (l.Dirty || r.m.evalRunning(l.Team)) {
+	if l.Settings.Eval != "" && l.Stopped == "" && ((l.Dirty && r.m.childrenBusy(l.Line) > 0) || r.m.evalRunning(l.Team)) {
 		return
 	}
 	if on, err := r.m.teamOn(r.agent.IsolationID); err != nil || !on {

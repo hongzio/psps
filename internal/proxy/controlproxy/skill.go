@@ -121,9 +121,10 @@ const evals = `
 ## Team evals
 
 A team's lead runs its agents toward an eval: a shell command whose last line
-reading "SCORE: <number>" is the score, higher better. gero runs it when the
-lead's agents have all ended their turns, or when asked, and tells the lead the
-score; what the eval printed is your operator's, not the lead's.
+reading "SCORE: <number>" is the score, higher better. gero runs it when a
+round is over (the lead's agents have ended their turns, and the lead's turn on
+their news started nothing more), or when asked, and tells the lead the score;
+what the eval printed is your operator's, not the lead's.
 
 In an eval isolation, such as this one when you set the eval, each eval runs
 like this:

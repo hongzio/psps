@@ -83,14 +83,17 @@ gero tells you of your team in a message that starts with a line like
 when an agent of yours ends a turn (with its last answer), waits for your
 operator to approve something, or is stopped at its turn limit; when the eval
 has run; when nothing of your team runs any more; and when gero stops the run.
-When the agents of yours that were working have all ended their turns, gero runs
-the eval before it tells you, so the score comes with their answers. News that
-comes while you work waits, and arrives together once you are idle.
+The news of your agents' turns waits while others of them still work, so you
+hear of a round's turns together; news that comes while you work waits too,
+and arrives together once you are idle.
 
-The eval scores what is in its directory at that moment. So have an agent put
-the result in place, as part of its work: what you write yourself after reading
-their answers is scored only at the next eval, or when you ask for one. The
-first eval after your operator sets or changes it comes after the next round.
+A round is over when you have heard of it and started nothing more. If your
+turn on that news makes an agent or writes to one (the next step, which needs
+the last one's work), the round goes on. If it ends with none of your agents
+at work, gero runs the eval, on what is in its directory then, your own
+changes included, and tells you the score. So a team that works in steps is
+scored once, after the last. The first eval after your operator sets or
+changes it comes after the next round.
 
 So do not poll and do not wait in a loop: end your turn, and the next news wakes
 you. Their answers come to you; they need not mail you.

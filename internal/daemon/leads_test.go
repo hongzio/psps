@@ -68,6 +68,13 @@ func makeAgent(t *testing.T, m *Manager, from string, req api.TeamAgentNew) api.
 	return a
 }
 
+// free is whether agent id is idle with nothing on its way to it, as a
+// lead whose turn on its news has ended.
+func free(m *Manager, id string) bool {
+	r, err := m.runtime(id)
+	return err == nil && r.free()
+}
+
 // news is what boss was told of its team, message by message.
 func news(e *testEnv, boss string) []string {
 	var out []string
@@ -245,40 +252,40 @@ func TestARoundEndsWithTheEvalAndARunWithoutProgressStops(t *testing.T) {
 	score := func(s string) { os.WriteFile(filepath.Join(dir, "score"), []byte("measuring\nSCORE: "+s+"\n"), 0o644) }
 	score("1.5")
 	boss, team := withTeams(t, e, m, api.PutLead{Budget: ptr(int64(1_000_000)), Eval: ptr("cat score"), EvalDir: ptr(dir), Patience: ptr(2)})
+	told := func() string { return strings.Join(news(e, boss.ID), "\n\n") }
 
+	// The lead hears of its agents' turns before any eval: it may go on
+	// with the round.
 	a := makeAgent(t, m, boss.ID, api.TeamAgentNew{Role: "one", Kind: driver.Codex, Prompt: "hello"})
 	b := makeAgent(t, m, boss.ID, api.TeamAgentNew{Role: "two", Kind: driver.Codex, Prompt: "hello"})
-	e.waitFor("both turns' ends", func() bool {
-		l, _ := m.store.Lead(team.ID)
-		return l.Dirty && m.childrenBusy(boss.ID) == 0
+	e.waitFor("both turns' news", func() bool {
+		return strings.Contains(told(), a.ID+` ("one", codex) ended its turn`) && strings.Contains(told(), b.ID+` ("two", codex) ended its turn`)
 	})
-	// The round is told once, with the score.
-	time.Sleep(200 * time.Millisecond)
-	if n := news(e, boss.ID); len(n) != 0 {
-		t.Fatalf("news before the eval: %q", n)
+	if strings.Contains(told(), "Eval #") {
+		t.Fatalf("an eval before the lead heard of the round:\n%s", told())
 	}
+	// Until its turn on them ends, the round goes on.
+	e.waitFor("the lead at work", func() bool { return status(m, boss.ID) != event.StatusIdle || len(e.events(boss.ID)) > 0 })
+	e.waitFor("the lead idle", func() bool { return free(m, boss.ID) })
+	before := len(news(e, boss.ID))
+
+	// Its turn ended with nothing started: the round is over, and the
+	// eval's news says nothing runs.
 	m.teamCheck(team.ID)
-	e.waitFor("the round's news", func() bool { return len(news(e, boss.ID)) == 1 })
-	n := news(e, boss.ID)[0]
-	for _, want := range []string{"3 item(s)", a.ID + ` ("one", codex) ended its turn`, b.ID + ` ("two", codex) ended its turn`,
-		"3. Eval #1 (the turns of your agents ended) took ", "SCORE 1.5, a new best."} {
+	e.waitFor("the eval's news", func() bool { return len(news(e, boss.ID)) == before+1 })
+	n := news(e, boss.ID)[before]
+	for _, want := range []string{"1 item(s)", "Eval #1 (the round ended) took ", "SCORE 1.5, a new best.",
+		"Nothing of your team is running. The team has used ", "Design the next team, or say why you stop."} {
 		if !strings.Contains(n, want) {
 			t.Fatalf("news lacks %q:\n%s", want, n)
 		}
 	}
-
-	// Nothing runs after it: the lead is told, once.
-	e.waitFor("the lead idle", func() bool { return status(m, boss.ID) == event.StatusIdle })
-	m.teamCheck(team.ID)
-	e.waitFor("the nudge", func() bool { return len(news(e, boss.ID)) == 2 })
-	if n := news(e, boss.ID)[1]; !strings.Contains(n, "Nothing of your team is running. SCORE 1.5, a new best. The team has used ") {
-		t.Fatal(n)
-	}
-	e.waitFor("the lead idle", func() bool { return status(m, boss.ID) == event.StatusIdle })
+	// Told so once.
+	e.waitFor("the lead idle", func() bool { return free(m, boss.ID) })
 	m.teamCheck(team.ID)
 	time.Sleep(200 * time.Millisecond)
-	if len(news(e, boss.ID)) != 2 {
-		t.Fatalf("nudged twice: %q", news(e, boss.ID))
+	if len(news(e, boss.ID)) != before+1 {
+		t.Fatalf("nudged twice: %q", news(e, boss.ID)[before:])
 	}
 
 	// Evals without a new best, as many as its patience, stop the run.
@@ -287,13 +294,13 @@ func TestARoundEndsWithTheEvalAndARunWithoutProgressStops(t *testing.T) {
 		if code, out := teamAs(t, m, boss.ID, "POST", "/eval", ""); code != http.StatusAccepted {
 			t.Fatalf("%d %s", code, out)
 		}
-		e.waitFor("the eval's news", func() bool { return len(news(e, boss.ID)) == 3+i })
-		if n := news(e, boss.ID)[2+i]; !strings.Contains(n, want) {
-			t.Fatalf("news lacks %q:\n%s", want, n)
+		e.waitFor("the eval's news", func() bool { return len(news(e, boss.ID)) == before+2+i })
+		if n := news(e, boss.ID)[before+1+i]; !strings.Contains(n, want) || strings.Contains(n, "Nothing of your team is running") {
+			t.Fatalf("news lacks %q, or asks for a team after an eval asked for:\n%s", want, n)
 		}
 		e.waitFor("the lead idle", func() bool { return status(m, boss.ID) == event.StatusIdle })
 	}
-	if n := news(e, boss.ID)[3]; !strings.Contains(n, "gero stopped the run: 2 evals in a row came without a new best") {
+	if n := news(e, boss.ID)[before+2]; !strings.Contains(n, "gero stopped the run: 2 evals in a row came without a new best") {
 		t.Fatal(n)
 	}
 	if code, out := teamAs(t, m, boss.ID, "POST", "/agents", `{"role":"three","kind":"codex","prompt":"hi"}`); code != http.StatusConflict {
@@ -306,6 +313,69 @@ func TestARoundEndsWithTheEvalAndARunWithoutProgressStops(t *testing.T) {
 	// Resumed, the evals so far no longer count.
 	if run, _ = m.SetLead(context.Background(), "lab", api.PutLead{Agent: "boss"}); run.Stopped != "" || run.Stale != 0 {
 		t.Fatalf("%+v", run)
+	}
+}
+
+// A round's next step, which its lead starts once it hears the last one
+// ended, is the same round: no eval scores the work between the two.
+func TestARoundGoesOnWhileItsLeadStartsTheNextStep(t *testing.T) {
+	fakeTimeout(t)
+	e := newTestEnv(t)
+	m, stop := e.daemon()
+	defer stop()
+	dir := t.TempDir()
+	os.WriteFile(filepath.Join(dir, "score"), []byte("SCORE: 1\n"), 0o644)
+	boss, team := withTeams(t, e, m, api.PutLead{Eval: ptr("cat score"), EvalDir: ptr(dir)})
+	evals := func() int { es, _ := m.store.Evals(team.ID); return len(es) }
+
+	// The first step ends while the lead is at work: its news waits for the
+	// lead, and so does the eval.
+	if err := m.Send(boss.ID, "hang"); err != nil {
+		t.Fatal(err)
+	}
+	e.waitFor("the lead at work", func() bool { return status(m, boss.ID) == event.StatusWorking })
+	makeAgent(t, m, boss.ID, api.TeamAgentNew{Role: "prep", Kind: driver.Codex, Prompt: "prepare the data"})
+	e.waitFor("the first step's end", func() bool {
+		n, _ := m.store.TeamNewsWaiting(team.ID)
+		return n == 1 && m.childrenBusy(boss.ID) == 0
+	})
+	m.teamCheck(team.ID)
+	time.Sleep(200 * time.Millisecond)
+	if evals() != 0 {
+		t.Fatal("an eval before the lead heard the step ended")
+	}
+
+	// It hears, and starts the next step in its turn.
+	if err := m.Interrupt(boss.ID); err != nil {
+		t.Fatal(err)
+	}
+	e.waitFor("the lead's turn to stop", func() bool { s := status(m, boss.ID); return s == event.StatusIdle || s == event.StatusInterrupted })
+	if err := m.Send(boss.ID, "go on"); err != nil {
+		t.Fatal(err)
+	}
+	e.waitFor("the first step's news", func() bool { return len(news(e, boss.ID)) == 1 })
+	train := makeAgent(t, m, boss.ID, api.TeamAgentNew{Role: "train", Kind: driver.Codex, Prompt: "hang"})
+	e.waitFor("the lead's turn on it", func() bool { return free(m, boss.ID) })
+	m.teamCheck(team.ID)
+	time.Sleep(200 * time.Millisecond)
+	if evals() != 0 {
+		t.Fatal("an eval while the round's next step ran")
+	}
+
+	// The last step ends, and the lead's turn on it starts nothing: one
+	// eval, of the round.
+	if err := m.Interrupt(train.ID); err != nil {
+		t.Fatal(err)
+	}
+	e.waitFor("the last step's news", func() bool { return len(news(e, boss.ID)) == 2 })
+	e.waitFor("the lead's turn on it", func() bool { return free(m, boss.ID) })
+	m.teamCheck(team.ID)
+	e.waitFor("the round's eval", func() bool { return len(news(e, boss.ID)) == 3 })
+	if n := news(e, boss.ID)[2]; !strings.Contains(n, "Eval #1 (the round ended)") || !strings.Contains(n, "SCORE 1, a new best.") {
+		t.Fatal(n)
+	}
+	if evals() != 1 {
+		t.Fatalf("%d evals of one round", evals())
 	}
 }
 
@@ -324,26 +394,26 @@ func TestARunIsPausedWhileTheLeadsIsolationHasNoTeams(t *testing.T) {
 	boss, team := withTeams(t, e, m, api.PutLead{Eval: ptr("cat score"), EvalDir: ptr(dir)})
 
 	makeAgent(t, m, boss.ID, api.TeamAgentNew{Role: "one", Kind: driver.Codex, Prompt: "hello"})
-	e.waitFor("its turn's end", func() bool {
-		l, _ := m.store.Lead(team.ID)
-		return l.Dirty && m.childrenBusy(boss.ID) == 0
-	})
+	e.waitFor("its turn's news", func() bool { return len(news(e, boss.ID)) == 1 })
+	e.waitFor("the lead's turn on it", func() bool { return free(m, boss.ID) })
 	if err := m.Unexpose(ctx, "dev", "team"); err != nil {
 		t.Fatal(err)
 	}
 	if code, out := teamAs(t, m, boss.ID, "GET", "", ""); code != http.StatusForbidden || !strings.Contains(out, "isolation dev has no teams") {
 		t.Fatalf("a lead without teams: %d %s", code, out)
 	}
+	// Paused, the lead can start nothing: the round is over, and its eval
+	// runs; what it scored waits.
+	e.waitFor("the lead idle", func() bool { return free(m, boss.ID) })
 	m.teamCheck(team.ID)
 	e.waitFor("the eval", func() bool { evals, _ := m.store.Evals(team.ID); return len(evals) == 1 && !m.evalRunning(team.ID) })
-	e.waitFor("the lead idle", func() bool { return status(m, boss.ID) == event.StatusIdle })
 	m.teamCheck(team.ID)
 	time.Sleep(200 * time.Millisecond)
-	if n := news(e, boss.ID); len(n) != 0 {
-		t.Fatalf("a paused lead was told: %q", n)
+	if n := news(e, boss.ID); len(n) != 1 {
+		t.Fatalf("a paused lead was told: %q", n[1:])
 	}
-	if n, _ := m.store.TeamNewsWaiting(team.ID); n != 2 {
-		t.Fatalf("%d items wait, not the turn's end and the eval", n)
+	if n, _ := m.store.TeamNewsWaiting(team.ID); n != 1 {
+		t.Fatalf("%d items wait, not the eval", n)
 	}
 	run, _ := m.TeamRun("lab")
 	if run.TeamsOff != "dev" || !strings.HasPrefix(run.Status, "paused, as teams are off in dev; ") || run.Stopped != "" {
@@ -353,20 +423,26 @@ func TestARunIsPausedWhileTheLeadsIsolationHasNoTeams(t *testing.T) {
 	if _, err := m.Expose(ctx, "dev", "team", api.Expose{}); err != nil {
 		t.Fatal(err)
 	}
-	e.waitFor("the news that waited", func() bool { return len(news(e, boss.ID)) == 1 })
-	if n := news(e, boss.ID)[0]; !strings.Contains(n, "2 item(s)") || !strings.Contains(n, "SCORE 2, a new best.") {
+	e.waitFor("the news that waited", func() bool { return len(news(e, boss.ID)) == 2 })
+	if n := news(e, boss.ID)[1]; !strings.Contains(n, "SCORE 2, a new best.") {
 		t.Fatal(n)
 	}
 	if run, _ = m.TeamRun("lab"); run.TeamsOff != "" || strings.HasPrefix(run.Status, "paused") {
 		t.Fatalf("%+v", run)
 	}
-	e.waitFor("the lead idle", func() bool { return status(m, boss.ID) == event.StatusIdle })
 
-	// Nor is a paused lead told to make the next team.
+	// Nor is a paused lead told to make the next team, after an eval its
+	// operator asked for.
+	e.waitFor("the lead idle", func() bool { return free(m, boss.ID) })
+	if err := m.EvalTeam("lab"); err != nil {
+		t.Fatal(err)
+	}
+	e.waitFor("the asked eval's news", func() bool { return len(news(e, boss.ID)) == 3 })
+	e.waitFor("the lead idle", func() bool { return free(m, boss.ID) })
 	if err := m.Unexpose(ctx, "dev", "team"); err != nil {
 		t.Fatal(err)
 	}
-	e.waitFor("the lead idle", func() bool { return status(m, boss.ID) == event.StatusIdle })
+	e.waitFor("the lead idle", func() bool { return free(m, boss.ID) })
 	time.Sleep(200 * time.Millisecond)
 	m.teamCheck(team.ID)
 	if n, _ := m.store.TeamNewsWaiting(team.ID); n != 0 {
@@ -375,8 +451,8 @@ func TestARunIsPausedWhileTheLeadsIsolationHasNoTeams(t *testing.T) {
 	if _, err := m.Expose(ctx, "dev", "team", api.Expose{}); err != nil {
 		t.Fatal(err)
 	}
-	e.waitFor("the nudge", func() bool { m.teamCheck(team.ID); return len(news(e, boss.ID)) == 2 })
-	if n := news(e, boss.ID)[1]; !strings.Contains(n, "Nothing of your team is running.") {
+	e.waitFor("the nudge", func() bool { m.teamCheck(team.ID); return len(news(e, boss.ID)) == 4 })
+	if n := news(e, boss.ID)[3]; !strings.Contains(n, "Nothing of your team is running.") {
 		t.Fatal(n)
 	}
 }
