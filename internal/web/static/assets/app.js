@@ -1050,6 +1050,8 @@ function renderSidebar() {
       h('span', { class: 'meta' }, `${e.sessions.length} sessions · ${current.isolation}`)),
       open ? h('div', { class: 'line-sessions' }, e.sessions.map(row)) : null)
   })
+  // Polling redraws the sidebar: the list stays where it was scrolled.
+  const scrolled = el.querySelector('.agent-list')?.scrollTop || 0
   el.replaceChildren(
     h('div', { class: 'brand' }, 'gero', h('span', { class: 'count' }, `${live.length} agent${live.length === 1 ? '' : 's'}`),
       h('button', { class: 'add-divider', title: 'Add a divider at the bottom; hold it to move it', 'aria-label': 'Add a divider', onclick: addDivider },
@@ -1065,6 +1067,7 @@ function renderSidebar() {
       h('button', { class: S.view === 'services' ? 'active' : '', onclick: () => show('services') }, icon('key-round'), ' Services'),
       h('button', { class: S.view === 'setup' ? 'active' : '', onclick: () => show('setup') }, icon('user-round'), ' Accounts')),
   )
+  if (scrolled) el.querySelector('.agent-list').scrollTop = scrolled
 }
 
 // sortable is a sidebar list whose rows, a line each, move by a long press

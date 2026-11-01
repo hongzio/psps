@@ -247,7 +247,8 @@ body.resizing { cursor: col-resize; user-select: none; -webkit-user-select: none
 @media (prefers-reduced-motion: reduce) { .dot.working, .dot.starting { animation: none; } }
 
 /* Main */
-.main { display: flex; flex-direction: column; min-width: 0; min-height: 0; background: var(--panel); }
+/* overflow-x: clip: a topbar drawn whole before it is fitted (every poll) never widens a phone's page, which moves an open dialog's scroll. */
+.main { display: flex; flex-direction: column; min-width: 0; min-height: 0; overflow-x: clip; background: var(--panel); }
 .topbar {
   display: flex;
   align-items: center;
