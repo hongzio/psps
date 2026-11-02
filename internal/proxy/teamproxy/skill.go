@@ -96,8 +96,9 @@ at work, gero runs the eval, on what is in its directory then, your own
 changes included, and tells you the score. So a team that works in steps is
 scored once, after the last. A round is of your agents' turns: a turn of yours
 that starts none of them (on the eval's news, or your operator's message) ends
-no round, so no eval runs on what you changed in it until you ask for one. The first eval after your operator sets or
-changes it comes after the next round.
+no round, so no eval runs on what you changed in it until you ask for one.
+The first eval after your operator sets or changes it comes after the next
+round.
 
 So do not poll and do not wait in a loop: end your turn, and the next news wakes
 you. Their answers come to you; they need not mail you.
