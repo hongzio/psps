@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"sort"
+	"time"
 
 	"github.com/hongzio/gero/internal/api"
 	"github.com/hongzio/gero/internal/store"
@@ -49,9 +50,10 @@ func (m *Manager) Order() (api.AgentOrders, error) {
 	return api.AgentOrders{Live: ls[store.LiveList], Archived: ls[store.ArchivedList], Teams: runs}, nil
 }
 
-// orderAgents puts the lines the operator ordered first in each list, in
-// that order, and the rest after them as they were: a line not moved yet,
-// a new one, stays at the bottom. A live agent whose line is in a team
+// orderAgents puts the lines the operator ordered first in the live list,
+// in that order, and the rest after them as they were: a line not moved
+// yet, a new one, stays at the bottom. The archived list goes by when its
+// lines were archived, the latest first. A live agent whose line is in a team
 // (teams, by line) is where the team is in the live list, in the team's
 // order, its teammates all together.
 func orderAgents(as []agentView, order map[string]map[string]int, teams map[string]string) {
@@ -63,6 +65,7 @@ func orderAgents(as []agentView, order map[string]map[string]int, teams map[stri
 	}
 	keys := make(map[string]key, len(as))
 	groups := map[string]int{}
+	archived := archivedRanks(as)
 	for i, a := range as {
 		line := cmp.Or(a.Line, a.ID)
 		list, at := store.LiveList, line
@@ -76,7 +79,9 @@ func orderAgents(as []agentView, order map[string]map[string]int, teams map[stri
 			groups[g] = i
 		}
 		k := key{group: groups[g], unplacedIn: 1}
-		if p, ok := order[list][at]; ok {
+		if list == store.ArchivedList {
+			k.at = archived[line]
+		} else if p, ok := order[list][at]; ok {
 			k.at = p
 		} else {
 			k.unplaced, k.at = 1, k.group
@@ -98,4 +103,30 @@ func orderAgents(as []agentView, order map[string]map[string]int, teams map[stri
 			cmp.Compare(ki.in, kj.in),
 		) < 0
 	})
+}
+
+// archivedRanks are the archived lines' places in their list: the one with
+// the session archived last first.
+func archivedRanks(as []agentView) map[string]int {
+	last := map[string]time.Time{}
+	var lines []string
+	for _, a := range as {
+		if a.ArchivedAt == nil {
+			continue
+		}
+		line := cmp.Or(a.Line, a.ID)
+		t, ok := last[line]
+		if !ok {
+			lines = append(lines, line)
+		}
+		if !ok || a.ArchivedAt.After(t) {
+			last[line] = *a.ArchivedAt
+		}
+	}
+	sort.SliceStable(lines, func(i, j int) bool { return last[lines[i]].After(last[lines[j]]) })
+	out := make(map[string]int, len(lines))
+	for i, l := range lines {
+		out[l] = i
+	}
+	return out
 }

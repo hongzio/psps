@@ -1076,7 +1076,7 @@ function renderSidebar() {
       sortable('live', liveRows(live, row)),
       h('button', { class: 'fold', onclick: () => { S.showArchived = !S.showArchived; renderSidebar() } },
         icon(S.showArchived ? 'chevron-down' : 'chevron-right'), ` Archived (${archived.length})`),
-      S.showArchived ? sortable('archived', archivedRows()) : null),
+      S.showArchived ? h('div', { class: 'archived-list' }, archivedRows()) : null),
     h('div', { class: 'side-foot' },
       h('button', { class: S.view === 'isolations' ? 'active' : '', onclick: () => show('isolations') }, icon('box'), ' Isolations'),
       h('button', { class: S.view === 'services' ? 'active' : '', onclick: () => show('services') }, icon('key-round'), ' Services'),
@@ -1488,7 +1488,7 @@ function setLiveOrder(lines) {
 // reorderAgents puts one sidebar list's agents in the order of its lines at
 // once, in the places they had among all agents, before the daemon answers.
 function reorderAgents(list, order) {
-  const inList = isTeam(list) ? (a) => !a.archived_at && a.team_id === teamOf(list) : (a) => !!a.archived_at === (list === 'archived')
+  const inList = isTeam(list) ? (a) => !a.archived_at && a.team_id === teamOf(list) : (a) => !a.archived_at
   const rank = new Map(order.map((l, i) => [l, i]))
   const mine = S.agents.filter(inList)
     .map((a, i) => [rank.get(a.line || a.id) ?? order.length + i, a])

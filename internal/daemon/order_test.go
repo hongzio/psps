@@ -12,18 +12,20 @@ import (
 	"github.com/hongzio/gero/internal/store"
 )
 
-func TestTheOperatorsOrderComesFirstInEachList(t *testing.T) {
+func TestTheOperatorsOrderComesFirstInTheLiveList(t *testing.T) {
 	now := time.Now()
-	agent := func(id, line string, archived bool) agentView {
+	agent := func(id, line string, archived time.Duration) agentView {
 		var a agentView
 		a.ID, a.Line, a.CreatedAt = id, line, now
-		if archived {
-			a.ArchivedAt = &now
+		if archived != 0 {
+			at := now.Add(archived)
+			a.ArchivedAt = &at
 		}
 		return a
 	}
-	as := []agentView{agent("a", "A", false), agent("a0", "A", true), agent("b", "B", false), agent("c", "C", false),
-		agent("d0", "D", true), agent("new", "N", false), agent("e", "", false)}
+	as := []agentView{agent("a", "A", 0), agent("a0", "A", -3*time.Hour), agent("b", "B", 0), agent("c", "C", 0),
+		agent("d0", "D", -2*time.Hour), agent("new", "N", 0), agent("e", "", 0),
+		agent("f0", "F", -4*time.Hour), agent("f1", "F", -time.Hour)}
 	orderAgents(as, map[string]map[string]int{
 		store.LiveList:     {"C": 0, "e": 1, "A": 2, "B": 3},
 		store.ArchivedList: {"D": 0, "A": 1},
@@ -39,7 +41,9 @@ func TestTheOperatorsOrderComesFirstInEachList(t *testing.T) {
 	if got, want := live, []string{"c", "e", "a", "b", "new"}; !slices.Equal(got, want) {
 		t.Errorf("live %v, want %v", got, want)
 	}
-	if got, want := archived, []string{"d0", "a0"}; !slices.Equal(got, want) {
+	// The archived list ignores the operator's order: a line archived last
+	// is first, its sessions together.
+	if got, want := archived, []string{"f0", "f1", "d0", "a0"}; !slices.Equal(got, want) {
 		t.Errorf("archived %v, want %v", got, want)
 	}
 }
