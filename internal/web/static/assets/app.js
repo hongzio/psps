@@ -4428,9 +4428,11 @@ function showShortcuts() {
   })
 }
 
-// stepAgent opens the agent by from the open one in the sidebar's live list.
+// stepAgent opens the agent by from the open one in the sidebar's live list,
+// a team's agents with it where its fold shows them.
 function stepAgent(by) {
-  const rows = [...document.querySelectorAll('#sidebar .sortable:first-of-type > .agent')]
+  const live = document.querySelector('#sidebar .sortable:first-of-type')
+  const rows = live ? [...live.querySelectorAll(':scope > .agent, :scope > .team .agent')] : []
   if (!rows.length) return
   const ids = rows.map((r) => S.agents.find((a) => !a.archived_at && (a.line || a.id) === r.dataset.line)?.id)
   const at = ids.indexOf(S.view === 'agent' ? S.sel : null)
