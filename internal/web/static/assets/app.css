@@ -978,3 +978,26 @@ kbd {
   display: inline-block; min-width: 1.6em; padding: 1px 6px; border: 1px solid var(--border); border-bottom-width: 2px;
   border-radius: 5px; background: var(--code); color: var(--text); font-family: var(--mono); font-size: 12px; text-align: center;
 }
+
+/* What an agent's CLI runs beside its turn: subagents, shells run in the
+   background. The status line counts them and opens their list; the
+   sidebar shows only that something runs. */
+.task-mark { display: inline-flex; align-items: center; gap: 2px; }
+.task-mark .icon { width: 12px; height: 12px; }
+.status-line .sl-tasks {
+  display: inline-flex; align-items: center; gap: 6px; padding: 0 5px; border: 0; border-radius: 5px;
+  background: var(--accent-soft); color: var(--accent); font: inherit; line-height: inherit; cursor: pointer;
+}
+.status-line .sl-tasks[aria-expanded="true"] { outline: 1px solid var(--accent); }
+.tasks-pop { left: 16px; right: auto; padding: 10px 6px 6px; }
+.tasks-pop h3 { margin: 0 8px 6px; font-size: 12px; color: var(--muted); font-weight: 600; text-transform: uppercase; letter-spacing: .05em; }
+.tasks-pop .tasks { max-height: 50vh; overflow-y: auto; }
+.tasks-pop .task { display: grid; grid-template-columns: 16px minmax(0, 1fr); gap: 0 8px; padding: 6px 8px; }
+.tasks-pop .task + .task { border-top: 1px solid var(--border); }
+.tasks-pop .task .icon { width: 14px; height: 14px; margin-top: 3px; color: var(--accent); }
+.tasks-pop .task-what { font-size: 13px; overflow-wrap: anywhere; }
+.tasks-pop .task-kind { grid-column: 2; color: var(--muted); font-size: 12px; }
+.agent .meta.with-marks { display: flex; align-items: center; gap: 6px; }
+.agent .meta.with-marks .meta-text { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.agent .tasks-marks { display: inline-flex; gap: 4px; flex: none; color: var(--accent); }
+.agent .tasks-marks .icon { width: 13px; height: 13px; }

@@ -107,6 +107,7 @@ const S = {
   verifyOut: null, // the open verify report
   verifying: null, // the isolation being measured
   starting: null, // the isolation being started
+  tasksOpen: null, // the agent whose background tasks are listed
   // Claude & Codex: each isolation's CLIs as read from inside it (an
   // array, or {error}), the login on screen, the CLI an action runs for.
   clis: {},
@@ -1034,6 +1035,9 @@ function renderSidebar() {
     if (togglable) dot.addEventListener('click', (e) => { e.stopPropagation(); togglePark(a) })
     const meta = a.problem ? h('span', { class: 'problem' }, icon('triangle-alert'), ' ' + a.problem)
       : [`${shownID(a)} · ${a.isolation}`, a.inbox ? [' · ', icon('mail'), ` ${a.inbox}`] : null]
+    // What it runs beside its turn, as icons alone at the line's end.
+    const tasks = liveTasks(a)
+    const marks = tasks.length ? h('span', { class: 'tasks-marks', title: tasksSummary(tasks), 'aria-label': tasksSummary(tasks) }, ...taskMarks(tasks, false)) : null
     // A team's lead wears a crown; an agent it made, an arrow from it, as
     // does one an agent made through the control service.
     const maker = a.made_via && S.agents.find((x) => x.id === a.made_via)
@@ -1043,7 +1047,8 @@ function renderSidebar() {
     return h('button', {
       class: 'agent' + (a.id === S.sel && S.view === 'agent' ? ' selected' : '') + (a.archived_at ? ' archived' : ''),
       'data-line': a.line || a.id, onclick: () => select(a.id),
-    }, dot, h('span', { class: 'name' }, mark, agentTitle(a)), h('span', { class: 'meta' }, meta))
+    }, dot, h('span', { class: 'name' }, mark, agentTitle(a)),
+      h('span', { class: 'meta' + (marks ? ' with-marks' : '') }, marks ? h('span', { class: 'meta-text' }, meta) : meta, marks))
   }
   // An agent's archived sessions are one folded line, under the ID it goes
   // by now; a lone one is a row of its own.
@@ -2585,6 +2590,7 @@ function composer(a) {
   queueMicrotask(grow)
   const wrap = h('div', { class: 'composer' },
     h('div', { id: 'settings-slot' }),
+    h('div', { id: 'tasks-slot' }),
     h('div', { id: 'status-slot', class: 'status-line' }),
     h('div', { class: 'composer-row' },
       done.box,
@@ -2695,15 +2701,64 @@ function planLimits(a) {
   return [...latest.values()].filter((l) => !l.resets_at || l.resets_at > now).sort((p, q) => p.window.localeCompare(q.window))
 }
 
+// liveTasks are what the agent's CLI runs beside its turn: subagents and
+// shells run in the background.
+const liveTasks = (a) => a.archived_at ? [] : a.state?.tasks || []
+const taskIcon = (t) => t.kind === 'agent' ? 'bot' : t.kind === 'shell' ? 'terminal' : 'clock'
+// taskMarks are a kind's icon, with how many when counted: subagents, then
+// shells, then any other kind.
+function taskMarks(tasks, counted) {
+  const kinds = [...new Set(tasks.map((t) => t.kind))].sort((x, y) => (x === 'agent' ? 0 : x === 'shell' ? 1 : 2) - (y === 'agent' ? 0 : y === 'shell' ? 1 : 2))
+  return kinds.map((k) => h('span', { class: 'task-mark' }, icon(taskIcon({ kind: k })),
+    counted ? String(tasks.filter((t) => t.kind === k).length) : null))
+}
+const taskKindName = (t) => t.kind === 'agent' ? 'subagent' + (t.subagent ? ' · ' + t.subagent : '') : t.kind
+function tasksSummary(tasks) {
+  const n = (k, one) => { const c = tasks.filter((t) => t.kind === k).length; return c ? plural(c, one) : null }
+  const other = tasks.filter((t) => t.kind !== 'agent' && t.kind !== 'shell').length
+  return [n('agent', 'subagent'), n('shell', 'shell'), other ? plural(other, 'other task') : null].filter(Boolean).join(', ') + ' running'
+}
+
+// renderTasks is the list the status line's tasks item opens, over the
+// message box.
+function renderTasks() {
+  const slot = document.getElementById('tasks-slot')
+  if (!slot) return
+  const a = agentById(S.sel)
+  const tasks = a ? liveTasks(a) : []
+  if (S.tasksOpen !== S.sel || !tasks.length) { S.tasksOpen = null; slot.replaceChildren(); return }
+  slot.replaceChildren(h('div', { class: 'popover tasks-pop', role: 'dialog', 'aria-label': 'Running in the background' },
+    h('h3', null, 'Running in the background'),
+    h('div', { class: 'tasks' }, tasks.map((t) => h('div', { class: 'task' }, icon(taskIcon(t)),
+      h('span', { class: 'task-what' }, t.description || '(no description)'),
+      h('span', { class: 'task-kind' }, taskKindName(t)))))))
+}
+
+function closeTasks() {
+  if (!S.tasksOpen) return false
+  S.tasksOpen = null
+  renderTasks()
+  renderStatusLine()
+  return true
+}
+
 function renderStatusLine() {
   const slot = document.getElementById('status-slot')
   const a = agentById(S.sel)
   if (!slot || !a) return
-  const u = a.state?.usage
-  if (!u || a.archived_at) { slot.replaceChildren(); return }
+  const u = a.state?.usage || {}
+  const tasks = liveTasks(a)
+  renderTasks()
+  if ((!a.state?.usage && !tasks.length) || a.archived_at) { slot.replaceChildren(); return }
   const dir = (u.cwd || a.workdir || '').replace(/^\/home\/agent(?=\/|$)/, '~')
   const branch = readBranch(a)
+  // What runs beside the turn leads, so a wrapped line keeps it in view.
+  const open = S.tasksOpen === a.id
   const parts = [
+    tasks.length && h('span', null, h('button', {
+      type: 'button', class: 'sl-tasks', 'aria-expanded': String(open), 'aria-label': tasksSummary(tasks), title: tasksSummary(tasks),
+      onclick: (e) => { e.stopPropagation(); S.tasksOpen = open ? null : a.id; renderStatusLine() },
+    }, ...taskMarks(tasks, true))),
     branch && h('span', { class: 'sl-branch' }, `(${branch})`),
     u.model && h('span', { class: 'sl-model' }, modelName(u.model)),
   ]
@@ -4488,9 +4543,13 @@ function stepAgent(by) {
   if (next) { select(next); rows[ids.indexOf(next)].scrollIntoView({ block: 'nearest' }) }
 }
 
+// The tasks list closes on a click anywhere else.
+document.addEventListener('click', (e) => { if (S.tasksOpen && !e.target.closest?.('.tasks-pop, .sl-tasks')) closeTasks() })
+
 let goPending = 0
 document.addEventListener('keydown', (e) => {
   const t = e.target
+  if (e.key === 'Escape' && !e.isComposing && closeTasks()) { e.preventDefault(); return }
   // Esc leaves the message box, or a field of the new agent's form, once
   // nothing in it (a completion) took it: the shortcuts work again.
   if (e.key === 'Escape' && !e.defaultPrevented && !e.isComposing &&

@@ -127,11 +127,28 @@ type State struct {
 	Queued int `json:"queued,omitempty"`
 	// Background is how many tasks the process runs in the background,
 	// after its turn: replacing it would end them.
-	Background int    `json:"background,omitempty"`
-	Error      string `json:"error,omitempty"`
+	Background int `json:"background,omitempty"`
+	// Tasks are those tasks, as the CLI states them.
+	Tasks []Task `json:"tasks,omitempty"`
+	Error string `json:"error,omitempty"`
 	// Usage is the model and spending the CLI last stated.
 	Usage *Usage `json:"usage,omitempty"`
 }
+
+// Task is one the CLI runs beside its turn: a subagent, a shell run in the
+// background, or another kind it names.
+type Task struct {
+	// Kind is TaskAgent, TaskShell, or the CLI's own name for another.
+	Kind        string `json:"kind"`
+	Description string `json:"description,omitempty"`
+	// Subagent is an agent task's type, general-purpose say.
+	Subagent string `json:"subagent,omitempty"`
+}
+
+const (
+	TaskAgent = "agent"
+	TaskShell = "shell"
+)
 
 type Driver interface {
 	// Command is the process to start for the next generation.
