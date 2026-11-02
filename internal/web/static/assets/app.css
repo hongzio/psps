@@ -458,6 +458,10 @@ a.btn { display: inline-flex; align-items: center; color: var(--text); text-deco
 .approval .opts { display: flex; flex-wrap: wrap; gap: 6px; }
 .approval .opt-desc { color: var(--muted); font-size: 13px; overflow-wrap: anywhere; }
 .approval .opt-desc b { font-weight: 600; color: var(--text); }
+.btn.opt .opt-key { color: var(--muted); font-size: 11px; margin-right: 5px; font-variant-numeric: tabular-nums; }
+.btn.opt.on .opt-key { color: inherit; }
+@media (hover: none) { .btn.opt .opt-key { display: none; } }
+.approval .q.cur { box-shadow: -3px 0 0 var(--accent); padding-left: 8px; margin-left: -8px; }
 .btn.opt.on { border-color: var(--accent); background: var(--accent-soft); color: var(--accent); }
 .approval .own { width: 100%; padding: 7px 10px; border-radius: 8px; border: 1px solid var(--border); background: var(--bg); font-size: 14px; }
 .approval.decided { border-color: var(--border); background: transparent; }
