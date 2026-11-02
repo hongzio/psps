@@ -280,6 +280,9 @@ func isoCmd(p paths.Paths, args []string) error {
 		if err != nil {
 			return err
 		}
+		if x.Warning != "" {
+			defer fmt.Fprintln(os.Stderr, "warning: "+x.Warning)
+		}
 		fmt.Printf("%s is on for %s: envs %s%s; settings %s\n", svc.Name(), pos[0], orStr(strings.Join(x.Envs, ","), "(none)"),
 			map[bool]string{true: ", default " + x.Default}[x.Default != ""], compact(x.Settings))
 		if _, ok := svc.(proxy.Mounter); ok {

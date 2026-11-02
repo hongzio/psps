@@ -697,7 +697,10 @@ at most (20), in one of two places:
   that user left anywhere it can write, System V IPC included, so nothing
   passes from one eval to the next. The lead hears only the score: what the
   eval printed, which what is scored could fill with the grader, is yours
-  (`gero team show`, the team's dialog and page).
+  (`gero team show`, the team's dialog and page). A service you turn on
+  there anyway, say aws to record the grader's data, warns that the eval is
+  refused until it is off again; each refused one shows as `not run` and
+  counts for no patience.
 
 A grader for an eval isolation, say `grader`, lives in its agent user's home:
 make it in `gero iso shell grader`, where `~` is `/home/agent` (clone it,
@@ -747,7 +750,9 @@ resume it (`gero team resume`, or setting the lead again), when:
   it became the lead, as their CLIs count them (`--budget`; `none` takes it
   off);
 - the target is reached (`--target`);
-- `--patience` evals in a row (3) came without a new best.
+- `--patience` evals in a row (3) came without a new best. One gero could
+  not run (its isolation unfit, no verified fence, the work not copied)
+  scored nothing of the work's and counts for none.
 
 Resuming tells the lead, and asks it for the next team if nothing of its
 team works, as it would otherwise wait, told only that the run stopped. The

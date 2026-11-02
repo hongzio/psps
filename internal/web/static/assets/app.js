@@ -1372,7 +1372,7 @@ async function editTeam(t) {
     h('div', null, `Spent ${tokens(run.spent.input + run.spent.output)}` + (run.settings.budget ? ` of ${tokens(run.settings.budget)} tokens` : ' tokens, no budget') +
       (run.best ? ` · best ${run.best.score} at eval #${run.best.id}, ${run.stale} since without a new one` : '')),
     run.evals.length ? h('div', { class: 'lead-evals' }, run.evals.slice(-5).map((e) =>
-      h('span', { title: e.why + (e.output ? '\n\n' + e.output : '') }, `#${e.id} ${e.score ?? 'no score'}`))) : null,
+      h('span', { title: e.why + (e.output ? '\n\n' + e.output : '') }, `#${e.id} ${e.score ?? (e.not_run ? 'not run' : 'no score')}`))) : null,
     h('div', { class: 'lead-actions' },
       run.settings.eval ? h('button', {
         type: 'button', class: 'btn small', onclick: async (e) => {
@@ -3969,7 +3969,8 @@ function exposeForm(i, s, x) {
       const got = await api('PUT', `/v1/isolations/${enc(i.name)}/services/${enc(s.name)}`,
         { envs, default_env: def.value === DEFAULT ? undefined : def.value, settings: ctl.patch() })
       S.openForm = null
-      toast(s.replaces ? `${i.name} has ${envs.map((n) => '/shared/' + n).join(', ') || 'no shared folder'}`
+      if (got.warning) toast(got.warning, true)
+      else toast(s.replaces ? `${i.name} has ${envs.map((n) => '/shared/' + n).join(', ') || 'no shared folder'}`
         : s.forwards ? `${i.name} on the Mac: ${(got.forwards || []).map((f) => f.url).join(', ') || 'no port'}`
           : `${s.name} is on for ${i.name}; agents pick it up at their next idle moment`)
       await refreshIsolations()

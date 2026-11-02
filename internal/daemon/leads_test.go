@@ -614,6 +614,28 @@ func TestAnEvalRunsInItsIsolationOnACopyOfTheWork(t *testing.T) {
 	if _, err := m.SetLead(ctx, "lab", api.PutLead{Agent: "boss", EvalIsolation: ptr("ev")}); err != nil {
 		t.Fatal("with control:", err)
 	}
+	// A service the operator turns on there anyway says what it costs, and
+	// the eval it keeps from running counts for no patience.
+	x, err := m.Expose(ctx, "ev", "team", api.Expose{})
+	if err != nil || !strings.Contains(x.Warning, `isolation ev runs the eval of team "lab": while it has team, gero refuses to run it`) {
+		t.Fatalf("the warning: %q %v", x.Warning, err)
+	}
+	before, _ := m.TeamRun("lab")
+	m.EvalTeam("lab")
+	e.waitFor("the refused eval's news", func() bool { return len(news(e, boss.ID)) == 3 })
+	if n := news(e, boss.ID)[2]; !strings.Contains(n, "gero could not run it, so the work was not scored, and it counts for no patience") ||
+		!strings.Contains(n, "gero says: isolation ev cannot run the eval: it has the team service") {
+		t.Fatal(n)
+	}
+	if run, _ := m.TeamRun("lab"); !run.Evals[len(run.Evals)-1].NotRun || run.Stale != before.Stale {
+		t.Fatalf("stale %d, was %d: %+v", run.Stale, before.Stale, run.Evals)
+	}
+	if x, err := m.Expose(ctx, "ev", "control", api.Expose{}); err != nil || x.Warning != "" {
+		t.Fatalf("control warns: %q %v", x.Warning, err)
+	}
+	if err := m.Unexpose(ctx, "ev", "team"); err != nil {
+		t.Fatal(err)
+	}
 	// An agent of the operator's may work there: the eval runs as ever.
 	if _, err := m.CreateAgent(ctx, api.CreateAgent{Isolation: "ev", Kind: driver.Codex, Handle: "helper"}); err != nil {
 		t.Fatal(err)
@@ -622,8 +644,8 @@ func TestAnEvalRunsInItsIsolationOnACopyOfTheWork(t *testing.T) {
 		t.Fatal("with an agent in it:", err)
 	}
 	m.EvalTeam("lab")
-	e.waitFor("the eval's news", func() bool { return len(news(e, boss.ID)) == 3 })
-	if n := news(e, boss.ID)[2]; strings.Contains(n, "cannot run the eval") || !strings.Contains(n, "gero says: the eval: exit status 3") {
+	e.waitFor("the eval's news", func() bool { return len(news(e, boss.ID)) == 4 })
+	if n := news(e, boss.ID)[3]; strings.Contains(n, "cannot run the eval") || !strings.Contains(n, "gero says: the eval: exit status 3") {
 		t.Fatal(n)
 	}
 	if _, err := m.SetLead(ctx, "lab", api.PutLead{Agent: "boss", EvalIsolation: ptr("")}); err != nil {
