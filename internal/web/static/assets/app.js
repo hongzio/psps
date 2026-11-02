@@ -2284,13 +2284,13 @@ function approvalCard(a, ap) {
 // caret.
 function questionCard(a, ap) {
   const card = h('div', { class: 'approval asking' })
-  const st = (S.answering[ap.id] ||= { picked: {}, own: {} })
+  const st = (S.answering[ap.id] ||= { picked: {}, own: {}, cur: 0 })
   const answerTo = (q) => {
     const own = (st.own[q.question] || '').trim()
     if (!q.multi_select) return own || st.picked[q.question] || ''
     return [...(st.picked[q.question] || []), ...(own ? [own] : [])].join(', ')
   }
-  const draw = () => {
+  let draw = () => {
     const typing = card.contains(document.activeElement) && document.activeElement.dataset?.q != null ? document.activeElement : null
     const sel = typing && [typing.dataset.q, typing.selectionStart, typing.selectionEnd]
     const answer = h('button', { class: 'btn primary' }, 'Answer')
@@ -2313,18 +2313,19 @@ function questionCard(a, ap) {
       // the option is shown unpicked while there are any.
       const typed = () => !q.multi_select && !!(st.own[q.question] || '').trim()
       const isOn = (o) => q.multi_select ? (picked || []).includes(o.label) : picked === o.label && !typed()
-      const opts = (q.options || []).map((o) => {
+      const opts = (q.options || []).map((o, j) => {
         const on = isOn(o)
         return h('button', {
           class: 'btn small opt' + (on ? ' on' : ''), title: o.description || '', 'aria-pressed': String(on),
           onclick: () => {
             const on = isOn(o)
+            st.cur = i
             if (!q.multi_select && on) delete st.picked[q.question]
             else if (!q.multi_select) { st.picked[q.question] = o.label; st.own[q.question] = '' }
             else st.picked[q.question] = on ? picked.filter((l) => l !== o.label) : [...(picked || []), o.label]
             draw()
           },
-        }, o.label)
+        }, h('span', { class: 'opt-key' }, String(j + 1)), o.label)
       })
       const notes = descs(q)
       // Typing changes them in place: a redraw would take the box away from
@@ -2342,7 +2343,12 @@ function questionCard(a, ap) {
       own.dataset.q = String(i)
       shade()
       own.addEventListener('input', () => { st.own[q.question] = own.value; shade(); ready() })
-      own.addEventListener('keydown', (e) => { if (e.key === 'Enter' && !e.isComposing && !answer.disabled) answer.click() })
+      own.addEventListener('focus', () => { st.cur = i; markCur() })
+      own.addEventListener('keydown', (e) => {
+        if (e.isComposing) return
+        if (e.key === 'Enter' && !answer.disabled) answer.click()
+        if (e.key === 'Escape') { e.preventDefault(); own.blur() }
+      })
       return h('div', { class: 'q' },
         h('div', { class: 'q-head' }, q.header ? h('span', { class: 'chip' }, q.header) : null, q.question,
           q.multi_select ? h('span', { class: 'hint' }, ' (any of them)') : null),
@@ -2361,6 +2367,30 @@ function questionCard(a, ap) {
       if (el) { el.focus({ preventScroll: true }); el.setSelectionRange(sel[1], sel[2]) }
     }
   }
+  // The question the keys answer is marked where there are several.
+  const markCur = () => card.querySelectorAll('.q').forEach((el, i) => el.classList.toggle('cur', ap.questions.length > 1 && i === st.cur))
+  const rows = () => card.querySelectorAll('.q')
+  // The keys, taken where no field has them (see the shortcuts): a number
+  // picks that option of the question at hand, going on to the next where
+  // only one may be picked; 0 writes an answer of one's own; Enter answers.
+  card.keys = {
+    pick(n) {
+      const q = ap.questions[st.cur]
+      const opt = rows()[st.cur]?.querySelectorAll('.opt')[n - 1]
+      if (!opt) return
+      opt.click()
+      if (!q.multi_select && st.picked[q.question] && st.cur < ap.questions.length - 1) { st.cur++; draw() }
+      rows()[st.cur]?.scrollIntoView({ block: 'nearest' })
+    },
+    write() {
+      const own = rows()[st.cur]?.querySelector('input.own')
+      own?.focus()
+      own?.scrollIntoView({ block: 'nearest' })
+    },
+    answer() { card.querySelector('.actions .btn.primary:not(:disabled)')?.click() },
+  }
+  const drawn = draw
+  draw = () => { drawn(); markCur() }
   draw()
   return card
 }
@@ -4536,6 +4566,9 @@ const shortcuts = [
   ['Esc', 'Leave the message box; out of it, stop the working agent (Enter stops, Esc keeps it)'],
   ['j / k', 'Next / previous agent'],
   ['Space', 'Park the idle agent, or make it idle again'],
+  ['1–9', 'Pick that option of the question the agent asks'],
+  ['0', 'Answer the question in your own words (Esc leaves the box)'],
+  ['Enter', 'Send the answers to the question'],
   ['n', 'New agent'],
   ['m', 'Mail of the agent'],
   ['c', 'Cron of the agent'],
@@ -4630,6 +4663,16 @@ document.addEventListener('keydown', (e) => {
   if (t.closest?.('input, textarea, select, [contenteditable]') || document.querySelector('dialog[open]')) return
   const key = e.code?.startsWith('Key') ? e.code.slice(3).toLowerCase() : e.key
   const a = S.view === 'agent' ? agentById(S.sel) : null
+  // A question the open agent waits on answers to the numbers and Enter.
+  const asking = a && [...document.querySelectorAll('#convo .approval.asking')].find((c) => c.keys)
+  if (asking && !e.shiftKey) {
+    const n = /^Digit[0-9]$/.test(e.code) ? +e.code.slice(5) : /^[0-9]$/.test(e.key) ? +e.key : -1
+    const answering = n === 0 ? () => asking.keys.write()
+      : n > 0 ? () => asking.keys.pick(n)
+      : e.key === 'Enter' && (t === document.body || asking.contains(t)) ? () => asking.keys.answer()
+      : null
+    if (answering) { e.preventDefault(); answering(); return }
+  }
   const going = Date.now() - goPending < 1500
   goPending = 0
   const act = going ? { i: () => show('isolations'), s: () => show('services'), a: () => show('setup') }[key]
