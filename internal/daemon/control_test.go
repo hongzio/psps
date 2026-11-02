@@ -307,3 +307,75 @@ func TestControlSetsATeamsEvalToRunInItsOwnIsolation(t *testing.T) {
 		t.Fatalf("%+v %v", run.Settings, err)
 	}
 }
+
+// A command runs in an isolation only where an agent its caller made would
+// run under auto, and what it printed comes back with its exit code.
+func TestControlRunsACommandWhereAnAgentItMadeWouldRunUnderAuto(t *testing.T) {
+	e := newTestEnv(t)
+	m, stop := e.daemon()
+	defer stop()
+	ctx := context.Background()
+	fakeTimeout(t)
+	m.SetProxies(proxy.NewRegistry(mailproxy.Service{}, controlproxy.Service{}), &creds.Store{Path: filepath.Join(t.TempDir(), "credentials")})
+	m.tunnelPort = func(int) int { return freePort(t) }
+	if _, err := m.CreateIsolation(ctx, api.CreateIsolation{Name: "far"}, nil); err != nil {
+		t.Fatal(err)
+	}
+	agent := func(handle string, approvals driver.Approvals) store.Agent {
+		a, err := m.CreateAgent(ctx, api.CreateAgent{Isolation: "dev", Kind: driver.Codex, Handle: handle, Options: driver.Options{Approvals: approvals}})
+		if err != nil {
+			t.Fatal(err)
+		}
+		e.waitFor(handle, func() bool { return status(m, a.ID) == event.StatusIdle })
+		return a
+	}
+	boss := agent("boss", driver.ApprovalsAuto)
+	asker := agent("asker", driver.ApprovalsAsk)
+	if _, err := m.PutEnv(ctx, "control", "ops", proxy.Patch{Set: map[string]any{"allow": []string{"iso.exec"}}}, true); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := m.Expose(ctx, "dev", "control", api.Expose{Envs: []string{"ops"}, Settings: proxy.Patch{Set: map[string]any{"reach": []string{"far"}}}}); err != nil {
+		t.Fatal(err)
+	}
+	dir := t.TempDir()
+	run := func(from store.Agent, iso string, req map[string]any) (int, api.ControlExec, string) {
+		t.Helper()
+		body, _ := json.Marshal(req)
+		code, out := mailAs(t, m, from.IsolationID, from.ID, "POST", "/control/isolations/"+iso+"/exec", string(body))
+		var v api.ControlExec
+		json.Unmarshal([]byte(out), &v)
+		return code, v, out
+	}
+
+	code, v, out := run(boss, "dev", map[string]any{"command": "echo hi; pwd; echo oops >&2; exit 3", "dir": dir})
+	if code != 200 || v.Exit != 3 || v.Cut || !strings.Contains(v.Output, "hi") || !strings.Contains(v.Output, "oops") || !strings.Contains(v.Output, filepath.Base(dir)) {
+		t.Fatalf("%d %s", code, out)
+	}
+	code, v, out = run(boss, "dev", map[string]any{"command": "head -c 70000 /dev/zero | tr '\\0' a", "dir": dir})
+	if code != 200 || v.Exit != 0 || !v.Cut || len(v.Output) != 64<<10 {
+		t.Fatalf("%d %d %v", code, len(v.Output), v.Cut)
+	}
+	for _, req := range []map[string]any{{"command": " "}, {"command": "true", "seconds": 601}, {"command": "true", "dir": "rel"}} {
+		if code, _, out := run(boss, "dev", req); code != http.StatusBadRequest {
+			t.Fatalf("%v: %d %s", req, code, out)
+		}
+	}
+	if code, _, out := run(asker, "dev", map[string]any{"command": "true", "dir": dir}); code != http.StatusForbidden || !strings.Contains(out, "yours ask") {
+		t.Fatalf("an agent under ask: %d %s", code, out)
+	}
+	if code, _, out := run(boss, "far", map[string]any{"command": "true", "dir": dir}); code != http.StatusForbidden || !strings.Contains(out, "elsewhere_approvals") {
+		t.Fatalf("elsewhere, without auto there: %d %s", code, out)
+	}
+	if code, _, _ := run(boss, "nowhere", map[string]any{"command": "true", "dir": dir}); code != http.StatusNotFound {
+		t.Fatalf("an isolation it does not reach: %d", code)
+	}
+	if _, err := m.Expose(ctx, "dev", "control", api.Expose{Envs: []string{"ops"}, Settings: proxy.Patch{Set: map[string]any{"approvals": "auto"}}}); err != nil {
+		t.Fatal(err)
+	}
+	if code, v, out := run(boss, "far", map[string]any{"command": "echo there", "dir": dir}); code != 200 || v.Output != "there" {
+		t.Fatalf("elsewhere, with auto there: %d %s", code, out)
+	}
+	if code, _, _ := run(asker, "far", map[string]any{"command": "true", "dir": dir}); code != http.StatusForbidden {
+		t.Fatalf("an agent under ask, elsewhere: %d", code)
+	}
+}

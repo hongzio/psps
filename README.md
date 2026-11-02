@@ -794,7 +794,8 @@ gero env help control                        # the actions an env can open
 The actions: `agent.ls`, `agent.log` (a conversation), `agent.new`,
 `agent.send`, `agent.interrupt`, `agent.archive`, `agent.restore`,
 `agent.fork`, `agent.rename`, `agent.team`, `agent.set` (model and effort),
-`agent.cron`, `agent.inbox`, `iso.ls`, `iso.services`, `team.ls`,
+`agent.cron`, `agent.inbox`, `iso.ls`, `iso.services`, `iso.exec` (a
+command in an isolation), `team.ls`,
 `team.show`, `team.new`, `team.rename`, `team.rm`, `team.eval` and
 `team.evalset`. An env made without `--allow` opens the reads alone. Nothing
 that is credentials or rights is among them, so no env opens it: accounts,
@@ -825,6 +826,13 @@ as that agent:
   under auto or never runs under auto, with auto's reviewer, and one whose
   maker asks still asks. Nothing gives never that way. An agent cannot set
   a mode, and `agent.set` changes model and effort only.
+- **A command it runs, it could have had an agent run.** `iso.exec` runs a
+  shell command as the agent user in an isolation it reaches, for a minute
+  (ten at most), and gives back the end of what it printed and its exit code;
+  only where an agent it made would run under auto: in its own isolation
+  when the caller runs under auto or never, in another when you also gave
+  the exposure `--approvals auto`. Reaching an isolation this way is reaching
+  its files and services, an eval isolation's grader and data among them.
 - **It has few made at once, and writes within mail's budget.** `--max-live`
   (3) agents made through it (`agent.new`, `agent.fork`, restoring one) by
   the isolation's agents are live at once, and what they write through it

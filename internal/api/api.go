@@ -348,6 +348,15 @@ type ControlView struct {
 	Elsewhere string `json:"elsewhere_approvals"`
 }
 
+// ControlExec is what a command an agent ran in an isolation through the
+// control service printed (stdout and stderr together, the end of it when
+// Cut), and its exit code.
+type ControlExec struct {
+	Exit   int    `json:"exit"`
+	Output string `json:"output"`
+	Cut    bool   `json:"cut,omitempty"`
+}
+
 // PutCron sets a cron of an agent's: a cron expression or "@every 30m" for
 // Schedule, the message, and store.CronSkip or store.CronWait for what a
 // run that finds the agent busy does. What is left out stays as it is; a

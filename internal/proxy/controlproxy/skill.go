@@ -86,6 +86,21 @@ at most 20 set by agents, none coming more often than every five minutes.`,
 	"iso.services": `Which services an isolation you reach has:
 
     curl -sS "$GERO_CONTROL_URL/isolations/NAME/services"`,
+	"iso.exec": `Run a shell command in an isolation you reach, as its agent user, in its
+home or dir, and read what it printed (stdout and stderr together, its last
+64 KiB) and its exit code:
+
+    curl -sS "$GERO_CONTROL_URL/isolations/NAME/exec" --json @- <<'EXEC'
+    {"command": "git -C ~/work/repo branch -a", "dir": "~", "seconds": 60}
+    EXEC
+
+- seconds: how long it may run, 60 when left out, 600 at most; then it is
+  ended, exit 124.
+- It runs only where an agent you made would run under auto: in this
+  isolation when yours are auto or never, in another when your operator also
+  gave this isolation's agents auto there (elsewhere_approvals).
+- What it does is done as you, in the log: look before you change anything
+  there, and leave what is another agent's work to that agent.`,
 	"team.ls": `The teams that have an agent you reach, or none:
 
     curl -sS "$GERO_CONTROL_URL/teams"`,
