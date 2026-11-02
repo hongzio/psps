@@ -2299,6 +2299,14 @@ function questionCard(a, ap) {
       const answers = Object.fromEntries(ap.questions.map((q) => [q.question, answerTo(q)]))
       decide(ap.id, 'accept', answers)
     })
+    // What the picked options mean, under them: a touch screen has no
+    // hover for an option's title.
+    const descs = (q) => {
+      const picked = st.picked[q.question]
+      const on = q.multi_select ? picked || [] : picked && !(st.own[q.question] || '').trim() ? [picked] : []
+      const shown = (q.options || []).filter((o) => o.description && on.includes(o.label))
+      return shown.map((o) => h('div', { class: 'opt-desc' }, q.multi_select || shown.length > 1 ? h('b', null, o.label + ': ') : null, o.description))
+    }
     const question = (q, i) => {
       const picked = st.picked[q.question]
       const opts = (q.options || []).map((o) => {
@@ -2319,7 +2327,7 @@ function questionCard(a, ap) {
       return h('div', { class: 'q' },
         h('div', { class: 'q-head' }, q.header ? h('span', { class: 'chip' }, q.header) : null, q.question,
           q.multi_select ? h('span', { class: 'hint' }, ' (any of them)') : null),
-        opts.length ? h('div', { class: 'opts' }, opts) : null, own)
+        opts.length ? h('div', { class: 'opts' }, opts) : null, ...descs(q), own)
     }
     card.replaceChildren(
       h('div', { class: 'head' }, `${label(a)} asks you`),

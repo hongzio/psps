@@ -456,6 +456,8 @@ a.btn { display: inline-flex; align-items: center; color: var(--text); text-deco
 .approval .q-head { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; font-size: 14px; }
 .approval .q-head .hint { color: var(--muted); font-size: 12.5px; }
 .approval .opts { display: flex; flex-wrap: wrap; gap: 6px; }
+.approval .opt-desc { color: var(--muted); font-size: 13px; overflow-wrap: anywhere; }
+.approval .opt-desc b { font-weight: 600; color: var(--text); }
 .btn.opt.on { border-color: var(--accent); background: var(--accent-soft); color: var(--accent); }
 .approval .own { width: 100%; padding: 7px 10px; border-radius: 8px; border: 1px solid var(--border); background: var(--bg); font-size: 14px; }
 .approval.decided { border-color: var(--border); background: transparent; }
