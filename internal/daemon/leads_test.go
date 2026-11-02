@@ -301,7 +301,7 @@ func TestARoundEndsWithTheEvalAndARunWithoutProgressStops(t *testing.T) {
 	e.waitFor("the eval's news", func() bool { return len(news(e, boss.ID)) == before+1 })
 	n := news(e, boss.ID)[before]
 	for _, want := range []string{"1 item(s)", "Eval #1 (the round ended) took ", "SCORE 1.5, a new best.",
-		"Nothing of your team is running. The team has used ", "Design the next team, have the eval run on a change of your own (POST $GERO_TEAM_URL/eval), or say why you stop."} {
+		"Nothing of your team is running. The team has used ", "which signs of a stuck team yours shows", "Then design the next team, have the eval run on a change of your own (POST $GERO_TEAM_URL/eval), or say why you stop."} {
 		if !strings.Contains(n, want) {
 			t.Fatalf("news lacks %q:\n%s", want, n)
 		}
@@ -348,7 +348,7 @@ func TestARoundEndsWithTheEvalAndARunWithoutProgressStops(t *testing.T) {
 	e.waitFor("the resume's news", func() bool { return len(news(e, boss.ID)) == before+4 })
 	n = news(e, boss.ID)[before+3]
 	for _, want := range []string{"1 item(s)", "Your operator resumed the run, which gero had stopped (2 evals in a row came without a new best). The evals so far count no more toward its patience. The best is 1.5, at eval #1. Nothing of your team is running. The team has used ",
-		"Design the next team, have the eval run on a change of your own (POST $GERO_TEAM_URL/eval), or say why you stop."} {
+		"which signs of a stuck team yours shows", "Then design the next team, have the eval run on a change of your own (POST $GERO_TEAM_URL/eval), or say why you stop."} {
 		if !strings.Contains(n, want) {
 			t.Fatalf("news lacks %q:\n%s", want, n)
 		}

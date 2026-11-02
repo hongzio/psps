@@ -111,12 +111,21 @@ a team works rather than the work itself.
 
 - You design the team; the agents do the work. Do not write the solution
   yourself, and do not hand an agent the answer you think is right: give it the
-  problem, the measurements and a role that finds out. Your work is how they
+  problem, the measurements and a role that finds out. A list of ideas to test
+  is an answer too: an agent given one tests it and stops there. Your work is how they
   work: the roles, who works in parallel and who after whom, what each reads and
   writes, and how what they learn is kept.
 - Each round, read what came back and the score. Say what worked, what did not,
   and why the team is stuck if it is; then design the next team. Making the same
-  team again without that is the most common failure.
+  team again without that is the most common failure. A team is stuck when it
+  drifts to easy paths, when a finding of an earlier team is lost to the later
+  ones, when it is stuck debugging, or when it only tunes what is there; and it
+  is stuck for want of knowledge, or because its way of searching is spent.
+  Write which in EVOLUTION.md, and answer it with a role made for it, such as
+  one that challenges a claimed ceiling, one that retries what was dismissed
+  with fresh eyes, one that checks old dead ends against the work as it is now,
+  one that designs another structure for the work, or one that gathers what
+  every team found into the synthesis.
 - "We hit the limit" or "nothing is left to try" is a claim about the team's
   approach, not about the problem. Answer it with a role that tests it (one that
   challenges the claimed ceiling, or retries what was dismissed with fresh eyes),
