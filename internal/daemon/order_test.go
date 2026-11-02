@@ -171,3 +171,38 @@ func TestAnAgentsTeamFollowsItsLine(t *testing.T) {
 		t.Fatalf("%+v", o)
 	}
 }
+
+// A new agent goes right after the last of its isolation's in the live
+// list, a team's agents aside; with none of its isolation, at the bottom.
+func TestANewAgentGoesAfterTheLastOfItsIsolation(t *testing.T) {
+	agent := func(id, iso string) agentView {
+		var a agentView
+		a.ID, a.Line, a.IsolationID = id, id, iso
+		return a
+	}
+	teams := map[string]string{"t1": "T"}
+	cases := []struct {
+		name string
+		live []string
+		as   []agentView
+		want []string
+	}{
+		{"placed", []string{"a", "divider:1", "b", "team:T", "c"},
+			[]agentView{agent("a", "x"), agent("b", "y"), agent("t1", "x"), agent("c", "y"), agent("new", "x")},
+			[]string{"a", "new", "divider:1", "b", "team:T", "c"}},
+		{"after the last", []string{"a", "b", "c"},
+			[]agentView{agent("a", "x"), agent("b", "y"), agent("c", "x"), agent("new", "x")},
+			[]string{"a", "b", "c", "new"}},
+		{"not placed yet", []string{"a"},
+			[]agentView{agent("a", "y"), agent("b", "x"), agent("t1", "x"), agent("c", "y"), agent("new", "x")},
+			[]string{"a", "b", "new"}},
+		{"none of it", []string{"a"},
+			[]agentView{agent("a", "y"), agent("t1", "x"), agent("new", "x")}, nil},
+	}
+	for _, c := range cases {
+		got, ok := placedAfter(c.live, c.as, teams, "new", "x")
+		if ok != (c.want != nil) || !slices.Equal(got, c.want) {
+			t.Errorf("%s: %v %v, want %v", c.name, got, ok, c.want)
+		}
+	}
+}
