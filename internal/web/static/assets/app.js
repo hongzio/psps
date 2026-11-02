@@ -2303,17 +2303,22 @@ function questionCard(a, ap) {
     // hover for an option's title.
     const descs = (q) => {
       const picked = st.picked[q.question]
-      const on = q.multi_select ? picked || [] : picked && !(st.own[q.question] || '').trim() ? [picked] : []
+      const on = q.multi_select ? picked || [] : picked ? [picked] : []
       const shown = (q.options || []).filter((o) => o.description && on.includes(o.label))
       return shown.map((o) => h('div', { class: 'opt-desc' }, q.multi_select || shown.length > 1 ? h('b', null, o.label + ': ') : null, o.description))
     }
     const question = (q, i) => {
       const picked = st.picked[q.question]
+      // Where one may be picked, words of one's own are the answer instead:
+      // the option is shown unpicked while there are any.
+      const typed = () => !q.multi_select && !!(st.own[q.question] || '').trim()
+      const isOn = (o) => q.multi_select ? (picked || []).includes(o.label) : picked === o.label && !typed()
       const opts = (q.options || []).map((o) => {
-        const on = q.multi_select ? (picked || []).includes(o.label) : picked === o.label && !(st.own[q.question] || '').trim()
+        const on = isOn(o)
         return h('button', {
           class: 'btn small opt' + (on ? ' on' : ''), title: o.description || '', 'aria-pressed': String(on),
           onclick: () => {
+            const on = isOn(o)
             if (!q.multi_select && on) delete st.picked[q.question]
             else if (!q.multi_select) { st.picked[q.question] = o.label; st.own[q.question] = '' }
             else st.picked[q.question] = on ? picked.filter((l) => l !== o.label) : [...(picked || []), o.label]
@@ -2321,14 +2326,27 @@ function questionCard(a, ap) {
           },
         }, o.label)
       })
+      const notes = descs(q)
+      // Typing changes them in place: a redraw would take the box away from
+      // under an IME's composition.
+      const shade = () => {
+        if (q.multi_select) return
+        ;(q.options || []).forEach((o, j) => {
+          const on = isOn(o)
+          opts[j].classList.toggle('on', on)
+          opts[j].setAttribute('aria-pressed', String(on))
+        })
+        for (const n of notes) n.hidden = typed()
+      }
       const own = h('input', { class: 'own', value: st.own[q.question] || '', placeholder: q.multi_select ? 'And in your own words…' : 'Or in your own words…', autocomplete: 'off', 'aria-label': q.question })
       own.dataset.q = String(i)
-      own.addEventListener('input', () => { st.own[q.question] = own.value; ready() })
+      shade()
+      own.addEventListener('input', () => { st.own[q.question] = own.value; shade(); ready() })
       own.addEventListener('keydown', (e) => { if (e.key === 'Enter' && !e.isComposing && !answer.disabled) answer.click() })
       return h('div', { class: 'q' },
         h('div', { class: 'q-head' }, q.header ? h('span', { class: 'chip' }, q.header) : null, q.question,
           q.multi_select ? h('span', { class: 'hint' }, ' (any of them)') : null),
-        opts.length ? h('div', { class: 'opts' }, opts) : null, ...descs(q), own)
+        opts.length ? h('div', { class: 'opts' }, opts) : null, ...notes, own)
     }
     card.replaceChildren(
       h('div', { class: 'head' }, `${label(a)} asks you`),
