@@ -865,18 +865,22 @@ func TestClaudeCountsWhatRunsInTheBackground(t *testing.T) {
 	tp := &tape{}
 	tp.started()
 	tp.out(`{"type":"system","subtype":"init","session_id":"s1"}`)
-	tp.out(`{"type":"system","subtype":"background_tasks_changed","tasks":[{"task_id":"b1","task_type":"local_bash","description":"tests"},{"task_id":"a2","task_type":"local_agent","description":"audit"}]}`)
+	tp.out(`{"type":"system","subtype":"background_tasks_changed","tasks":[{"task_id":"b1","task_type":"local_bash","description":"tests"},{"task_id":"a2","task_type":"local_agent","subagent_type":"general-purpose","description":"audit"}]}`)
 	tp.out(`{"type":"result","subtype":"success","queued_turn_count":0}`)
 	feed(c, tp.recs)
 	if st := c.State(); st.Busy || st.Background != 2 {
 		t.Fatalf("after the turn: %+v", st)
+	}
+	want := []Task{{Kind: TaskShell, Description: "tests"}, {Kind: TaskAgent, Description: "audit", Subagent: "general-purpose"}}
+	if st := c.State(); !reflect.DeepEqual(st.Tasks, want) {
+		t.Fatalf("tasks %+v", st.Tasks)
 	}
 	feed(c, []shimproto.Record{tp.out(`{"type":"system","subtype":"background_tasks_changed","tasks":[{"task_id":"a2"}]}`)})
 	if st := c.State(); st.Background != 1 {
 		t.Fatalf("one ended: %+v", st)
 	}
 	feed(c, []shimproto.Record{tp.exited(143)})
-	if st := c.State(); st.Background != 0 {
+	if st := c.State(); st.Background != 0 || st.Tasks != nil {
 		t.Fatalf("after the process: %+v", st)
 	}
 }

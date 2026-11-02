@@ -43,13 +43,13 @@ type claude struct {
 	sessionUsed  bool
 	gen          int
 	pendingTurns int
-	// background is how many tasks claude says run in the background (a
-	// shell, a subagent, a monitor): they go on after a turn ends, and die
-	// with the process.
-	background int
-	queue      []string
-	pending    []*clPending
-	stop       bool
+	// tasks are those claude says run in the background (a shell, a
+	// subagent, a monitor): they go on after a turn ends, and die with the
+	// process. A subagent is among them while it runs, in the turn too.
+	tasks   []Task
+	queue   []string
+	pending []*clPending
+	stop    bool
 	// stopping: the turn running was told to stop, by an interrupt or a
 	// decision that stops it. Claude ends such a turn in an error during
 	// execution, which is the stop, not a failure.
@@ -153,7 +153,7 @@ func (c *claude) Command() []string {
 
 func (c *claude) State() State {
 	return State{Status: c.status, Alive: c.alive, Busy: c.busy, SessionID: c.sessionID, Error: c.errText, Restart: c.restart, Queued: len(c.queue),
-		Background: c.background, Usage: c.usage.shown()}
+		Background: len(c.tasks), Tasks: slices.Clone(c.tasks), Usage: c.usage.shown()}
 }
 
 func (c *claude) Send(text string) { c.queue = append(c.queue, text) }
@@ -443,7 +443,7 @@ func (c *claude) Observe(rec shimproto.Record) []event.Event {
 		case shimproto.SysStarted:
 			c.gen++
 			c.alive, c.restart, c.errText, c.asked = true, false, "", false
-			c.busy, c.blocked, c.pendingTurns, c.pending, c.stopping, c.background = false, false, 0, nil, false, 0
+			c.busy, c.blocked, c.pendingTurns, c.pending, c.stopping, c.tasks = false, false, 0, nil, false, nil
 			evs = append(evs, c.text(rec, event.KindNotice, "", fmt.Sprintf("claude started (pid %d)", rec.Sys.PID)))
 			c.forking = slices.Contains(rec.Sys.Argv, "--fork-session")
 			if rw := c.rewindIn(rec.Sys.Argv); rw != nil {
@@ -451,7 +451,7 @@ func (c *claude) Observe(rec shimproto.Record) []event.Event {
 				c.rewind, c.going, c.lastEntry = nil, rw, rw.at
 			}
 		case shimproto.SysExited, shimproto.SysLost:
-			c.pending, c.pendingTurns, c.background = nil, 0, 0
+			c.pending, c.pendingTurns, c.tasks = nil, 0, nil
 			evs = c.processEnded(rec, "claude")
 			if c.forking {
 				// It never forked: the session it is a copy of is gone. The
@@ -574,7 +574,7 @@ func (c *claude) observeOut(rec shimproto.Record, m clMessage) []event.Event {
 	switch m.Type {
 	case "system":
 		if m.Subtype == "background_tasks_changed" {
-			c.background = len(m.Tasks)
+			c.tasks = clTasks(m.Tasks)
 		}
 		if m.Subtype == "init" {
 			// init opens every turn, also one claude starts itself when a
@@ -803,4 +803,27 @@ func toolSummary(name string, input json.RawMessage) string {
 		}
 	}
 	return ""
+}
+
+// clTasks reads background_tasks_changed's tasks: local_agent is a
+// subagent, local_bash a shell; another kind keeps claude's name.
+func clTasks(raw []json.RawMessage) []Task {
+	var out []Task
+	for _, r := range raw {
+		var t struct {
+			Type        string `json:"task_type"`
+			Description string `json:"description"`
+			Subagent    string `json:"subagent_type"`
+		}
+		json.Unmarshal(r, &t)
+		kind := t.Type
+		switch t.Type {
+		case "local_agent":
+			kind = TaskAgent
+		case "local_bash":
+			kind = TaskShell
+		}
+		out = append(out, Task{Kind: cmp.Or(kind, "task"), Description: t.Description, Subagent: t.Subagent})
+	}
+	return out
 }
