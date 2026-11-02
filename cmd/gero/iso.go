@@ -22,7 +22,7 @@ import (
 
 func isoCmd(p paths.Paths, args []string) error {
 	if len(args) == 0 {
-		return errors.New("usage: gero iso create|ls|rename|set|upgrade|rm|env|login|logout|account|shell|verify|services|expose|unexpose")
+		return errors.New("usage: gero iso create|ls|rename|set|upgrade|rm|env|login|logout|account|shell|verify|kill|services|expose|unexpose")
 	}
 	c, err := connect(p)
 	if err != nil {
@@ -193,6 +193,22 @@ func isoCmd(p paths.Paths, args []string) error {
 		if code != api.VerifyOK {
 			return exitCode(code)
 		}
+		return nil
+
+	case "kill":
+		pos := parse(fs, args[1:])
+		if len(pos) != 1 {
+			return errors.New("usage: gero iso kill NAME")
+		}
+		v, err := c.KillIsolation(ctx, pos[0])
+		if err != nil {
+			return err
+		}
+		if len(v.Processes) == 0 {
+			fmt.Printf("%s was not running\n", pos[0])
+			return nil
+		}
+		fmt.Printf("killed %s (processes %v); its agents are interrupted, and it starts again when next needed\n", pos[0], v.Processes)
 		return nil
 
 	case "services":

@@ -177,6 +177,8 @@ type fakeContainers struct {
 	refuseShare string
 	// evalResets are the EvalResets, as "container wipe".
 	evalResets []string
+	// killed are the containers Kill ended.
+	killed []string
 	// dial is what the tunnel connects the daemon to inside: the isolation's
 	// loopback, as the shim allows; nil is a shim from before forwards.
 	dial tunnel.Allow
@@ -409,6 +411,13 @@ func (f *fakeContainers) StartAsAgent(ctx context.Context, name string, env []st
 
 // evalRoot is the container's isolation.EvalRoot.
 func (f *fakeContainers) evalRoot(name string) string { return filepath.Join(f.base, name, "eval") }
+
+func (f *fakeContainers) Kill(_ context.Context, name string) ([]int, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.killed = append(f.killed, name)
+	return []int{4242}, nil
+}
 
 func (f *fakeContainers) EvalReset(_ context.Context, name string, wipe bool) error {
 	f.mu.Lock()
@@ -2159,5 +2168,31 @@ func TestAForkStartsFromTheConversationItForks(t *testing.T) {
 	e.waitFor("its process to end", func() bool { return m.DeleteAgent(ctx, f.ID, true) == nil })
 	if !exists(a.Workdir) {
 		t.Fatal("purging a fork took the directory")
+	}
+}
+
+func TestKillingAnIsolationEndsItsContainerAndMeasuresItsFenceAgain(t *testing.T) {
+	e := newTestEnv(t)
+	m, stop := e.daemon()
+	defer stop()
+	v, err := m.KillIsolation(context.Background(), "dev")
+	if err != nil {
+		t.Fatal(err)
+	}
+	e.fc.mu.Lock()
+	killed := slices.Clone(e.fc.killed)
+	e.fc.mu.Unlock()
+	if !slices.Equal(killed, []string{testCtr}) || !slices.Equal(v.Processes, []int{4242}) {
+		t.Fatalf("killed %v, reported %v", killed, v.Processes)
+	}
+	m.mu.Lock()
+	fs := m.fenceStateLocked(testIsoID)
+	stale := fs.stale && !fs.ok
+	m.mu.Unlock()
+	if !stale {
+		t.Error("a killed isolation's fence is still taken as measured")
+	}
+	if _, err := m.KillIsolation(context.Background(), "nope"); err == nil {
+		t.Error("killed an isolation that is not there")
 	}
 }

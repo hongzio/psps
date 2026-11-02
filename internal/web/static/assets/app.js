@@ -3040,6 +3040,7 @@ function isoDetail(i) {
       h('span', { class: 'head-actions' },
         h('button', { class: 'btn', disabled: S.verifying === i.name, onclick: () => verifyIsolation(i) },
           S.verifying === i.name ? 'Measuring…' : 'Verify'),
+        h('button', { class: 'btn danger', disabled: i.state !== 'running', title: 'End its VM now, past container: for one that no longer answers', onclick: () => killIsolation(i) }, 'Kill'),
         h('button', { class: 'btn', onclick: () => upgradeIsolation(i) }, 'Upgrade'))),
     fenceOK(i) ? null : h('p', { class: 'callout warn' }, `Agents start here only behind a verified network fence: ${i.fence_state}.`),
     S.openForm === `verify:${i.name}` && S.verifyOut ? verifyView(S.verifyOut) : null,
@@ -3262,6 +3263,22 @@ async function upgradeIsolation(i) {
   if (!await ask({ title: `Upgrade ${i.name} to the current image?`, body: 'Running agents restart; sessions are kept.', ok: 'Upgrade' })) return
   toast('Upgrading…')
   await guarded(async () => { await api('POST', `/v1/isolations/${enc(i.name)}/upgrade`); toast(`${i.name} upgraded`); await refreshIsolations() })
+}
+
+// killIsolation ends the container's VM with SIGKILL, past container: a
+// VM too starved to start anything holds up every exec, container's stop
+// with them, and only this ends it.
+async function killIsolation(i) {
+  if (!await ask({
+    title: `Kill ${i.name}?`,
+    body: 'Its VM ends at once, as if unplugged: its agents are interrupted, and what its disks had not written is lost. It starts again when something next needs it. For an isolation that no longer answers, when Stop would hang too.',
+    ok: 'Kill', danger: true,
+  })) return
+  await guarded(async () => {
+    const got = await api('POST', `/v1/isolations/${enc(i.name)}/kill`)
+    toast(got.processes?.length ? `${i.name} killed` : `${i.name} was not running`)
+    await refreshIsolations()
+  })
 }
 
 async function deleteIsolation(i) {

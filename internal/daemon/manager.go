@@ -63,6 +63,8 @@ type Containers interface {
 	EvalReset(ctx context.Context, container string, wipe bool) error
 	CopyToEval(ctx context.Context, from, dir, to string) error
 	RunEval(ctx context.Context, container string, argv ...string) (string, error)
+	// Kill ends a container container no longer answers for (isolation/kill.go).
+	Kill(ctx context.Context, container string) ([]int, error)
 }
 
 // Fence is the root helper that keeps isolation networks off the Mac and its
@@ -571,6 +573,24 @@ func (m *Manager) UpgradeIsolation(ctx context.Context, name string, progress io
 	}
 	_, err = m.ensureIsolation(ctx, iso.ID)
 	return iso, err
+}
+
+// KillIsolation ends an isolation's container the hard way, past container
+// itself: for a VM that has stopped answering, which holds up every exec,
+// and container's stop with them. It takes no lock of the isolation's, as
+// what holds one may be waiting on that VM. The agents in it are
+// interrupted; the container starts again when something next needs it.
+func (m *Manager) KillIsolation(ctx context.Context, name string) (api.Killed, error) {
+	iso, err := m.isolationNamed(name)
+	if err != nil {
+		return api.Killed{}, err
+	}
+	pids, err := m.cli.Kill(ctx, iso.Container)
+	if len(pids) > 0 {
+		m.markFenceStale(iso.ID)
+		m.log.Printf("isolation %s: killed (processes %v)", iso.Name, pids)
+	}
+	return api.Killed{Processes: append([]int{}, pids...)}, err
 }
 
 // checkSize refuses a size the VM cannot have, before anything is torn
