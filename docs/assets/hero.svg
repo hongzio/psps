@@ -1,0 +1,108 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="520" viewBox="0 0 1280 520" role="img" aria-labelledby="t d">
+  <title id="t">gero</title>
+  <desc id="d">A lead agent runs a team of Claude Code and Codex agents that mail each other, run on schedules and are scored by an eval round after round, inside a fenced isolation on your Mac.</desc>
+  <style>
+    .sans { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif; }
+    .mono { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
+    .fence { stroke-dasharray: 7 6; animation: march 1.6s linear infinite; }
+    @keyframes march { to { stroke-dashoffset: -26; } }
+    .pulse { animation: pulse 1.8s ease-in-out infinite; }
+    .pulse.b { animation-delay: .6s; } .pulse.c { animation-delay: 1.2s; }
+    @keyframes pulse { 0%,100% { opacity: 1; } 50% { opacity: .35; } }
+    .grow { transform-box: fill-box; transform-origin: bottom; animation: grow 4s ease-out infinite; }
+    @keyframes grow { 0%,55%,100% { transform: scaleY(1); } 65%,70% { transform: scaleY(.15); } }
+    @media (prefers-reduced-motion: reduce) { .fence, .pulse, .grow { animation: none; } }
+  </style>
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#0b0f17"/>
+      <stop offset="1" stop-color="#161b26"/>
+    </linearGradient>
+    <radialGradient id="glow" cx=".25" cy=".35" r=".6">
+      <stop offset="0" stop-color="#d2a8ff" stop-opacity=".14"/>
+      <stop offset="1" stop-color="#d2a8ff" stop-opacity="0"/>
+    </radialGradient>
+  </defs>
+
+  <rect width="1280" height="520" rx="20" fill="url(#bg)"/>
+  <rect width="1280" height="520" rx="20" fill="url(#glow)"/>
+
+  <!-- left: the pitch -->
+  <text x="64" y="100" class="sans" font-size="15" letter-spacing="2.5" fill="#8b949e">CLAUDE CODE + CODEX · ON YOUR MAC</text>
+  <text x="58" y="204" class="sans" font-size="128" font-weight="800" fill="#e6edf3" letter-spacing="-4">gero</text>
+  <text x="64" y="282" class="sans" font-size="32" font-weight="600" fill="#e6edf3">Run a team of coding agents.</text>
+  <text x="64" y="324" class="sans" font-size="32" font-weight="600" fill="#d2a8ff">Not a terminal tab per agent.</text>
+
+  <g class="mono" font-size="15" fill="#c9d1d9">
+    <rect x="64" y="362" width="196" height="34" rx="17" fill="#ffffff" fill-opacity=".06" stroke="#30363d"/>
+    <text x="84" y="384">a lead that hires</text>
+    <rect x="272" y="362" width="204" height="34" rx="17" fill="#ffffff" fill-opacity=".06" stroke="#30363d"/>
+    <text x="292" y="384">runs toward a score</text>
+    <rect x="64" y="408" width="232" height="34" rx="17" fill="#ffffff" fill-opacity=".06" stroke="#30363d"/>
+    <text x="84" y="430">mail · cron · control</text>
+    <rect x="308" y="408" width="196" height="34" rx="17" fill="#ffffff" fill-opacity=".06" stroke="#30363d"/>
+    <text x="328" y="430">web · TUI · phone</text>
+  </g>
+
+  <!-- right: a team at work, in a fenced isolation -->
+  <rect x="640" y="56" width="576" height="408" rx="14" fill="#0d1117"/>
+  <rect x="640" y="56" width="576" height="408" rx="14" fill="none" stroke="#ffa657" stroke-opacity=".7" stroke-width="1.5" class="fence"/>
+  <text x="660" y="82" class="mono" font-size="13" fill="#8b949e">team <tspan fill="#d2a8ff">lab</tspan> · isolation <tspan fill="#ffa657">dev</tspan>, fenced</text>
+
+  <!-- lead -->
+  <rect x="836" y="100" width="184" height="46" rx="10" fill="#1c1630" stroke="#d2a8ff"/>
+  <circle cx="858" cy="123" r="5" fill="#d2a8ff" class="pulse c"/>
+  <text x="872" y="128" class="mono" font-size="15" fill="#e6edf3">lead <tspan fill="#d2a8ff">tara</tspan></text>
+
+  <!-- lead to its agents -->
+  <path id="l1" d="M928 146 L744 200" stroke="#3d444d" stroke-width="1.5" fill="none"/>
+  <path id="l2" d="M928 146 L928 200" stroke="#3d444d" stroke-width="1.5" fill="none"/>
+  <path id="l3" d="M928 146 L1112 200" stroke="#3d444d" stroke-width="1.5" fill="none"/>
+  <circle r="3.5" fill="#d2a8ff"><animateMotion dur="2.4s" repeatCount="indefinite"><mpath href="#l1"/></animateMotion></circle>
+  <circle r="3.5" fill="#d2a8ff"><animateMotion dur="2.4s" repeatCount="indefinite" begin=".8s"><mpath href="#l2"/></animateMotion></circle>
+  <circle r="3.5" fill="#d2a8ff"><animateMotion dur="2.4s" repeatCount="indefinite" begin="1.6s"><mpath href="#l3"/></animateMotion></circle>
+
+  <!-- agents -->
+  <g class="mono" font-size="14" fill="#c9d1d9">
+    <rect x="664" y="200" width="160" height="46" rx="10" fill="#161b22" stroke="#3d444d"/>
+    <circle cx="684" cy="223" r="5" fill="#7ee787" class="pulse"/>
+    <text x="698" y="228">claude <tspan fill="#8b949e">api</tspan></text>
+    <rect x="848" y="200" width="160" height="46" rx="10" fill="#161b22" stroke="#3d444d"/>
+    <circle cx="868" cy="223" r="5" fill="#7ee787" class="pulse b"/>
+    <text x="882" y="228">codex <tspan fill="#8b949e">tests</tspan></text>
+    <rect x="1032" y="200" width="160" height="46" rx="10" fill="#161b22" stroke="#3d444d"/>
+    <circle cx="1052" cy="223" r="5" fill="#8b949e"/>
+    <text x="1066" y="228" fill="#8b949e">claude idle</text>
+  </g>
+
+  <!-- mail between peers -->
+  <path id="m1" d="M760 246 Q844 290 912 246" stroke="#58a6ff" stroke-width="1.5" stroke-dasharray="4 4" fill="none"/>
+  <circle r="3" fill="#58a6ff"><animateMotion dur="2s" repeatCount="indefinite"><mpath href="#m1"/></animateMotion></circle>
+  <text x="818" y="292" class="mono" font-size="12" fill="#58a6ff">✉ mail</text>
+
+  <!-- eval -->
+  <rect x="664" y="310" width="344" height="134" rx="10" fill="#161b22" stroke="#3d444d"/>
+  <text x="682" y="334" class="mono" font-size="12" fill="#8b949e">eval per round · in a grader isolation</text>
+  <g fill="#3d444d">
+    <rect x="684" y="394" width="24" height="30" rx="3"/>
+    <rect x="724" y="382" width="24" height="42" rx="3"/>
+    <rect x="764" y="386" width="24" height="38" rx="3"/>
+    <rect x="804" y="368" width="24" height="56" rx="3"/>
+    <rect x="844" y="358" width="24" height="66" rx="3"/>
+    <rect x="884" y="346" width="24" height="78" rx="3" fill="#7ee787" class="grow"/>
+  </g>
+  <text x="926" y="384" class="sans" font-size="34" font-weight="800" fill="#7ee787">91</text>
+  <text x="928" y="406" class="mono" font-size="12" fill="#8b949e">best,</text>
+  <text x="928" y="422" class="mono" font-size="12" fill="#8b949e">round 6</text>
+
+  <!-- terms and schedules -->
+  <rect x="1024" y="310" width="168" height="134" rx="10" fill="#161b22" stroke="#3d444d"/>
+  <g class="mono" font-size="13">
+    <text x="1040" y="338" fill="#c9d1d9">◷ <tspan fill="#8b949e">09:00</tspan> check CI</text>
+    <text x="1040" y="364" fill="#c9d1d9">✉ <tspan fill="#8b949e">2 waiting</tspan></text>
+    <text x="1040" y="392" fill="#8b949e">budget 5M</text>
+    <rect x="1040" y="404" width="136" height="8" rx="4" fill="#30363d"/>
+    <rect x="1040" y="404" width="52" height="8" rx="4" fill="#ffa657"/>
+    <text x="1040" y="432" fill="#8b949e">38% spent</text>
+  </g>
+</svg>

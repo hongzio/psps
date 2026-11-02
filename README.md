@@ -1,1034 +1,343 @@
-# gero
+<p align="center">
+  <img src="docs/assets/hero.svg" alt="gero: a lead agent runs a team of Claude Code and Codex agents toward an eval score, steered from the web, the TUI or a phone" width="100%">
+</p>
 
-Runs Claude Code and Codex agents inside Apple `container` isolations, and
-shows what they do in its own format. See [.docs/PRD.md](.docs/PRD.md) and
-[.docs/FEASIBILITY.md](.docs/FEASIBILITY.md).
+<p align="center">
+  <a href="#get-going-in-a-minute"><b>Quick start</b></a> ·
+  <a href="#teams-that-run-themselves">Teams</a> ·
+  <a href="#agents-that-talk-schedule-and-delegate">Mail · Cron · Control</a> ·
+  <a href="#safe-enough-to-leave-running">Safety</a> ·
+  <a href="#questions-youre-probably-asking">FAQ</a> ·
+  <a href="docs/REFERENCE.md">Reference</a>
+</p>
 
-## Install
+<p align="center">
+  <img alt="macOS on Apple silicon" src="https://img.shields.io/badge/macOS-Apple%20silicon-111?logo=apple&logoColor=white">
+  <img alt="Claude Code" src="https://img.shields.io/badge/Claude%20Code-supported-d97757">
+  <img alt="Codex" src="https://img.shields.io/badge/Codex-supported-10a37f">
+  <img alt="Written in Go" src="https://img.shields.io/badge/Go-single%20binary-00add8?logo=go&logoColor=white">
+</p>
 
-On an Apple silicon Mac:
+---
 
-```sh
-brew trust hongzio/tap   # Homebrew 7 loads no third-party tap it does not trust
-brew tap hongzio/tap
-brew install gero        # the release's binary; brings Apple's container
-```
+**gero is an orchestrator for Claude Code and Codex.** Run as many agents as
+your work needs, side by side, from one sidebar. Let them mail each other
+and set their own schedules. Hand a goal and a scoring script to a lead
+agent, and it hires a team, runs it round after round, and keeps whatever
+scores best. You steer from a TUI, a web app or your phone. Every agent runs
+in a fenced VM on your Mac, so you can leave them running unattended.
 
-`brew upgrade gero` is all an upgrade takes: the next gero command moves the
-daemon onto the new version, its agents carrying on. The fence helper is a
-copy of gero the upgrade leaves as it was, which is fine until a release
-needs a helper that behaves differently: then the fence shows `run sudo gero
-pf install` (in `gero iso ls`, `gero pf status` and the web) and agents wait
-for it. Before
-`brew uninstall gero`, run `gero daemon uninstall` and `sudo gero pf uninstall`.
+> [!TIP]
+> If you've ever had six terminal tabs of `claude` open and caught yourself
+> copy-pasting between them, gero is for you.
 
-A release is `sh scripts/release.sh 1.2.3`: it tags main, builds gero, attaches
-it to the GitHub release and points the tap's formula (from
-[packaging/gero.rb](packaging/gero.rb)) at it.
+## You've become the scheduler
 
-## Build
+One coding agent is a great pair programmer. Five of them make you a
+full-time dispatcher.
 
-```sh
-mise install
-mise run build        # cross-compiles the linux shim, embeds it, writes bin/gero
-mise run test
-```
+| Today, without gero | 😩 |
+|---|---|
+| **One tab per agent.** Which one finished? Which one is waiting on you? | You alt-tab to find out |
+| **Agents can't talk to each other.** The refactor agent changes an interface, and the test agent never hears about it | You relay the message by hand |
+| **Nothing happens while you're away.** No "check CI every morning", no "keep going until the benchmark passes" | The agents sit idle when you aren't there |
+| **Claude or Codex?** Each CLI has its own UI, its own commands, its own login | You pick one and stick with it |
+| **Unattended means risky.** Skipping permissions lets the agent do anything you can do | So you approve each step, and you're the bottleneck again |
 
-A build of your own says it is version `dev`; the formula stamps the release's.
+**gero takes over the dispatching, so you can get back to the work.**
 
-### Claude Code and Codex in the image
-
-The isolations' image pins both CLIs ([internal/isolation/image.go](internal/isolation/image.go)):
-the drivers parse what they print, so newer ones are a change of gero's,
-checked before an agent runs on them.
-
-1. `sh scripts/cli-check.sh` (npm's latest; or `sh scripts/cli-check.sh 2.1.320 0.170.0`)
-   names any method or flag the drivers use that the new versions no longer
-   have, and shows Codex's protocol schema diff, Claude Code's `--help` diff
-   and both changelogs in between. It spends no tokens and touches no login.
-2. Change the two versions in image.go, `mise run build` and restart the
-   daemon. Isolations keep the image they have; a new one gets the new image.
-3. The live check, in a new isolation (`gero iso create canary`, its CLIs
-   logged in), one agent of each kind on its cheapest model, approvals `ask`:
-   - a short answer streams in and it ends idle;
-   - a shell command asks first: allow one, deny one;
-   - Claude, asked to put a question with choices to you first, does, and
-     your answer reaches it;
-   - a long task (`sleep 300`) stops on `/stop`;
-   - after the daemon restarts, it still knows the conversation;
-   - rewound to an earlier message, it forgets what came after;
-   - `/` lists its commands and models; Codex's `/compact` compacts and `$`
-     lists its skills.
-4. `gero iso upgrade` each isolation, then `gero iso rm canary --purge`.
-   Going back is the old versions in image.go and another upgrade. With the
-   shim unchanged since, that is the old image, still there, so nothing is
-   built; a new shim makes it a new image, the old versions built with it.
-   Keep the old image until the new versions have proven themselves.
-
-## Use
+## Get going in a minute
 
 ```sh
-bin/gero                                  # start the daemon (registers a LaunchAgent)
-sudo bin/gero pf install                  # once: the network fence helper (see below)
-bin/gero iso create dev                   # first run builds the base image
-bin/gero iso login dev codex              # or claude; or from the web / TUI (see below)
-bin/gero iso upgrade dev                  # after a gero upgrade: new image, same volumes
-bin/gero iso set dev --memory 8G --cpus 6  # resize: a new container, same volumes
-bin/gero iso rename dev work              # agents keep running
-bin/gero iso verify dev                   # measure the fence, the proxies, the mounts
-bin/gero agent new --iso dev --kind codex "fix the flaky test"
-bin/gero agent new --iso dev --kind claude  # no prompt: it waits for its first message
-bin/gero agent new --iso dev --kind codex --id login "fix the login bug"
-bin/gero agent ls
-bin/gero agent log <id> -f
-bin/gero agent send <id> "also update the changelog"
-bin/gero agent inbox <id> [--rm N|--clear] # mail other agents sent it (see Mail)
-bin/gero agent cron <id> --add "0 9 * * 1-5" "check CI"  # a message on a schedule (see Cron)
-bin/gero agent rename <id> login bug      # only the name changes; a turn carries on
-bin/gero agent id <id> login              # an ID of your own (--clear gives it back)
-bin/gero agent team <id> backend          # its team: a group in the sidebar it moves within;
-                                          # a new name makes one (--clear: none; gero team ls|rename|rm;
-                                          # a lead that makes agents of its own: see Teams)
-bin/gero agent archive <id>               # stops it; its history is kept
-bin/gero agent fork <id>                  # live or archived: a new agent, <id>-xxxx, in its
-                                          # directory, knowing its conversation; no crons or mail
-bin/gero agent restore <id>               # an archived one carries on where it left off,
-                                          # under its line's ID; a live session there is archived
-bin/gero agent rm <id> [--purge]          # an archived one: gone from gero; --purge also
-                                          # removes its workspace and session transcript
+brew trust hongzio/tap && brew tap hongzio/tap
+brew install gero                 # brings Apple's container runtime with it
+sudo gero pf install              # once: the network fence helper
+
+gero iso create dev               # a fenced Linux VM for your agents
+gero iso login dev claude         # and codex; also from the web, even on a phone
+gero agent new --iso dev --kind claude "write a tiny HTTP server in Go, with tests"
+gero agent new --iso dev --kind codex  "review what the other agent writes"
+gero web                          # one sidebar for both
 ```
 
-### TUI
+## One sidebar for every agent
+
+Claude Code and Codex agents sit in one list, grouped into teams, each with
+a status dot. A grey dot means an idle agent wants a look. Tap it to park
+the agent until its next turn.
+
+<table>
+<tr>
+<td width="33%" valign="top">
+
+### ⌨️ TUI
+`gero tui`
+
+Agents on the left, the conversation in the middle, settings behind
+`ctrl+o`. `ctrl+a` answers an approval. Every key can be rebound.
+
+</td>
+<td width="33%" valign="top">
+
+### 🌐 Web
+`gero web`
+
+`/` commands, an `@` file picker and Codex `$skills` as you type. `j`/`k`
+moves between agents, and vim keys scroll the conversation.
+
+</td>
+<td width="33%" valign="top">
+
+### 📱 Phone
+`tailscale serve`
+
+`gero web` prints the exact command. Approve a deploy from the train.
+Answer Claude's question from the couch.
+
+</td>
+</tr>
+</table>
+
+You run the same agent lifecycle whichever CLI is underneath:
+
+| | What it does |
+|---|---|
+| `/model` `/effort` `/approvals` | Changed per agent at any time. The change outlasts the process |
+| `/stop` | Ends the turn now |
+| `/new` | A fresh session that keeps the agent's ID, crons and waiting mail. The old one is archived |
+| **Restore** | Goes back to an archived session, picking up where it left off |
+| **Fork** | A new agent that starts from a copy of this one's conversation |
+| **Send when idle** | On the web, queue your next message. It goes when the current turn ends |
+
+## Teams that run themselves
+
+This is the main event. **Give a lead a goal, a budget and a scoring
+script, then walk away.**
 
 ```sh
-bin/gero tui
+gero iso expose dev team
+gero team lead lab tara --budget 5M \
+     --eval-iso grader --eval 'sh /home/agent/grader/run.sh' --patience 3
+gero agent send tara '/gero-team Build what SPEC.md describes.'
 ```
 
-Agents on the left (status at a glance; archived ones folded at the bottom,
-`r` renames one, `i` gives it an ID of your own, `t` puts it in a team, `d` deletes one;
-a team is a group under its name that `enter` folds to its agents' icons, and on its name `r` and `d` rename and delete it,
-`l` opens its page, its lead and the terms (see Teams), and `e` runs its eval),
-the selected agent's conversation in the middle, the input at the bottom with
-the agent's settings behind `ctrl+o`. `ctrl+n` makes an agent (its first message, typed in the form or later in the input, starts it and names it; its directory, a workspace of its own unless you type one, offers the isolation's directories as you type, as the web form does), `ctrl+g`
-manages isolations (environment, `s` to rename or resize one, upgrades, `v` to verify one, `l` its accounts
-(what Claude and Codex log in with), and with `p` the credential proxies each one serves), `ctrl+r` the
-proxies' environments (secrets and
-browser logins included), `ctrl+a` answers a pending approval, `f1` lists
-every key. Rebind any of them:
+```mermaid
+flowchart LR
+  YOU(["you: goal, budget, eval"]) --> LEAD
+  LEAD["🟣 lead<br/>plans the team"] -->|"hires"| A1["claude: api"]
+  LEAD -->|"hires"| A2["codex: tests"]
+  LEAD -->|"hires"| A3["claude: docs"]
+  A1 & A2 & A3 -->|"turn ends: last answer"| LEAD
+  LEAD -->|"round over"| EVAL["eval in a<br/>grader isolation"]
+  EVAL -->|"SCORE only"| LEAD
+  EVAL -.->|"best · target · patience · budget"| STOP(["gero stops the run"])
+```
 
+The lead **designs the team, not the code.** It picks the roles the work
+needs, starts Claude and Codex agents for them, and hears from each one as
+its turn ends. Once the round is over, gero scores it, and the lead uses
+the score to design the next team. The way of working follows EAT (Evolving
+Agent Teams, [arXiv 2610.36848](https://arxiv.org/abs/2610.36848)).
+
+gero keeps the run within your terms:
+
+- 🎯 **Scored where the agents can't reach.** Each round, gero copies the
+  work into a separate grader isolation and runs your eval there, as a user
+  that can't change the grader. The lead hears only the score.
+- 💸 **Within a budget.** The run stops when the token budget is spent. On a
+  subscription, `--plan-ceiling` stops the lead from starting agents once a
+  plan window is nearly used up.
+- 🛑 **It knows when to quit.** The run stops at `--target`, or after
+  `--patience` evals in a row with no new best score.
+- 🚦 **It stays within limits.** At most `--max-live` of the lead's agents
+  run at once, and a turn that runs past `--turn-minutes` is stopped and
+  asked for a report.
+- 👀 **You can watch it.** `gero team show lab`, the team's dialog on the
+  web or its page in the TUI show the spend, every score and the lead's
+  agents. **Run eval now**, **Resume** and **Reset best** are one click away.
+
+## Agents that talk, schedule and delegate
+
+Turn on each service per isolation. Each one installs a skill, so the agents
+know how to use it.
+
+<table>
+<tr>
+<td width="50%" valign="top">
+
+### ✉️ Mail
 ```sh
-bin/gero tui --keys > ~/.config/gero/keys.toml   # then edit
+gero iso expose dev mail
 ```
+Every agent has an inbox. A message from a peer waits until the agent is
+idle, then arrives as a turn of its own, marked as coming from another
+agent and not from you. Isolations exchange mail only where you open a way
+(`--to`). Rate limits wind down two agents that would otherwise keep
+replying to each other.
 
-### Web
+</td>
+<td width="50%" valign="top">
 
+### ◷ Cron
 ```sh
-bin/gero web          # opens http://127.0.0.1:4376 signed in
+gero agent cron ci-bot --add "*/30 9-18 * * 1-5" \
+  "check CI; fix what is red"
 ```
-
-The same agents, conversations, approvals, isolation settings, accounts
-(what Claude and Codex log in with) and credential proxies (the Services page, and each isolation's
-services), laid out for a
-desktop browser or a phone. Isolations, Services and Accounts are each a list
-and one of it: an isolation's overview, its services (a switch each), its
-logins, environment variables and settings; a service's environments and the
-isolations that have it; an isolation's logins or a shared account. On a phone
-or in a narrow window the list is the page and one of it replaces it, with
-the way back on top. Each has an address of its own
-(`#/isolations/dev/services`), so a page can be bookmarked and the back
-gesture goes where it should. In the sidebar an idle agent's grey dot means it
-wants a look; tapping it parks the agent (a dimmer grey: it needs none), and
-tapping again undoes that. Its next turn takes it out of being parked. A team
-(an agent's Edit, or New agent, names it; a new name makes one) is a group
-there that folds to a dot for each of its agents, the ones that want a look
-first. A long press moves an agent within its list: a team's agents within
-the team only, and the team as one row among the rest. A team holds an
-agent's line, so `/new`, a restore and a fork stay in it. The pencil on a
-team's name opens its dialog: its name, its lead and the terms (see Teams),
-and, once it has a lead, how the run goes, with Run eval now and, when gero
-stopped it, Resume. The daemon serves it on loopback only, and
-every API call needs the token `gero web` signs you in with (`--rotate`
-issues a new one and signs every browser out). To use it from a phone,
-expose it to your tailnet yourself — `gero web` prints the exact
-`tailscale serve` command and the phone link — so Tailscale provides the
-HTTPS certificate and decides which devices can reach it.
-
-For development, `GERO_HOME=$PWD/.dev` keeps all state under `.dev/` and runs
-the daemon as a plain background process instead of touching launchd.
-
-### Commands and files in a message
-
-In the web UI, `/` at the start of a message offers commands as you type
-(↑↓ picks, Tab completes, Enter completes and sends a whole command, Esc
-closes), `@` anywhere offers the agent's workspace files (git's list in a
-repository, so what it ignores is left out; a folder opens as you pick it),
-and with Codex `$` offers its skills. The TUI does not offer them yet, but
-what is typed there works the same.
-
-- gero's own, which gero does instead of sending them, wherever a message is
-  typed (`gero agent send` too): `/model <model>`, `/effort <level>`,
-  `/approvals <mode>` (alone, each says what it is now), `/stop`, which
-  stops the turn, and `/new`, which starts the agent over: a new session
-  in the same isolation and directory takes its ID, settings, crons and
-  waiting mail, and the old one is archived. The web UI and the TUI go on
-  in the new one; an agent's archived sessions fold together under
-  Archived, whatever ID they went by. Restoring one (Restore in the web UI,
-  `u` in the TUI, `gero agent restore`) goes back to it: its session
-  resumes and it takes the ID, crons and waiting mail back from the
-  session there now, which is archived. One session of an agent is live at
-  a time. Forking one, live or archived (Fork in the web UI, `f` in the
-  TUI, `gero agent fork`), makes a new agent instead: its ID is the
-  agent's with a random suffix, it works in the same isolation and
-  directory, and its session starts as a copy of the agent's (Claude's
-  `--fork-session`, Codex's `thread/fork`), with no crons or mail.
-- Claude's: its slash commands and skills, as the running `claude` lists
-  them (asked once a process, which costs no turn). Its `/model` and
-  `/effort` are left out for gero's, which last beyond the process, and
-  `/clear` because it starts a session gero does not follow (`/new` is
-  gero's).
-- Codex's: its skills, `$name` anywhere in a message, and `/compact`, which
-  gero has Codex do; its app-server takes any other slash command for text.
-
-### Claude & Codex: accounts and logins
-
-An agent CLI in an isolation gets its credential one of two ways.
-
-**An account**, defined once on the Mac and used by any number of
-isolations (one per CLI in each). Only credentials that stay valid wherever
-they are used at once qualify: a Claude token from `claude setup-token`
-(your subscription, valid for a year) or an Anthropic API key. The secret
-lives in the credentials file under `[account NAME]`; agents get it as
-`CLAUDE_CODE_OAUTH_TOKEN` / `ANTHROPIC_API_KEY` when they start.
-
-```sh
-claude setup-token                                  # on any machine with a browser
-bin/gero account add claude --kind claude-token     # paste it
-bin/gero iso account dev claude claude              # dev's Claude uses it (- goes back to a login inside)
-bin/gero account set claude                         # rotate: idle agents restart with the new one
-```
-
-A ChatGPT login cannot be shared that way: its refresh token is single-use,
-so copies of one login in several places log each other out, and OpenAI
-offers Plus/Pro no long-lived token (Codex access tokens are for Business
-and Enterprise workspaces). Codex therefore logs in inside each isolation.
-A token that used to sit in an isolation's environment was moved into an
-account, once, when the daemon first started with accounts.
-
-**A login inside the isolation.** `gero iso login dev` shows both CLIs as
-an agent there finds them (account and environment applied). A login is run
-by the daemon inside the isolation, with no terminal, so the web page (a
-phone's included), the TUI and the CLI all drive the same one:
-
-- **Claude**: `claude auth login` prints an address; sign in there and the
-  page ends on a code, which you paste back. A wrong code ends the login;
-  start it again.
-- **Codex**: `codex login --device-auth` prints an address and a one-time
-  code to enter there, and notices by itself.
-
-The daemon passes the address and the codes along and keeps them only in
-memory for the login's 15 minutes; the credential lands in the isolation as
-before. A login (or `gero iso logout`) restarts the isolation's idle agents
-of that kind, since Codex reads its login only when it starts.
-
-### Approvals
-
-Each agent runs in one of four modes (`--approvals`, or its settings in the
-TUI and on the web), changed at any time:
-
-- **never** (the default): unattended. The isolation, its network fence and
-  the credential proxies are the boundary.
-- **auto**: unattended, with a reviewer model in your place. Claude runs in
-  its auto mode: a classifier checks each action before it runs and refuses
-  what goes beyond the request, targets unknown infrastructure or follows
-  instructions planted in content it read; what it keeps refusing comes to
-  you as an approval. Codex runs its own Auto: a workspace-write sandbox
-  whose escapes (the network, the proxies included, and writes outside the
-  workspace) go to its auto-review agent; the conversation shows each
-  review, a refusal in red. Both cost a little latency per reviewed action,
-  and the reviews count toward the CLI's usage.
-- **ask**: every tool use waits for you (`ctrl+a` in the TUI, the
-  conversation on the web).
-- **default**: the CLI's own configuration in the isolation decides:
-  Claude's `~/.claude/settings.json` (`permissions.defaultMode`; manual,
-  asking for anything not allowed, when it says nothing), Codex's
-  `~/.codex/config.toml` (`approval_policy`, `sandbox_mode`,
-  `approvals_reviewer`; Codex's own defaults, a read-only sandbox that asks
-  for writes and the network, where it says nothing). Whatever that asks
-  comes to you as an approval. Edit those files with `gero iso shell`; a
-  running agent picks the change up when its mode is set again or it
-  restarts.
-
-In auto, ask and default, Claude can also ask you something it needs to
-know (its AskUserQuestion): the question and its options come to you, and
-you answer by picking options, or in words of your own on the web (the TUI
-takes picks by number; `gero agent answer ID APPROVAL ANSWER...` one per
-question). Declining tells Claude you would not say. In never Claude has no
-one to ask, so it does not.
-
-## How it holds together
-
-- **gero-shim** is each isolation container's main process. It owns the agent
-  processes and keeps a durable, sequenced log of everything they read and
-  write, on a volume. It never parses agent output.
-- **The daemon** reaches the shim through `container exec -i` (no IP route to
-  the host), replays an agent's log through a **driver** that understands its
-  protocol (`codex app-server` JSON-RPC, `claude -p` stream-json), and stores
-  the resulting events in SQLite.
-- Daemon restarts lose nothing: agents keep running under the shim and the
-  daemon catches up from the log. A reboot or container stop ends the agent
-  process; the turn in flight shows as `interrupted`, and the next message
-  starts a process that resumes the same session.
-- An agent's process lives from turn to turn. gero replaces it, resuming the
-  same session, when what it starts with changes: its options, a rewind, or
-  its isolation's services, login or CLI. That waits for an idle moment, and a
-  change of the isolation's waits too until nothing Claude started runs in the
-  background (a shell, a subagent), which would end with the process.
-- An isolation is an ID to gero (`7f3a9c1b`); its name is what people call
-  it. Everything that belongs to it names it by ID: its agents, exposures,
-  tokens and accounts in the store, and its container, network and volumes
-  (`gero-7f3a9c1b`, `-net`, `-home`, `-state`; `gero iso ls` shows the
-  container). So `gero iso rename` changes the name and nothing else, and a
-  new isolation never picks up an old one's volumes. Isolations from before
-  IDs kept their name as their ID. `container` cannot resize a VM, so
-  `gero iso set` replaces the container on the same volumes, as an upgrade
-  does: running agents end, sessions and workspaces stay, and a size the new
-  container will not start with is put back.
-- An agent likewise has a key gero gives it (`77b17c2c`), which its
-  workspace, log and history are named after, and an ID it goes by: yours
-  (`--id`, `gero agent id`, the TUI's `i`, the web's Name & ID), or else an
-  adjective-noun gero picks (`brave-otter`, one of 250,000). The ID names it wherever the key
-  does and is shown in its place; no other agent may have it, as theirs or
-  as their key, archived ones included, which is checked each time one is
-  given. Taking it away (`--clear`, or empty) frees it, and the agent goes
-  by its key. The key stays random: a deleted agent's workspace stays
-  unless purged, and an ID that came back would find it.
-
-## Network fence
-
-Each isolation gets its own container network, and a small root helper
-(`dev.gero.pfd`, installed by `sudo gero pf install`) keeps the host's packet
-filter fencing those networks off the Mac and its LAN — IPv4 and IPv6 —
-while internet egress stays open. The rules live in the `com.apple/gero`
-anchor that the stock `/etc/pf.conf` already evaluates, so no system file is
-edited. The helper recomputes them every few seconds from the Mac's current
-addresses and bridges, so Wi-Fi changes, new containers and reboots need
-nothing from you.
-
-The daemon trusts the fence only after measuring it: it listens on every
-address the Mac holds and tries each one from inside the isolation. Until
-that measurement passes, agents in the isolation take no new turns; if it
-finds a hole, they are stopped. A new container's bridge is fenced for IPv6
-only once the helper sees it, so the daemon asks the helper again until the
-rules pf actually holds cover that bridge, and only then measures; a probe
-that could not even leave the isolation (its link-local address is still
-tentative for the first seconds after boot) counts as not measured, not as a
-pass or a leak. `gero iso create NAME --fence off` opts an
-isolation out; without the helper installed, creating one with the fence on
-is refused, since its agents would never start. `gero pf status -v` shows the loaded rules;
-`sudo gero pf uninstall` removes everything the helper installed.
-
-Isolations resolve names through their network's gateway, which forwards to
-the Mac's resolver. A local DNS proxy on the Mac (Cloudflare WARP answers on
-127.0.2.2) never answers it: the image build fails at `apt-get update` and
-nothing resolves inside. Name nameservers on the internet instead, in
-`~/.config/gero/config.toml`, and restart the daemon:
-
-```toml
-dns = ["1.1.1.1", "8.8.8.8"]
-```
-
-The image build and containers made from then on use them; an existing
-isolation takes them on `gero iso upgrade`.
-
-## Credential proxies
-
-An agent can **use** a credential without being able to **read** it: the
-credential stays on the Mac, inside a proxy that injects it on the way out,
-within an allowlist. These are ports of
-[isolate](https://github.com/hongzio/isolate)'s proxies, decision and wire
-tests included. Inside the isolation they are fixed loopback addresses:
-
-```
-127.0.0.1:3020   git        url.insteadOf sends github.com URLs here
-127.0.0.1:3021   AWS        AWS_CONTAINER_CREDENTIALS_FULL_URI points here
-127.0.0.1:3022   PostgreSQL PGHOST/PGPORT/PGUSER/PGPASSFILE point here
-127.0.0.1:3023   Datadog    DATADOG_HOST points here (DD_API_KEY holds a workspace token)
-127.0.0.1:3024   Slack      SLACK_API_URL points here
-127.0.0.1:3025   ClickHouse CLICKHOUSE_URL (HTTP interface) points here
-127.0.0.1:3026   GitHub API GITHUB_API_URL points here
-127.0.0.1:3027   Grafana    GRAFANA_URL points here
-127.0.0.1:3028   Notion     NOTION_MCP_URL; every agent gets it as an MCP server
-127.0.0.1:3029   mail       GERO_MAIL_URL, each agent's own (see Mail); GERO_CRON_URL, GERO_TEAM_URL
-                            and GERO_CONTROL_URL too (see Cron, Teams, Control)
-127.0.0.1:3030   Linear     LINEAR_MCP_URL; every agent gets it as an MCP server
-```
-
-The proxies run inside the daemon; nothing of theirs listens on the Mac. Each isolation
-has one tunnel — SSH over its `container exec` channel, from `gero-shim
-tunnel` — and a connection on it reaches that isolation's proxies only, so the
-tunnel is who is asking. Edits take effect on the next request.
-
-An **environment** is defined once and exposed per isolation:
-
-```sh
-gero env add git work --allow-repo owner/repo [--read-only]
-gero env secret git work                 # its GitHub token (or: --token-command gh)
-gero env choices git work repos          # the repositories that token opens
-gero env check git work                  # take its credential, ask GitHub who it is
-gero iso expose dev git work             # dev now routes owner/repo with that credential
-gero iso services dev
-gero iso unexpose dev git
-gero env help git                        # every flag
-```
-
-git with no env (`gero iso expose dev git`) forwards public repositories with
-no credential and refuses the rest. Inside, `GET $GITHUB_API_URL/user/repos`
-(or `/orgs/OWNER/repos`) lists the repositories the exposed envs allow,
-answered by the proxy from the allowlist, so an agent told only "trevia"
-finds the owner instead of guessing it. What a service puts in the isolation — its
-variables in `/etc/gero/env.sh` (and in every agent's environment), git's URL
-rewrite in `/etc/gero/gitconfig`, a skill under `~/.claude/skills/gero-*` and
-`~/.codex/skills/gero-*` explaining that a refusal is a decision — is written
-by `gero-shim sync` and removed when the service is turned off.
-
-Secrets for services that keep one live in `~/.config/gero/credentials`, an
-INI of `[service env]` sections, 0600, read per request:
-`gero env secret SERVICE NAME` prompts for them (or reads one line per field
-from stdin). git's is a GitHub token; an env may instead name a
-gh-compatible command (`--token-command gh`, which runs `gh auth token`), and
-a stored token wins over it. The web and TUI env forms for git ask for the
-token first and then list the repositories it opens to tick; until there is a
-token (or a command) to list with, the repositories are typed, and the form
-says why.
-
-AWS is a credential broker rather than a proxy: it assumes an IAM role with
-the Mac's AWS CLI (`aws sts assume-role --profile ...`) under a session policy
-built from the env's allowlist, and hands the isolation the short-lived
-result through the standard container-credentials variables, so every SDK
-and session-manager-plugin work with no ~/.aws. AWS enforces the allowlist.
-Narrowing it applies to the next issue at once; credentials already issued
-stay valid until they expire (at most an hour), as STS cannot revoke them.
-
-```sh
-gero env add aws dev --role-arn arn:aws:iam::123456789012:role/agent --aws-profile dev \
-  --allow-instance i-0123456789abcdef0=session --allow-bucket transfer-bucket=read
-gero env check aws dev                   # assume the role now, ask STS who it is
-gero iso expose dev aws dev
-gero env choices aws dev role_arn --aws-profile dev   # what that profile's login lists
-```
-
-The web and TUI forms pick all of it from what the Mac's AWS CLI lists: the
-profile (`aws configure list-profiles`), then with it the role, the instances
-and the buckets, looked up again when the profile changes. Roles are the
-account's that an AWS principal may assume, each with whom it trusts; a role
-in another account, which `iam list-roles` cannot see, is typed. Instances
-are swept from every enabled region, with their Name tag; a region the
-account is kept out of is left out. A ticked instance or bucket narrows
-itself in place (session or command; read, write or delete), which lands in
-the session policy as `NAME=CAP`. Whatever the profile may not list
-(`iam:ListRoles`, `s3:ListAllMyBuckets` refused) is typed instead, with AWS's
-refusal shown; the TUI filters a long list with `/` and narrows the ticked
-entry under the cursor with 1, 2, 3.
-
-PostgreSQL is terminated on both sides, the way pgbouncer does it: the
-isolation signs in with its workspace token (from PGPASSFILE), the env name
-as the user and a database on the allowlist; the proxy then opens its own
-connection with the env's role and stored password (SCRAM-SHA-256, MD5 or
-cleartext, TLS per `--sslmode`) and becomes a byte pump. What the role may
-do inside those databases is Postgres's grants, deliberately not a SQL
-filter. ClickHouse is fronted over its HTTP interface only: the query
-endpoint and /ping, the real login attached, and for a read-only env (the
-default) `readonly=2` pinned so the server itself refuses writes.
-
-```sh
-gero env add pg prod --host db.internal --user app_ro --sslmode verify-full --allow-db app
-gero env secret pg prod                  # the role's password
-gero env add clickhouse main --host ch.internal
-gero env secret clickhouse main          # user and password
-```
-
-Datadog, Grafana and Slack are HTTP proxies over an allowlist of endpoint
-families, reads by default and each write family a separate choice
-(`--allow-api`, `--allow-write`; a write whose reads are not open is dropped
-with a warning naming the flags that keep it). Datadog can pin a log-search
-scope, Grafana bounds queries to named data sources and saves to named
-folders, Slack can deny channels (its `users` family, who the U... ids
-in messages are, reads no channel, so the deny list does not touch it). For these, as for ClickHouse, Notion and Linear,
-the isolation's token is per env and its value picks the env.
-
-Notion is its hosted MCP server, behind a fixed tool table: a tool the
-table does not model does not exist from the isolation, and writes are
-families an env opens by name. There is no integration to create; gero logs
-in as you:
-
-```sh
-gero env add notion work                 # content and search; --allow-api pages ... for more
-gero env secret notion work              # prints a URL; approve it in any browser
-gero iso expose dev notion work
-```
-
-`gero env secret notion` works from a browser on another device too: the
-page Notion sends you to afterwards will not load there; paste its address
-back into the terminal.
-
-Linear is its hosted MCP server the same way, logged in as you with no API
-key. An env reads issues, projects, documents, teams and users; each write
-is a family it opens by name: `issue-edits` (create and change issues),
-`comments`, `labels`, `project-edits`, `document-edits` and `deletes`.
-
-```sh
-gero env add linear work                 # every read, no write
-gero env edit linear work --allow-api issues --allow-api projects --allow-api documents \
-  --allow-api teams --allow-api users --allow-api issue-edits --allow-api comments
-                                         # the list is replaced, so the reads are named too
-gero env secret linear work              # prints a URL; approve it in any browser
-gero env check linear work               # who the login is, and any tool Linear offers
-                                         # that the table does not model (shut until it does)
-gero iso expose dev linear work
-```
-
-Port 3030 came after the others: an isolation made before it serves Linear
-after `gero iso upgrade NAME`. Services that are MCP servers reach agents at launch
-— Claude Code through `--mcp-config /etc/gero/mcp.json`, Codex through `-c
-mcp_servers.…` — so neither tool's own configuration is touched.
-
-Isolations created before the proxies need `gero iso upgrade NAME` once;
-`gero iso ls` says so under PROXIES.
-
-## Agents in gero
-
-Four services give an isolation's agents a part in gero itself. Each is a
-different kind of right, turned on apart:
-
-| For agents to… | Turn on | What it is |
-|---|---|---|
-| ask, tell and answer each other | `mail` | a peer's letter: it waits in the inbox and is read, one a turn, when its agent is idle; both isolations take mail |
-| come back to something on a schedule | `cron` | crons an agent sets on itself |
-| work as a team toward an eval, within a budget | `team` | the agent you make a team's lead makes agents of its own, hears of their turns and has the eval run, within your terms |
-| do some of what you do with the gero command | `control` | the actions its env ticks, on the agents of the isolations it reaches, as itself |
-
-Each puts a skill in the isolation, and each skill sends what is another's
-there: a question to a peer to mail, an instruction to control, a lead's own
-agents to its team.
-
-## Mail
-
-Agents write to each other through gero. Every agent has an inbox; a mail
-waits there until its agent is idle, then arrives as a turn of its own, one
-mail at a time, oldest first. An agent that is in error or was interrupted
-keeps its mail until your next message, which always goes before mail.
-
-```sh
-gero iso expose dev mail                  # dev's agents write to each other
-gero iso expose scratch mail --to dev     # ...and scratch's to dev's too (one way)
-gero agent inbox <id>                     # what waits; --rm N / --clear take it out unread
-gero agent mail <id>                      # its history: what it was sent, read or not, and wrote
-```
-
-In the web, ✉ Mail on an agent's top bar shows the same history, with what
-waits counted on it; a mail it read also shows in its conversation, as mail.
-Mail stays as history once read or discarded; deleting an agent deletes the
-mail it was sent, and what it wrote stays with its recipients.
-
-Inside the isolation, `GERO_MAIL_URL` is each agent's own address: it carries a
-token that names the sender, handed to that agent's process alone, and the
-`gero-mail` skill says how to use it (`GET $GERO_MAIL_URL/agents`, `POST
-$GERO_MAIL_URL/send?to=<id>`). The recipient reads who wrote, from where, and
-that it is another agent and not you, ahead of the text.
-
-A mail is an instruction to the agent that reads it, so it crosses isolations
-only where you say: an isolation's agents write to their own isolation's, and
-to those of the isolations `--to` names (kept by ID: a rename keeps the way
-open, a new isolation given the old name gets none), if those take mail. The
-tunnel proves which isolation a mail comes from. Within one isolation the
-agents run as one user and can read each other's environment, so there the
-token names the sender rather than proving it. A mail is at most 32 KiB, an
-inbox holds 50, and an isolation's agents send 20 a minute at most. Agents
-answering each other can go on forever: the skill tells them not to answer
-what needs no answer, and `gero agent inbox <id> --clear` stops a loop.
-
-## Cron
-
-An agent can be sent a message of yours on a schedule: a cron expression in
-the Mac's time, `@daily` and the like, or `@every 45m`. A run is sent when it
-finds the agent idle. One that finds it busy is skipped, or with `--wait`
-waits and goes the moment the agent is idle; runs that come due while one
-waits are folded into it. As with mail, an agent that is in error or was
-interrupted is not idle until your next message, which goes first.
-
-```sh
-gero agent cron <id> --add "*/30 9-18 * * 1-5" "check CI; fix what is red"
-gero agent cron <id> --add "@every 2h" --wait "write down where you are"
-gero agent cron <id>                       # its crons: when next, what came of the last run
-gero agent cron <id> --set 1 --schedule @hourly   # or --wait / --skip, or a new message
-gero agent cron <id> --off 1               # --on 1, --rm 1
-```
-
-In the web, ◷ Cron on an agent's top bar sets the same: every N minutes or
-hours, a time on some days of the week, or an expression. The agent reads,
-ahead of the message, that it comes on a schedule and that you may not be
-watching; the conversation shows it as the cron's. A time missed while the
-Mac slept or gero was down comes due once, as soon as it can, not once for
-each time missed. An archived agent's crons do not run; deleting it deletes
-them.
-
-Agents can set crons of their own, where you turn that on:
-
-```sh
-gero iso expose dev cron                   # dev's agents set crons of their own
-```
-
-Inside the isolation, `GERO_CRON_URL` is each agent's own address for its
-crons (on mail's port, at its mail address, so no `gero iso upgrade` is
-needed), and the `gero-cron` skill says how to use it: `GET` lists its crons,
-`POST` sets one (`{"schedule", "prompt", "if_busy"}`), `PATCH`/`DELETE
-$GERO_CRON_URL/<id>` change and remove one. An agent reaches its own crons
-only: it sees yours, and changes and removes those it set; you change any.
-Its own come as yours do, saying the agent set them; the web marks them "set
-by the agent", `gero agent cron` under SET BY. An agent sets at most twenty,
-none coming more often than every five minutes.
-
-A cron that comes once (`--once`, the web's Once, `"once": true`) is sent the
-first time it comes and then removed: with a schedule that names a time and a
-day of a month, it is something at one later time. Its one run always waits if
-the agent is busy.
-
-```sh
-gero agent cron <id> --add "30 14 3 11 *" --once "deploy the release branch"
-```
-
-## Teams
-
-A team is a named group of agents in the sidebar (`gero agent team <id>
-NAME`, an agent's Edit in the web, `t` in the TUI), from any isolations. A
-team can have a lead: one of its agents, which makes agents of its own in the
-team, in its isolation, for the roles the work needs, follows them, and
-designs the next team when they are done. The way of working comes from EAT
-(Evolving Agent Teams, [arXiv 2610.36848](https://arxiv.org/abs/2610.36848)),
-whose supervisor improves how a team works rather than the work itself; gero
-keeps the run going and within your terms.
-
-```sh
-gero iso expose dev team                   # dev's agents get a team address
-gero team lead lab tara                    # tara leads team lab (it joins it)
-gero team lead lab tara --budget 5M        # within 5M tokens
-gero team lead lab tara --eval 'make bench | tail -1' --eval-dir ~/work/app --patience 3
-gero team lead lab tara --eval-iso grader  # the eval runs in grader, on a copy
-gero agent send tara '/gero-team Build what SPEC.md describes.'   # the work, for the team
-gero team show lab                         # spending, scores, the lead's agents
-gero team eval lab                         # run the eval now
-gero team reset-best lab                   # the evals so far count for no best (the target, the patience)
-gero team resume lab                       # go on after gero stopped the run
-gero team lead lab --clear                 # no lead; its agents are yours
-```
-
-The same is set in a team's dialog in the web (the pencil on its name, or its
-run's line under it) and on its page in the TUI (`l` on its name), which
-offer to turn teams on in the lead's isolation if they are off.
-
-Being made lead tells an agent nothing. Give it the work with the skill
-named first, `/gero-team <the work>` for Claude or `$gero-team <the work>`
-for Codex, so that it reads how to lead before it starts: an agent given
-work it could do alone tends to do it alone, and then no round ends and no
-eval runs. A session that has read the skill needs no reminder for later
-work. `gero team help` has the gist of this section in the terminal, with a
-first team to follow.
-
-Inside the isolation, `GERO_TEAM_URL` is each agent's address for its team
-(on mail's port, so no `gero iso upgrade` is needed); only a lead's answers.
-The `gero-team` skill says how to use it: `GET` the team, `POST
-$GERO_TEAM_URL/agents` an agent of its own (`{"role", "kind", "prompt",
-"model", "effort", "workdir", "turn_minutes"}`), and per agent its last
-answer, `send`, `interrupt` and `archive`. An agent a lead makes is a gero
-agent like any: in the sidebar under its team, marked as the lead's, with the
-lead's approvals and its own session, working in the lead's directory unless
-the lead names another. It makes no agents itself. A lead reaches the agents
-it made, and no other.
-
-Turning teams off in the lead's isolation (`gero iso unexpose dev team`)
-pauses its run: the lead's address answers 403, and gero tells it nothing
-and does not ask it for the next team, so it spends no turn on what it
-could not act on. Its agents finish their turns and the eval runs. Turned
-on again, the lead starts with its address once idle, and what came
-meanwhile reaches it as one message. `gero team show`, the web and the TUI
-say the run is paused.
-
-gero tells the lead, as a message of its own whenever it is idle:
-
-- when a turn of one of its agents ends, with its last answer, and when one
-  waits for you to approve something;
-- when a turn runs past its limit (`--turn-minutes`, 60 by default, or the
-  lead's for one agent): gero stops it, asks for a final report, and the
-  report is the news;
-- what the eval scored, once a round is over: with an eval set, the lead
-  hears of its agents' turns together, once none of them works, and may go
-  on with the round's next step, one that needs the last one's work. When
-  its turn on that news ends with none of its agents at work, gero runs the
-  eval, on what is there then (the lead's own changes included), and tells
-  it the score and that nothing runs. A team that works in steps is scored
-  once, after the last. A turn of the lead's own that starts no agent ends
-  no round: what it changed alone is scored when it asks for the eval. An
-  eval set or changed scores no round that ended before it: its first comes
-  after the next round, or when asked;
-- that nothing runs any more, once after an eval it or you asked for (a
-  round's eval says so itself), if it let its team end without making the
-  next (and not while a plan window is past the ceiling, when it could
-  make none);
-- that gero stopped the run, and that you resumed it.
-
-The eval is a shell command; the last line it prints that reads
-`SCORE: <number>` is the score, higher better. It runs for `--eval-minutes`
-at most (20), in one of two places:
-
-- In the lead's isolation, as the agents, in `--eval-dir` (the lead's
-  directory by default). The agents can change the eval, what it reads and
-  what it runs with; a read-only shared folder (see Shared folders) keeps
-  its files from them, not its home or its processes.
-- In an eval isolation (`--eval-iso`), one with no services but control,
-  which the team's agents never reach. For each eval gero ends what the last one
-  left running there, copies `--eval-dir` from the lead's isolation to
-  `/eval/work`, and runs the eval there as a user of its own (uid 1001, its
-  home `/eval/home`, both made anew: `~` in the eval is that empty home, so
-  give the grader's path in full), who can read but not change what you
-  put in the isolation: the agent user's files (`gero iso shell`) and the
-  image's. It has the internet, as any isolation does, and not the Mac or
-  the LAN. Keep the grader and its data there, and take only what is
-  scored from the copy: an eval that runs the copy's own benchmark or tests
-  is the agents' to change. Before each eval gero also removes whatever
-  that user left anywhere it can write, System V IPC included, so nothing
-  passes from one eval to the next. The lead hears only the score: what the
-  eval printed, which what is scored could fill with the grader, is yours
-  (`gero team show`, the team's dialog and page). A service you turn on
-  there anyway, say aws to record the grader's data, warns that the eval is
-  refused until it is off again; each refused one shows as `not run` and
-  counts for no patience.
-
-A grader for an eval isolation, say `grader`, lives in its agent user's home:
-make it in `gero iso shell grader`, where `~` is `/home/agent` (clone it,
-or write it there). The eval user reads and runs it and cannot change it.
-An agent of yours may work there too, to set the isolation up or read the
-results, but it runs as the agent user, the grader's owner: what it reads of
-what the eval leaves (`/eval`, the output) is the work's to write, so set it
-to read only, by hand. Control is the one service it may have there: its
-address is in each agent's process alone, which the eval's user cannot
-read, so long as the agent does not write it to a file.
-Run with `--eval-iso grader --eval 'sh /home/agent/grader/run.sh'`:
-
-```sh
-#!/bin/sh
-# /home/agent/grader/run.sh. It starts in /eval/work, the copy of --eval-dir;
-# $HOME is /eval/home, empty.
-set -e
-G=/home/agent/grader                   # yours: the eval reads it, cannot change it
-npm ci >"$HOME/build.log" 2>&1         # the work's own build, its output kept apart
-pass=0 total=0
-for c in "$G"/cases/*.in; do           # your cases, never the copy's
-  total=$((total + 1))
-  timeout 10 node ./main.js <"$c" >"$HOME/out" 2>/dev/null || continue
-  cmp -s "$HOME/out" "${c%.in}.out" && pass=$((pass + 1))
-done
-echo "SCORE: $((100 * pass / total))"  # last, after all the work printed
-```
-
-What it measures with (the cases, the expected output, the benchmark) is
-the grader's; only what is measured comes from the copy. The work's build
-may be the work's own, as it is part of the work. The eval user's `PATH` is
-the image's: a tool you installed in the agent's home (mise,
-`~/.local/bin`) needs its path in full, and with `~` empty each eval fetches
-its caches anew. While the eval runs, the work runs as the same user as the
-grader, so a work bent on it can still reach what the grader writes then
-(`$HOME`, `/tmp`) and what it prints; it cannot reach the grader's files,
-or anything the next eval starts from.
-
-Either way the eval runs the agents' work, which can print a `SCORE:` line
-of its own: print the score after the work's output, or keep the two apart.
-
-gero stops the run, and the lead makes no agent and writes to none until you
-resume it (`gero team resume`, or setting the lead again), when:
-
-- the budget, if you set one, is used: the tokens sent anew and written
-  (reads from the prompt cache not counted) by the lead and its agents since
-  it became the lead, as their CLIs count them (`--budget`; `none` takes it
-  off);
-- the target is reached (`--target`);
-- `--patience` evals in a row (3) came without a new best. One gero could
-  not run (its isolation unfit, no verified fence, the work not copied)
-  scored nothing of the work's and counts for none.
-
-Resuming tells the lead, and asks it for the next team if nothing of its
-team works, as it would otherwise wait, told only that the run stopped. The
-evals before count no more toward the patience, so a run out of it can always
-go on; one stopped by its budget or its target cannot while that still
-holds: give it a larger budget, or a higher target or none (`--no-target`),
-in the same `gero team lead` (or the dialog), which resumes it.
-
-Besides, at most `--max-live` agents of the lead's are live at once (3), and
-none is made on a plan once a window of that plan is used past
-`--plan-ceiling` percent (90): the plan of the account that kind of CLI runs on
-in the isolation, as its agents last said it.
-
-On a subscription the plan windows are the real limit, so a budget is
-optional; without one, the ceiling is all that holds the run back, and it
-counts the account's whole use, yours on the Mac too, so lower it to keep
-some of the week. Without an eval either, gero neither ends the run nor
-tells the lead that nothing runs: the team spends for as long as the lead
-keeps work going, and stands idle, spending nothing, once it stops. A CLI
-billed per use (an API key) has no plan window: where one is logged in, gero
-refuses a lead without a budget, and its agents of that kind.
-
-## Control
-
-Some of what you do with the gero command can be opened to an isolation's
-agents: an agent that keeps others going lists them, makes them, writes to
-them, sets them crons. What is opened is an env, a set of gero commands ticked
-one by one (checkboxes in the web's environment form), and an isolation has one:
-
+Schedule your own messages, or let agents schedule their own with
+`gero iso expose dev cron`. Supports `@every 2h`, `--once`, and `--wait` to
+hold a run until the agent is idle. Runs missed while the Mac slept come
+due once, not all at once.
+
+</td>
+</tr>
+<tr>
+<td colspan="2" valign="top">
+
+### 🎛️ Control: hand an agent part of the gero command
 ```sh
 gero env add control ops --allow agent.ls,agent.log,agent.new,agent.send --max-live 3
-gero iso expose dev control ops              # dev's agents act on dev's agents
-gero iso expose dev control ops --reach far  # ...and on far's
-gero iso expose dev control ops --approvals auto  # agents they make on far run under auto
-gero env edit control ops --allow agent.ls   # replaces the list
-gero env help control                        # the actions an env can open
+gero iso expose dev control ops
 ```
+Tick the actions an agent may take: list, create, message, fork or archive
+agents, set crons, run evals. Anything an agent makes or sends is marked as
+coming from it. Credentials, approvals, making or removing isolations, and
+the fence are never on the list.
 
-The actions: `agent.ls`, `agent.log` (a conversation), `agent.new`,
-`agent.send`, `agent.interrupt`, `agent.archive`, `agent.restore`,
-`agent.fork`, `agent.rename`, `agent.team`, `agent.set` (model and effort),
-`agent.cron`, `agent.inbox`, `iso.ls`, `iso.services`, `iso.exec` (a
-command in an isolation), `team.ls`,
-`team.show`, `team.new`, `team.rename`, `team.rm`, `team.eval` and
-`team.evalset`. An env made without `--allow` opens the reads alone. Nothing
-that is credentials or rights is among them, so no env opens it: accounts,
-envs and their secrets, services, an isolation's environment and logins,
-approvals (an agent's mode, and approving or answering), a lead and its
-terms, making, resizing, upgrading and removing isolations, removing agents,
-resuming a run gero stopped, the fence and the daemon.
+</td>
+</tr>
+</table>
 
-Inside the isolation, `GERO_CONTROL_URL` is each agent's own address for it
-(on mail's port, so no `gero iso upgrade` is needed), and the `gero-control`
-skill shows what its env opens, with the request for each: the daemon's own
-API paths, under the agent's address. What an agent does through it is done
-as that agent:
+## Never lose a run
 
-- **It reaches its own isolation's agents, and those of the isolations
-  `--reach` names; to it the others are not there.** Its own isolation's
-  agents share its files and services, so acting on them gives it nothing it
-  does not have. Reaching another isolation is reaching what that one's
-  services open, through its agents: name one only where that is meant.
-- **What it makes, writes or sets reads as its own.** A message arrives as
-  `[gero control: from agent boss in isolation dev, ...]`, an agent it made
-  starts on a prompt that says so, a cron it set says who set it (`gero agent
-  cron` under SET BY), and the sidebar marks an agent made this way with an
-  arrow. The daemon's log has a line for every change.
-- **Approvals stay yours.** An agent it makes in its own isolation takes its
-  maker's approvals mode, as a lead's do; one in another isolation asks you,
-  unless you gave the exposure `--approvals auto`: then one whose maker runs
-  under auto or never runs under auto, with auto's reviewer, and one whose
-  maker asks still asks. Nothing gives never that way. An agent cannot set
-  a mode, and `agent.set` changes model and effort only.
-- **A command it runs, it could have had an agent run.** `iso.exec` runs a
-  shell command as the agent user in an isolation it reaches, for a minute
-  (ten at most), and gives back the end of what it printed and its exit code;
-  only where an agent it made would run under auto: in its own isolation
-  when the caller runs under auto or never, in another when you also gave
-  the exposure `--approvals auto`. Reaching an isolation this way is reaching
-  its files and services, an eval isolation's grader and data among them.
-- **It has few made at once, and writes within mail's budget.** `--max-live`
-  (3) agents made through it (`agent.new`, `agent.fork`, restoring one) by
-  the isolation's agents are live at once, and what they write through it
-  spends the isolation's mail budget, 20 a minute, so two agents writing to
-  each other wind down either way.
-- **Crons it changes are the agents'.** It sets crons on the agents it
-  reaches, at most twenty of the agents' each and none more often than every
-  five minutes, and changes and removes those agents set, never yours.
-- **A team is its to change only whole.** It renames or removes a team only
-  when it reaches all its agents, and sees a run or runs an eval where it
-  reaches the lead.
-- **An eval it sets runs where it could run commands.** `team.evalset` sets
-  a team's eval command, its limit and its eval isolation, where it reaches
-  the lead, on a copy of the lead's working directory or one in it: never in
-  the lead's isolation, where an eval runs as the agents, and on nothing else
-  of it. The eval isolation is the setting agent's own, or one it reaches
-  where `iso.exec` would run (`--approvals auto`, and the agent under auto or
-  never); left out, it stays where it is, or is the agent's own when the
-  eval ran in the lead's. The rest of the run's
-  terms stay yours, a stopped run stays stopped, and `gero team show`, the
-  team's dialog and page say which agent set the eval, until you change it.
-  The `gero-control` skill says what an eval is wherever its env touches
-  one.
+- **The daemon can crash.** The agents keep running under `gero-shim` inside
+  the VM, which keeps a durable, sequenced log of everything they read and
+  write. The daemon replays the log and catches up.
+- **The Mac can reboot.** The turn that was running shows `interrupted`, and
+  your next message resumes the same session.
+- **gero can upgrade.** After `brew upgrade gero`, the next gero command
+  moves the daemon onto the new version, and the agents carry on.
 
-Turning control off for an isolation, or editing its env, takes effect on the
-next request; its agents' processes start again when idle, with the address
-and the skill or without them.
+## Safe enough to leave running
 
-## Shared folders
+Orchestration only pays off if you can walk away. So every agent runs with
+no one approving each step, inside a box that holds even if it misbehaves:
 
-A folder of the Mac's can be put in an isolation, at `/shared/<name>`:
+| | |
+|---|---|
+| 📦 **A VM per isolation** | Apple's `container` gives each isolation its own lightweight Linux VM. It doesn't see your files unless you share a folder, read-only by default |
+| 🧱 **A measured fence** | pf walls each isolation off the Mac and the LAN over IPv4 and IPv6. **The daemon tests the fence from inside** against every address your Mac has, and agents take no turns until the test passes |
+| 🔑 **Credentials it can use but never read** | git, AWS, Postgres, Slack, Notion, Linear and more go through proxies on the Mac. Each proxy adds your credential and checks the request against an allowlist, so the agent never sees the token |
+| 🙋 **Approvals if you want them** | `never` · `auto` (a reviewer model checks each action) · `ask` · `default`, set per agent at any time |
 
 ```sh
-gero env add share notes --path ~/Projects/notes           # read-only
-gero env add share out --path ./out --read-write           # a relative path is the CLI's own
-gero iso expose dev share notes,out                        # dev restarts with both
-gero iso unexpose dev share                                # ...and without them
+gero env add git work --allow-repo acme/api     # only this repo
+gero iso expose dev git work                    # dev's agents push with your token, never holding it
+gero iso verify dev                             # check every guarantee, from inside, now
 ```
 
-It is a hole in the isolation, kept small:
+[How the fence and the proxies work →](docs/REFERENCE.md#network-fence)
 
-- **Read-only unless `--read-write`.** The VM's kernel refuses a write to a
-  read-only one ("Read-only file system").
-- **A writable one is yours.** The VM does not enforce file permissions on
-  it: an agent there overwrites a 0600 file, plants an executable git hook,
-  deletes what it likes, and on the Mac all of it is your own (measured).
-  Whatever runs from that folder on the Mac — git hooks, `.envrc`, scripts,
-  a Makefile — is then the agents' to write. A link an agent makes there is
-  a real one on the Mac, to the Mac's paths.
-- **Only a folder in your home folder**, and never the home folder itself, a
-  dot folder in it (`~/.ssh`, `~/.aws`, `~/.config`…), `~/Library`, or gero's
-  own directories; links are followed before that is checked, and again
-  whenever a container starts with the folder. Desktop, Documents and
-  Downloads are refused as well: macOS keeps the container runtime out of
-  them and the VM does not start ("Operation not permitted").
+## A day with gero
 
-`container` mounts a folder only when it starts a VM, so turning a share on
-or off for an isolation, or changing an exposed one, replaces its container,
-the way a resize does: volumes, sessions and workspaces are kept, running
-agents end and start again on their next message. The web and the TUI ask
-first. A container that will not start with a new folder is put back with
-the ones it had and the change is refused; one recreated later without a
-folder that has gone starts without it. Inside, the `gero-share` skill says
-which folder of the Mac's each one is, and how to treat it; Claude gets each
-one as `--add-dir`, and Codex's auto sandbox may write to the writable ones.
+> **08:55.** A cron you set last week wakes `ci-bot`: *"check CI; fix what
+> is red."* By 09:10 there's a green build and a PR.
+>
+> **11:30.** On the train, your phone shows Claude waiting on a question with
+> three options. You tap one.
+>
+> **14:00.** A Codex agent takes the refactor and a Claude agent takes the
+> tests. They mail each other about the interface. You don't relay a word.
+>
+> **18:00.** You hand `tara` a spec, a 5M-token budget and a grader. You close
+> the laptop.
+>
+> **08:00 the next day.** `gero team show lab` lists six rounds, the best
+> score after round 4, and how many tokens it spent. Nothing on your Mac was
+> touched.
 
-## Skills
+## How it compares
 
-A skill of your own — a folder with `SKILL.md` at its top, and whatever
-scripts, references and assets it ships — can be put in an isolation, for
-Claude Code and Codex alike:
+| | Tabs of CLIs | In-CLI subagents | Cloud agents | **gero** |
+|---|:-:|:-:|:-:|:-:|
+| Many agents, one place to watch and steer | ❌ | ⚠️ *(within one session)* | ✅ | ✅ |
+| Claude Code **and** Codex together | ❌ | ❌ | ❌ | ✅ |
+| Agents message each other | ❌ | ❌ | ❌ | ✅ |
+| Agents on a schedule | ❌ | ❌ | ⚠️ | ✅ |
+| A lead that runs rounds toward a score, within a budget | ❌ | ❌ | ❌ | ✅ |
+| Runs unattended without risking your machine | ❌ | ❌ | ✅ | ✅ |
+| Your machine, your files, your subscription | ✅ | ✅ | ❌ | ✅ |
+| Steer from your phone | ❌ | ❌ | ✅ | ✅ |
 
-```sh
-gero env add skill pdf --path ~/skills/pdf      # checked, then copied to ~/.config/gero/skills/pdf
-gero iso expose dev skill pdf,xlsx              # in dev's agents' skills, at once
-gero env edit skill pdf --path ~/skills/pdf     # copied in again after you changed it
-gero env edit skill pdf                         # ...or check the kept one after editing it there
-gero env check skill pdf                        # what is kept, and anything worth fixing
-gero env rm skill pdf                           # gone from the Mac and every isolation
-```
+## Questions you're probably asking
 
-gero keeps its own copy in `~/.config/gero/skills/NAME`; the folder it came
-from can move or change without touching what agents have. Both CLIs drop a
-skill they cannot read without telling the agent, so a skill is checked as it
-is added, and refused rather than kept broken:
+<details>
+<summary><b>Do I have to use teams?</b></summary>
 
-- **`SKILL.md`**, named so, UTF-8, starting with a `---` line, its frontmatter
-  closed by another, and YAML both CLIs can read (a value with `: ` or ` #`
-  in it needs quotes).
-- **`name`** is the skill's name as it is added: lowercase letters, digits
-  and single hyphens, up to 64. Names starting with `gero` are gero's own.
-- **`description`**, not empty, up to 1024 characters: how an agent knows
-  when to use it.
-- **Claude Code's fields** have the type it reads (`user-invocable: true`,
-  `context: fork`, `metadata` of names to text…); one neither CLI reads is a
-  warning, as is a link in `SKILL.md` to a file the skill does not have, or a
-  `SKILL.md` past 500 lines.
-- **Its files and nothing else**: a link (symlink) is refused rather than
-  followed, so nothing else of the Mac's rides along; `.git` and `.DS_Store`
-  are left out. Up to 256 files, 1 MiB each, 4 MiB in all. Nothing is taken
-  from gero's own directories.
+No. Most people start with a few agents side by side, plus a cron or two.
+Teams are for when you can say what "better" means in a script that prints
+`SCORE: <number>`. `gero team help` walks you through a first team.
+</details>
 
-In the isolation each skill is at `~/.claude/skills/gero-skill-NAME` and
-`~/.codex/skills/gero-skill-NAME`; both CLIs know it by its `name`. Executable
-scripts stay executable, and the agent owns its copy. Ticked, unticked,
-removed or copied in again, the isolation follows at once, and a file the new
-copy no longer has goes too; an edit made in `~/.config/gero/skills` reaches it
-with `gero env edit skill NAME`. Claude Code notices a changed skill as it
-runs; Codex reads them as a session starts. Isolations made before skills need `gero iso upgrade
-NAME` once for that, and for files that are not text; until then they get the
-text files, and lose a skill only when the service is turned off.
+<details>
+<summary><b>How does a lead not burn through my subscription?</b></summary>
 
-A skill runs as the agent: its scripts are yours to trust, as you would a
-package.
+Set `--budget` (in tokens, not counting prompt-cache reads) and
+`--plan-ceiling`, which defaults to 90% of a plan window. gero refuses to
+run a lead without a budget on a pay-per-use API key.
+</details>
 
-## Forwarded ports
+<details>
+<summary><b>Can I use my Claude subscription?</b></summary>
 
-A port of the isolation's — a dev server, a WAS an agent runs — can be put on
-the Mac's `127.0.0.1`:
+Yes. Run `claude setup-token` once (the token is valid for a year) and
+`gero account add`. Any number of isolations can share it. Codex logs in
+once per isolation, because a ChatGPT login can't be shared. You can finish
+that login from any browser, including your phone's.
+</details>
 
-```sh
-gero env add port web --port 5173                          # http://web.localhost:5173 on the Mac
-gero env add port api --port 8080 --host-port 18080        # ...or another port of the Mac's
-gero env add port db --port 5432 --mode tcp                # bytes unchanged, for what is not HTTP
-gero iso expose dev port web,api
-```
+<details>
+<summary><b>What stops two agents from mailing each other forever?</b></summary>
 
-The daemon listens on the Mac and takes each connection through the
-isolation's tunnel to its own loopback, so a server there that listens on
-localhost only is reached too. Turning a port on or off changes only the
-Mac's listener; the container stays. A port another isolation already has,
-or something on the Mac already listens on (on any address), is refused
-rather than shared. Isolations made before forwarded ports need `gero iso
-upgrade NAME` once; the browser is told so.
+The skill tells them not to answer what needs no answer. An isolation sends
+at most 20 mails a minute, and an inbox holds 50.
+`gero agent inbox <id> --clear` ends a loop on the spot.
+</details>
 
-It opens the isolation toward the Mac, kept small:
+<details>
+<summary><b>Can I see a dev server an agent runs?</b></summary>
 
-- **The Mac's loopback only**, never the LAN. The isolation still cannot
-  connect to the Mac (the fence is measured as before): a connection only
-  ever starts on the Mac.
-- **Its cookies are its own.** A browser keeps cookies by name, not port:
-  127.0.0.1's go to every port of it, gero's web session (the web token)
-  among them. So an http port is given out under a name of its own,
-  `http://<env>.localhost:<port>` (browsers and macOS resolve any name under
-  localhost to the loopback; Vite, Django and Rails accept it as it is),
-  where the browser sends it no other program's cookies and keeps what it
-  sets from them; a cookie it sets loses any `Domain`. `127.0.0.1` and
-  `localhost` still work, for a login whose callback is registered there;
-  there the other cookies of that name reach it, all but gero's own. In
-  `http` mode, the default, the daemon is an HTTP proxy that takes gero's
-  cookie out of every request and out of every answer; WebSockets (a dev
-  server's live reload) pass. `tcp` mode passes bytes unchanged: a
-  browser pointed at a tcp port hands the isolation your session, and gero
-  warns when one is defined. An http port answers only to `127.0.0.1`,
-  `localhost` and `*.localhost`, so a web page elsewhere that points a name
-  of its own at 127.0.0.1 (DNS rebinding) cannot read it through your
-  browser.
-- **What an agent serves runs in your browser**, as a page from 127.0.0.1.
-  gero's own API refuses it (it needs a header a cross-origin page cannot
-  send), but other things on the Mac may not; the `gero-port` skill tells
-  agents which ports the Mac reaches and what not to serve. The web links
-  each http port, opened with no hold on the gero tab.
+`gero env add port web --port 5173` gives you `http://web.localhost:5173` on
+your Mac, on the Mac's loopback only. Connections only ever start on the
+Mac.
+</details>
 
-## Kill
+<details>
+<summary><b>Can I give agents my own skills?</b></summary>
 
-```sh
-gero iso kill sim            # SIGKILL its VM, past container (the web's Kill)
-```
+`gero env add skill pdf --path ~/skills/pdf` checks the skill the way both
+CLIs read it, refuses a broken one rather than dropping it silently, and
+installs it for Claude Code and Codex alike.
+</details>
 
-A VM so short of memory that nothing starts in it holds up container's every
-`exec`, in every isolation, and its `stop` and `kill` with them. `gero iso
-kill` goes past container: it SIGKILLs the container's runtime helper and the
-process its VM runs in (the one with its root disk open), as unplugging it
-would. Its agents are interrupted, what its disks had not written is lost, and
-it starts again when something next needs it: within a minute when it has
-live agents, as they reconnect; otherwise at the next agent made in it, or
-`gero iso start sim` (the web's Start).
+## The fine print
 
-## Verify
+- **Apple silicon Macs only.** gero is built on Apple's `container`.
+- **The CLI's own login lives in the VM.** Service credentials stay on the
+  Mac, but Claude's account token or Codex's login is in the isolation,
+  where the CLI needs it.
+- **Agents in one isolation share a user.** Isolations are the trust
+  boundary. A team's agents work in the lead's isolation.
+- **A writable shared folder is a real hole.** Shares are read-only by
+  default, and gero refuses `~/.ssh`, `~/.aws`, `~/Library` and the like.
+- **The CLI versions are pinned.** gero parses what Claude Code and Codex
+  print, so a new CLI version is checked before an image ships with it
+  ([how](docs/REFERENCE.md#claude-code-and-codex-in-the-image)).
 
-```sh
-gero iso verify dev          # exit 0 ok / 1 a guarantee is broken / 2 setup only
-gero iso verify              # every isolation
-gero iso verify dev --json
-```
+## Learn more
 
-Measures what an isolation can do, now, instead of trusting the
-configuration: the fence afresh (every address the Mac holds, from inside),
-that no Mac directory is mounted but its shares, each the folder it was
-shared as and a read-only one read-only, that the Mac listens for each forwarded
-port on its loopback alone and the tunnel takes it in, and for each exposed
-proxy that the tunnel carries its ports, that it refuses a request it must refuse — a wrong
-workspace token, an unlisted repository — made from inside the isolation as
-the agent, with curl or psql, and that each env still answers from the Mac
-(`gero env check`). Then that the credentials file is owner-only and the
-internet is still reachable. FAIL lines are broken guarantees, WARN lines
-setup; a leak found here stops agents like any other measurement. The TUI
-has it on `v` in the isolations page, the web as Verify on an isolation's page.
+- 📖 **[The reference](docs/REFERENCE.md)**: every command, flag and guarantee, in depth
+- 🤝 [Teams](docs/REFERENCE.md#teams) · [Mail](docs/REFERENCE.md#mail) · [Cron](docs/REFERENCE.md#cron) · [Control](docs/REFERENCE.md#control)
+- 🔒 [Network fence](docs/REFERENCE.md#network-fence) · [Credential proxies](docs/REFERENCE.md#credential-proxies) · [Verify](docs/REFERENCE.md#verify)
+- 🛠️ [Build from source](docs/REFERENCE.md#build): `mise install && mise run build`
+
+<p align="center"><sub>Stop dispatching agents. Start leading a team.</sub></p>
