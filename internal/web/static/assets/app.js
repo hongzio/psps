@@ -80,6 +80,8 @@ const S = {
   drawer: false,
   convos: new Map(),
   drafts: new Map(),
+  // What is picked and typed for a question an agent asks, by its ID.
+  answering: {},
   es: null,
   esFor: null,
   settingsOpen: false,
@@ -1517,6 +1519,7 @@ function agentView() {
         h('button', { type: 'button', class: 'sent-nav', 'data-go': 'down', title: 'The message you sent after', 'aria-label': 'Next message you sent', onclick: () => goSent(1) }, icon('chevron-down')),
         h('button', { type: 'button', class: 'sent-nav', 'data-go': 'end', title: 'To the end', 'aria-label': 'Scroll to the end', onclick: () => { const b = document.getElementById('convo'); b.scrollTo({ top: b.scrollHeight, behavior: 'smooth' }) } }, icon('arrow-down-to-line'))))),
       h('div', { class: 'convo-inner', id: 'convo-inner' })),
+    h('div', { class: 'ask-jump-slot' }, h('button', { type: 'button', class: 'ask-jump', id: 'ask-jump', hidden: true }, icon('chevron-down'), ' A question waits for you')),
     h('div', { id: 'approvals' }),
     composer(a),
   )
@@ -1973,7 +1976,7 @@ function onConvoScroll(box, id) {
   stick = box.scrollHeight - box.scrollTop - box.clientHeight < 8
   // Drawing the earlier would stop a scroll the buttons began.
   if (box.scrollTop < 400 && convo(id).hidden && Date.now() > goingUntil) showEarlier(convo(id))
-  if (!lastSentQueued) { lastSentQueued = true; requestAnimationFrame(() => { lastSentQueued = false; renderLastSent() }) }
+  if (!lastSentQueued) { lastSentQueued = true; requestAnimationFrame(() => { lastSentQueued = false; renderLastSent(); renderAskJump() }) }
 }
 let lastSentQueued = false
 
@@ -2054,6 +2057,7 @@ function renderConvo(forceBottom) {
   if (ta && ta !== typing) { ta.focus({ preventScroll: true }); ta.setSelectionRange(...sel) }
   if (stick) box.scrollTop = box.scrollHeight
   renderLastSent()
+  renderAskJump()
 }
 
 const convoPage = 150
@@ -2202,6 +2206,7 @@ function entryView(en, a, frozen) {
     }
     case 'approval': {
       const d = en.decision
+      if (!d && en.questions && !frozen) return questionCard(a, en)
       const outcome = d ? ' — ' + decisionText(d) : ''
       return h('div', { class: 'approval' + (d ? ' decided' : '') },
         h('div', { class: 'head' }, `Approval: ${en.akind}${outcome}`),
@@ -2248,10 +2253,11 @@ function renderApprovals() {
   const box = document.getElementById('approvals')
   const a = agentById(S.sel)
   if (!box || !a) return
-  const p = pending(convo(a.id))
+  // A question is asked in the conversation itself, where it scrolls with
+  // the rest: drawn here, it would cover a phone's screen.
+  const p = pending(convo(a.id)).filter((en) => !en.questions)
   if (!p.length) { box.replaceChildren(); return }
   const ap = p[0]
-  if (ap.questions) { renderQuestion(box, a, ap, p.length); return }
   box.replaceChildren(h('div', { class: 'composer pending-approval' },
     h('div', { class: 'composer-row' }, h('div', { class: 'approval grow' },
       h('div', { class: 'head' }, `${label(a)} asks to ${askText(ap.akind)}` + (p.length > 1 ? ` (+${p.length - 1} more)` : '')),
@@ -2263,60 +2269,84 @@ function renderApprovals() {
         h('button', { class: 'btn danger', onclick: () => decide(ap.id, 'cancel') }, 'Decline & stop'))))))
 }
 
-// renderQuestion is a question the agent asks (Claude's AskUserQuestion):
-// each of its questions with its options to pick, one or several, and a
-// box for an answer of one's own. What is picked lives in S, since the page
-// is redrawn as events arrive; a box being typed in keeps its caret.
-function renderQuestion(box, a, ap, n) {
-  if (S.answering?.id !== ap.id) S.answering = { id: ap.id, picked: {}, own: {} }
-  const st = S.answering
-  const typing = document.activeElement?.dataset?.q != null ? document.activeElement : null
-  const sel = typing && [typing.dataset.q, typing.selectionStart, typing.selectionEnd]
+// questionCard is a question the agent asks (Claude's AskUserQuestion),
+// drawn in the conversation where it was asked: each of its questions with
+// its options to pick, one or several, and a box for an answer of one's
+// own. The card stays while it waits, so the conversation keeps it through
+// redraws; a pick redraws only the card. What is picked lives in S, kept
+// when the agent is left and come back to; a box being typed in keeps its
+// caret.
+function questionCard(a, ap) {
+  const card = h('div', { class: 'approval asking' })
+  const st = (S.answering[ap.id] ||= { picked: {}, own: {} })
   const answerTo = (q) => {
     const own = (st.own[q.question] || '').trim()
     if (!q.multi_select) return own || st.picked[q.question] || ''
     return [...(st.picked[q.question] || []), ...(own ? [own] : [])].join(', ')
   }
-  const answer = h('button', { class: 'btn primary' }, 'Answer')
-  const ready = () => { answer.disabled = !ap.questions.every((q) => answerTo(q)) }
-  answer.addEventListener('click', () => {
-    const answers = Object.fromEntries(ap.questions.map((q) => [q.question, answerTo(q)]))
-    decide(ap.id, 'accept', answers)
-  })
-  const question = (q, i) => {
-    const picked = st.picked[q.question]
-    const opts = (q.options || []).map((o) => {
-      const on = q.multi_select ? (picked || []).includes(o.label) : picked === o.label && !(st.own[q.question] || '').trim()
-      return h('button', {
-        class: 'btn small opt' + (on ? ' on' : ''), title: o.description || '', 'aria-pressed': String(on),
-        onclick: () => {
-          if (!q.multi_select) { st.picked[q.question] = o.label; st.own[q.question] = '' }
-          else st.picked[q.question] = on ? picked.filter((l) => l !== o.label) : [...(picked || []), o.label]
-          renderApprovals()
-        },
-      }, o.label)
+  const draw = () => {
+    const typing = card.contains(document.activeElement) && document.activeElement.dataset?.q != null ? document.activeElement : null
+    const sel = typing && [typing.dataset.q, typing.selectionStart, typing.selectionEnd]
+    const answer = h('button', { class: 'btn primary' }, 'Answer')
+    const ready = () => { answer.disabled = !ap.questions.every((q) => answerTo(q)) }
+    answer.addEventListener('click', () => {
+      const answers = Object.fromEntries(ap.questions.map((q) => [q.question, answerTo(q)]))
+      decide(ap.id, 'accept', answers)
     })
-    const own = h('input', { class: 'own', value: st.own[q.question] || '', placeholder: q.multi_select ? 'And in your own words…' : 'Or in your own words…', autocomplete: 'off' })
-    own.dataset.q = String(i)
-    own.addEventListener('input', () => { st.own[q.question] = own.value; ready() })
-    own.addEventListener('keydown', (e) => { if (e.key === 'Enter' && !e.isComposing && !answer.disabled) answer.click() })
-    return h('div', { class: 'q' },
-      h('div', { class: 'q-head' }, q.header ? h('span', { class: 'chip' }, q.header) : null, q.question,
-        q.multi_select ? h('span', { class: 'hint' }, ' (any of them)') : null),
-      opts.length ? h('div', { class: 'opts' }, opts) : null, own)
-  }
-  box.replaceChildren(h('div', { class: 'composer pending-approval' },
-    h('div', { class: 'composer-row' }, h('div', { class: 'approval grow' },
-      h('div', { class: 'head' }, `${label(a)} asks you` + (n > 1 ? ` (+${n - 1} more)` : '')),
-      ap.questions.map(question),
+    const question = (q, i) => {
+      const picked = st.picked[q.question]
+      const opts = (q.options || []).map((o) => {
+        const on = q.multi_select ? (picked || []).includes(o.label) : picked === o.label && !(st.own[q.question] || '').trim()
+        return h('button', {
+          class: 'btn small opt' + (on ? ' on' : ''), title: o.description || '', 'aria-pressed': String(on),
+          onclick: () => {
+            if (!q.multi_select) { st.picked[q.question] = o.label; st.own[q.question] = '' }
+            else st.picked[q.question] = on ? picked.filter((l) => l !== o.label) : [...(picked || []), o.label]
+            draw()
+          },
+        }, o.label)
+      })
+      const own = h('input', { class: 'own', value: st.own[q.question] || '', placeholder: q.multi_select ? 'And in your own words…' : 'Or in your own words…', autocomplete: 'off', 'aria-label': q.question })
+      own.dataset.q = String(i)
+      own.addEventListener('input', () => { st.own[q.question] = own.value; ready() })
+      own.addEventListener('keydown', (e) => { if (e.key === 'Enter' && !e.isComposing && !answer.disabled) answer.click() })
+      return h('div', { class: 'q' },
+        h('div', { class: 'q-head' }, q.header ? h('span', { class: 'chip' }, q.header) : null, q.question,
+          q.multi_select ? h('span', { class: 'hint' }, ' (any of them)') : null),
+        opts.length ? h('div', { class: 'opts' }, opts) : null, own)
+    }
+    card.replaceChildren(
+      h('div', { class: 'head' }, `${label(a)} asks you`),
+      ...ap.questions.map(question),
       h('div', { class: 'actions' },
         answer,
         h('button', { class: 'btn', onclick: () => decide(ap.id, 'decline') }, 'Decline'),
-        h('button', { class: 'btn danger', onclick: () => decide(ap.id, 'cancel') }, 'Decline & stop'))))))
-  ready()
-  if (sel) {
-    const el = box.querySelector(`input[data-q="${sel[0]}"]`)
-    if (el) { el.focus({ preventScroll: true }); el.setSelectionRange(sel[1], sel[2]) }
+        h('button', { class: 'btn danger', onclick: () => decide(ap.id, 'cancel') }, 'Decline & stop')))
+    ready()
+    if (sel) {
+      const el = card.querySelector(`input[data-q="${sel[0]}"]`)
+      if (el) { el.focus({ preventScroll: true }); el.setSelectionRange(sel[1], sel[2]) }
+    }
+  }
+  draw()
+  return card
+}
+
+// renderAskJump shows, over the message box, a way down to a question
+// still waiting when it is below what is in view.
+function renderAskJump() {
+  const btn = document.getElementById('ask-jump')
+  const box = document.getElementById('convo')
+  if (!btn || !box) return
+  const cards = box.querySelectorAll('.approval.asking')
+  const card = cards[cards.length - 1]
+  btn.hidden = !card || card.getBoundingClientRect().top < box.getBoundingClientRect().bottom - 40
+  btn.onclick = () => {
+    if (!card) return
+    card.scrollIntoView({ block: 'start', behavior: 'smooth' })
+    card.classList.remove('flash')
+    void card.offsetWidth
+    card.classList.add('flash')
   }
 }
 
