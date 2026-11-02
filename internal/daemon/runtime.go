@@ -45,7 +45,7 @@ type runtime struct {
 	problem  string
 	// restartWhenIdle replaces the process at the next idle moment with
 	// nothing in the background (envRestartDue), so a changed isolation
-	// environment reaches it.
+	// environment, or Claude's changed options, reach it.
 	restartWhenIdle bool
 
 	outbox []store.Pending
@@ -519,8 +519,8 @@ func (r *runtime) freeLocked(st driver.State) bool {
 }
 
 // envRestartDue is whether the process is to be replaced now for a new
-// environment: not while it runs tasks in the background, which would die
-// with it. Until they end it goes on with the environment it has, taking
+// environment or new options: not while it runs tasks in the background,
+// which would die with it. Until they end it goes on with the environment it has, taking
 // turns as before; one that never ends keeps it.
 func (r *runtime) envRestartDue(st driver.State) bool {
 	return r.restartWhenIdle && st.Background == 0
@@ -604,8 +604,16 @@ func (r *runtime) interrupt() error {
 func (r *runtime) setOptions(o driver.Options) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
+	// Options saved as they were replace no process.
+	if o == r.agent.Options {
+		return
+	}
 	r.agent.Options = o
 	r.drv.SetOptions(o)
+	// Claude reads its options as flags as it starts.
+	if r.agent.Kind == driver.Claude {
+		r.restartWhenIdle = true
+	}
 	r.kickLocked()
 }
 

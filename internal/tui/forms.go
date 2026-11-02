@@ -780,7 +780,7 @@ func (m *Model) handleSettingsKey(msg tea.KeyMsg) tea.Cmd {
 		be, id := m.be, s.agent
 		note := "settings saved; they apply from the next turn"
 		if a, ok := m.agent(id); ok && a.Kind == driver.Claude {
-			note = "settings saved; claude restarts with them when idle"
+			note = "settings saved; claude restarts with them when idle, with nothing in the background"
 		}
 		return m.do(note, true, func(ctx context.Context) error { return be.SetOptions(ctx, id, o) })
 	}
