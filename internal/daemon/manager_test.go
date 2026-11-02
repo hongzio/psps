@@ -2196,3 +2196,19 @@ func TestKillingAnIsolationEndsItsContainerAndMeasuresItsFenceAgain(t *testing.T
 		t.Error("killed an isolation that is not there")
 	}
 }
+
+func TestStartingAnIsolationBringsAStoppedOneUp(t *testing.T) {
+	e := newTestEnv(t)
+	m, stop := e.daemon()
+	defer stop()
+	e.fc.reboot(testCtr, false)
+	if st, _ := e.fc.State(context.Background(), testCtr); st != "stopped" {
+		t.Fatalf("staged %q, not stopped", st)
+	}
+	if _, err := m.StartIsolation(context.Background(), "dev"); err != nil {
+		t.Fatal(err)
+	}
+	if st, _ := e.fc.State(context.Background(), testCtr); st != "running" {
+		t.Fatalf("after start: %q", st)
+	}
+}
