@@ -205,6 +205,7 @@ var added = []struct{ table, column, def string }{
 	{"team_evals", "private", "INTEGER NOT NULL DEFAULT 0"},
 	{"agents", "made_via", "TEXT NOT NULL DEFAULT ''"},
 	{"crons", "set_by", "TEXT NOT NULL DEFAULT ''"},
+	{"team_evals", "not_run", "INTEGER NOT NULL DEFAULT 0"},
 }
 
 func hasColumn(db interface {
@@ -226,6 +227,10 @@ func hasColumn(db interface {
 }
 
 func migrate(db *sql.DB) error {
+	hadNotRun, err := hasColumn(db, "team_evals", "not_run")
+	if err != nil {
+		return err
+	}
 	for _, a := range added {
 		have, err := hasColumn(db, a.table, a.column)
 		if err != nil {
@@ -235,6 +240,13 @@ func migrate(db *sql.DB) error {
 			if _, err := db.Exec(fmt.Sprintf(`ALTER TABLE %s ADD COLUMN %s %s`, a.table, a.column, a.def)); err != nil {
 				return err
 			}
+		}
+	}
+	// An eval from before not_run that gero could not run printed nothing:
+	// its output is gero's refusal alone, from its start.
+	if !hadNotRun {
+		if _, err := db.Exec(`UPDATE team_evals SET not_run = 1 WHERE score IS NULL AND (output LIKE 'isolation % cannot run the eval: %' OR output LIKE 'isolation % has no verified network fence: %')`); err != nil {
+			return err
 		}
 	}
 	// NULL is no handle, or no mail token yet; any number of agents have

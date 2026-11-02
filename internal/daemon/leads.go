@@ -902,6 +902,8 @@ func (m *Manager) runEval(l store.Lead, why string) {
 	if err != nil && e.Score == nil {
 		e.Output = tail(strings.TrimSpace(e.Output+"\n"+err.Error()), evalOutput)
 	}
+	var nr notRun
+	e.NotRun = errors.As(err, &nr)
 	m.teamMu.Lock()
 	defer m.teamMu.Unlock()
 	e, aerr := m.store.AddEval(e)
@@ -917,6 +919,10 @@ func (m *Manager) runEval(l store.Lead, why string) {
 	msg := fmt.Sprintf("Eval #%d (%s) took %s. %s", e.ID, why, e.Took, scoreLine(e, best, stale, l.Settings.Patience))
 	switch {
 	case e.Score != nil:
+	case e.NotRun:
+		// gero's own words: nothing of what is scored is in them.
+		msg += "\ngero says: " + tail(err.Error(), 1500) +
+			"\nYour operator is to fix that. Until then a round's end or your asking runs into the same, counting for nothing; once it is fixed, have the eval run (POST $GERO_TEAM_URL/eval)."
 	case e.Private && err != nil:
 		msg += "\nIts output is your operator's alone, as it ran in an isolation of its own. gero says: " + tail(err.Error(), 1500)
 	case e.Private:
@@ -934,7 +940,10 @@ func (m *Manager) runEval(l store.Lead, why string) {
 	}
 	// A round's eval runs when nothing of the team does: the same news
 	// asks for the next team, unless the run stops or nothing may start.
-	if why == whyRound && stop == "" && l.Stopped == "" && m.childrenBusy(l.Line) == 0 {
+	if e.NotRun {
+		// The next team would come to the same eval: nothing is asked for.
+		m.store.SetLeadNudged(l.Team, e.ID)
+	} else if why == whyRound && stop == "" && l.Stopped == "" && m.childrenBusy(l.Line) == 0 {
 		if nudge := m.nudgeText(l); nudge != "" {
 			msg += "\n\n" + nudge
 			m.store.SetLeadNudged(l.Team, e.ID)
@@ -943,6 +952,8 @@ func (m *Manager) runEval(l store.Lead, why string) {
 	score := "no score"
 	if e.Score != nil {
 		score = fmt.Sprintf("SCORE %g", *e.Score)
+	} else if e.NotRun {
+		score = "not run: " + err.Error()
 	}
 	m.log.Printf("team %s: eval #%d: %s", l.Team, e.ID, score)
 	if err := m.store.AddTeamNews(l.Team, msg); err != nil {
@@ -985,7 +996,14 @@ func nextTeam(l store.Lead) string {
 		" Then design the next team, have the eval run on a change of your own (POST $GERO_TEAM_URL/eval), or say why you stop."
 }
 
-// evalOutput runs l's eval and says what it printed.
+// notRun is an error of gero's that kept an eval from running: what is
+// scored never ran, so the eval counts for no patience.
+type notRun struct{ error }
+
+func (e notRun) Unwrap() error { return e.error }
+
+// evalOutput runs l's eval and says what it printed. An error before the
+// eval itself runs is a notRun.
 func (m *Manager) evalOutput(l store.Lead) (string, error) {
 	var lead store.Agent
 	if r := m.lineRuntime(l.Line); r != nil {
@@ -993,7 +1011,7 @@ func (m *Manager) evalOutput(l store.Lead) (string, error) {
 	} else if a, err := m.storedAgent(l.Line); err == nil {
 		lead = a
 	} else {
-		return "", err
+		return "", notRun{err}
 	}
 	limit := time.Duration(l.Settings.EvalMinutes) * time.Minute
 	budget := limit + time.Minute
@@ -1004,10 +1022,10 @@ func (m *Manager) evalOutput(l store.Lead) (string, error) {
 	defer cancel()
 	iso, err := m.store.Isolation(lead.IsolationID)
 	if err != nil {
-		return "", err
+		return "", notRun{err}
 	}
 	if err := m.readyForEval(ctx, iso); err != nil {
-		return "", err
+		return "", notRun{err}
 	}
 	// timeout(1) signals the eval's whole process group; ending `container
 	// exec` would leave it running.
@@ -1017,13 +1035,13 @@ func (m *Manager) evalOutput(l store.Lead) (string, error) {
 	}
 	ev, err := m.store.Isolation(l.Settings.EvalIsolation)
 	if err != nil {
-		return "", fmt.Errorf("the eval's isolation: %w", err)
+		return "", notRun{fmt.Errorf("the eval's isolation: %w", err)}
 	}
 	if why := m.evalIsoUnfit(ev.ID, iso.ID); why != "" {
-		return "", fmt.Errorf("isolation %s cannot run the eval: %s", ev.Name, why)
+		return "", notRun{fmt.Errorf("isolation %s cannot run the eval: %s", ev.Name, why)}
 	}
 	if err := m.readyForEval(ctx, ev); err != nil {
-		return "", err
+		return "", notRun{err}
 	}
 	// What the work left running there ends with the eval, whatever it was
 	// in time for.
@@ -1035,10 +1053,10 @@ func (m *Manager) evalOutput(l store.Lead) (string, error) {
 		}
 	}()
 	if err := m.cli.EvalReset(ctx, ev.Container, true); err != nil {
-		return "", err
+		return "", notRun{err}
 	}
 	if err := m.cli.CopyToEval(ctx, iso.Container, l.Settings.EvalDir, ev.Container); err != nil {
-		return "", fmt.Errorf("copying %s to isolation %s: %w", l.Settings.EvalDir, ev.Name, err)
+		return "", notRun{fmt.Errorf("copying %s to isolation %s: %w", l.Settings.EvalDir, ev.Name, err)}
 	}
 	return m.cli.RunEval(ctx, ev.Container, append(argv, l.Settings.Eval)...)
 }
@@ -1079,8 +1097,38 @@ func (m *Manager) evalIsoUnfit(iso, leadIso string) string {
 	return ""
 }
 
+// evalIsoWarning says which teams' evals iso stops running by having
+// service; "" if none. An eval isolation has none but control, and the
+// operator may still give it one for a while, as for work of their own.
+func (m *Manager) evalIsoWarning(iso store.Isolation, service string) string {
+	if service == controlproxy.Name {
+		return ""
+	}
+	leads, err := m.store.Leads()
+	if err != nil {
+		return ""
+	}
+	var teams []string
+	for _, l := range leads {
+		if l.Settings.EvalIsolation != iso.ID {
+			continue
+		}
+		name := l.Team
+		if t, err := m.store.Team(l.Team); err == nil {
+			name = t.Name
+		}
+		teams = append(teams, fmt.Sprintf("%q", name))
+	}
+	if len(teams) == 0 {
+		return ""
+	}
+	return fmt.Sprintf("isolation %s runs the eval of team %s: while it has %s, gero refuses to run it, as what is scored could use it (a refused eval counts for no patience); `gero iso unexpose %s %s` lets it run again",
+		iso.Name, strings.Join(teams, ", "), service, iso.Name, service)
+}
+
 // bestOf is the best scored of evals, and how many evals since it came
-// without a new best, those up to from not counted.
+// without a new best, those up to from not counted, nor those gero could
+// not run.
 func bestOf(evals []store.Eval, from int64) (*store.Eval, int) {
 	var best *store.Eval
 	stale := 0
@@ -1090,7 +1138,7 @@ func bestOf(evals []store.Eval, from int64) (*store.Eval, int) {
 			best, stale = e, 0
 			continue
 		}
-		if e.ID > from {
+		if e.ID > from && !e.NotRun {
 			stale++
 		}
 	}
@@ -1099,6 +1147,13 @@ func bestOf(evals []store.Eval, from int64) (*store.Eval, int) {
 
 // scoreLine says what e scored against the best.
 func scoreLine(e store.Eval, best *store.Eval, stale, patience int) string {
+	if e.NotRun {
+		s := "gero could not run it, so the work was not scored, and it counts for no patience"
+		if best != nil {
+			s += fmt.Sprintf("; the best is %g, at eval #%d", *best.Score, best.ID)
+		}
+		return s + fmt.Sprintf(". %d of %d evals without a new best.", stale, patience)
+	}
 	if e.Score == nil {
 		s := `It printed no "SCORE:" line, so it scored nothing`
 		if best != nil {

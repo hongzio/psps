@@ -348,6 +348,8 @@ func (m *Model) renderTeam(w int) string {
 			score := "no score"
 			if e.Score != nil {
 				score = strconv.FormatFloat(*e.Score, 'g', -1, 64)
+			} else if e.NotRun {
+				score = "not run"
 			}
 			line(fmt.Sprintf("eval #%d %s  %s  (%s)", e.ID, e.At.Local().Format("Jan 2 15:04"), score, e.Why))
 		}

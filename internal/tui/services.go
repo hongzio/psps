@@ -3,6 +3,7 @@ package tui
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"strings"
@@ -759,6 +760,9 @@ func (m *Model) handleExposeKey(msg tea.KeyMsg) tea.Cmd {
 				flash += ": " + strings.Join(x.Envs, ", ") + " (default " + x.Default + "); agents pick it up at their next idle moment"
 			case err == nil:
 				flash += "; agents pick it up at their next idle moment"
+			}
+			if err == nil && x.Warning != "" {
+				return doneMsg{flash: x.Warning, err: errors.New(x.Warning), refresh: true}
 			}
 			return doneMsg{flash: flash, err: err, refresh: true}
 		}

@@ -921,7 +921,7 @@ func (m *Manager) Expose(ctx context.Context, name, service string, req api.Expo
 	}
 	m.servicesChanged(ctx, iso.ID)
 	x.Settings = m.settingsOut(svc, x.Settings)
-	out := api.Exposure{Service: service, Enabled: true, Exposure: x}
+	out := api.Exposure{Service: service, Enabled: true, Exposure: x, Warning: m.evalIsoWarning(iso, service)}
 	if v, err := m.viewFor(iso.ID, svc); err == nil {
 		out.Forwards = m.forwardsOf(iso.ID, svc, v)
 	}

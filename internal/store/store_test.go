@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -106,6 +107,45 @@ func TestMigrationAddsColumnsToAnOldDatabase(t *testing.T) {
 	s.PutIsolation(iso)
 	if got, _ := s.Isolation("dev"); got.Network != "gero-dev-net" {
 		t.Fatalf("network not stored: %+v", got)
+	}
+}
+
+func TestMigrationMarksTheEvalsGeroCouldNotRun(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "old.db")
+	db, err := sql.Open("sqlite", "file:"+path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// team_evals as it was before not_run.
+	db.Exec(`CREATE TABLE team_evals (id INTEGER PRIMARY KEY AUTOINCREMENT, team TEXT NOT NULL, at TEXT NOT NULL, took_ms INTEGER NOT NULL,
+		score REAL, why TEXT NOT NULL, output TEXT NOT NULL, private INTEGER NOT NULL DEFAULT 0)`)
+	for _, out := range []string{
+		"isolation sim cannot run the eval: it has the aws service, and an eval isolation has none but control: what is scored could use it",
+		"isolation sim has no verified network fence: not verified yet",
+		"Traceback: the grader cannot run the eval: its own words",
+	} {
+		db.Exec(`INSERT INTO team_evals (team, at, took_ms, score, why, output) VALUES ('lab', '2026-11-02T00:00:00Z', 0, NULL, 'the round ended', ?)`, out)
+	}
+	db.Exec(`INSERT INTO team_evals (team, at, took_ms, score, why, output) VALUES ('lab', '2026-11-02T00:00:00Z', 0, 3.5, 'the round ended', 'cannot run the eval: ')`)
+	db.Close()
+
+	s, err := Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	evals, err := s.Evals("lab")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var got []bool
+	for _, e := range evals {
+		got = append(got, e.NotRun)
+	}
+	// Only gero's refusal, all of the output, marks one: not a grader's
+	// words like it, nor an eval with a score.
+	if fmt.Sprint(got) != "[true true false false]" {
+		t.Fatalf("not run: %v", got)
 	}
 }
 

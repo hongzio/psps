@@ -44,7 +44,8 @@ CREATE TABLE IF NOT EXISTS team_evals (
 	score   REAL,
 	why     TEXT NOT NULL,
 	output  TEXT NOT NULL,
-	private INTEGER NOT NULL DEFAULT 0
+	private INTEGER NOT NULL DEFAULT 0,
+	not_run INTEGER NOT NULL DEFAULT 0
 );
 CREATE TABLE IF NOT EXISTS spent (
 	agent  TEXT PRIMARY KEY REFERENCES agents(id),
@@ -293,11 +294,15 @@ type Eval struct {
 	// Private says the output is the operator's alone: the eval ran in an
 	// eval isolation, and what is scored there could write anything in it.
 	Private bool `json:"private,omitempty"`
+	// NotRun says gero could not run it (its isolation unfit, no fence,
+	// the work not copied): the work was not scored, so it counts for no
+	// patience.
+	NotRun bool `json:"not_run,omitempty"`
 }
 
 func (s *Store) AddEval(e Eval) (Eval, error) {
-	res, err := s.db.Exec(`INSERT INTO team_evals (team, at, took_ms, score, why, output, private) VALUES (?, ?, ?, ?, ?, ?, ?)`,
-		e.Team, ts(e.At), e.Took.Milliseconds(), e.Score, e.Why, e.Output, e.Private)
+	res, err := s.db.Exec(`INSERT INTO team_evals (team, at, took_ms, score, why, output, private, not_run) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+		e.Team, ts(e.At), e.Took.Milliseconds(), e.Score, e.Why, e.Output, e.Private, e.NotRun)
 	if err != nil {
 		return e, err
 	}
@@ -307,7 +312,7 @@ func (s *Store) AddEval(e Eval) (Eval, error) {
 
 // Evals are team's evals, oldest first.
 func (s *Store) Evals(team string) ([]Eval, error) {
-	rows, err := s.db.Query(`SELECT id, team, at, took_ms, score, why, output, private FROM team_evals WHERE team = ? ORDER BY id`, team)
+	rows, err := s.db.Query(`SELECT id, team, at, took_ms, score, why, output, private, not_run FROM team_evals WHERE team = ? ORDER BY id`, team)
 	if err != nil {
 		return nil, err
 	}
@@ -318,7 +323,7 @@ func (s *Store) Evals(team string) ([]Eval, error) {
 		var at string
 		var took int64
 		var score sql.NullFloat64
-		if err := rows.Scan(&e.ID, &e.Team, &at, &took, &score, &e.Why, &e.Output, &e.Private); err != nil {
+		if err := rows.Scan(&e.ID, &e.Team, &at, &took, &score, &e.Why, &e.Output, &e.Private, &e.NotRun); err != nil {
 			return nil, err
 		}
 		e.At, e.Took = parseTS(at), time.Duration(took)*time.Millisecond

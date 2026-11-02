@@ -435,6 +435,9 @@ type Exposure struct {
 	// Forwards are a forwarding service's ports; Error says why one is not
 	// listening on the Mac.
 	Forwards []Forward `json:"forwards,omitempty"`
+	// Warning is what turning it on costs, said once it is on: a team's
+	// eval its isolation runs is refused while it has the service.
+	Warning string `json:"warning,omitempty"`
 }
 
 type Forward struct {

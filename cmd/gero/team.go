@@ -349,7 +349,8 @@ When gero holds the team back
 
   gero stops the run when the budget is used, the target is reached, or
   --patience evals in a row bring no new best, and tells the lead: no agent of
-  its can be made or written to, and those at work finish their turns.
+  its can be made or written to, and those at work finish their turns. An
+  eval gero could not run (its isolation unfit, no fence) counts for none.
   gero team resume TEAM lets it go on, with the evals so far no longer
   counting toward patience, and tells the lead, which it asks for the next
   team. Changing the terms with gero team lead resumes it too. Neither does
@@ -403,6 +404,8 @@ func printRun(run api.TeamRun) error {
 		score := "no score"
 		if e.Score != nil {
 			score = strconv.FormatFloat(*e.Score, 'g', -1, 64)
+		} else if e.NotRun {
+			score = "not run"
 		}
 		fmt.Printf("  #%-4d %s  %-10s %s, %s\n", e.ID, e.At.Local().Format("Jan 2 15:04"), score, e.Why, e.Took.Round(time.Second))
 	}
