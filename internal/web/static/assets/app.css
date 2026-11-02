@@ -432,7 +432,7 @@ a.btn { display: inline-flex; align-items: center; color: var(--text); text-deco
 .approval.asking.flash { animation: ask-flash 1.2s ease; }
 @keyframes ask-flash { 0%, 40% { box-shadow: 0 0 0 3px var(--warn); } 100% { box-shadow: 0 0 0 0 transparent; } }
 @media (prefers-reduced-motion: reduce) { .approval.asking.flash { animation: none; } }
-/* Over the message box: the way down to a question waiting below. */
+/* Over the message box: the way down to a question or approval waiting below. */
 .ask-jump-slot { position: relative; height: 0; z-index: 4; }
 .ask-jump {
   position: absolute; bottom: 10px; left: 50%; transform: translateX(-50%);
@@ -788,8 +788,6 @@ a.btn { display: inline-flex; align-items: center; color: var(--text); text-deco
 }
 
 /* What were inline styles: the page's CSP (style-src 'self') refuses those. */
-.composer.pending-approval { border-top: 0; padding-bottom: 0; }
-.approval.grow { flex: 1; }
 .popover-actions { display: flex; gap: 8px; margin-top: 12px; }
 .row.spaced { margin-top: 10px; }
 
