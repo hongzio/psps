@@ -886,6 +886,9 @@ function route() {
   if (!(S.view === 'setup' && S.setupSel?.kind === 'new')) S.acctDraft = { name: '', kind: null, secret: '' }
   if (S.view === 'isolations' && S.isoTab === 'logins' && was !== 'isolations') S.clis = {}
   render()
+  // A new agent's form starts at its ID; not on a phone, where the
+  // keyboard would cover the form.
+  if (S.view === 'new' && was !== 'new' && !coarse) document.getElementById('new-handle')?.focus()
   if (S.view !== 'agent') guarded(refreshIsolations)
   if (S.view === 'services') guarded(refreshServices)
   document.getElementById('main')?.querySelector('.page')?.scrollTo?.(0, 0)
@@ -2858,7 +2861,7 @@ function newAgentView() {
   }
   fillIsos()
   S.refillIsolations = fillIsos
-  const handle = h('input', { placeholder: 'optional; like brave-otter otherwise', autocomplete: 'off', autocapitalize: 'off', spellcheck: 'false' })
+  const handle = h('input', { id: 'new-handle', placeholder: 'optional; like brave-otter otherwise', autocomplete: 'off', autocapitalize: 'off', spellcheck: 'false' })
   const [team, teams] = teamInput('')
   team.className = ''
   team.placeholder = 'optional; in none otherwise'
@@ -4437,8 +4440,10 @@ function stepAgent(by) {
 let goPending = 0
 document.addEventListener('keydown', (e) => {
   const t = e.target
-  // Esc leaves the message box, once nothing in it (a completion) took it.
-  if (e.key === 'Escape' && t.matches?.('.composer textarea') && !e.defaultPrevented) { t.blur(); return }
+  // Esc leaves the message box, or a field of the new agent's form, once
+  // nothing in it (a completion) took it: the shortcuts work again.
+  if (e.key === 'Escape' && !e.defaultPrevented && !e.isComposing &&
+    (t.matches?.('.composer textarea') || (S.view === 'new' && t.matches?.('.page input, .page textarea')))) { t.blur(); return }
   if (e.ctrlKey || e.metaKey || e.altKey || e.isComposing || e.defaultPrevented) return
   if (t.closest?.('input, textarea, select, [contenteditable]') || document.querySelector('dialog[open]')) return
   const key = e.code?.startsWith('Key') ? e.code.slice(3).toLowerCase() : e.key
