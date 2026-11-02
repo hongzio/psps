@@ -26,7 +26,8 @@ CREATE TABLE IF NOT EXISTS team_leads (
 	stopped    TEXT NOT NULL DEFAULT '',
 	stale_from INTEGER NOT NULL DEFAULT 0,
 	nudged     INTEGER NOT NULL DEFAULT 0,
-	dirty      INTEGER NOT NULL DEFAULT 0
+	dirty      INTEGER NOT NULL DEFAULT 0,
+	best_from  INTEGER NOT NULL DEFAULT 0
 );
 CREATE TABLE IF NOT EXISTS team_news (
 	id           INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -104,14 +105,17 @@ type Lead struct {
 	StaleFrom int64 `json:"-"`
 	Nudged    int64 `json:"-"`
 	Dirty     bool  `json:"-"`
+	// BestFrom: evals up to it count for no best, the operator having
+	// reset it.
+	BestFrom int64 `json:"-"`
 }
 
-const leadCols = `team, line, settings, since, base, stopped, stale_from, nudged, dirty`
+const leadCols = `team, line, settings, since, base, stopped, stale_from, nudged, dirty, best_from`
 
 func scanLead(row interface{ Scan(...any) error }) (Lead, error) {
 	var l Lead
 	var settings, since, base string
-	err := row.Scan(&l.Team, &l.Line, &settings, &since, &base, &l.Stopped, &l.StaleFrom, &l.Nudged, &l.Dirty)
+	err := row.Scan(&l.Team, &l.Line, &settings, &since, &base, &l.Stopped, &l.StaleFrom, &l.Nudged, &l.Dirty, &l.BestFrom)
 	if errors.Is(err, sql.ErrNoRows) {
 		return l, ErrNotFound
 	}
@@ -143,10 +147,10 @@ func (s *Store) PutLead(l Lead) error {
 	if _, err := tx.Exec(`DELETE FROM team_leads WHERE line = ? AND team != ?`, l.Line, l.Team); err != nil {
 		return err
 	}
-	if _, err := tx.Exec(`INSERT INTO team_leads (`+leadCols+`) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+	if _, err := tx.Exec(`INSERT INTO team_leads (`+leadCols+`) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 		ON CONFLICT (team) DO UPDATE SET line = excluded.line, settings = excluded.settings, since = excluded.since, base = excluded.base,
-			stopped = excluded.stopped, stale_from = excluded.stale_from, nudged = excluded.nudged, dirty = excluded.dirty`,
-		l.Team, l.Line, string(settings), ts(l.Since), string(base), l.Stopped, l.StaleFrom, l.Nudged, l.Dirty); err != nil {
+			stopped = excluded.stopped, stale_from = excluded.stale_from, nudged = excluded.nudged, dirty = excluded.dirty, best_from = excluded.best_from`,
+		l.Team, l.Line, string(settings), ts(l.Since), string(base), l.Stopped, l.StaleFrom, l.Nudged, l.Dirty, l.BestFrom); err != nil {
 		return err
 	}
 	return tx.Commit()

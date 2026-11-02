@@ -109,7 +109,7 @@ func (m *Manager) SetLead(ctx context.Context, teamRef string, req api.PutLead) 
 		if err != nil {
 			return api.TeamRun{}, err
 		}
-		l = store.Lead{Team: t.ID, Line: line, Settings: l.Settings, Since: time.Now().UTC(), Base: lineSpent(line, agents, spent)}
+		l = store.Lead{Team: t.ID, Line: line, Settings: l.Settings, Since: time.Now().UTC(), Base: lineSpent(line, agents, spent), BestFrom: l.BestFrom}
 	}
 	was := l.Settings
 	if l.Settings, err = m.leadTerms(l.Settings, req, a); err != nil {
@@ -173,7 +173,7 @@ func (m *Manager) stopsAgain(l store.Lead, evals []store.Eval) (string, error) {
 	if used := teamSpent(l, agents, spent).New(); overBudget(l, used) {
 		return fmt.Sprintf("the run would stop again at once: the team has used %s of its %s tokens; give it a larger budget (`--budget`)", tokens(used), tokens(l.Settings.Budget)), nil
 	}
-	if best, _ := bestOf(evals, 0); best != nil && l.Settings.Target != nil && *best.Score >= *l.Settings.Target {
+	if best, _ := bestOf(evals, l); best != nil && l.Settings.Target != nil && *best.Score >= *l.Settings.Target {
 		return fmt.Sprintf("the run would stop again at its next eval: eval #%d scored %g, which reaches the target %g; raise the target (`--target`), or take it off (`--no-target`)", best.ID, *best.Score, *l.Settings.Target), nil
 	}
 	return "", nil
@@ -186,7 +186,7 @@ func (m *Manager) resumedNews(l store.Lead, why string, evals []store.Eval) {
 	msg := "Your operator resumed the run, which gero had stopped (" + why + ")."
 	if l.Settings.Eval != "" {
 		msg += " The evals so far count no more toward its patience."
-		if best, _ := bestOf(evals, 0); best != nil {
+		if best, _ := bestOf(evals, l); best != nil {
 			msg += fmt.Sprintf(" The best is %g, at eval #%d.", *best.Score, best.ID)
 		}
 	}
@@ -340,6 +340,46 @@ func (m *Manager) EvalTeam(teamRef string) error {
 	return m.startEval(l, "your operator asked")
 }
 
+// ResetBest has a team's run count no eval so far for its best, for its
+// operator: the next scored eval is the best, and the target is reached by
+// what comes after. Its lead is told.
+func (m *Manager) ResetBest(teamRef string) error {
+	t, err := m.store.Team(teamRef)
+	if err != nil {
+		return err
+	}
+	m.teamMu.Lock()
+	defer m.teamMu.Unlock()
+	l, err := m.store.Lead(t.ID)
+	if err != nil {
+		return err
+	}
+	evals, err := m.store.Evals(t.ID)
+	if err != nil {
+		return err
+	}
+	if len(evals) == 0 || evals[len(evals)-1].ID <= l.BestFrom {
+		return nil
+	}
+	was, _ := bestOf(evals, l)
+	l.BestFrom = evals[len(evals)-1].ID
+	l.StaleFrom = max(l.StaleFrom, l.BestFrom)
+	if err := m.store.PutLead(l); err != nil {
+		return err
+	}
+	msg := fmt.Sprintf("Your operator reset the best score: evals up to #%d count no more, for the best, the target or the patience; the next scored eval is the best.", l.BestFrom)
+	if was != nil {
+		msg += fmt.Sprintf(" The best was %g, at eval #%d.", *was.Score, was.ID)
+	}
+	if err := m.store.AddTeamNews(t.ID, msg); err != nil {
+		m.log.Printf("team %s: %v", t.ID, err)
+	}
+	m.log.Printf("team %s: the best is reset after eval #%d", t.ID, l.BestFrom)
+	go m.teamNewsChanged(t.ID)
+	m.teamChanged(t.ID)
+	return nil
+}
+
 // teamsWithRuns are teams as the sidebar draws them.
 func (m *Manager) teamsWithRuns(teams []store.Team) ([]api.Team, error) {
 	runs, err := m.runBriefs()
@@ -387,7 +427,7 @@ func (m *Manager) runBriefs() (map[string]*api.TeamBrief, error) {
 		if err != nil {
 			return nil, err
 		}
-		best, _ := bestOf(evals, l.StaleFrom)
+		best, _ := bestOf(evals, l)
 		b := &api.TeamBrief{Lead: l.Line, Status: m.runStatus(l), Spent: teamSpent(l, agents, spent).New(), Budget: l.Settings.Budget}
 		if best != nil {
 			b.Best = best.Score
@@ -407,7 +447,7 @@ func (m *Manager) teamRun(t store.Team, l store.Lead) (api.TeamRun, error) {
 	if err != nil {
 		return api.TeamRun{}, err
 	}
-	best, stale := bestOf(evals, l.StaleFrom)
+	best, stale := bestOf(evals, l)
 	run := api.TeamRun{Team: t, Lead: l.Line, LeadLine: l.Line, Settings: l.Settings, Since: l.Since, Stopped: l.Stopped,
 		Status: m.runStatus(l), TeamsOff: m.teamsOff(l), Spent: teamSpent(l, agents, spent), Evaluating: m.evalRunning(t.ID), Stale: stale, Evals: []store.Eval{}, Agents: []api.TeamAgent{}}
 	if best != nil {
@@ -769,7 +809,7 @@ func (m *Manager) teamCheck(team string) {
 		return // the next step looks again, the window may have started over
 	}
 	last := evals[len(evals)-1]
-	best, stale := bestOf(evals, l.StaleFrom)
+	best, stale := bestOf(evals, l)
 	msg := "Nothing of your team is running. " + scoreLine(last, best, stale, l.Settings.Patience) +
 		" The team has used " + spentText(teamSpent(l, agents, spent).New(), l.Settings.Budget) + "." +
 		" " + nextTeam(l)
@@ -915,7 +955,7 @@ func (m *Manager) runEval(l store.Lead, why string) {
 		return
 	}
 	evals, _ := m.store.Evals(l.Team)
-	best, stale := bestOf(evals, l.StaleFrom)
+	best, stale := bestOf(evals, l)
 	msg := fmt.Sprintf("Eval #%d (%s) took %s. %s", e.ID, why, e.Took, scoreLine(e, best, stale, l.Settings.Patience))
 	switch {
 	case e.Score != nil:
@@ -1126,19 +1166,22 @@ func (m *Manager) evalIsoWarning(iso store.Isolation, service string) string {
 		iso.Name, strings.Join(teams, ", "), service, iso.Name, service)
 }
 
-// bestOf is the best scored of evals, and how many evals since it came
-// without a new best, those up to from not counted, nor those gero could
-// not run.
-func bestOf(evals []store.Eval, from int64) (*store.Eval, int) {
+// bestOf is the best scored of evals under l, those up to its BestFrom
+// not counted, and how many evals since it came without a new best, those
+// up to its StaleFrom not counted, nor those gero could not run.
+func bestOf(evals []store.Eval, l store.Lead) (*store.Eval, int) {
 	var best *store.Eval
 	stale := 0
 	for i := range evals {
 		e := &evals[i]
+		if e.ID <= l.BestFrom {
+			continue
+		}
 		if e.Score != nil && (best == nil || *e.Score > *best.Score) {
 			best, stale = e, 0
 			continue
 		}
-		if e.ID > from && !e.NotRun {
+		if e.ID > l.StaleFrom && !e.NotRun {
 			stale++
 		}
 	}

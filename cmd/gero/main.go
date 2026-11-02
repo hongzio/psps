@@ -88,6 +88,7 @@ const usage = `gero — run coding agents in isolated containers
                                 its lead: makes agents of its own in the team and hears when their turns end; --clear: none
   gero team show TEAM [--json]  its run: spending, the eval's scores, the lead's agents
   gero team eval TEAM           run its eval now; the result goes to the lead
+  gero team reset-best TEAM     the evals so far count for no best; the next scored is it
   gero team resume TEAM         a run gero stopped (budget, target, no new best) goes on
   gero team help                how a team and its lead work, from a first team on
 

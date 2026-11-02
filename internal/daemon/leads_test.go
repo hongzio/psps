@@ -353,6 +353,30 @@ func TestARoundEndsWithTheEvalAndARunWithoutProgressStops(t *testing.T) {
 			t.Fatalf("news lacks %q:\n%s", want, n)
 		}
 	}
+
+	// The operator resets the best: the evals so far count for none, a
+	// target the old best reached is set, and the next scored eval is the
+	// best. The lead hears so.
+	if err := m.ResetBest("lab"); err != nil {
+		t.Fatal(err)
+	}
+	if run, _ = m.TeamRun("lab"); run.Best != nil || run.Stale != 0 {
+		t.Fatalf("%+v", run)
+	}
+	e.waitFor("the reset's news", func() bool {
+		return strings.Contains(told(), "Your operator reset the best score: evals up to #3 count no more, for the best, the target or the patience; the next scored eval is the best. The best was 1.5, at eval #1.")
+	})
+	if _, err := m.SetLead(context.Background(), "lab", api.PutLead{Agent: "boss", Target: ptr(1.5)}); err != nil {
+		t.Fatalf("the reset best still stops the run: %v", err)
+	}
+	e.waitFor("the lead idle", func() bool { return free(m, boss.ID) })
+	if code, out := teamAs(t, m, boss.ID, "POST", "/eval", ""); code != http.StatusAccepted {
+		t.Fatalf("%d %s", code, out)
+	}
+	e.waitFor("the eval after the reset", func() bool { r, _ := m.TeamRun("lab"); return len(r.Evals) == 4 })
+	if run, _ = m.TeamRun("lab"); run.Best == nil || run.Best.ID != 4 || *run.Best.Score != 1.2 || run.Stopped != "" {
+		t.Fatalf("%+v", run)
+	}
 }
 
 // A round's next step, which its lead starts once it hears the last one
