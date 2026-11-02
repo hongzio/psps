@@ -496,6 +496,12 @@ type VerifyCheck struct {
 	Detail   string `json:"detail,omitempty"`
 }
 
+// Killed is `gero iso kill`: the Mac's processes that ended an isolation's
+// container, its runtime helper and its VM; none when it was not running.
+type Killed struct {
+	Processes []int `json:"processes"`
+}
+
 // Verify is `gero iso verify`: an isolation's guarantees, measured now.
 type Verify struct {
 	Isolation string        `json:"isolation"`

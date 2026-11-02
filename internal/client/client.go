@@ -105,6 +105,11 @@ func (c *Client) Verify(ctx context.Context, name string) (api.Verify, error) {
 	return v, c.do(ctx, "POST", "/v1/isolations/"+url.PathEscape(name)+"/verify", nil, &v)
 }
 
+func (c *Client) KillIsolation(ctx context.Context, name string) (api.Killed, error) {
+	var v api.Killed
+	return v, c.do(ctx, "POST", "/v1/isolations/"+url.PathEscape(name)+"/kill", nil, &v)
+}
+
 func (c *Client) Accounts(ctx context.Context) ([]api.Account, error) {
 	var v []api.Account
 	return v, c.do(ctx, "GET", "/v1/accounts", nil, &v)

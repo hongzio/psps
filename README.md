@@ -993,6 +993,19 @@ It opens the isolation toward the Mac, kept small:
   agents which ports the Mac reaches and what not to serve. The web links
   each http port, opened with no hold on the gero tab.
 
+## Kill
+
+```sh
+gero iso kill sim            # SIGKILL its VM, past container (the web's Kill)
+```
+
+A VM so short of memory that nothing starts in it holds up container's every
+`exec`, in every isolation, and its `stop` and `kill` with them. `gero iso
+kill` goes past container: it SIGKILLs the container's runtime helper and the
+process its VM runs in (the one with its root disk open), as unplugging it
+would. Its agents are interrupted, what its disks had not written is lost, and
+it starts again when something next needs it.
+
 ## Verify
 
 ```sh
