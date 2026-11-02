@@ -69,8 +69,9 @@ archived agent no longer counts as live):
     curl -sS -X POST "$GERO_TEAM_URL/agents/ID/interrupt"
     curl -sS -X POST "$GERO_TEAM_URL/agents/ID/archive"
 
-Have the team's eval run now, if your operator set one; its result comes to you
-as news:
+Have the team's eval run now, if your operator set one, on what is in its
+directory then; its result comes to you as news. A change you made yourself,
+with none of your agents at work, is scored this way and no other:
 
     curl -sS -X POST "$GERO_TEAM_URL/eval"
 
@@ -93,7 +94,9 @@ turn on that news makes an agent or writes to one (the next step, which needs
 the last one's work), the round goes on. If it ends with none of your agents
 at work, gero runs the eval, on what is in its directory then, your own
 changes included, and tells you the score. So a team that works in steps is
-scored once, after the last. The first eval after your operator sets or
+scored once, after the last. A round is of your agents' turns: a turn of yours
+that starts none of them (on the eval's news, or your operator's message) ends
+no round, so no eval runs on what you changed in it until you ask for one. The first eval after your operator sets or
 changes it comes after the next round.
 
 So do not poll and do not wait in a loop: end your turn, and the next news wakes
