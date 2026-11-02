@@ -297,7 +297,9 @@ News and rounds
   none of its agents at work, gero runs the eval on what is in the eval's
   directory then, the lead's own changes included, tells the lead the score,
   and asks it for the next team or why it stops. A team that works in steps
-  is scored once, after the last. Without an eval, the lead hears of each
+  is scored once, after the last. A turn of the lead's own that starts no
+  agent ends no round: what it changed alone is scored when it asks for the
+  eval (POST $GERO_TEAM_URL/eval), or with gero team eval. Without an eval, the lead hears of each
   turn as it ends, and only the budget stops the run.
 
 The eval

@@ -665,8 +665,10 @@ gero tells the lead, as a message of its own whenever it is idle:
   its turn on that news ends with none of its agents at work, gero runs the
   eval, on what is there then (the lead's own changes included), and tells
   it the score and that nothing runs. A team that works in steps is scored
-  once, after the last. An eval set or changed scores no round that ended
-  before it: its first comes after the next round, or when asked;
+  once, after the last. A turn of the lead's own that starts no agent ends
+  no round: what it changed alone is scored when it asks for the eval. An
+  eval set or changed scores no round that ended before it: its first comes
+  after the next round, or when asked;
 - that nothing runs any more, once after an eval it or you asked for (a
   round's eval says so itself), if it let its team end without making the
   next (and not while a plan window is past the ceiling, when it could

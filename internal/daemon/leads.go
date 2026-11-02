@@ -772,7 +772,7 @@ func (m *Manager) teamCheck(team string) {
 	best, stale := bestOf(evals, l.StaleFrom)
 	msg := "Nothing of your team is running. " + scoreLine(last, best, stale, l.Settings.Patience) +
 		" The team has used " + spentText(teamSpent(l, agents, spent).New(), l.Settings.Budget) + "." +
-		" Design the next team, or say why you stop."
+		" " + nextTeam(l)
 	if err := m.store.AddTeamNews(team, msg); err != nil {
 		m.log.Printf("team %s: %v", team, err)
 		return
@@ -968,7 +968,16 @@ func (m *Manager) nudgeText(l store.Lead) string {
 		return ""
 	}
 	return "Nothing of your team is running. The team has used " + spentText(teamSpent(l, agents, spent).New(), l.Settings.Budget) + "." +
-		" Design the next team, or say why you stop."
+		" " + nextTeam(l)
+}
+
+// nextTeam asks l's lead what it does now. A change it makes alone ends
+// no round, so with an eval it is told how to have one scored.
+func nextTeam(l store.Lead) string {
+	if l.Settings.Eval == "" {
+		return "Design the next team, or say why you stop."
+	}
+	return "Design the next team, have the eval run on a change of your own (POST $GERO_TEAM_URL/eval), or say why you stop."
 }
 
 // evalOutput runs l's eval and says what it printed.
