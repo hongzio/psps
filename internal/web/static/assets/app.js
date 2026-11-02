@@ -961,6 +961,8 @@ function sidebarResizer() {
 
 function render() {
   root.className = 'app' + (S.drawer ? ' drawer' : '')
+  // The page is drawn anew, the sidebar's list where it was scrolled.
+  const scrolled = document.querySelector('#sidebar .agent-list')?.scrollTop || 0
   root.replaceChildren()
   if (!S.authed) {
     root.style.display = 'block'
@@ -972,6 +974,8 @@ function render() {
   const main = h('main', { class: 'main', id: 'main' })
   root.append(main)
   renderSidebar()
+  const list = document.querySelector('#sidebar .agent-list')
+  if (list && scrolled) list.scrollTop = scrolled
   if (S.view === 'new') main.append(topbar('New agent'), newAgentView())
   else if (S.view === 'isolations') main.append(topbar('Isolations'), h('div', { class: 'page split', id: 'isolations' }))
   else if (S.view === 'services') main.append(topbar('Services'), h('div', { class: 'page split', id: 'services' }))
