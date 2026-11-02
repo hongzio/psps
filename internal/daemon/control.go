@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"os/exec"
 	"strconv"
 	"strings"
 	"time"
@@ -241,6 +242,98 @@ type controlNew struct {
 
 var errApprovals = httpError{http.StatusForbidden, errors.New("control: an agent's approvals are your operator's: one you make takes yours in your own isolation, and asks them in another")}
 
+// approvalsIn is the approvals of an agent c makes in isolation iso. Where
+// the maker works it may already do what the agent would; anywhere else,
+// what the agent does is the operator's to approve, unless they gave its
+// agents auto there and the maker has as much.
+func (c controlCall) approvalsIn(iso string) driver.Approvals {
+	switch {
+	case iso == c.me.IsolationID:
+		return c.me.Options.Approvals
+	case c.s.elsewhere == driver.ApprovalsAuto && unattended(c.me.Options.Approvals):
+		return driver.ApprovalsAuto
+	}
+	return driver.ApprovalsAsk
+}
+
+// unattended is whether an agent under a runs without asking anyone: auto,
+// or never (the mode left unset).
+func unattended(a driver.Approvals) bool {
+	return a == driver.ApprovalsAuto || a == driver.ApprovalsNever || a == ""
+}
+
+// controlRun is a command as an agent runs it in an isolation.
+type controlRun struct {
+	Command string `json:"command"`
+	Dir     string `json:"dir"`
+	Seconds int    `json:"seconds"`
+}
+
+const (
+	controlRunSeconds    = 60
+	controlRunMaxSeconds = 600
+	// controlRunOutput is how much of the end of what it printed comes back.
+	controlRunOutput = 64 << 10
+)
+
+// controlExec runs req's command in the isolation named iso, as its agent
+// user: only where an agent c made would run under auto, so it does no more
+// than that agent could.
+func (m *Manager) controlExec(ctx context.Context, c controlCall, name string, req controlRun) (api.ControlExec, error) {
+	iso, err := m.reachIsolation(c, name)
+	if err != nil {
+		return api.ControlExec{}, err
+	}
+	if !unattended(c.approvalsIn(iso.ID)) {
+		why := "yours ask"
+		if iso.ID != c.me.IsolationID {
+			why = "your operator did not give this isolation's agents auto there (elsewhere_approvals), or yours ask"
+		}
+		return api.ControlExec{}, httpError{http.StatusForbidden, fmt.Errorf("control: a command runs in isolation %s only where an agent you made would run under auto, and %s", iso.Name, why)}
+	}
+	cmd := strings.TrimSpace(req.Command)
+	switch {
+	case cmd == "":
+		return api.ControlExec{}, badRequest(errors.New(`control: say the command, a shell command, as "command"`))
+	case strings.ContainsRune(cmd, 0):
+		return api.ControlExec{}, badRequest(errors.New("control: the command is a shell command, without NUL"))
+	}
+	secs := cmp.Or(req.Seconds, controlRunSeconds)
+	if secs < 1 || secs > controlRunMaxSeconds {
+		return api.ControlExec{}, badRequest(fmt.Errorf("control: a command runs 1 to %d seconds, not %d", controlRunMaxSeconds, secs))
+	}
+	dir, err := m.isoPath(cmp.Or(strings.TrimSpace(req.Dir), "~"))
+	if err != nil {
+		return api.ControlExec{}, badRequest(fmt.Errorf("control: the command's directory: %w", err))
+	}
+	ctx, cancel := context.WithTimeout(ctx, time.Duration(secs)*time.Second+time.Minute)
+	defer cancel()
+	if err := m.readyForEval(ctx, iso); err != nil {
+		return api.ControlExec{}, err
+	}
+	m.did(c, "iso.exec", fmt.Sprintf("in isolation %s, in %s: %q", iso.Name, dir, clip(cmd, 200)))
+	// timeout(1) signals the command's whole process group; ending
+	// `container exec` would leave it running.
+	out, err := m.cli.RunAsAgent(ctx, iso.Container, "timeout", "--kill-after=10", fmt.Sprintf("%ds", secs),
+		"sh", "-c", `cd -- "$1" && exec sh -c "$2"`, "gero-exec", dir, cmd)
+	v := api.ControlExec{Output: out}
+	if err != nil {
+		var exit *exec.ExitError
+		if !errors.As(err, &exit) {
+			return api.ControlExec{}, err
+		}
+		v.Exit = exit.ExitCode()
+	}
+	if len(v.Output) > controlRunOutput {
+		cut := len(v.Output) - controlRunOutput
+		for cut < len(v.Output) && !utf8.RuneStart(v.Output[cut]) {
+			cut++
+		}
+		v.Output, v.Cut = v.Output[cut:], true
+	}
+	return v, nil
+}
+
 // controlMake makes the agent req says, as c's.
 func (m *Manager) controlMake(ctx context.Context, c controlCall, req controlNew) (api.Agent, error) {
 	if req.Approvals != nil {
@@ -260,16 +353,7 @@ func (m *Manager) controlMake(ctx context.Context, c controlCall, req controlNew
 			return api.Agent{}, err
 		}
 	}
-	// Where the maker works it may already do what the agent would; anywhere
-	// else, what the agent does is the operator's to approve, unless they
-	// gave its agents auto there and the maker has as much.
-	approvals := driver.ApprovalsAsk
-	switch {
-	case iso.ID == c.me.IsolationID:
-		approvals = c.me.Options.Approvals
-	case c.s.elsewhere == driver.ApprovalsAuto && (c.me.Options.Approvals == driver.ApprovalsAuto || c.me.Options.Approvals == driver.ApprovalsNever):
-		approvals = driver.ApprovalsAuto
-	}
+	approvals := c.approvalsIn(iso.ID)
 	m.controlMu.Lock()
 	defer m.controlMu.Unlock()
 	if err := m.roomForOne(c); err != nil {
@@ -842,6 +926,16 @@ func (m *Manager) controlRoutes(mux *http.ServeMux, iso string) {
 			return
 		}
 		v, err := m.Exposures(iso.Name)
+		reply(w, v, err)
+	})
+
+	route("POST /isolations/{name}/exec", "iso.exec", func(w http.ResponseWriter, r *http.Request, c controlCall) {
+		var req controlRun
+		if err := controlJSON(r, &req, `{"command": "..."}`); err != nil {
+			reply(w, nil, err)
+			return
+		}
+		v, err := m.controlExec(r.Context(), c, r.PathValue("name"), req)
 		reply(w, v, err)
 	})
 

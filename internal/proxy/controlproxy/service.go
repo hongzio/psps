@@ -19,7 +19,9 @@
 // making, changing and removing isolations, removing agents, and the Mac's
 // own (the fence, the daemon). A team's eval is one only as team.evalset
 // has it: run in the isolation of the agent that sets it, never the
-// lead's, on a copy of a directory in the lead's.
+// lead's, on a copy of a directory in the lead's. A command in an isolation
+// is one only as iso.exec has it: where an agent the caller made would run
+// under auto, so it does no more than that agent could.
 package controlproxy
 
 import (
@@ -67,6 +69,7 @@ var Actions = []Action{
 	{"agent.inbox", "read an agent's inbox, and clear it", true},
 	{"iso.ls", "list the isolations it reaches", false},
 	{"iso.services", "see which services an isolation has", false},
+	{"iso.exec", "run a command in an isolation, as its agent user", true},
 	{"team.ls", "list the teams", false},
 	{"team.show", "see a team's run", false},
 	{"team.new", "make a team", true},
