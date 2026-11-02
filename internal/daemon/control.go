@@ -41,6 +41,8 @@ type controlScope struct {
 	controlproxy.Env
 	// reach are the isolations' IDs, its own among them.
 	reach map[string]bool
+	// elsewhere is the approvals of an agent made in another of them.
+	elsewhere driver.Approvals
 }
 
 // controlOf is isolation iso's scope; false while it has no control
@@ -74,6 +76,7 @@ func (m *Manager) controlOf(iso string) (controlScope, bool, error) {
 	for _, id := range st.Reach {
 		s.reach[id] = true
 	}
+	s.elsewhere = driver.Approvals(cmp.Or(st.Approvals, string(driver.ApprovalsAsk)))
 	return s, true, nil
 }
 
@@ -258,10 +261,14 @@ func (m *Manager) controlMake(ctx context.Context, c controlCall, req controlNew
 		}
 	}
 	// Where the maker works it may already do what the agent would; anywhere
-	// else, what the agent does is the operator's to approve.
+	// else, what the agent does is the operator's to approve, unless they
+	// gave its agents auto there and the maker has as much.
 	approvals := driver.ApprovalsAsk
-	if iso.ID == c.me.IsolationID {
+	switch {
+	case iso.ID == c.me.IsolationID:
 		approvals = c.me.Options.Approvals
+	case c.s.elsewhere == driver.ApprovalsAuto && (c.me.Options.Approvals == driver.ApprovalsAuto || c.me.Options.Approvals == driver.ApprovalsNever):
+		approvals = driver.ApprovalsAuto
 	}
 	m.controlMu.Lock()
 	defer m.controlMu.Unlock()
@@ -484,7 +491,7 @@ func (m *Manager) controlRoutes(mux *http.ServeMux, iso string) {
 	}
 
 	route("GET ", "", func(w http.ResponseWriter, r *http.Request, c controlCall) {
-		v := api.ControlView{Env: c.s.env, Allow: c.s.Allow, Reach: []string{c.s.name}, MaxLive: c.s.MaxLive}
+		v := api.ControlView{Env: c.s.env, Allow: c.s.Allow, Reach: []string{c.s.name}, MaxLive: c.s.MaxLive, Elsewhere: string(c.s.elsewhere)}
 		isos, err := m.store.Isolations()
 		if err != nil {
 			reply(w, nil, err)

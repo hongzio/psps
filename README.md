@@ -781,6 +781,7 @@ one by one (checkboxes in the web's environment form), and an isolation has one:
 gero env add control ops --allow agent.ls,agent.log,agent.new,agent.send --max-live 3
 gero iso expose dev control ops              # dev's agents act on dev's agents
 gero iso expose dev control ops --reach far  # ...and on far's
+gero iso expose dev control ops --approvals auto  # agents they make on far run under auto
 gero env edit control ops --allow agent.ls   # replaces the list
 gero env help control                        # the actions an env can open
 ```
@@ -814,8 +815,11 @@ as that agent:
   cron` under SET BY), and the sidebar marks an agent made this way with an
   arrow. The daemon's log has a line for every change.
 - **Approvals stay yours.** An agent it makes in its own isolation takes its
-  maker's approvals mode, as a lead's do; one in another isolation asks you.
-  It cannot set a mode, and `agent.set` changes model and effort only.
+  maker's approvals mode, as a lead's do; one in another isolation asks you,
+  unless you gave the exposure `--approvals auto`: then one whose maker runs
+  under auto or never runs under auto, with auto's reviewer, and one whose
+  maker asks still asks. Nothing gives never that way. An agent cannot set
+  a mode, and `agent.set` changes model and effort only.
 - **It has few made at once, and writes within mail's budget.** `--max-live`
   (3) agents made through it (`agent.new`, `agent.fork`, restoring one) by
   the isolation's agents are live at once, and what they write through it

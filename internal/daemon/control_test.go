@@ -161,6 +161,30 @@ func TestControlOpensWhatItsEnvTicksOnTheAgentsItReaches(t *testing.T) {
 		t.Fatalf("one in its own isolation takes its approvals: %d %s", code, out)
 	}
 
+	// The operator may give the ones it makes elsewhere auto, as much as
+	// its own; never is not theirs to give that way.
+	if _, err := m.Expose(ctx, "dev", "control", api.Expose{Envs: []string{"ops"}, Settings: proxy.Patch{Set: map[string]any{"approvals": "never"}}}); err == nil {
+		t.Fatal("never given to the agents made elsewhere")
+	}
+	if _, err := m.Expose(ctx, "dev", "control", api.Expose{Envs: []string{"ops"}, Settings: proxy.Patch{Set: map[string]any{"approvals": "auto"}}}); err != nil {
+		t.Fatal(err)
+	}
+	if err := m.Archive(ctx, made.ID); err != nil {
+		t.Fatal(err)
+	}
+	code, out = ctl(boss, "GET", "", "")
+	if !strings.Contains(out, `"elsewhere_approvals":"auto"`) || !strings.Contains(out, `"far"`) {
+		t.Fatalf("the view: %d %s", code, out)
+	}
+	code, out = ctl(boss, "POST", "/agents", `{"kind": "codex", "prompt": "measure again", "isolation": "far"}`)
+	json.Unmarshal([]byte(out), &made)
+	if code != http.StatusCreated || made.Isolation != "far" || made.Options.Approvals != driver.ApprovalsAuto {
+		t.Fatalf("one made elsewhere under auto: %d %s", code, out)
+	}
+	if err := m.Archive(ctx, made.ID); err != nil {
+		t.Fatal(err)
+	}
+
 	// Model and effort are its to set; approvals are not.
 	if code, out := ctl(boss, "PUT", "/agents/mate/options", `{"approvals": "never"}`); code != http.StatusForbidden {
 		t.Fatalf("%d %s", code, out)
