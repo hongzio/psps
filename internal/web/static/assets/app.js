@@ -1069,7 +1069,8 @@ function renderSidebar() {
   el.replaceChildren(
     h('div', { class: 'brand' }, 'gero', h('span', { class: 'count' }, `${live.length} agent${live.length === 1 ? '' : 's'}`),
       h('button', { class: 'add-divider', title: 'Add a divider at the bottom; hold it to move it', 'aria-label': 'Add a divider', onclick: addDivider },
-        icon('separator-horizontal'))),
+        icon('separator-horizontal')),
+      h('button', { class: 'brand-settings', title: 'Settings', 'aria-label': 'Settings', onclick: openSettings }, icon('settings'))),
     h('button', { class: 'new-agent' + (S.view === 'new' ? ' active' : ''), onclick: () => show('new') }, '+ New agent'),
     h('div', { class: 'agent-list' },
       sortable('live', liveRows(live, row)),
@@ -4529,6 +4530,50 @@ function showShortcuts() {
 async function askStop(a) {
   if (!await ask({ title: `Stop ${agentTitle(a)}?`, body: 'Its turn is interrupted; a message continues it.', ok: 'Stop' })) return
   await guarded(() => api('POST', `/v1/agents/${a.id}/interrupt`))
+}
+
+// ---- Settings: this browser's own; the theme is the system's, or one picked.
+
+const THEMES = [['system', 'System'], ['light', 'Light'], ['dark', 'Dark']]
+function savedTheme() {
+  try { const t = localStorage.getItem('gero.theme'); return THEMES.some(([v]) => v === t) ? t : 'system' } catch { return 'system' }
+}
+// applyTheme sets data-theme for a picked one, and the browser's bar color
+// with it; the system's leaves both to the media queries.
+const themeMetas = [...document.querySelectorAll('meta[name="theme-color"]')].map((m) => [m, m.getAttribute('media'), m.content])
+function applyTheme(theme) {
+  if (theme === 'system') document.documentElement.removeAttribute('data-theme')
+  else document.documentElement.dataset.theme = theme
+  for (const [m, media, content] of themeMetas) {
+    if (theme === 'system') { m.setAttribute('media', media); m.content = content }
+    else { m.removeAttribute('media'); m.content = theme === 'dark' ? '#121216' : '#f7f7f9' }
+  }
+}
+applyTheme(savedTheme())
+
+function openSettings() {
+  if (document.querySelector('dialog[open]')) return
+  const seg = h('div', { class: 'segmented', role: 'radiogroup', 'aria-label': 'Theme' })
+  const draw = () => {
+    const now = savedTheme()
+    seg.replaceChildren(...THEMES.map(([v, label]) => h('button', {
+      type: 'button', role: 'radio', 'aria-checked': String(v === now), class: v === now ? 'on' : '',
+      onclick: (e) => {
+        e.preventDefault()
+        try { localStorage.setItem('gero.theme', v) } catch {}
+        applyTheme(v)
+        draw()
+        seg.querySelector('.on')?.focus()
+      },
+    }, label)))
+  }
+  draw()
+  ask({
+    title: 'Settings', cancel: 'Close',
+    extra: h('div', { class: 'settings-list' },
+      h('div', { class: 'setting' }, h('span', { class: 'setting-name' }, 'Theme'), seg),
+      h('p', { class: 'note' }, 'Kept in this browser.')),
+  })
 }
 
 // stepAgent opens the agent by from the open one in the sidebar's live list,
