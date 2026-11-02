@@ -4,6 +4,7 @@ import (
 	"cmp"
 	"errors"
 	"fmt"
+	"slices"
 	"sort"
 	"time"
 
@@ -129,4 +130,91 @@ func archivedRanks(as []agentView) map[string]int {
 		out[l] = i
 	}
 	return out
+}
+
+// placeNew puts a new agent's line in the live list right after the last
+// agent there of its isolation, outside a team as it is. With none, or in a
+// team, it stays where a new line goes: at the bottom.
+func (m *Manager) placeNew(a store.Agent) error {
+	line := cmp.Or(a.Line, a.ID)
+	all, err := m.store.Agents()
+	if err != nil {
+		return err
+	}
+	order, err := m.store.Order()
+	if err != nil {
+		return err
+	}
+	teams, err := m.store.LineTeams()
+	if err != nil {
+		return err
+	}
+	if _, ok := teams[line]; ok {
+		return nil
+	}
+	lists, err := m.store.Lists()
+	if err != nil {
+		return err
+	}
+	as := make([]agentView, 0, len(all))
+	for _, x := range all {
+		as = append(as, agentView{Agent: x})
+	}
+	sortAgents(as)
+	orderAgents(as, order, teams)
+	next, ok := placedAfter(lists[store.LiveList], as, teams, line, a.IsolationID)
+	if !ok {
+		return nil
+	}
+	return m.store.SetOrder(store.LiveList, next)
+}
+
+// placedAfter is the live list live with line right after the last line of
+// as, in their order, that is of isolation iso and in no team. A line it
+// has not placed yet is drawn after the ones it has, as the rows before it
+// are; those are placed with it, so they stay where they are drawn.
+func placedAfter(live []string, as []agentView, teams map[string]string, line, iso string) ([]string, bool) {
+	var rows []string
+	seen := map[string]bool{line: true}
+	last := -1
+	for _, a := range as {
+		if a.ArchivedAt != nil {
+			continue
+		}
+		row := cmp.Or(a.Line, a.ID)
+		if t, ok := teams[row]; ok {
+			row = store.TeamLine(t)
+		} else if row != line && a.IsolationID == iso {
+			last = max(last, slices.Index(rows, row))
+			if !seen[row] {
+				last = len(rows)
+			}
+		}
+		if !seen[row] {
+			seen[row] = true
+			rows = append(rows, row)
+		}
+	}
+	if last < 0 {
+		return nil, false
+	}
+	after := rows[last]
+	placed := map[string]bool{}
+	var next []string
+	for _, l := range live {
+		if l == line {
+			continue
+		}
+		placed[l] = true
+		next = append(next, l)
+	}
+	if i := slices.Index(next, after); i >= 0 {
+		return slices.Insert(next, i+1, line), true
+	}
+	for _, r := range rows[:last+1] {
+		if !placed[r] {
+			next = append(next, r)
+		}
+	}
+	return append(next, line), true
 }

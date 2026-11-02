@@ -930,6 +930,9 @@ func (m *Manager) createAgent(ctx context.Context, req api.CreateAgent, own stor
 	if err := m.setTeam(a, req.Team); err != nil {
 		m.log.Printf("agent %s: team %q: %v", a.ID, req.Team, err)
 	}
+	if err := m.placeNew(a); err != nil {
+		m.log.Printf("agent %s: its place in the sidebar: %v", a.ID, err)
+	}
 	r, err := m.ensureRuntime(a)
 	if err != nil {
 		return a, err
