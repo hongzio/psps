@@ -241,13 +241,15 @@ func itoa(n int64) string { b, _ := json.Marshal(n); return string(b) }
 // An agent sets a team's eval through the control service to run in its
 // own isolation, on a copy of a directory in the lead's: never in the
 // lead's isolation, on nothing else of it, and nothing else of the run.
-func TestControlSetsATeamsEvalToRunInItsOwnIsolation(t *testing.T) {
+func TestControlSetsATeamsEvalToRunWhereItMayRunCommands(t *testing.T) {
 	e := newTestEnv(t)
 	m, stop := e.daemon()
 	defer stop()
 	ctx := context.Background()
-	if _, err := m.CreateIsolation(ctx, api.CreateIsolation{Name: "ev"}, nil); err != nil {
-		t.Fatal(err)
+	for _, name := range []string{"ev", "ev2"} {
+		if _, err := m.CreateIsolation(ctx, api.CreateIsolation{Name: name}, nil); err != nil {
+			t.Fatal(err)
+		}
 	}
 	boss, team := withTeams(t, e, m, api.PutLead{Budget: ptr(int64(1_000_000))})
 	helper, err := m.CreateAgent(ctx, api.CreateAgent{Isolation: "ev", Kind: driver.Codex, Handle: "helper"})
@@ -259,7 +261,7 @@ func TestControlSetsATeamsEvalToRunInItsOwnIsolation(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, iso := range []string{"ev", "dev"} {
-		if _, err := m.Expose(ctx, iso, "control", api.Expose{Envs: []string{"grade"}, Settings: proxy.Patch{Set: map[string]any{"reach": []string{map[string]string{"ev": "dev", "dev": "ev"}[iso]}}}}); err != nil {
+		if _, err := m.Expose(ctx, iso, "control", api.Expose{Envs: []string{"grade"}, Settings: proxy.Patch{Set: map[string]any{"reach": map[string][]string{"ev": {"dev", "ev2"}, "dev": {"ev"}}[iso]}}}); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -273,8 +275,14 @@ func TestControlSetsATeamsEvalToRunInItsOwnIsolation(t *testing.T) {
 	if code, out := set(helper, `{"eval": "x", "eval_dir": "`+boss.Workdir+`/../.."}`); code != http.StatusForbidden {
 		t.Fatalf("out by ..: %d %s", code, out)
 	}
-	if code, out := set(helper, `{"eval": "x", "eval_isolation": "dev"}`); code != http.StatusBadRequest {
-		t.Fatalf("an isolation of its choice: %d %s", code, out)
+	if code, out := set(helper, `{"eval": "x", "eval_isolation": "dev"}`); code != http.StatusForbidden || !strings.Contains(out, "which is the lead's") {
+		t.Fatalf("the lead's isolation, named: %d %s", code, out)
+	}
+	if code, out := set(helper, `{"eval": "x", "eval_isolation": "far"}`); code != http.StatusNotFound {
+		t.Fatalf("an isolation it does not reach: %d %s", code, out)
+	}
+	if code, out := set(helper, `{"eval": "x", "eval_isolation": "ev2"}`); code != http.StatusForbidden || !strings.Contains(out, "may not run commands") {
+		t.Fatalf("one where it may not run commands: %d %s", code, out)
 	}
 	if code, out := set(boss, `{"eval": "x"}`); code != http.StatusForbidden || !strings.Contains(out, "which is the lead's") {
 		t.Fatalf("from the lead's isolation: %d %s", code, out)
@@ -300,6 +308,27 @@ func TestControlSetsATeamsEvalToRunInItsOwnIsolation(t *testing.T) {
 	}
 	if l, _ := m.store.Lead(team.ID); l.Dirty {
 		t.Fatal("a round that ended before the eval is still to score")
+	}
+
+	// Where it may run commands it may run the eval, and what it leaves out
+	// stays as it is, where the eval runs among it.
+	if _, err := m.Expose(ctx, "ev", "control", api.Expose{Envs: []string{"grade"}, Settings: proxy.Patch{Set: map[string]any{"approvals": "auto"}}}); err != nil {
+		t.Fatal(err)
+	}
+	if code, out := set(helper, `{"eval_isolation": "ev2"}`); code != 200 {
+		t.Fatalf("%d %s", code, out)
+	}
+	if code, out := set(helper, `{"eval_minutes": 60}`); code != 200 {
+		t.Fatalf("%d %s", code, out)
+	}
+	if run, _ = m.TeamRun("lab"); run.EvalIsolation != "ev2" || run.Settings.EvalMinutes != 60 || run.Settings.Eval != "sh /home/agent/grader/run.sh" {
+		t.Fatalf("%+v", run)
+	}
+	if _, err := m.Expose(ctx, "ev", "control", api.Expose{Envs: []string{"grade"}, Settings: proxy.Patch{Set: map[string]any{"approvals": "ask"}}}); err != nil {
+		t.Fatal(err)
+	}
+	if code, out := set(helper, `{"eval_minutes": 30}`); code != http.StatusForbidden || !strings.Contains(out, "runs in isolation ev2") {
+		t.Fatalf("kept where it may no longer run commands: %d %s", code, out)
 	}
 
 	// Changed by the operator, it is theirs again.

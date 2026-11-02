@@ -451,14 +451,19 @@ type controlEval struct {
 	Eval        *string `json:"eval"`
 	EvalDir     *string `json:"eval_dir"`
 	EvalMinutes *int    `json:"eval_minutes"`
+	// EvalIsolation is where it runs: by name, one c reaches. Left out, it
+	// stays where it runs now, or runs in c's own when it runs in the lead's.
+	EvalIsolation *string `json:"eval_isolation"`
 }
 
 // controlEvalSet sets the eval of team ref, as c's: the command and how
-// long it may run, run in c's own isolation as its eval isolation (where
-// c may already run what it likes, and the eval's user changes nothing),
-// on a copy of a directory in the lead's working directory. In the lead's
-// own isolation an eval runs as the agents, so that is the operator's to
-// set, and so are the run's other terms; a run gero stopped stays stopped.
+// long it may run, and where, on a copy of a directory in the lead's
+// working directory. It runs in c's own isolation, or one c reaches where
+// an agent c made would run under auto (iso.exec's rule): where c may
+// already run what it likes, and the eval's user changes nothing. In the
+// lead's own isolation an eval runs as the agents, so that is the
+// operator's to set, and so are the run's other terms; a run gero stopped
+// stays stopped.
 func (m *Manager) controlEvalSet(c controlCall, ref string, req controlEval) (api.TeamRun, error) {
 	t, _, reached, err := m.controlTeam(c, ref)
 	if err == nil && !reached {
@@ -486,10 +491,22 @@ func (m *Manager) controlEvalSet(c controlCall, ref string, req controlEval) (ap
 	if lead.ID == "" {
 		return api.TeamRun{}, httpError{http.StatusNotFound, fmt.Errorf("control: team %q has no lead you reach", t.Name)}
 	}
-	if lead.IsolationID == c.s.iso {
-		return api.TeamRun{}, httpError{http.StatusForbidden, fmt.Errorf("control: the eval would run in isolation %s, which is the lead's, as its agents; only your operator sets that", c.s.name)}
-	}
 	s := l.Settings
+	ev := store.Isolation{ID: c.s.iso, Name: c.s.name}
+	switch {
+	case req.EvalIsolation != nil && strings.TrimSpace(*req.EvalIsolation) != "":
+		if ev, err = m.reachIsolation(c, strings.TrimSpace(*req.EvalIsolation)); err != nil {
+			return api.TeamRun{}, err
+		}
+	case s.EvalIsolation != "":
+		ev = store.Isolation{ID: s.EvalIsolation, Name: m.isoName(s.EvalIsolation)}
+	}
+	if ev.ID == lead.IsolationID {
+		return api.TeamRun{}, httpError{http.StatusForbidden, fmt.Errorf("control: the eval would run in isolation %s, which is the lead's, as its agents; only your operator sets that", ev.Name)}
+	}
+	if ev.ID != c.s.iso && (!c.s.reach[ev.ID] || !unattended(c.approvalsIn(ev.ID))) {
+		return api.TeamRun{}, httpError{http.StatusForbidden, fmt.Errorf(`control: the eval runs in isolation %s, where you may not run commands (iso.exec's rule: one you reach, where an agent you made would run under auto); name one where you may, as "eval_isolation", or ask your operator`, ev.Name)}
+	}
 	if req.Eval != nil {
 		s.Eval = strings.TrimSpace(*req.Eval)
 	}
@@ -519,10 +536,10 @@ func (m *Manager) controlEvalSet(c controlCall, ref string, req controlEval) (ap
 		return api.TeamRun{}, httpError{http.StatusForbidden, fmt.Errorf("control: the eval's directory is the lead's working directory, %s, or one in it, not %s", lead.Workdir, dir)}
 	}
 	s.EvalDir = dir
-	if why := m.evalIsoUnfit(c.s.iso, lead.IsolationID); why != "" {
-		return api.TeamRun{}, httpError{http.StatusForbidden, fmt.Errorf("control: isolation %s cannot run the eval: %s", c.s.name, why)}
+	if why := m.evalIsoUnfit(ev.ID, lead.IsolationID); why != "" {
+		return api.TeamRun{}, httpError{http.StatusForbidden, fmt.Errorf("control: isolation %s cannot run the eval: %s", ev.Name, why)}
 	}
-	s.EvalIsolation = c.s.iso
+	s.EvalIsolation = ev.ID
 	s.EvalSetBy = c.by()
 	if err := m.store.SetLeadSettings(t.ID, s); err != nil {
 		return api.TeamRun{}, err
@@ -534,7 +551,7 @@ func (m *Manager) controlEvalSet(c controlCall, ref string, req controlEval) (ap
 		l.Dirty = false
 	}
 	l.Settings = s
-	m.did(c, "team.evalset", fmt.Sprintf("%q: %q in %s, %dm at most, in isolation %s", t.Name, s.Eval, s.EvalDir, s.EvalMinutes, c.s.name))
+	m.did(c, "team.evalset", fmt.Sprintf("%q: %q in %s, %dm at most, in isolation %s", t.Name, s.Eval, s.EvalDir, s.EvalMinutes, ev.Name))
 	m.teamChanged(t.ID)
 	v, err := m.teamRun(t, l)
 	return leadsView(v), err

@@ -844,11 +844,14 @@ as that agent:
 - **A team is its to change only whole.** It renames or removes a team only
   when it reaches all its agents, and sees a run or runs an eval where it
   reaches the lead.
-- **An eval it sets runs in its own isolation.** `team.evalset` sets a
-  team's eval command and its limit, where it reaches the lead, to run in the
-  setting agent's isolation as the eval isolation, on a copy of the lead's
-  working directory or one in it: never in the lead's isolation, where an
-  eval runs as the agents, and on nothing else of it. The rest of the run's
+- **An eval it sets runs where it could run commands.** `team.evalset` sets
+  a team's eval command, its limit and its eval isolation, where it reaches
+  the lead, on a copy of the lead's working directory or one in it: never in
+  the lead's isolation, where an eval runs as the agents, and on nothing else
+  of it. The eval isolation is the setting agent's own, or one it reaches
+  where `iso.exec` would run (`--approvals auto`, and the agent under auto or
+  never); left out, it stays where it is, or is the agent's own when the
+  eval ran in the lead's. The rest of the run's
   terms stay yours, a stopped run stays stopped, and `gero team show`, the
   team's dialog and page say which agent set the eval, until you change it.
   The `gero-control` skill says what an eval is wherever its env touches
