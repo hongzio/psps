@@ -940,7 +940,11 @@ func (m *Manager) runEval(l store.Lead, why string) {
 			m.store.SetLeadNudged(l.Team, e.ID)
 		}
 	}
-	m.log.Printf("team %s: eval #%d: %v", l.Team, e.ID, e.Score)
+	score := "no score"
+	if e.Score != nil {
+		score = fmt.Sprintf("SCORE %g", *e.Score)
+	}
+	m.log.Printf("team %s: eval #%d: %s", l.Team, e.ID, score)
 	if err := m.store.AddTeamNews(l.Team, msg); err != nil {
 		m.log.Printf("team %s: %v", l.Team, err)
 	}

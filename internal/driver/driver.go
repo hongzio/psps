@@ -119,8 +119,9 @@ type State struct {
 	Busy bool `json:"busy"`
 	// SessionID is the agent's own session or thread id, kept for resume.
 	SessionID string `json:"session_id,omitempty"`
-	// Restart: the running process must be replaced for new options to take
-	// effect. The caller does it when the agent is not busy.
+	// Restart: the running process must be replaced for what is queued (a
+	// rewind, a message after a failed login). The caller does it when the
+	// agent is not busy.
 	Restart bool `json:"restart,omitempty"`
 	// Queued user messages are waiting for the agent to be ready.
 	Queued int `json:"queued,omitempty"`

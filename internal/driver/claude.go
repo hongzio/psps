@@ -248,12 +248,10 @@ func (c *claude) wentBack(rec shimproto.Record, rw *clRewind) []event.Event {
 	return []event.Event{e}
 }
 
-func (c *claude) SetOptions(o Options) {
-	c.opts = o
-	if c.alive {
-		c.restart = true
-	}
-}
+// SetOptions takes effect when the next process starts: replacing the
+// one running is its caller's, which waits for what that one runs in the
+// background.
+func (c *claude) SetOptions(o Options) { c.opts = o }
 
 func (c *claude) Approve(id string, d Decision, answers map[string]string) error {
 	for _, p := range c.pending {

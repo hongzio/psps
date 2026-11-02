@@ -2739,7 +2739,7 @@ function renderSettings(a) {
     h('div', { class: 'field' }, h('label', null, 'Effort'), effort),
     h('div', { class: 'field' }, h('label', null, 'Model'), model),
     h('div', { class: 'field' }, h('label', null, 'Approvals'), approvals),
-    h('div', { class: 'note' }, a.kind === 'claude' ? 'Claude restarts with these when it is idle.' : 'Codex uses these from the next turn.'),
+    h('div', { class: 'note' }, a.kind === 'claude' ? 'Claude restarts with these when it is idle, with nothing in the background.' : 'Codex uses these from the next turn.'),
     h('div', { class: 'actions popover-actions' },
       h('button', {
         class: 'btn primary', onclick: async () => {

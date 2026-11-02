@@ -190,7 +190,7 @@ func (m *Manager) Message(id, text string) (api.Sent, error) {
 	}
 	when := "Codex uses it from the next turn."
 	if a.Kind == driver.Claude {
-		when = "Claude restarts with it when it is idle."
+		when = "Claude restarts with it when it is idle, with nothing in the background."
 	}
 	return api.Sent{Done: fmt.Sprintf("%s set to %s. %s", what, shown(v), when)}, nil
 }
