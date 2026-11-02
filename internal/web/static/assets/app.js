@@ -2314,7 +2314,8 @@ function questionCard(a, ap) {
         return h('button', {
           class: 'btn small opt' + (on ? ' on' : ''), title: o.description || '', 'aria-pressed': String(on),
           onclick: () => {
-            if (!q.multi_select) { st.picked[q.question] = o.label; st.own[q.question] = '' }
+            if (!q.multi_select && on) delete st.picked[q.question]
+            else if (!q.multi_select) { st.picked[q.question] = o.label; st.own[q.question] = '' }
             else st.picked[q.question] = on ? picked.filter((l) => l !== o.label) : [...(picked || []), o.label]
             draw()
           },
