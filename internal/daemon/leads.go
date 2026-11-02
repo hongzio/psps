@@ -977,7 +977,8 @@ func nextTeam(l store.Lead) string {
 	if l.Settings.Eval == "" {
 		return "Design the next team, or say why you stop."
 	}
-	return "Design the next team, have the eval run on a change of your own (POST $GERO_TEAM_URL/eval), or say why you stop."
+	return "Before you design the next team, write in EVOLUTION.md which signs of a stuck team yours shows (drifting to easy paths, findings lost between teams, stuck debugging, only tuning what is there), and give each role the problem and the measurements, not a list of ideas (the gero-team skill, Leading)." +
+		" Then design the next team, have the eval run on a change of your own (POST $GERO_TEAM_URL/eval), or say why you stop."
 }
 
 // evalOutput runs l's eval and says what it printed.
