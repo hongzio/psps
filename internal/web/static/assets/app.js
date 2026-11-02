@@ -542,7 +542,6 @@ async function resend(a, en) {
   renderConvo(ok)
 }
 
-const pending = (c) => c.entries.filter((en) => en.kind === 'approval' && !en.decision)
 const decisionText = (d) => ({ accept: 'accepted', decline: 'declined', cancel: 'declined, turn stopped', void: 'the process ended' })[d] || d
 const askText = (kind) => ({ command: 'run a command', file_change: 'change files', tool: 'use a tool', question: 'know' })[kind] || kind
 
@@ -721,7 +720,7 @@ let convoQueued = false
 function scheduleConvo() {
   if (convoQueued) return
   convoQueued = true
-  setTimeout(() => { convoQueued = false; renderConvo(); renderApprovals() }, 30)
+  setTimeout(() => { convoQueued = false; renderConvo() }, 30)
 }
 
 // ---- Polling
@@ -1519,11 +1518,10 @@ function agentView() {
         h('button', { type: 'button', class: 'sent-nav', 'data-go': 'down', title: 'The message you sent after', 'aria-label': 'Next message you sent', onclick: () => goSent(1) }, icon('chevron-down')),
         h('button', { type: 'button', class: 'sent-nav', 'data-go': 'end', title: 'To the end', 'aria-label': 'Scroll to the end', onclick: () => { const b = document.getElementById('convo'); b.scrollTo({ top: b.scrollHeight, behavior: 'smooth' }) } }, icon('arrow-down-to-line'))))),
       h('div', { class: 'convo-inner', id: 'convo-inner' })),
-    h('div', { class: 'ask-jump-slot' }, h('button', { type: 'button', class: 'ask-jump', id: 'ask-jump', hidden: true }, icon('chevron-down'), ' A question waits for you')),
-    h('div', { id: 'approvals' }),
+    h('div', { class: 'ask-jump-slot' }, h('button', { type: 'button', class: 'ask-jump', id: 'ask-jump', hidden: true }, icon('chevron-down'), h('span', null))),
     composer(a),
   )
-  queueMicrotask(() => { renderTopbar(); renderConvo(true); renderApprovals() })
+  queueMicrotask(() => { renderTopbar(); renderConvo(true) })
   return frag
 }
 
@@ -2206,7 +2204,7 @@ function entryView(en, a, frozen) {
     }
     case 'approval': {
       const d = en.decision
-      if (!d && en.questions && !frozen) return questionCard(a, en)
+      if (!d && !frozen) return en.questions ? questionCard(a, en) : approvalCard(a, en)
       const outcome = d ? ' — ' + decisionText(d) : ''
       return h('div', { class: 'approval' + (d ? ' decided' : '') },
         h('div', { class: 'head' }, `Approval: ${en.akind}${outcome}`),
@@ -2249,24 +2247,18 @@ function editView(en, a) {
       h('button', { class: 'btn small primary', disabled: !ok || ed.sending || !ed.text.trim(), onclick: () => resend(a, en) }, ed.sending ? 'Sending…' : 'Resend')))
 }
 
-function renderApprovals() {
-  const box = document.getElementById('approvals')
-  const a = agentById(S.sel)
-  if (!box || !a) return
-  // A question is asked in the conversation itself, where it scrolls with
-  // the rest: drawn here, it would cover a phone's screen.
-  const p = pending(convo(a.id)).filter((en) => !en.questions)
-  if (!p.length) { box.replaceChildren(); return }
-  const ap = p[0]
-  box.replaceChildren(h('div', { class: 'composer pending-approval' },
-    h('div', { class: 'composer-row' }, h('div', { class: 'approval grow' },
-      h('div', { class: 'head' }, `${label(a)} asks to ${askText(ap.akind)}` + (p.length > 1 ? ` (+${p.length - 1} more)` : '')),
-      h('div', { class: 'what' }, ap.summary),
-      ap.reason ? h('div', { class: 'why' }, ap.reason) : null,
-      h('div', { class: 'actions' },
-        h('button', { class: 'btn primary', onclick: () => decide(ap.id, 'accept') }, 'Accept'),
-        h('button', { class: 'btn', onclick: () => decide(ap.id, 'decline') }, 'Decline'),
-        h('button', { class: 'btn danger', onclick: () => decide(ap.id, 'cancel') }, 'Decline & stop'))))))
+// approvalCard is what an agent asks to do (run a command, change files),
+// drawn in the conversation where it asked, like a question: there it
+// scrolls with the rest instead of covering a phone's screen.
+function approvalCard(a, ap) {
+  return h('div', { class: 'approval asking' },
+    h('div', { class: 'head' }, `${label(a)} asks to ${askText(ap.akind)}`),
+    h('div', { class: 'what' }, ap.summary),
+    ap.reason ? h('div', { class: 'why' }, ap.reason) : null,
+    h('div', { class: 'actions' },
+      h('button', { class: 'btn primary', onclick: () => decide(ap.id, 'accept') }, 'Accept'),
+      h('button', { class: 'btn', onclick: () => decide(ap.id, 'decline') }, 'Decline'),
+      h('button', { class: 'btn danger', onclick: () => decide(ap.id, 'cancel') }, 'Decline & stop')))
 }
 
 // questionCard is a question the agent asks (Claude's AskUserQuestion),
@@ -2332,17 +2324,18 @@ function questionCard(a, ap) {
   return card
 }
 
-// renderAskJump shows, over the message box, a way down to a question
-// still waiting when it is below what is in view.
+// renderAskJump shows, over the message box, a way down to the first
+// question or approval still waiting below what is in view.
 function renderAskJump() {
   const btn = document.getElementById('ask-jump')
   const box = document.getElementById('convo')
   if (!btn || !box) return
-  const cards = box.querySelectorAll('.approval.asking')
-  const card = cards[cards.length - 1]
-  btn.hidden = !card || card.getBoundingClientRect().top < box.getBoundingClientRect().bottom - 40
+  const bottom = box.getBoundingClientRect().bottom - 40
+  const card = [...box.querySelectorAll('.approval.asking')].find((c) => c.getBoundingClientRect().top >= bottom)
+  btn.hidden = !card
+  if (!card) return
+  btn.lastChild.textContent = card.querySelector('.q') ? 'A question waits for you' : 'An approval waits for you'
   btn.onclick = () => {
-    if (!card) return
     card.scrollIntoView({ block: 'start', behavior: 'smooth' })
     card.classList.remove('flash')
     void card.offsetWidth
