@@ -4450,7 +4450,7 @@ document.addEventListener('keydown', (e) => {
 const shortcuts = [
   ['?', 'Show these shortcuts'],
   ['/', 'Write in the message box'],
-  ['Esc', 'Leave the message box'],
+  ['Esc', 'Leave the message box; out of it, stop the working agent (Enter stops, Esc keeps it)'],
   ['j / k', 'Next / previous agent'],
   ['Space', 'Park the idle agent, or make it idle again'],
   ['n', 'New agent'],
@@ -4468,6 +4468,12 @@ function showShortcuts() {
     extra: h('table', { class: 'shortcuts' }, shortcuts.map(([k, what]) =>
       h('tr', null, h('td', null, k === '/' ? h('kbd', null, k) : k.split(' ').map((p) => ['then', '/'].includes(p) ? ` ${p} ` : h('kbd', null, p))), h('td', null, what)))),
   })
+}
+
+// askStop asks before interrupting the agent's turn, as Esc does.
+async function askStop(a) {
+  if (!await ask({ title: `Stop ${agentTitle(a)}?`, body: 'Its turn is interrupted; a message continues it.', ok: 'Stop' })) return
+  await guarded(() => api('POST', `/v1/agents/${a.id}/interrupt`))
 }
 
 // stepAgent opens the agent by from the open one in the sidebar's live list,
@@ -4509,6 +4515,9 @@ document.addEventListener('keydown', (e) => {
       t: a && !a.archived_at && (() => openTodos(a)),
       e: a && (() => editAgent(a)),
       g: () => { goPending = Date.now() },
+      // Out of the message box, Esc asks to stop the agent at work: the
+      // dialog's Stop has the focus, so Enter stops and Esc closes it.
+      Escape: a && !S.drawer && a.state?.status === 'working' && !a.archived_at && (() => askStop(a)),
     }[key]
   if (!act) return
   e.preventDefault()
