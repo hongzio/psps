@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"slices"
 	"sort"
 	"strings"
 	"sync"
@@ -14,6 +15,8 @@ import (
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/lipgloss"
+	"github.com/charmbracelet/x/ansi"
 
 	"github.com/hongzio/gero/internal/api"
 	"github.com/hongzio/gero/internal/driver"
@@ -1222,5 +1225,34 @@ func TestATeamsLeadAndTermsAreSetOnItsPage(t *testing.T) {
 	h.key("ctrl+s")
 	if got := strings.Join(h.be.teams, " | "); !strings.Contains(got, `lead t-lab {"agent":"aaaa","budget":0,`) || !strings.Contains(got, `"eval_isolation":"grader"`) {
 		t.Fatalf("teams %s", got)
+	}
+}
+
+func TestWhatAnAgentRunsBesideItsTurnIsShownOverTheBoxAndMarkedInTheSidebar(t *testing.T) {
+	h := newHarness(t)
+	h.drainFeed()
+	as := slices.Clone(h.be.agents)
+	as[1].State.Tasks = []driver.Task{{Kind: driver.TaskShell, Description: "Run 24h switchback sim"},
+		{Kind: driver.TaskAgent, Description: "Adversarial audit", Subagent: "general-purpose"}}
+	h.send(agentsMsg{agents: as})
+	view := ansi.Strip(h.m.View())
+	if !strings.Contains(view, "◆1 $1 running: Adversarial audit · Run 24h switchback sim") {
+		t.Fatalf("no tasks line over the box:\n%s", view)
+	}
+	var row string
+	for _, l := range strings.Split(view, "\n") {
+		if strings.Contains(l, "bbbb · dev") {
+			row = l
+		}
+	}
+	if !strings.Contains(row, "◆ $") {
+		t.Fatalf("no marks on the sidebar row: %q", row)
+	}
+	if got := lipgloss.Height(h.m.View()); got != 30 {
+		t.Fatalf("the view is %d lines, not the window's 30", got)
+	}
+	h.send(agentsMsg{agents: h.be.agents})
+	if strings.Contains(ansi.Strip(h.m.View()), "running:") {
+		t.Fatal("the line stays once nothing runs")
 	}
 }
