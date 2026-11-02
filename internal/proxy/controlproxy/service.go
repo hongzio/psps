@@ -119,10 +119,16 @@ func (e Env) Opens(action string) bool {
 }
 
 // Settings are an exposure's: the isolations, by ID, whose agents its own
-// reach besides their own.
+// reach besides their own, and the approvals of an agent they make in one
+// of those (ask when left out).
 type Settings struct {
-	Reach []string `json:"reach"`
+	Reach     []string `json:"reach"`
+	Approvals string   `json:"approvals,omitempty"`
 }
+
+// Elsewhere are the approvals an agent made in another isolation may be
+// given: none that approves more than auto's reviewer would.
+var Elsewhere = []string{"ask", "auto"}
 
 type Service struct{}
 
@@ -148,6 +154,8 @@ func (Service) Settings() []proxy.Field {
 	return []proxy.Field{
 		{Key: "reach", Kind: proxy.List, Flag: "reach", Clear: "clear-reach", Metavar: "ISOLATION", Isolations: true,
 			Help: "another isolation whose agents this one's reach (repeat; replaces the list); their own they always do"},
+		{Key: "approvals", Kind: proxy.String, Flag: "approvals", Metavar: "MODE", Choices: Elsewhere,
+			Help: "the approvals of an agent they make in an isolation they reach, at most the maker's own (ask or auto; default ask)"},
 	}
 }
 
@@ -201,6 +209,13 @@ func (Service) Normalize(name string, env map[string]any) ([]string, error) {
 
 func (Service) NormalizeSettings(s map[string]any) error {
 	s["reach"] = proxy.SortedSet(proxy.Strings(s, "reach"))
+	switch a, _ := s["approvals"].(string); a {
+	case "":
+		delete(s, "approvals")
+	case "ask", "auto":
+	default:
+		return fmt.Errorf("--approvals is %s, not %q", strings.Join(Elsewhere, " or "), a)
+	}
 	return nil
 }
 

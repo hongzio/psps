@@ -343,6 +343,9 @@ type ControlView struct {
 	Reach   []string `json:"reach"`
 	Live    int      `json:"live"`
 	MaxLive int      `json:"max_live"`
+	// Elsewhere is the approvals of an agent made in another isolation:
+	// ask, or auto when the operator gave it and the maker has as much.
+	Elsewhere string `json:"elsewhere_approvals"`
 }
 
 // PutCron sets a cron of an agent's: a cron expression or "@every 30m" for

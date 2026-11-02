@@ -31,7 +31,9 @@ var how = map[string]string{
 - Its prompt is all it knows of the work: write it as a brief for a colleague
   who has not seen this conversation. It reads that you made it.
 - In this isolation it takes approvals as you do; in another, it asks your
-  operator for them.
+  operator for them, unless they gave this isolation's agents auto there
+  (elsewhere_approvals in GET $GERO_CONTROL_URL) and yours are auto or
+  never. Asking for approvals yourself is refused either way.
 - The agents of this isolation may have %d made this way live at once; archive
   one that is done.`,
 	"agent.send": `Write to an agent. It reads it as yours: at once if it is idle, otherwise
