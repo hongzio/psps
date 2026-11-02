@@ -57,6 +57,10 @@ func (m *Manager) Handler() http.Handler {
 		v, err := m.UpgradeIsolation(context.WithoutCancel(r.Context()), r.PathValue("name"), nil)
 		reply(w, v, err)
 	})
+	mux.HandleFunc("POST /v1/isolations/{name}/start", func(w http.ResponseWriter, r *http.Request) {
+		v, err := m.StartIsolation(context.WithoutCancel(r.Context()), r.PathValue("name"))
+		reply(w, v, err)
+	})
 	mux.HandleFunc("POST /v1/isolations/{name}/kill", func(w http.ResponseWriter, r *http.Request) {
 		v, err := m.KillIsolation(r.Context(), r.PathValue("name"))
 		reply(w, v, err)

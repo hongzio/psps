@@ -575,6 +575,22 @@ func (m *Manager) UpgradeIsolation(ctx context.Context, name string, progress io
 	return iso, err
 }
 
+// StartIsolation brings an isolation up as an agent in it would: a stopped
+// container started, a missing one made again from its volumes, and its
+// shim answering, its fence measured and its proxies' tunnel open. An
+// isolation with no agents stays down after a kill until this, or until
+// something else needs it.
+func (m *Manager) StartIsolation(ctx context.Context, name string) (store.Isolation, error) {
+	iso, err := m.isolationNamed(name)
+	if err != nil {
+		return iso, err
+	}
+	if _, err := m.ensureIsolation(ctx, iso.ID); err != nil {
+		return iso, err
+	}
+	return m.store.Isolation(iso.ID)
+}
+
 // KillIsolation ends an isolation's container the hard way, past container
 // itself: for a VM that has stopped answering, which holds up every exec,
 // and container's stop with them. It takes no lock of the isolation's, as

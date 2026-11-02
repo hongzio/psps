@@ -1004,7 +1004,9 @@ A VM so short of memory that nothing starts in it holds up container's every
 kill` goes past container: it SIGKILLs the container's runtime helper and the
 process its VM runs in (the one with its root disk open), as unplugging it
 would. Its agents are interrupted, what its disks had not written is lost, and
-it starts again when something next needs it.
+it starts again when something next needs it: within a minute when it has
+live agents, as they reconnect; otherwise at the next agent made in it, or
+`gero iso start sim` (the web's Start).
 
 ## Verify
 

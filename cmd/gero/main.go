@@ -45,6 +45,7 @@ const usage = `gero — run coding agents in isolated containers
   gero iso shell NAME
   gero iso verify [NAME...] [--json]   measure the guarantees now; exit 0 ok / 1 isolation / 2 config
   gero iso kill NAME                   SIGKILL its VM, for one that no longer answers (stop hangs too)
+  gero iso start NAME                  bring it up again; one with live agents comes up by itself
   gero iso services NAME        which credential proxies the isolation has
   gero iso expose NAME SERVICE [ENV,...] [--default-env ENV] [flags]
   gero iso unexpose NAME SERVICE

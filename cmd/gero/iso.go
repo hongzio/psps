@@ -22,7 +22,7 @@ import (
 
 func isoCmd(p paths.Paths, args []string) error {
 	if len(args) == 0 {
-		return errors.New("usage: gero iso create|ls|rename|set|upgrade|rm|env|login|logout|account|shell|verify|kill|services|expose|unexpose")
+		return errors.New("usage: gero iso create|ls|rename|set|upgrade|rm|env|login|logout|account|shell|verify|start|kill|services|expose|unexpose")
 	}
 	c, err := connect(p)
 	if err != nil {
@@ -193,6 +193,17 @@ func isoCmd(p paths.Paths, args []string) error {
 		if code != api.VerifyOK {
 			return exitCode(code)
 		}
+		return nil
+
+	case "start":
+		pos := parse(fs, args[1:])
+		if len(pos) != 1 {
+			return errors.New("usage: gero iso start NAME")
+		}
+		if err := c.StartIsolation(ctx, pos[0]); err != nil {
+			return err
+		}
+		fmt.Printf("%s is up\n", pos[0])
 		return nil
 
 	case "kill":

@@ -106,6 +106,7 @@ const S = {
   checkOut: null,
   verifyOut: null, // the open verify report
   verifying: null, // the isolation being measured
+  starting: null, // the isolation being started
   // Claude & Codex: each isolation's CLIs as read from inside it (an
   // array, or {error}), the login on screen, the CLI an action runs for.
   clis: {},
@@ -3040,7 +3041,10 @@ function isoDetail(i) {
       h('span', { class: 'head-actions' },
         h('button', { class: 'btn', disabled: S.verifying === i.name, onclick: () => verifyIsolation(i) },
           S.verifying === i.name ? 'Measuring…' : 'Verify'),
-        h('button', { class: 'btn danger', disabled: i.state !== 'running', title: 'End its VM now, past container: for one that no longer answers', onclick: () => killIsolation(i) }, 'Kill'),
+        i.state === 'running'
+          ? h('button', { class: 'btn danger', title: 'End its VM now, past container: for one that no longer answers', onclick: () => killIsolation(i) }, 'Kill')
+          : h('button', { class: 'btn', disabled: S.starting === i.name, title: 'Start its container, its shim answering and its fence measured', onclick: () => startIsolation(i) },
+            S.starting === i.name ? 'Starting…' : 'Start'),
         h('button', { class: 'btn', onclick: () => upgradeIsolation(i) }, 'Upgrade'))),
     fenceOK(i) ? null : h('p', { class: 'callout warn' }, `Agents start here only behind a verified network fence: ${i.fence_state}.`),
     S.openForm === `verify:${i.name}` && S.verifyOut ? verifyView(S.verifyOut) : null,
@@ -3263,6 +3267,23 @@ async function upgradeIsolation(i) {
   if (!await ask({ title: `Upgrade ${i.name} to the current image?`, body: 'Running agents restart; sessions are kept.', ok: 'Upgrade' })) return
   toast('Upgrading…')
   await guarded(async () => { await api('POST', `/v1/isolations/${enc(i.name)}/upgrade`); toast(`${i.name} upgraded`); await refreshIsolations() })
+}
+
+// startIsolation brings a stopped one up: one with no agents stays down
+// after a kill until something needs it.
+async function startIsolation(i) {
+  S.starting = i.name
+  rerender()
+  try {
+    await guarded(async () => {
+      await api('POST', `/v1/isolations/${enc(i.name)}/start`)
+      toast(`${i.name} started`)
+    })
+    await refreshIsolations().catch(() => {})
+  } finally {
+    S.starting = null
+    rerender()
+  }
 }
 
 // killIsolation ends the container's VM with SIGKILL, past container: a
