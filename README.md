@@ -617,6 +617,7 @@ gero team lead lab tara --eval-iso grader  # the eval runs in grader, on a copy
 gero agent send tara '/gero-team Build what SPEC.md describes.'   # the work, for the team
 gero team show lab                         # spending, scores, the lead's agents
 gero team eval lab                         # run the eval now
+gero team reset-best lab                   # the evals so far count for no best (the target, the patience)
 gero team resume lab                       # go on after gero stopped the run
 gero team lead lab --clear                 # no lead; its agents are yours
 ```

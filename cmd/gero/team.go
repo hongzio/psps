@@ -19,7 +19,7 @@ import (
 // their leads. An agent joins one with `gero agent team`.
 func teamCmd(p paths.Paths, args []string) error {
 	if len(args) == 0 {
-		return errors.New("usage: gero team ls|new|rename|rm|lead|show|eval|resume  (gero team help: how teams work)")
+		return errors.New("usage: gero team ls|new|rename|rm|lead|show|eval|reset-best|resume  (gero team help: how teams work)")
 	}
 	switch args[0] {
 	case "help", "-h", "--help":
@@ -208,6 +208,16 @@ func teamCmd(p paths.Paths, args []string) error {
 		fmt.Println("the eval runs; its result goes to the lead, and shows in `gero team show`")
 		return nil
 
+	case "reset-best":
+		if len(args) != 2 {
+			return errors.New("usage: gero team reset-best TEAM")
+		}
+		if err := c.ResetBest(ctx, args[1]); err != nil {
+			return err
+		}
+		fmt.Println("the evals so far count no more for the best, the target or the patience; the next scored eval is the best, and the lead is told")
+		return nil
+
 	case "resume":
 		if len(args) != 2 {
 			return errors.New("usage: gero team resume TEAM")
@@ -248,6 +258,7 @@ Commands
   gero team show TEAM [--json]      the run: status, spending, plan windows,
                                     scores, the lead's agents
   gero team eval TEAM               run the eval now; the score goes to the lead
+  gero team reset-best TEAM         the evals so far count for no best; the next scored is it
   gero team resume TEAM             a run gero stopped goes on
 
 A first team

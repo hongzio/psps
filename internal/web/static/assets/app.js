@@ -1391,6 +1391,18 @@ async function editTeam(t) {
           await guarded(async () => { await api('POST', `/v1/teams/${enc(t.id)}/eval`); toast('The eval runs; its result goes to the lead') })
         },
       }, 'Run eval now') : null,
+      run.best ? h('button', {
+        type: 'button', class: 'btn small', title: 'The evals so far count for no best, the target or the patience; the next scored eval is the best',
+        onclick: async (e) => {
+          e.target.closest('dialog').close('cancel')
+          if (!await ask({ title: 'Reset the best score?', body: `The best is ${run.best.score}, at eval #${run.best.id}. The evals so far will count no more for the best, the target or the patience: the next scored eval is the best. The lead is told.`, ok: 'Reset' })) return
+          await guarded(async () => {
+            await api('DELETE', `/v1/teams/${enc(t.id)}/best`)
+            toast(`Team "${t.name}": the best is reset`)
+            await refreshAgents()
+          })
+        },
+      }, 'Reset best') : null,
       run.stopped ? h('button', {
         type: 'button', class: 'btn small primary', onclick: async (e) => {
           e.target.closest('dialog').close('cancel')
