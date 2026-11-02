@@ -1,8 +1,10 @@
 package tui
 
 import (
+	"cmp"
 	"fmt"
 	"slices"
+	"strconv"
 	"strings"
 	"time"
 
@@ -10,6 +12,7 @@ import (
 	"github.com/charmbracelet/x/ansi"
 
 	"github.com/hongzio/gero/internal/api"
+	"github.com/hongzio/gero/internal/driver"
 	"github.com/hongzio/gero/internal/event"
 )
 
@@ -79,7 +82,14 @@ func (m *Model) renderSidebar(w int) string {
 		case a.MadeBy != "", a.MadeVia != "":
 			mark = "↳ "
 		}
-		row(a.ID, indent+th.agentIcon(a, m.frame)+" "+mark+title(a), indent+th.dim.Render(meta))
+		metaLine := indent + th.dim.Render(meta)
+		// What it runs beside its turn, as marks alone at the line's end.
+		if tm := taskMarks(a.State.Tasks, false); tm != "" && a.ArchivedAt == nil {
+			room := w - 2 - lipgloss.Width(tm) - 1
+			metaLine = truncate(metaLine, room)
+			metaLine += strings.Repeat(" ", max(room-lipgloss.Width(metaLine), 0)+1) + th.user.Render(tm)
+		}
+		row(a.ID, indent+th.agentIcon(a, m.frame)+" "+mark+title(a), metaLine)
 	}
 	for _, g := range m.liveGroups() {
 		if g.team == "" {
@@ -321,6 +331,9 @@ func (m *Model) renderAgent(w int) string {
 		parts = append(parts, th.dim.Render(fmt.Sprintf("  %s save · %s close · ←/→ change", k.Label("submit"), k.Label("back"))))
 	}
 
+	if l := tasksLine(a, w); l != "" {
+		parts = append(parts, th.user.Render(l))
+	}
 	inRule := th.rule
 	if m.focus == focusInput {
 		inRule = th.focusRule
@@ -403,4 +416,76 @@ func tokenCount(n int64) string {
 		return fmt.Sprintf("%.1fk", float64(n)/1e3)
 	}
 	return fmt.Sprint(n)
+}
+
+// taskMarks are a mark per kind of task an agent's CLI runs beside its
+// turn, subagents first, each with how many when counted.
+func taskMarks(tasks []driver.Task, counted bool) string {
+	var b strings.Builder
+	for _, k := range taskKinds(tasks) {
+		b.WriteString(taskMark(k))
+		if counted {
+			b.WriteString(strconv.Itoa(countKind(tasks, k)))
+		}
+		b.WriteString(" ")
+	}
+	return strings.TrimSpace(b.String())
+}
+
+func taskMark(kind string) string {
+	switch kind {
+	case driver.TaskAgent:
+		return "◆"
+	case driver.TaskShell:
+		return "$"
+	}
+	return "•"
+}
+
+func taskKinds(tasks []driver.Task) []string {
+	var ks []string
+	for _, t := range tasks {
+		if !slices.Contains(ks, t.Kind) {
+			ks = append(ks, t.Kind)
+		}
+	}
+	rank := func(k string) int {
+		switch k {
+		case driver.TaskAgent:
+			return 0
+		case driver.TaskShell:
+			return 1
+		}
+		return 2
+	}
+	slices.SortStableFunc(ks, func(x, y string) int { return rank(x) - rank(y) })
+	return ks
+}
+
+func countKind(tasks []driver.Task, kind string) int {
+	n := 0
+	for _, t := range tasks {
+		if t.Kind == kind {
+			n++
+		}
+	}
+	return n
+}
+
+// tasksLine is the line over the message box of what the agent's CLI runs
+// beside its turn: how many of each kind, then what each is.
+func tasksLine(a api.Agent, w int) string {
+	tasks := a.State.Tasks
+	if len(tasks) == 0 || a.ArchivedAt != nil {
+		return ""
+	}
+	var what []string
+	for _, k := range taskKinds(tasks) {
+		for _, t := range tasks {
+			if t.Kind == k {
+				what = append(what, cmp.Or(t.Description, t.Kind))
+			}
+		}
+	}
+	return truncate(taskMarks(tasks, true)+" running: "+strings.Join(what, " · "), w)
 }

@@ -1365,6 +1365,9 @@ func (m *Model) layout() {
 	if m.settings != nil {
 		used += 2 + len(m.settings.fields) // title, fields, hint
 	}
+	if a, ok := m.agent(m.openID); ok && len(a.State.Tasks) > 0 && a.ArchivedAt == nil {
+		used++ // what runs beside its turn
+	}
 	m.vp.Width = mw
 	m.vp.Height = max(m.height-used, 1)
 }
