@@ -4565,6 +4565,9 @@ const shortcuts = [
   ['/', 'Write in the message box'],
   ['Esc', 'Leave the message box; out of it, stop the working agent (Enter stops, Esc keeps it)'],
   ['j / k', 'Next / previous agent'],
+  ['Ctrl+d / Ctrl+u', 'Scroll the conversation half a page down / up'],
+  ['Ctrl+f / Ctrl+b', 'Scroll the conversation a page down / up'],
+  ['G', 'Go to the end of the conversation'],
   ['Space', 'Park the idle agent, or make it idle again'],
   ['1–9', 'Pick that option of the question the agent asks'],
   ['0', 'Answer the question in your own words (Esc leaves the box)'],
@@ -4659,9 +4662,17 @@ document.addEventListener('keydown', (e) => {
   // nothing in it (a completion) took it: the shortcuts work again.
   if (e.key === 'Escape' && !e.defaultPrevented && !e.isComposing &&
     (t.matches?.('.composer textarea') || (S.view === 'new' && t.matches?.('.page input, .page textarea')))) { t.blur(); return }
-  if (e.ctrlKey || e.metaKey || e.altKey || e.isComposing || e.defaultPrevented) return
+  if (e.metaKey || e.altKey || e.isComposing || e.defaultPrevented) return
   if (t.closest?.('input, textarea, select, [contenteditable]') || document.querySelector('dialog[open]')) return
   const key = e.code?.startsWith('Key') ? e.code.slice(3).toLowerCase() : e.key
+  // Ctrl with d / u / f / b scrolls the conversation as vim does: half a
+  // page down / up, a page down / up.
+  if (e.ctrlKey) {
+    const box = S.view === 'agent' && !e.shiftKey && document.getElementById('convo')
+    const by = box && { d: 0.5, u: -0.5, f: 0.9, b: -0.9 }[key]
+    if (by) { e.preventDefault(); box.scrollBy({ top: by * box.clientHeight }) }
+    return
+  }
   const a = S.view === 'agent' ? agentById(S.sel) : null
   // A question the open agent waits on answers to the numbers and Enter.
   const asking = a && [...document.querySelectorAll('#convo .approval.asking')].find((c) => c.keys)
@@ -4677,6 +4688,10 @@ document.addEventListener('keydown', (e) => {
   goPending = 0
   const act = going ? { i: () => show('isolations'), s: () => show('services'), a: () => show('setup') }[key]
     : e.key === '?' ? showShortcuts
+    : e.shiftKey && key === 'g' ? S.view === 'agent' && (() => {
+      const box = document.getElementById('convo')
+      if (box) box.scrollTop = box.scrollHeight
+    })
     : e.shiftKey ? null
     : {
       '/': () => document.querySelector('.composer textarea:not(:disabled)')?.focus(),
