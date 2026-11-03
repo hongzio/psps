@@ -32,6 +32,11 @@ type Isolation struct {
 	State   string   `json:"state"`
 	// FenceState is "verified", "off", or why agents cannot start.
 	FenceState string `json:"fence_state"`
+	// Health, for a running isolation, is HealthMemoryFull or HealthStuck
+	// when it runs but cannot work, empty when it can or was not looked
+	// into; HealthDetail says what was seen.
+	Health       string `json:"health,omitempty"`
+	HealthDetail string `json:"health_detail,omitempty"`
 	// Proxies is "up" while the credential proxies' tunnel is open, or
 	// what is keeping it down.
 	Proxies string `json:"proxies,omitempty"`
@@ -39,6 +44,12 @@ type Isolation struct {
 	// none uses a login made inside the isolation.
 	Accounts map[driver.Kind]string `json:"accounts,omitempty"`
 }
+
+// What keeps a running isolation from working (Isolation.Health).
+const (
+	HealthMemoryFull = "memory full"
+	HealthStuck      = "not answering"
+)
 
 type CreateIsolation struct {
 	Name   string `json:"name"`

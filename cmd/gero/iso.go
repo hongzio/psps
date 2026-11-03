@@ -67,7 +67,11 @@ func isoCmd(p paths.Paths, args []string) error {
 			return orDash(s)
 		}
 		for _, iso := range isos {
-			fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n", iso.Name, iso.State, short(iso.FenceState), short(iso.Proxies), size(iso.CPUs, iso.Memory), iso.Container, iso.Image, strings.Join(iso.EnvKeys, ","))
+			state := iso.State
+			if iso.Health != "" {
+				state = iso.Health + " (" + iso.HealthDetail + ")"
+			}
+			fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n", iso.Name, state, short(iso.FenceState), short(iso.Proxies), size(iso.CPUs, iso.Memory), iso.Container, iso.Image, strings.Join(iso.EnvKeys, ","))
 		}
 		return tw.Flush()
 

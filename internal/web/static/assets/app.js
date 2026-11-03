@@ -3116,6 +3116,9 @@ function kv(pairs) {
 
 // ---- Isolations
 
+// isoUp: running and able to work; isoState says which, or what is wrong.
+const isoUp = (i) => i.state === 'running' && !i.health
+const isoState = (i) => cap(i.health || i.state)
 const fenceOK = (i) => i.fence_state === 'verified' || i.fence_state === 'off'
 const fenceText = (i) => i.fence_state === 'verified' ? 'fence verified' : i.fence_state === 'off' ? 'fence off' : 'fence ' + i.fence_state
 const isoAgents = (i) => S.agents.filter((a) => !a.archived_at && a.isolation === i.name)
@@ -3146,10 +3149,10 @@ function isoItem(i, on) {
   const xs = (S.exposures[i.name] || []).filter((x) => x.enabled).map((x) => x.service)
   return masterItem(isoHash(i.name), on,
     h('span', { class: 'item-line' },
-      h('span', { class: 'dot' + (i.state === 'running' ? ' on' : '') }),
+      h('span', { class: 'dot' + (isoUp(i) ? ' on' : '') }),
       h('strong', null, i.name),
       h('span', { class: 'item-side' }, n ? plural(n, 'agent') : 'no agents')),
-    h('span', { class: 'item-sub' + (fenceOK(i) ? '' : ' warn') }, `${cap(i.state)} · ${fenceText(i)}`),
+    h('span', { class: 'item-sub' + (fenceOK(i) && !i.health ? '' : ' warn') }, `${isoState(i)} · ${fenceText(i)}`),
     xs.length ? h('span', { class: 'item-sub' }, xs.join(', ')) : null)
 }
 
@@ -3160,7 +3163,7 @@ function isoDetail(i) {
     backLink('#/isolations', 'Isolations'),
     h('div', { class: 'detail-head' },
       h('h2', null, i.name),
-      h('span', { class: 'chip ' + (i.state === 'running' ? 'ok' : 'blocked') }, cap(i.state)),
+      h('span', { class: 'chip ' + (isoUp(i) ? 'ok' : 'blocked') }, isoState(i)),
       h('span', { class: 'chip ' + (i.fence_state === 'verified' ? 'ok' : i.fence_state === 'off' ? '' : 'blocked') }, cap(fenceText(i))),
       h('span', { class: 'grow' }),
       h('span', { class: 'head-actions' },
@@ -3171,6 +3174,9 @@ function isoDetail(i) {
           : h('button', { class: 'btn', disabled: S.starting === i.name, title: 'Start its container, its shim answering and its fence measured', onclick: () => startIsolation(i) },
             S.starting === i.name ? 'Starting…' : 'Start'),
         h('button', { class: 'btn', onclick: () => upgradeIsolation(i) }, 'Upgrade'))),
+    i.health ? h('p', { class: 'callout warn' }, i.health === 'memory full'
+      ? `It runs but has no memory left to work in: ${i.health_detail}. Its agents stall until that frees up; Kill restarts it.`
+      : `It runs but does not answer: ${i.health_detail}. Kill restarts it.`) : null,
     fenceOK(i) ? null : h('p', { class: 'callout warn' }, `Agents start here only behind a verified network fence: ${i.fence_state}.`),
     S.openForm === `verify:${i.name}` && S.verifyOut ? verifyView(S.verifyOut) : null,
     h('div', { class: 'tabs', role: 'tablist' }, ISO_TABS.map((t) => {
@@ -3191,7 +3197,7 @@ function isoOverview(i) {
   const xs = (S.exposures[i.name] || []).filter((x) => x.enabled).map((x) => x.service)
   return [
     block('Machine', kv([
-      ['State', cap(i.state)],
+      ['State', i.health ? `${isoState(i)}: ${i.health_detail}` : cap(i.state)],
       ['Network fence', i.fence_state === 'verified' ? 'Verified' : i.fence_state === 'off' ? 'Off: it reaches the Mac and the LAN' : cap(i.fence_state)],
       i.proxies && i.proxies !== 'up' ? ['Proxies', i.proxies] : null,
       ['Image', h('code', null, i.image)],
@@ -4376,7 +4382,7 @@ function setupDetail(sel) {
   const i = S.isolations.find((i) => i.name === sel.name)
   return [backLink('#/setup', 'Accounts'),
     h('div', { class: 'detail-head' }, h('h2', null, i.name),
-      h('span', { class: 'chip ' + (i.state === 'running' ? 'ok' : 'blocked') }, cap(i.state))),
+      h('span', { class: 'chip ' + (isoUp(i) ? 'ok' : 'blocked') }, isoState(i))),
     h('p', { class: 'lead' }, 'What Claude Code and Codex log in with here: an account kept on the Mac, or a login made inside the isolation, which any browser can finish, a phone’s included.'),
     cliCards(i)]
 }
