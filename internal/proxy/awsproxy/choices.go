@@ -1,7 +1,6 @@
 package awsproxy
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -21,20 +20,29 @@ import (
 // for a person to assume, its instances in every enabled region and its
 // buckets. The profile's login is the credential; nothing is stored.
 func (Service) Choices(ctx context.Context, field string, env map[string]any, _ map[string]string) ([]proxy.Choice, error) {
-	cli := strings.TrimSpace(proxy.StringOr(env, "aws_cli", ""))
-	if cli == "" {
-		cli = "aws"
-	}
-	path, err := exec.LookPath(cli)
-	if err != nil {
-		return nil, proxy.Deny("%q is not on the Mac's PATH; install the AWS CLI or give aws_cli its full path", cli)
+	bastion := strings.TrimSpace(proxy.StringOr(env, "bastion", ""))
+	var path string
+	if bastion == "" || field == "aws_profile" {
+		cli := strings.TrimSpace(proxy.StringOr(env, "aws_cli", ""))
+		if cli == "" {
+			cli = "aws"
+		}
+		var err error
+		if path, err = exec.LookPath(cli); err != nil {
+			return nil, proxy.Deny("%q is not on the Mac's PATH; install the AWS CLI or give aws_cli its full path", cli)
+		}
 	}
 	if field == "aws_profile" {
-		return runner{cli: path}.profiles(ctx)
+		return runner{CLI: CLI{AWS: path}}.profiles(ctx)
 	}
-	r := runner{cli: path, profile: strings.TrimSpace(proxy.StringOr(env, "aws_profile", ""))}
-	if r.profile == "" {
-		return nil, proxy.Deny("pick an aws_profile first: what is listed is what its login sees")
+	r := runner{CLI: CLI{AWS: path, Profile: strings.TrimSpace(proxy.StringOr(env, "aws_profile", "")), Bastion: bastion}}
+	if bastion != "" {
+		if err := validBastion(bastion); err != nil {
+			return nil, proxy.Deny("%s", err)
+		}
+		r.Profile = ""
+	} else if r.Profile == "" {
+		return nil, proxy.Deny("pick an aws_profile (or give a bastion) first: what is listed is what its login sees")
 	}
 	switch field {
 	case "role_arn":
@@ -47,44 +55,21 @@ func (Service) Choices(ctx context.Context, field string, env map[string]any, _ 
 	return nil, fmt.Errorf("aws has no choices for %s", field)
 }
 
+// runner runs the lookups, on the Mac with a profile or on a bastion.
 type runner struct {
-	cli, profile string
+	CLI
 }
 
-// run is one aws command with the profile, its JSON answer or why not. A
-// profile with no region set gets us-east-1, which answers for the whole
-// account: describe-regions, IAM and the bucket list are not regional.
+// run is one aws command, its JSON answer or why not. A profile with no
+// region set gets us-east-1, which answers for the whole account:
+// describe-regions, IAM and the bucket list are not regional.
 func (r runner) run(ctx context.Context, what string, args ...string) ([]byte, error) {
-	out, err := r.call(ctx, what, args)
+	out, err := r.CLI.run(ctx, what, 30*time.Second, args...)
 	var d *proxy.Denied
 	if errors.As(err, &d) && strings.Contains(d.Reason, "must specify a region") {
-		out, err = r.call(ctx, what, append(args[:len(args):len(args)], "--region", "us-east-1"))
+		out, err = r.CLI.run(ctx, what, 30*time.Second, append(args[:len(args):len(args)], "--region", "us-east-1")...)
 	}
 	return out, err
-}
-
-func (r runner) call(ctx context.Context, what string, args []string) ([]byte, error) {
-	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
-	defer cancel()
-	argv := append([]string(nil), args...)
-	if r.profile != "" {
-		argv = append(argv, "--profile", r.profile)
-	}
-	cmd := exec.CommandContext(ctx, r.cli, argv...)
-	var stderr bytes.Buffer
-	cmd.Stderr = &stderr
-	out, err := cmd.Output()
-	if ctx.Err() == context.DeadlineExceeded {
-		return nil, proxy.Deny("%s timed out; is the network up?", what)
-	}
-	var exit *exec.ExitError
-	if err != nil && !errors.As(err, &exit) {
-		return nil, proxy.Deny("aws CLI %q is not runnable: %v", r.cli, err)
-	}
-	if err != nil {
-		return nil, refusal(what, r.profile, stderr.String())
-	}
-	return out, nil
 }
 
 func (r runner) profiles(ctx context.Context) ([]proxy.Choice, error) {

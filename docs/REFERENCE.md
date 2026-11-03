@@ -435,6 +435,34 @@ the session policy as `NAME=CAP`. Whatever the profile may not list
 refusal shown; the TUI filters a long list with `/` and narrows the ticked
 entry under the cursor with 1, 2, 3.
 
+The Mac's login expires, and with it every isolation's AWS credentials. An
+env can instead name a **bastion**: a small EC2 instance whose instance
+role assumes the env's role. AWS rotates an instance role's credentials
+itself, so nothing needs a login. gero reaches it over
+[tailcat](https://github.com/tailscale/tailcat) (WireGuard with no account
+or control plane, `brew install tailcat` on the Mac) and runs the same aws
+commands there, the form's lookups included:
+
+```sh
+# on the bastion (Amazon Linux, a t4g.nano is plenty; no inbound rule: tailcat dials out)
+tailcat genkey --key=default            # prints its tailcat address
+tailcat serve --allow=<the Mac's key> no-auth-ssh   # under systemd
+# on the Mac
+tailcat genkey --client --key=client-default        # prints the Mac's key, once
+gero env add aws dev --bastion <its address> --role-arn arn:aws:iam::123456789012:role/agent \
+  --allow-bucket transfer-bucket=read
+```
+
+The bastion's role needs `sts:AssumeRole` on the agent roles (which must
+trust it) and, for the lookups, `iam:ListRoles`, `ec2:DescribeRegions`,
+`ec2:DescribeInstances` and `s3:ListAllMyBuckets`. `--allow` keeps the
+tunnel to the Mac's key, so the address alone opens nothing. An env with a
+bastion is saved only once the bastion answers as an AWS principal, and
+`gero env check` names both identities. gero runs the system ssh with
+tailcat as its ProxyCommand, in batch mode, with its own
+`~/.local/state/gero/bastion_known_hosts`: the first connection records the
+bastion's host key, and a changed one is refused.
+
 PostgreSQL is terminated on both sides, the way pgbouncer does it: the
 isolation signs in with its workspace token (from PGPASSFILE), the env name
 as the user and a database on the allowlist; the proxy then opens its own

@@ -76,8 +76,9 @@ below, not at the broker.
   policy in that account is theirs to do. Do not retry.
 - The credential endpoint answers 503 — read the reason directly:
   ` + "`curl -sS -H \"Authorization: $AWS_CONTAINER_AUTHORIZATION_TOKEN\" \"$AWS_CONTAINER_CREDENTIALS_FULL_URI\"`" + `.
-  The usual cause is the Mac's own AWS login having expired; only the operator
-  can fix that, so report it rather than retrying in a loop.
+  The usual causes are the Mac's own AWS login having expired, or the bastion
+  the broker assumes the role through not answering; only the operator can fix
+  either, so report the reason rather than retrying in a loop.
 - ` + "`Unable to locate credentials`" + ` / NoCredentialsError — this shell predates the
   broker. Start a fresh shell so the exported variables are present.
 

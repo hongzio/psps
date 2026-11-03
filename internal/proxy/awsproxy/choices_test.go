@@ -197,7 +197,7 @@ func TestBucketsAreTheAccountsWithTheirRegion(t *testing.T) {
 func TestALookupNeedsAProfileAndTheCLI(t *testing.T) {
 	f := newInventoryAWS(t)
 	_, err := f.choices(t, "instances", nil)
-	mustDeny(t, err, "pick an aws_profile first")
+	mustDeny(t, err, "pick an aws_profile (or give a bastion) first")
 	var d *proxy.Denied
 	if !errors.As(err, &d) {
 		t.Fatalf("not a refusal: %v", err)

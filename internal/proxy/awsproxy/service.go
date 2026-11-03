@@ -30,9 +30,17 @@ const (
 type Env struct {
 	RoleARN   string   `json:"role_arn"`
 	Profile   string   `json:"aws_profile"`
+	Bastion   string   `json:"bastion,omitempty"`
 	Instances []string `json:"instances"`
 	Buckets   []string `json:"buckets"`
 	CLI       string   `json:"aws_cli,omitempty"`
+}
+
+func (e Env) runner() CLI {
+	if e.Bastion != "" {
+		return CLI{Bastion: e.Bastion}
+	}
+	return CLI{AWS: e.cli(), Profile: e.Profile}
 }
 
 func (e Env) cli() string {
@@ -67,14 +75,16 @@ func caps(kind Kind) []proxy.Cap {
 	return out
 }
 
-// Every lookup is the Mac's AWS CLI with the env's profile (aws_profile
-// lists the profiles themselves).
-var withProfile = []string{"aws_profile", "aws_cli"}
+// Every lookup is the Mac's AWS CLI with the env's profile, or the
+// bastion's (aws_profile lists the Mac's profiles themselves).
+var withProfile = []string{"aws_profile", "aws_cli", "bastion"}
 
 func (Service) Fields() []proxy.Field {
 	return []proxy.Field{
 		{Key: "aws_profile", Kind: proxy.String, Flag: "aws-profile", Metavar: "NAME", Lookup: true, LookupWith: []string{"aws_cli"},
-			Help: "the Mac's AWS CLI profile whose login may assume the role (required)"},
+			Help: "the Mac's AWS CLI profile whose login may assume the role (required, unless --bastion)"},
+		{Key: "bastion", Kind: proxy.String, Flag: "bastion", Metavar: "TC-ADDR",
+			Help: "the tailcat address of an EC2 bastion whose instance role assumes the role, in place of the Mac's login, which expires (aws_profile is then unused)"},
 		{Key: "role_arn", Kind: proxy.String, Flag: "role-arn", Metavar: "ARN", Lookup: true, LookupWith: withProfile,
 			Help: "the IAM role the broker assumes (required)"},
 		{Key: "instances", Kind: proxy.List, Flag: "allow-instance", Clear: "clear-instances", Metavar: "I-ID[=CAPS]",
@@ -110,16 +120,32 @@ func (Service) Normalize(name string, env map[string]any) ([]string, error) {
 	if !strings.HasPrefix(role, "arn:aws:iam::") {
 		return nil, fmt.Errorf("%q does not look like an IAM role ARN (arn:aws:iam::<account>:role/<name>)", role)
 	}
-	if proxy.StringOr(env, "aws_profile", "") == "" {
-		return nil, fmt.Errorf("--aws-profile is required; it names the Mac's AWS CLI profile whose login may assume the role for %q", name)
+	bastion := strings.TrimSpace(proxy.StringOr(env, "bastion", ""))
+	if bastion != "" {
+		if err := validBastion(bastion); err != nil {
+			return nil, err
+		}
+		env["bastion"] = bastion
+		// Asked at each save, so a bastion is on only once it answers.
+		if _, err := TailcatPath(); err != nil {
+			return nil, err
+		}
+		if err := checkBastion(bastion); err != nil {
+			return nil, fmt.Errorf("env %q is not saved: %w", name, err)
+		}
+	} else {
+		delete(env, "bastion")
+		if proxy.StringOr(env, "aws_profile", "") == "" {
+			return nil, fmt.Errorf("--aws-profile (or --bastion) is required; it names the Mac's AWS CLI profile whose login may assume the role for %q", name)
+		}
+		// Pinned now: the daemon may run under launchd's minimal PATH.
+		cli := proxy.StringOr(env, "aws_cli", "aws")
+		found, err := exec.LookPath(cli)
+		if err != nil {
+			return nil, fmt.Errorf("%q is not on PATH; install the AWS CLI on the Mac or pass --aws-cli with a full path", cli)
+		}
+		env["aws_cli"] = found
 	}
-	// Pinned now: the daemon may run under launchd's minimal PATH.
-	cli := proxy.StringOr(env, "aws_cli", "aws")
-	found, err := exec.LookPath(cli)
-	if err != nil {
-		return nil, fmt.Errorf("%q is not on PATH; install the AWS CLI on the Mac or pass --aws-cli with a full path", cli)
-	}
-	env["aws_cli"] = found
 	if len(instances) == 0 && len(buckets) == 0 {
 		return []string{fmt.Sprintf("env %q has an empty allowlist; the broker refuses to issue its credentials until --allow-instance/--allow-bucket", name)}, nil
 	}
@@ -201,13 +227,13 @@ func (in *instance) Serve(port int, l net.Listener) error {
 func (in *instance) logf(format string, a ...any) { in.h.Logf("aws", format, a...) }
 
 func (in *instance) source(env string, e Env, policy string) *Source {
-	key := strings.Join([]string{e.cli(), e.RoleARN, e.Profile, policy}, "\x00")
+	key := strings.Join([]string{e.cli(), e.RoleARN, e.Profile, e.Bastion, policy}, "\x00")
 	in.mu.Lock()
 	defer in.mu.Unlock()
 	if c, ok := in.sources[env]; ok && c.key == key {
 		return c.src
 	}
-	src := &Source{AWS: e.cli(), RoleARN: e.RoleARN, Profile: e.Profile,
+	src := &Source{AWS: e.cli(), RoleARN: e.RoleARN, Profile: e.Profile, Bastion: e.Bastion,
 		SessionName: "gero-" + in.h.Name(), Policy: policy}
 	in.sources[env] = &cached{key: key, src: src}
 	return src
@@ -311,7 +337,8 @@ func unknownEnv(name string, v proxy.View) string {
 	return fmt.Sprintf("no AWS environment named %q here; this broker serves: %s. Point AWS_CONTAINER_CREDENTIALS_FULL_URI at %s/<env> to pick one", name, list, CredsPath)
 }
 
-// Check assumes the role from the Mac, now, and asks STS who that is.
+// Check assumes the role from the Mac (or the bastion), now, and asks
+// STS who that is.
 // Refusals: the credential endpoint answers the isolation's token only.
 func (Service) Refusals(proxy.View) []proxy.Refusal {
 	return []proxy.Refusal{{What: "a wrong authorization token", Port: Port, Method: "GET", Path: CredsPath,
@@ -327,8 +354,22 @@ func (Service) Check(ctx context.Context, name string, cfg json.RawMessage, _ *c
 	if err != nil {
 		return "", err
 	}
-	src := &Source{AWS: e.cli(), RoleARN: e.RoleARN, Profile: e.Profile,
+	src := &Source{AWS: e.cli(), RoleARN: e.RoleARN, Profile: e.Profile, Bastion: e.Bastion,
 		SessionName: "gero-envcheck-" + name, Policy: policy.JSON()}
+	if e.Bastion != "" {
+		// The bastion first, so a bastion that does not answer is told as
+		// that rather than as a role it could not assume.
+		who, err := e.runner().Identity(ctx)
+		if err != nil {
+			return "", err
+		}
+		c, err := src.Get(ctx, time.Now())
+		if err != nil {
+			return "", err
+		}
+		return fmt.Sprintf("bastion    %s\nidentity   %s\nexpires    %s\ninstances  %s\nbuckets    %s\n",
+			who, src.Assumed(), c.Expiration, describe(e.Instances), describe(e.Buckets)), nil
+	}
 	c, err := src.Get(ctx, time.Now())
 	if err != nil {
 		return "", err
