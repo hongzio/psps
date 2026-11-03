@@ -77,7 +77,7 @@ func TestTheRepositoriesATokenOpensAreTheChoices(t *testing.T) {
 
 func TestAStoredTokenWinsOverTheTokenCommand(t *testing.T) {
 	srv := fakeUserRepos(t)
-	c := &creds.Store{Path: filepath.Join(t.TempDir(), "credentials")}
+	c := creds.TestStore(filepath.Join(t.TempDir(), "credentials"))
 	s := Service{APIUpstream: srv.URL}
 	cfg := json.RawMessage(`{"repos":["me/site"],"token_command":["/bin/echo","bad"]}`)
 	if !s.CredentialElsewhere(cfg) || s.CredentialElsewhere(json.RawMessage(`{"repos":[]}`)) {

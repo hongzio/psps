@@ -28,7 +28,7 @@ func TestAnAgentKeepsCronsOfItsOwn(t *testing.T) {
 	ctx := context.Background()
 	m, stop := e.daemon()
 	defer stop()
-	m.SetProxies(proxy.NewRegistry(mailproxy.Service{}, cronproxy.Service{}), &creds.Store{Path: filepath.Join(t.TempDir(), "credentials")})
+	m.SetProxies(proxy.NewRegistry(mailproxy.Service{}, cronproxy.Service{}), creds.TestStore(filepath.Join(t.TempDir(), "credentials")))
 	m.tunnelPort = func(int) int { return freePort(t) }
 	a, _ := m.CreateAgent(ctx, api.CreateAgent{Isolation: "dev", Kind: driver.Codex, Handle: "alice"})
 	e.waitFor("the agent", func() bool { return status(m, a.ID) == event.StatusIdle })

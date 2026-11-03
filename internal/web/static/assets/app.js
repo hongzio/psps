@@ -3994,7 +3994,7 @@ function envForm(s, e) {
   const form = h('div', { class: 'subform' },
     name ? h('div', { class: 'field' }, h('label', null, 'name'), name, h('span', { class: 'hint' }, 'what isolations expose')) : null,
     secrets.map(({ f, el }) => h('div', { class: 'field' }, h('label', null, f), el,
-      h('span', { class: 'hint' }, 'Stored in the Mac’s credentials file (0600), never shown again. The proxy uses it; the isolation never sees it.'))),
+      h('span', { class: 'hint' }, 'Stored encrypted in the Mac’s credentials file, never shown again. The proxy uses it; the isolation never sees it.'))),
     ctl.rows, err,
     h('div', { class: 'actions' }, save, h('button', { class: 'btn', onclick: closeForm }, 'Cancel')))
   // The rest of the form can change what a lookup reads (git's token
@@ -4024,7 +4024,7 @@ function secretForm(s, e) {
   })
   return h('div', { class: 'subform' },
     inputs.map(({ f, el }) => h('div', { class: 'field' }, h('label', null, f), el)),
-    h('p', { class: 'note' }, 'Written to the Mac’s credentials file (0600) and never shown again.'), err,
+    h('p', { class: 'note' }, 'Written encrypted to the Mac’s credentials file and never shown again.'), err,
     h('div', { class: 'actions' }, save,
       h('button', {
         class: 'btn', onclick: async () => {
@@ -4502,7 +4502,7 @@ function newAccountForm() {
   return h('div', { class: 'subform' },
     h('div', { class: 'row' }, h('div', { class: 'field' }, h('label', null, 'Name'), name), h('div', { class: 'field' }, h('label', null, 'Kind'), kind, hint)),
     h('div', { class: 'field' }, h('label', null, 'Secret'), secret,
-      h('span', { class: 'hint' }, 'A token from ', h('code', null, 'claude setup-token'), ' (run it on any machine with a browser), or an API key. Stored in the Mac’s credentials file (0600), never shown again.')),
+      h('span', { class: 'hint' }, 'A token from ', h('code', null, 'claude setup-token'), ' (run it on any machine with a browser), or an API key. Stored encrypted in the Mac’s credentials file, never shown again.')),
     err,
     h('div', { class: 'actions' }, save, navLink('#/setup', 'btn', 'Cancel')))
 }

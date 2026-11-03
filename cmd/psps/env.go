@@ -28,11 +28,27 @@ import (
 
 func envCmd(p paths.Paths, args []string) error {
 	if len(args) == 0 {
-		return errors.New("usage: psps env ls|add|edit|rm|secret|choices|check ...  (psps env help SERVICE for its flags)")
+		return errors.New("usage: psps env ls|add|edit|rm|secret|encrypt|choices|check ...  (psps env help SERVICE for its flags)")
 	}
 	reg := services.Registry()
 	if args[0] == "help" {
 		return envHelp(reg, args[1:])
+	}
+	if args[0] == "encrypt" {
+		// The file and its lock are the Mac's; no daemon needed.
+		s := p.CredStore()
+		n, err := s.Encrypt()
+		if err != nil {
+			return err
+		}
+		if _, err := os.Stat(s.Path); errors.Is(err, os.ErrNotExist) {
+			fmt.Printf("no credentials file at %s yet; `psps env secret` writes it encrypted\n", s.Path)
+		} else if n == 0 {
+			fmt.Printf("every value in %s is already encrypted\n", s.Path)
+		} else {
+			fmt.Printf("encrypted the plain values of %d section(s) in %s with %s\n", n, s.Path, s.KeyPath)
+		}
+		return nil
 	}
 	c, err := connect(p)
 	if err != nil {
@@ -68,7 +84,14 @@ func envCmd(p paths.Paths, args []string) error {
 			}
 			fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\n", e.Service, e.Name, secret, orDash(strings.Join(e.ExposedTo, ",")), compact(e.Config))
 		}
-		return tw.Flush()
+		if err := tw.Flush(); err != nil {
+			return err
+		}
+		if plain, _ := p.CredStore().Plain(); len(plain) > 0 {
+			fmt.Fprintf(os.Stderr, "warning: %s holds plain-text values in [%s]; `psps env encrypt` encrypts them\n",
+				p.Credentials(), strings.Join(plain, "], ["))
+		}
+		return nil
 
 	case "add", "edit":
 		if len(args) < 3 {

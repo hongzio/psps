@@ -26,7 +26,7 @@ func shareEnv(t *testing.T) (*testEnv, *Manager, string) {
 	for _, d := range []string{"notes", "out", "denied"} {
 		os.MkdirAll(filepath.Join(home, d), 0o755)
 	}
-	m.SetProxies(proxy.NewRegistry(shareproxy.Service{Home: home, Protected: []string{}}), &creds.Store{Path: filepath.Join(t.TempDir(), "credentials")})
+	m.SetProxies(proxy.NewRegistry(shareproxy.Service{Home: home, Protected: []string{}}), creds.TestStore(filepath.Join(t.TempDir(), "credentials")))
 	return e, m, home
 }
 

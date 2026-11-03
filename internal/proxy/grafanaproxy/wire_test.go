@@ -103,7 +103,7 @@ func newHarness(t *testing.T) *harness {
 	h := &harness{t: t, tap: tp, tls: httptest.NewTLSServer(tp), plain: httptest.NewServer(tp)}
 	t.Cleanup(h.tls.Close)
 	t.Cleanup(h.plain.Close)
-	cs := &creds.Store{Path: filepath.Join(t.TempDir(), "credentials")}
+	cs := creds.TestStore(filepath.Join(t.TempDir(), "credentials"))
 	for env, tok := range map[string]string{"prod": "REAL-TOKEN", "dev": "REAL-DEV", "sandbox": "REAL-SBX"} {
 		if err := cs.Write("grafana", env, map[string]string{"token": tok}); err != nil {
 			t.Fatal(err)
@@ -503,7 +503,7 @@ func TestAnInstanceThatIsNotGrafanaIsNamed(t *testing.T) {
 func TestCheckReportsAFamilyTheAccountCannotRead(t *testing.T) {
 	tp, up, rt := hostSide(t)
 	tp.script("/api/v1/provisioning/alert-rules", 403, "{}")
-	cs := &creds.Store{Path: filepath.Join(t.TempDir(), "credentials")}
+	cs := creds.TestStore(filepath.Join(t.TempDir(), "credentials"))
 	cs.Write("grafana", "prod", map[string]string{"token": "REAL-TOKEN"})
 	cfg, _ := json.Marshal(Env{BaseURL: up.URL, Families: []string{"alerts", "dashboards"}})
 	out, err := Service{Transport: rt}.Check(t.Context(), "prod", cfg, cs)

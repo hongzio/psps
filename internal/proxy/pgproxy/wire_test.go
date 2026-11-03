@@ -334,7 +334,7 @@ type harness struct {
 
 func newHarness(t *testing.T, up *fakeUpstream) *harness {
 	t.Helper()
-	cs := &creds.Store{Path: filepath.Join(t.TempDir(), "credentials")}
+	cs := creds.TestStore(filepath.Join(t.TempDir(), "credentials"))
 	if err := cs.Write("pg", "dev", map[string]string{"password": "real-pass"}); err != nil {
 		t.Fatal(err)
 	}
@@ -649,7 +649,7 @@ func TestListDatabasesReadsThemOffARealExchange(t *testing.T) {
 func TestCheckNamesAMissingSecret(t *testing.T) {
 	up := newUpstream(t, "cleartext", "real-pass")
 	cfg, _ := json.Marshal(Env{Host: "127.0.0.1", Port: up.port(), User: "real_user", Databases: []string{"app"}, SSLMode: "disable"})
-	_, err := Service{}.Check(t.Context(), "ghost", cfg, &creds.Store{Path: filepath.Join(t.TempDir(), "credentials")})
+	_, err := Service{}.Check(t.Context(), "ghost", cfg, creds.TestStore(filepath.Join(t.TempDir(), "credentials")))
 	if err == nil || !strings.Contains(err.Error(), "[pg ghost]") {
 		t.Fatalf("%v", err)
 	}

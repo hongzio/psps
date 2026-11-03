@@ -22,8 +22,8 @@ for it. Before
 `brew uninstall psps`, run `psps daemon uninstall` and `sudo psps pf uninstall`.
 
 `psps backup FILE` saves what psps keeps on the Mac to one file: a snapshot
-of the store (taken while the daemon runs), `config.toml`, the credentials,
-your skills, the web token and a bastion's known hosts. It leaves out the
+of the store (taken while the daemon runs), `config.toml`, the credentials
+and their key, your skills, the web token and a bastion's known hosts. It leaves out the
 daemon's socket, locks and log, and the isolations' volumes, which container
 keeps whatever happens to psps. The file holds the credentials, so it is
 the owner's alone (0600). `psps restore FILE` puts it back with no daemon
@@ -410,7 +410,13 @@ by `psps-shim sync` and removed when the service is turned off.
 Secrets for services that keep one live in `~/.config/psps/credentials`, an
 INI of `[service env]` sections, 0600, read per request:
 `psps env secret SERVICE NAME` prompts for them (or reads one line per field
-from stdin). git's is a GitHub token; an env may instead name a
+from stdin). Each value is written encrypted (`enc:v1:...`, AES-256-GCM)
+with a key kept apart from it, in `~/.local/state/psps/credentials.key`
+(0600, made on the first write), so a stray `cat` or a commit of
+`~/.config` shows the sections but no secret. It keeps nothing from a
+process running as you, which can read the key as the daemon does. A value
+added by hand in plain text is still read; `psps env ls` and verify warn of
+it, and `psps env encrypt` (or any write to the file) encrypts it. git's is a GitHub token; an env may instead name a
 gh-compatible command (`--token-command gh`, which runs `gh auth token`), and
 a stored token wins over it. The web and TUI env forms for git ask for the
 token first and then list the repositories it opens to tick; until there is a
@@ -1122,8 +1128,8 @@ port on its loopback alone and the tunnel takes it in, and for each exposed
 proxy that the tunnel carries its ports, that it refuses a request it must refuse — a wrong
 workspace token, an unlisted repository — made from inside the isolation as
 the agent, with curl or psql, and that each env still answers from the Mac
-(`psps env check`). Then that the credentials file is owner-only and the
-internet is still reachable. FAIL lines are broken guarantees, WARN lines
+(`psps env check`). Then that the credentials file is owner-only and its
+values encrypted, and the internet is still reachable. FAIL lines are broken guarantees, WARN lines
 setup; a leak found here stops agents like any other measurement. The TUI
 has it on `v` in the isolations page, the web as Verify on an isolation's page.
 

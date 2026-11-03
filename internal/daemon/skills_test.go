@@ -21,7 +21,7 @@ func TestASkillIsKeptOnTheMacAndWrittenWhereTheCLIsLook(t *testing.T) {
 	m, stop := e.daemon()
 	t.Cleanup(stop)
 	kept := filepath.Join(t.TempDir(), "skills")
-	m.SetProxies(proxy.NewRegistry(skillproxy.Service{Dir: kept, Protected: []string{}}), &creds.Store{Path: filepath.Join(t.TempDir(), "credentials")})
+	m.SetProxies(proxy.NewRegistry(skillproxy.Service{Dir: kept, Protected: []string{}}), creds.TestStore(filepath.Join(t.TempDir(), "credentials")))
 	ctx := context.Background()
 
 	src := t.TempDir()

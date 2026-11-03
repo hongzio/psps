@@ -28,7 +28,7 @@ func TestChoicesAreLookedUpWithTheTypedOrStoredCredential(t *testing.T) {
 	e := newTestEnv(t)
 	m, stop := e.daemon()
 	defer stop()
-	c := &creds.Store{Path: filepath.Join(t.TempDir(), "credentials")}
+	c := creds.TestStore(filepath.Join(t.TempDir(), "credentials"))
 	m.SetProxies(proxy.NewRegistry(gitproxy.Service{APIUpstream: gh.URL}), c)
 	ctx := context.Background()
 

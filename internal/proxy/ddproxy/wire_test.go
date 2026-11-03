@@ -90,7 +90,7 @@ type harness struct {
 
 func newHarness(t *testing.T, prod Env) *harness {
 	t.Helper()
-	cs := &creds.Store{Path: t.TempDir() + "/credentials"}
+	cs := creds.TestStore(t.TempDir() + "/credentials")
 	cs.Write("datadog", "prod", map[string]string{"api_key": "REAL-API", "app_key": "REAL-APP"})
 	h := &harness{t: t, tap: newTap(t)}
 	h.view = proxy.View{Isolation: "work", Enabled: true, Envs: map[string]json.RawMessage{}, Tokens: map[string]string{}}
@@ -416,7 +416,7 @@ func TestTheSiteDecidesTheUpstreamHost(t *testing.T) {
 
 func TestEveryAllowedFamilyIsProbedWithBothKeys(t *testing.T) {
 	tp := newTap(t)
-	cs := &creds.Store{Path: t.TempDir() + "/credentials"}
+	cs := creds.TestStore(t.TempDir() + "/credentials")
 	cs.Write("datadog", "prod", map[string]string{"api_key": "REAL-API", "app_key": "REAL-APP"})
 	cfg, _ := json.Marshal(Env{Site: "datadoghq.com", Families: []string{"monitors", "logs"}, Writes: []string{"monitors"}, LogsQuery: "service:project"})
 	out, err := Service{Transport: tp}.Check(t.Context(), "prod", cfg, cs)

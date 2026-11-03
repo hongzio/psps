@@ -23,7 +23,7 @@ import (
 
 func newStore(t *testing.T) *creds.Store {
 	t.Helper()
-	return &creds.Store{Path: filepath.Join(t.TempDir(), "credentials")}
+	return creds.TestStore(filepath.Join(t.TempDir(), "credentials"))
 }
 
 func asDenied(t *testing.T, err error) *Denied {

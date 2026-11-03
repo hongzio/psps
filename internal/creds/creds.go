@@ -59,7 +59,10 @@ func (d *Denied) Error() string { return d.Reason }
 
 type Store struct {
 	Path string
-	mu   sync.Mutex
+	// KeyPath is the key the file's values are sealed with, kept outside
+	// the file's directory (see seal.go).
+	KeyPath string
+	mu      sync.Mutex
 }
 
 func section(service, env string) string { return service + " " + env }
@@ -85,7 +88,20 @@ type file struct {
 	keys     map[string][]string // key order per section, for stable writes
 }
 
+// load reads the file with its sealed values opened.
 func (s *Store) load() (*file, error) {
+	f, err := s.loadRaw()
+	if err != nil {
+		return nil, err
+	}
+	if err := s.unseal(f); err != nil {
+		return nil, err
+	}
+	return f, nil
+}
+
+// loadRaw reads the file as written, sealed values still sealed.
+func (s *Store) loadRaw() (*file, error) {
 	st, err := os.Stat(s.Path)
 	if errors.Is(err, os.ErrNotExist) {
 		return nil, err
@@ -227,6 +243,30 @@ func (s *Store) Write(service, env string, values map[string]string) error {
 			return &Denied{fmt.Sprintf("the value for %s has a line break or surrounding spaces; the credentials file cannot hold that", k)}
 		}
 	}
+	return s.update(true, func(f *file) error {
+		name := section(service, env)
+		if _, ok := f.sections[name]; !ok && values != nil {
+			f.order = append(f.order, name)
+		}
+		if values == nil {
+			delete(f.sections, name)
+			return nil
+		}
+		f.sections[name] = values
+		keys := make([]string, 0, len(values))
+		for k := range values {
+			keys = append(keys, k)
+		}
+		sort.Strings(keys)
+		f.keys[name] = keys
+		return nil
+	})
+}
+
+// update applies change to the file under its lock and writes it back with
+// every value sealed, so any write also seals what was left in plain text.
+// Without create, a missing file stays missing (os.ErrNotExist).
+func (s *Store) update(create bool, change func(*file) error) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if err := os.MkdirAll(filepath.Dir(s.Path), 0o700); err != nil {
@@ -242,26 +282,18 @@ func (s *Store) Write(service, env string, values map[string]string) error {
 	}
 
 	f, err := s.load()
-	if errors.Is(err, os.ErrNotExist) {
+	if errors.Is(err, os.ErrNotExist) && create {
 		f, err = &file{sections: map[string]map[string]string{}, keys: map[string][]string{}}, nil
 	}
 	if err != nil {
 		return err
 	}
-	name := section(service, env)
-	if _, ok := f.sections[name]; !ok && values != nil {
-		f.order = append(f.order, name)
+	if err := change(f); err != nil {
+		return err
 	}
-	if values == nil {
-		delete(f.sections, name)
-	} else {
-		f.sections[name] = values
-		keys := make([]string, 0, len(values))
-		for k := range values {
-			keys = append(keys, k)
-		}
-		sort.Strings(keys)
-		f.keys[name] = keys
+	key, err := s.key(true)
+	if err != nil {
+		return err
 	}
 
 	var b strings.Builder
@@ -272,9 +304,15 @@ func (s *Store) Write(service, env string, values map[string]string) error {
 		}
 		fmt.Fprintf(&b, "[%s]\n", sec)
 		for _, k := range f.keys[sec] {
-			if v, ok := vals[k]; ok {
-				fmt.Fprintf(&b, "%s = %s\n", k, strings.ReplaceAll(v, "\n", "\n\t"))
+			v, ok := vals[k]
+			if !ok {
+				continue
 			}
+			sealed, err := seal(key, sec, k, v)
+			if err != nil {
+				return err
+			}
+			fmt.Fprintf(&b, "%s = %s\n", k, sealed)
 		}
 		b.WriteString("\n")
 	}

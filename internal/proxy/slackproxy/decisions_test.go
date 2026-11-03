@@ -34,7 +34,7 @@ func families(f ...string) *[]string { return &f }
 // --- the credential ---
 
 func TestTheStoreYieldsItsToken(t *testing.T) {
-	cs := &creds.Store{Path: filepath.Join(t.TempDir(), "credentials")}
+	cs := creds.TestStore(filepath.Join(t.TempDir(), "credentials"))
 	cs.Write("slack", "prod", map[string]string{"token": "xoxp-real"})
 	if got, err := cs.Read("slack", "prod"); err != nil || got["token"] != "xoxp-real" {
 		t.Fatalf("%v %v", got, err)
@@ -42,7 +42,7 @@ func TestTheStoreYieldsItsToken(t *testing.T) {
 }
 
 func TestAMissingSectionNamesTheFix(t *testing.T) {
-	cs := &creds.Store{Path: filepath.Join(t.TempDir(), "credentials")}
+	cs := creds.TestStore(filepath.Join(t.TempDir(), "credentials"))
 	_, err := cs.Read("slack", "prod")
 	if err == nil || !strings.Contains(err.Error(), "[slack prod]") {
 		t.Fatalf("%v", err)

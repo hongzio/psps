@@ -28,7 +28,7 @@ func portEnv(t *testing.T) (*testEnv, *Manager) {
 	e := newTestEnv(t)
 	m, stop := e.daemon()
 	t.Cleanup(stop)
-	m.SetProxies(proxy.NewRegistry(portproxy.Service{}), &creds.Store{Path: filepath.Join(t.TempDir(), "credentials")})
+	m.SetProxies(proxy.NewRegistry(portproxy.Service{}), creds.TestStore(filepath.Join(t.TempDir(), "credentials")))
 	return e, m
 }
 
@@ -271,7 +271,7 @@ func TestAnEditOntoATakenMacPortIsPutBack(t *testing.T) {
 func TestForwardsComeBackWithTheDaemon(t *testing.T) {
 	e := newTestEnv(t)
 	reg := proxy.NewRegistry(portproxy.Service{})
-	cs := &creds.Store{Path: filepath.Join(t.TempDir(), "credentials")}
+	cs := creds.TestStore(filepath.Join(t.TempDir(), "credentials"))
 	m, stop := e.daemon()
 	m.SetProxies(reg, cs)
 	ctx := context.Background()

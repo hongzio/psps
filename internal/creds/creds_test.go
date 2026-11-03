@@ -13,7 +13,8 @@ import (
 // them: which section, which fields, which chmod.
 
 func newStore(t *testing.T) *Store {
-	return &Store{Path: filepath.Join(t.TempDir(), "credentials")}
+	dir := t.TempDir()
+	return &Store{Path: filepath.Join(dir, "config", "credentials"), KeyPath: filepath.Join(dir, "state", "credentials.key")}
 }
 
 func reason(t *testing.T, err error) string {
@@ -113,10 +114,11 @@ func TestAPercentSignSurvivesTheRoundTrip(t *testing.T) {
 	}
 }
 
-func TestAnIsolateFileReadsAsIs(t *testing.T) {
-	// What Python's configparser writes, comments and a colon delimiter
-	// included, so an isolate credentials file can be brought over.
+func TestAHandWrittenFileReadsAsIs(t *testing.T) {
+	// Plain values written by hand, comments and a colon delimiter
+	// included, are read without any key.
 	s := newStore(t)
+	os.MkdirAll(filepath.Dir(s.Path), 0o700)
 	os.WriteFile(s.Path, []byte("; written by isolate\n[pg prod]\npassword = pw=with=equals\n\n[datadog prod]\nAPI_KEY: aaa\napp_key = bbb\n"), 0o600)
 	if got, err := s.Read("pg", "prod"); err != nil || got["password"] != "pw=with=equals" {
 		t.Fatalf("pg = %v %v", got, err)
@@ -142,5 +144,117 @@ func TestAValueTheFileCannotHoldIsRefused(t *testing.T) {
 	s := newStore(t)
 	if err := s.Write("slack", "dev", map[string]string{"token": "a\nb"}); err == nil {
 		t.Fatal("a multi-line value was written")
+	}
+}
+
+func TestValuesAreWrittenEncryptedWithTheKeyElsewhere(t *testing.T) {
+	s := newStore(t)
+	s.Write("pg", "prod", map[string]string{"password": "hunter2"})
+	b, _ := os.ReadFile(s.Path)
+	if strings.Contains(string(b), "hunter2") || !strings.Contains(string(b), "[pg prod]") || !strings.Contains(string(b), "password = enc:v1:") {
+		t.Fatalf("file = %s", b)
+	}
+	st, err := os.Stat(s.KeyPath)
+	if err != nil || st.Mode().Perm() != 0o600 {
+		t.Fatalf("key: %v %v", st, err)
+	}
+	if plain, _ := s.Plain(); len(plain) != 0 {
+		t.Fatalf("plain = %v", plain)
+	}
+}
+
+func TestPlainValuesAreNamedAndEncryptSealsThem(t *testing.T) {
+	s := newStore(t)
+	os.MkdirAll(filepath.Dir(s.Path), 0o700)
+	os.WriteFile(s.Path, []byte("[pg prod]\npassword = pw\n\n[slack dev]\ntoken = xoxb\n"), 0o600)
+	if plain, _ := s.Plain(); len(plain) != 2 {
+		t.Fatalf("plain = %v", plain)
+	}
+	if n, err := s.Encrypt(); err != nil || n != 2 {
+		t.Fatalf("encrypt = %d, %v", n, err)
+	}
+	b, _ := os.ReadFile(s.Path)
+	if strings.Contains(string(b), "xoxb") {
+		t.Fatalf("file = %s", b)
+	}
+	if got, err := s.Read("slack", "dev"); err != nil || got["token"] != "xoxb" {
+		t.Fatalf("slack = %v %v", got, err)
+	}
+	if n, err := s.Encrypt(); err != nil || n != 0 {
+		t.Fatalf("second encrypt = %d, %v", n, err)
+	}
+}
+
+func TestAnyWriteSealsAHandAddedValue(t *testing.T) {
+	s := newStore(t)
+	s.Write("pg", "prod", map[string]string{"password": "pw"})
+	f, _ := os.OpenFile(s.Path, os.O_APPEND|os.O_WRONLY, 0)
+	f.WriteString("[slack dev]\ntoken = xoxb\n")
+	f.Close()
+	s.Write("pg", "dev", map[string]string{"password": "pw2"})
+	if plain, _ := s.Plain(); len(plain) != 0 {
+		t.Fatalf("plain = %v", plain)
+	}
+	if got, _ := s.Read("slack", "dev"); got["token"] != "xoxb" {
+		t.Fatalf("slack = %v", got)
+	}
+}
+
+func TestEncryptWithoutAFileMakesNothing(t *testing.T) {
+	s := newStore(t)
+	if n, err := s.Encrypt(); err != nil || n != 0 {
+		t.Fatalf("encrypt = %d, %v", n, err)
+	}
+	if _, err := os.Stat(s.KeyPath); err == nil {
+		t.Fatal("a key was made with nothing to seal")
+	}
+}
+
+func TestAMissingKeyIsNamed(t *testing.T) {
+	s := newStore(t)
+	s.Write("pg", "prod", map[string]string{"password": "pw"})
+	os.Remove(s.KeyPath)
+	_, err := s.Read("pg", "prod")
+	if r := reason(t, err); !strings.Contains(r, s.KeyPath) || !strings.Contains(r, "missing") {
+		t.Fatal(r)
+	}
+	if err := s.Write("pg", "dev", map[string]string{"password": "x"}); err == nil {
+		t.Fatal("a write went ahead without the key the file was sealed with")
+	}
+}
+
+func TestAWrongKeyOrAMovedValueDoesNotOpen(t *testing.T) {
+	s := newStore(t)
+	s.Write("pg", "prod", map[string]string{"password": "pw"})
+	s.Write("pg", "dev", map[string]string{"password": "other"})
+	b, _ := os.ReadFile(s.Path)
+	// Swap the two sealed values: each is bound to its own section.
+	lines := strings.Split(string(b), "\n")
+	var idx []int
+	for i, l := range lines {
+		if strings.HasPrefix(l, "password = ") {
+			idx = append(idx, i)
+		}
+	}
+	lines[idx[0]], lines[idx[1]] = lines[idx[1]], lines[idx[0]]
+	os.WriteFile(s.Path, []byte(strings.Join(lines, "\n")), 0o600)
+	if _, err := s.Read("pg", "prod"); err == nil {
+		t.Fatal("a value moved to another section opened")
+	}
+
+	s2 := newStore(t)
+	s2.Write("pg", "prod", map[string]string{"password": "pw"})
+	os.WriteFile(s2.KeyPath, []byte("AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=\n"), 0o600)
+	if _, err := s2.Read("pg", "prod"); err == nil {
+		t.Fatal("a value opened with another key")
+	}
+}
+
+func TestALooseKeyIsRefused(t *testing.T) {
+	s := newStore(t)
+	s.Write("pg", "prod", map[string]string{"password": "pw"})
+	os.Chmod(s.KeyPath, 0o644)
+	if r := reason(t, func() error { _, err := s.Read("pg", "prod"); return err }()); !strings.Contains(r, "chmod 600 "+s.KeyPath) {
+		t.Fatal(r)
 	}
 }

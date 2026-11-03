@@ -97,7 +97,7 @@ func newHarness(t *testing.T) *harness {
 		w.Header().Set("Content-Type", "image/png")
 		w.Write(png)
 	})
-	cs := &creds.Store{Path: filepath.Join(t.TempDir(), "credentials")}
+	cs := creds.TestStore(filepath.Join(t.TempDir(), "credentials"))
 	cs.Write("slack", "main", map[string]string{"token": "xoxp-real-token"})
 	h.view = proxy.View{Isolation: "work", Enabled: true, Envs: map[string]json.RawMessage{}, Tokens: map[string]string{}}
 	h.view.Exposure = store.Exposure{IsolationID: "work", Service: "slack", Default: "main"}
@@ -572,7 +572,7 @@ func checkHarness(t *testing.T, answer string, scopes string) (*harness, *creds.
 		}
 		io.WriteString(w, answer)
 	})
-	cs := &creds.Store{Path: filepath.Join(t.TempDir(), "credentials")}
+	cs := creds.TestStore(filepath.Join(t.TempDir(), "credentials"))
 	cs.Write("slack", "main", map[string]string{"token": "xoxp-real-token"})
 	return h, cs, Service{API: h.api.srv.URL, Transport: h.api.srv.Client().Transport}
 }

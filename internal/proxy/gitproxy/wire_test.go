@@ -357,7 +357,7 @@ func TestTheAPISideCanBeTurnedOff(t *testing.T) {
 // the next one.
 func TestAStoredTokenIsTheCredentialAndTheCommandNeverRuns(t *testing.T) {
 	h := newHarness(t, map[string]Env{"main": {Repos: []string{"priv/repo"}}})
-	c := &creds.Store{Path: filepath.Join(t.TempDir(), "credentials")}
+	c := creds.TestStore(filepath.Join(t.TempDir(), "credentials"))
 	h.in.h.Creds = c
 	if err := c.Write("git", "main", map[string]string{"token": "stored-one"}); err != nil {
 		t.Fatal(err)
