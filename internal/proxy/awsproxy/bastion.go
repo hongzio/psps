@@ -172,7 +172,7 @@ func unreachable(addr, why string) error {
 	if why == "" {
 		why = "no answer"
 	}
-	return proxy.Deny("the bastion %s did not answer (%s); is the instance up, `tailcat serve ... no-auth-ssh` running on it, and the Mac's tailcat client key (made by `tailcat genkey --client`) in its --allow?", short, why)
+	return proxy.Deny("the bastion %s did not answer (%s); is the instance up, `tailcat serve ... no-auth-ssh` running on it, and the Mac's tailcat client key (`tailcat printpub` prints it) in its --allow?", short, why)
 }
 
 // Identity is who the aws CLI is, there: get-caller-identity's ARN.

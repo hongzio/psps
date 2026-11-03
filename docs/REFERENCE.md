@@ -448,7 +448,7 @@ commands there, the form's lookups included:
 tailcat genkey --key=default            # prints its tailcat address
 tailcat serve --allow=<the Mac's key> no-auth-ssh   # under systemd
 # on the Mac
-tailcat genkey --client --key=client-default        # prints the Mac's key, once
+tailcat printpub                                    # the Mac's key, for --allow (none yet: tailcat genkey --client --key=client-default)
 gero env add aws dev --bastion <its address> --role-arn arn:aws:iam::123456789012:role/agent \
   --allow-bucket transfer-bucket=read
 ```
