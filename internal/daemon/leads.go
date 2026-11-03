@@ -11,11 +11,13 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/hongzio/gero/internal/api"
 	"github.com/hongzio/gero/internal/driver"
 	"github.com/hongzio/gero/internal/event"
+	"github.com/hongzio/gero/internal/isolation"
 	"github.com/hongzio/gero/internal/proxy/controlproxy"
 	"github.com/hongzio/gero/internal/store"
 )
@@ -55,7 +57,10 @@ const (
 	// evalOutput how much of an eval's output is kept.
 	newsAnswer = 6 << 10
 	evalOutput = 4 << 10
-	teamStep   = 15 * time.Second
+	// evalKept how much of it is read back from the isolation, where its
+	// SCORE line is looked for: its end.
+	evalKept = 256 << 10
+	teamStep = 15 * time.Second
 	// leadPromptMax caps what a lead writes to an agent of its own.
 	leadPromptMax = 64 << 10
 )
@@ -909,29 +914,82 @@ func (m *Manager) startEval(l store.Lead, why string) error {
 	m.evaluating[l.Team] = true
 	m.mu.Unlock()
 	m.store.SetLeadDirty(l.Team, false)
-	m.loops.Add(1)
-	go func() {
-		defer m.loops.Done()
-		m.runEval(l, why)
+	run := store.EvalRun{Team: l.Team, At: time.Now().UTC(), Why: why, Run: newID(), Private: l.Settings.EvalIsolation != ""}
+	if err := m.store.PutEvalRun(run); err != nil {
 		m.mu.Lock()
 		delete(m.evaluating, l.Team)
 		m.mu.Unlock()
-		m.teamNewsChanged(l.Team)
-		m.teamChanged(l.Team)
-	}()
+		return err
+	}
+	m.followEval(run)
 	return nil
+}
+
+// followEval sees run through: what is scored started, followed until it
+// ends, and what came of it told. A daemon that stops meanwhile leaves run
+// in the store for the next one (resumeEvals).
+func (m *Manager) followEval(run store.EvalRun) {
+	m.loops.Add(1)
+	go func() {
+		defer m.loops.Done()
+		m.runEval(run)
+		m.mu.Lock()
+		delete(m.evaluating, run.Team)
+		m.mu.Unlock()
+		if m.ctx.Err() == nil {
+			m.teamNewsChanged(run.Team)
+			m.teamChanged(run.Team)
+		}
+	}()
+}
+
+// resumeEvals takes up the evals a daemon before this one left under way:
+// one whose scored part runs is followed on, as it ran on without the
+// daemon; one stopped before that is started again.
+func (m *Manager) resumeEvals() {
+	runs, err := m.store.EvalRuns()
+	if err != nil {
+		m.log.Printf("evals under way: %v", err)
+		return
+	}
+	for _, run := range runs {
+		m.mu.Lock()
+		m.evaluating[run.Team] = true
+		m.mu.Unlock()
+		if run.Isolation == "" {
+			m.log.Printf("team %s: the eval was stopped before it ran; running it again", run.Team)
+			run.At, run.Run = time.Now().UTC(), newID()
+			if err := m.store.PutEvalRun(run); err != nil {
+				m.log.Printf("team %s: %v", run.Team, err)
+			}
+		} else {
+			m.log.Printf("team %s: following the eval under way since %s", run.Team, run.At.Local().Format(time.TimeOnly))
+		}
+		m.followEval(run)
+	}
 }
 
 var scoreLineRe = regexp.MustCompile(`(?m)^SCORE:[ \t]*(\S+)[ \t]*$`)
 
-// runEval runs l's eval, in the lead's isolation as its agents or in its
-// eval isolation on a copy of the work, and tells the lead what came of it; a target reached or patience run out stops
-// the run.
-func (m *Manager) runEval(l store.Lead, why string) {
+// runEval runs run's eval, in the lead's isolation as its agents or in its
+// eval isolation on a copy of the work, and tells the lead what came of it;
+// a target reached or patience run out stops the run. Nothing is told
+// while the daemon stops: the next one goes on with run.
+func (m *Manager) runEval(run store.EvalRun) {
+	why := run.Why
+	l, err := m.store.Lead(run.Team)
+	if err != nil {
+		m.store.DeleteEvalRun(run.Team)
+		return
+	}
 	// What is scored in an eval isolation could print the eval, or what it
 	// reads there, for the lead: its output is the operator's alone.
-	e := store.Eval{Team: l.Team, At: time.Now().UTC(), Why: why, Private: l.Settings.EvalIsolation != ""}
-	out, err := m.evalOutput(l)
+	e := store.Eval{Team: l.Team, At: run.At, Why: why, Private: run.Private}
+	out, err := m.evalOutput(l, run)
+	if m.ctx.Err() != nil {
+		return
+	}
+	m.store.DeleteEvalRun(run.Team)
 	e.Took = time.Since(e.At).Round(time.Second)
 	e.Output = tail(out, evalOutput)
 	if ms := scoreLineRe.FindAllStringSubmatch(out, -1); len(ms) > 0 {
@@ -1042,19 +1100,35 @@ type notRun struct{ error }
 
 func (e notRun) Unwrap() error { return e.error }
 
-// evalOutput runs l's eval and says what it printed. An error before the
-// eval itself runs is a notRun.
-func (m *Manager) evalOutput(l store.Lead) (string, error) {
+// evalPoll is how often an eval under way is looked at.
+var evalPoll = 5 * time.Second
+
+// evalOutput runs l's eval as run, or follows run's where it runs already,
+// and says what it printed. An error before the eval itself runs, or one
+// that leaves nothing of it to score, is a notRun.
+func (m *Manager) evalOutput(l store.Lead, run store.EvalRun) (string, error) {
+	if run.Isolation == "" {
+		var err error
+		if run, err = m.startEvalRun(l, run); err != nil {
+			return "", err
+		}
+	}
+	return m.waitEvalRun(run)
+}
+
+// startEvalRun readies the eval's isolation and starts what is scored
+// there as run, apart from the daemon, and keeps where it runs.
+func (m *Manager) startEvalRun(l store.Lead, run store.EvalRun) (store.EvalRun, error) {
 	var lead store.Agent
 	if r := m.lineRuntime(l.Line); r != nil {
 		lead, _, _ = r.view()
 	} else if a, err := m.storedAgent(l.Line); err == nil {
 		lead = a
 	} else {
-		return "", notRun{err}
+		return run, notRun{err}
 	}
 	limit := time.Duration(l.Settings.EvalMinutes) * time.Minute
-	budget := limit + time.Minute
+	budget := time.Minute
 	if l.Settings.EvalIsolation != "" {
 		budget += limit // copying the work has as long as the eval
 	}
@@ -1062,43 +1136,114 @@ func (m *Manager) evalOutput(l store.Lead) (string, error) {
 	defer cancel()
 	iso, err := m.store.Isolation(lead.IsolationID)
 	if err != nil {
-		return "", notRun{err}
+		return run, notRun{err}
 	}
 	if err := m.readyForEval(ctx, iso); err != nil {
-		return "", notRun{err}
+		return run, notRun{err}
 	}
-	// timeout(1) signals the eval's whole process group; ending `container
-	// exec` would leave it running.
-	argv := []string{"timeout", "--kill-after=30", fmt.Sprintf("%ds", int(limit.Seconds())), "sh", "-c"}
-	if l.Settings.EvalIsolation == "" {
-		return m.cli.RunAsAgent(ctx, iso.Container, append(argv, `cd -- "$1" && exec sh -c "$2"`, "gero-eval", l.Settings.EvalDir, l.Settings.Eval)...)
+	// timeout(1) ends the eval in time, daemon or none.
+	argv := []string{"timeout", "--kill-after=30", fmt.Sprintf("%ds", int(limit.Seconds())), "sh", "-c", l.Settings.Eval}
+	where, how := iso, isolation.EvalRun{UID: isolation.AgentUID, Dir: l.Settings.EvalDir, Home: isolation.AgentHome, Argv: argv}
+	if l.Settings.EvalIsolation != "" {
+		ev, err := m.store.Isolation(l.Settings.EvalIsolation)
+		if err != nil {
+			return run, notRun{fmt.Errorf("the eval's isolation: %w", err)}
+		}
+		if why := m.evalIsoUnfit(ev.ID, iso.ID); why != "" {
+			return run, notRun{fmt.Errorf("isolation %s cannot run the eval: %s", ev.Name, why)}
+		}
+		if err := m.readyForEval(ctx, ev); err != nil {
+			return run, notRun{err}
+		}
+		if err := m.cli.EvalReset(ctx, ev.Container, true); err != nil {
+			return run, notRun{err}
+		}
+		if err := m.cli.CopyToEval(ctx, iso.Container, l.Settings.EvalDir, ev.Container); err != nil {
+			return run, notRun{fmt.Errorf("copying %s to isolation %s: %w", l.Settings.EvalDir, ev.Name, err)}
+		}
+		where, how = ev, isolation.EvalRun{UID: isolation.EvalUID, Dir: isolation.EvalWork, Home: isolation.EvalHome, Argv: argv}
 	}
-	ev, err := m.store.Isolation(l.Settings.EvalIsolation)
+	if err := m.cli.EvalStart(ctx, where.Container, run.Run, how); err != nil {
+		return run, notRun{err}
+	}
+	run.Isolation, run.Limit = where.ID, limit
+	if err := m.store.PutEvalRun(run); err != nil {
+		m.log.Printf("team %s: %v", run.Team, err)
+	}
+	return run, nil
+}
+
+// waitEvalRun follows run until what is scored ends, and then clears up
+// after it. It returns early, leaving all as it is, when the daemon stops.
+func (m *Manager) waitEvalRun(run store.EvalRun) (string, error) {
+	iso, err := m.store.Isolation(run.Isolation)
 	if err != nil {
 		return "", notRun{fmt.Errorf("the eval's isolation: %w", err)}
 	}
-	if why := m.evalIsoUnfit(ev.ID, iso.ID); why != "" {
-		return "", notRun{fmt.Errorf("isolation %s cannot run the eval: %s", ev.Name, why)}
-	}
-	if err := m.readyForEval(ctx, ev); err != nil {
-		return "", notRun{err}
+	// Its timeout(1) ends it at run.Limit, and what is past that by much
+	// is ended here.
+	deadline := run.At.Add(2*run.Limit + 3*time.Minute)
+	var st isolation.EvalState
+	for {
+		ctx, cancel := context.WithTimeout(m.ctx, 30*time.Second)
+		state, serr := m.cli.State(ctx, iso.Container)
+		if serr == nil && state != "running" {
+			st, err = isolation.EvalState{Lost: true}, nil
+		} else {
+			st, err = m.cli.EvalPoll(ctx, iso.Container, run.Run, evalKept)
+		}
+		cancel()
+		if m.ctx.Err() != nil {
+			return "", m.ctx.Err()
+		}
+		if err == nil && !st.Running {
+			break
+		}
+		if time.Now().After(deadline) {
+			ctx, cancel := context.WithTimeout(m.ctx, time.Minute)
+			m.cli.EvalStop(ctx, iso.Container, run.Run)
+			cancel()
+			st, err = isolation.EvalState{}, fmt.Errorf("the eval: still running %s after it started; ended", time.Since(run.At).Round(time.Second))
+			break
+		}
+		select {
+		case <-m.ctx.Done():
+			return "", m.ctx.Err()
+		case <-time.After(evalPoll):
+		}
 	}
 	// What the work left running there ends with the eval, whatever it was
 	// in time for.
-	defer func() {
-		ctx, cancel := context.WithTimeout(m.ctx, time.Minute)
-		defer cancel()
-		if err := m.cli.EvalReset(ctx, ev.Container, false); err != nil {
-			m.log.Printf("isolation %s: after the eval: %v", ev.Name, err)
+	ctx, cancel := context.WithTimeout(m.ctx, time.Minute)
+	defer cancel()
+	if !st.Lost {
+		m.cli.EvalForget(ctx, iso.Container, run.Run)
+	}
+	if run.Private {
+		if rerr := m.cli.EvalReset(ctx, iso.Container, false); rerr != nil {
+			m.log.Printf("isolation %s: after the eval: %v", iso.Name, rerr)
 		}
-	}()
-	if err := m.cli.EvalReset(ctx, ev.Container, true); err != nil {
-		return "", notRun{err}
 	}
-	if err := m.cli.CopyToEval(ctx, iso.Container, l.Settings.EvalDir, ev.Container); err != nil {
-		return "", notRun{fmt.Errorf("copying %s to isolation %s: %w", l.Settings.EvalDir, ev.Name, err)}
+	switch {
+	case err != nil:
+		return "", err
+	case st.Lost:
+		return "", notRun{fmt.Errorf("isolation %s started again while the eval ran there, and nothing of it is left to score", iso.Name)}
+	case st.Exit != 0:
+		return st.Output, fmt.Errorf("the eval: %s", exitText(st.Exit))
 	}
-	return m.cli.RunEval(ctx, ev.Container, append(argv, l.Settings.Eval)...)
+	return st.Output, nil
+}
+
+// exitText says how a process with that exit status ended, as sh has it.
+func exitText(code int) string {
+	switch {
+	case code == 124:
+		return "exit status 124 (out of time)"
+	case code > 128:
+		return fmt.Sprintf("signal: %s", syscall.Signal(code-128))
+	}
+	return fmt.Sprintf("exit status %d", code)
 }
 
 // readyForEval starts the isolation if it is not running, and refuses it

@@ -3,6 +3,7 @@ package daemon
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -674,6 +675,89 @@ func TestAnEvalRunsInItsIsolationOnACopyOfTheWork(t *testing.T) {
 	}
 	if _, err := m.SetLead(ctx, "lab", api.PutLead{Agent: "boss", EvalIsolation: ptr("")}); err != nil {
 		t.Fatal("back to the lead's own:", err)
+	}
+}
+
+// An eval runs in its isolation apart from the daemon: one that stops
+// meanwhile does not end it, and the next follows it to its score. One
+// whose VM started again is gone, and counts for no patience; one stopped
+// before it ran is started again.
+func TestAnEvalRunsOnWhileTheDaemonStopsAndTheNextFollowsIt(t *testing.T) {
+	fakeTimeout(t)
+	e := newTestEnv(t)
+	m, stop := e.daemon()
+	ctx := context.Background()
+	ev, err := m.CreateIsolation(ctx, api.CreateIsolation{Name: "ev"}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	gate := filepath.Join(t.TempDir(), "go")
+	eval := fmt.Sprintf(`while [ ! -f %s ]; do sleep 0.02; done; echo SCORE: 7`, gate)
+	_, team := withTeams(t, e, m, api.PutLead{Budget: ptr(int64(1_000_000)), Eval: ptr(eval), EvalDir: ptr(t.TempDir()), EvalIsolation: ptr("ev")})
+	started := func() store.EvalRun {
+		var run store.EvalRun
+		e.waitFor("the eval to start", func() bool {
+			runs, _ := e.st.EvalRuns()
+			if len(runs) == 1 && runs[0].Isolation == ev.ID {
+				run = runs[0]
+				return true
+			}
+			return false
+		})
+		return run
+	}
+	evals := func() []store.Eval {
+		es, _ := e.st.Evals(team.ID)
+		return es
+	}
+
+	if err := m.EvalTeam("lab"); err != nil {
+		t.Fatal(err)
+	}
+	run := started()
+	stop()
+	os.WriteFile(gate, nil, 0o644)
+	fr := e.fc.evalRun(ev.Container, run.Run)
+	<-fr.done
+	if es := evals(); len(es) != 0 {
+		t.Fatalf("a stopping daemon told of the eval: %+v", es)
+	}
+	m, stop = e.daemon()
+	e.waitFor("the score", func() bool { return len(evals()) == 1 })
+	if es := evals(); es[0].Score == nil || *es[0].Score != 7 || es[0].NotRun || !es[0].At.Equal(run.At) {
+		t.Fatalf("%+v", es[0])
+	}
+	e.waitFor("the eval run to go", func() bool {
+		runs, _ := e.st.EvalRuns()
+		return len(runs) == 0 && !m.evalRunning(team.ID)
+	})
+
+	// Its VM started again while no daemon looked: nothing is left of it.
+	os.Remove(gate)
+	if err := m.EvalTeam("lab"); err != nil {
+		t.Fatal(err)
+	}
+	started()
+	stop()
+	e.fc.reboot(ev.Container, true)
+	m, stop = e.daemon()
+	e.waitFor("the lost eval", func() bool { return len(evals()) == 2 })
+	if es := evals(); !es[1].NotRun || es[1].Score != nil || !strings.Contains(es[1].Output, "isolation ev started again while the eval ran there") {
+		t.Fatalf("%+v", es[1])
+	}
+	e.waitFor("the eval run to go", func() bool { return !m.evalRunning(team.ID) })
+
+	// One the daemon stopped before it ran is run again.
+	stop()
+	os.WriteFile(gate, nil, 0o644)
+	if err := e.st.PutEvalRun(store.EvalRun{Team: team.ID, At: time.Now(), Why: "asked", Run: "before"}); err != nil {
+		t.Fatal(err)
+	}
+	m, stop = e.daemon()
+	defer stop()
+	e.waitFor("the eval run again", func() bool { return len(evals()) == 3 })
+	if es := evals(); es[2].Score == nil || *es[2].Score != 7 || es[2].Why != "asked" {
+		t.Fatalf("%+v", es[2])
 	}
 }
 

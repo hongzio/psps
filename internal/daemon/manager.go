@@ -63,7 +63,10 @@ type Containers interface {
 	// An eval isolation's (isolation/eval.go).
 	EvalReset(ctx context.Context, container string, wipe bool) error
 	CopyToEval(ctx context.Context, from, dir, to string) error
-	RunEval(ctx context.Context, container string, argv ...string) (string, error)
+	EvalStart(ctx context.Context, container, run string, r isolation.EvalRun) error
+	EvalPoll(ctx context.Context, container, run string, max int) (isolation.EvalState, error)
+	EvalStop(ctx context.Context, container, run string) error
+	EvalForget(ctx context.Context, container, run string) error
 	// Kill ends a container container no longer answers for (isolation/kill.go).
 	Kill(ctx context.Context, container string) ([]int, error)
 }
@@ -221,6 +224,7 @@ func (m *Manager) Reconcile() error {
 			}
 		}
 	}
+	m.resumeEvals()
 	return nil
 }
 

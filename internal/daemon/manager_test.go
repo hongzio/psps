@@ -2,6 +2,7 @@ package daemon
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -42,6 +43,7 @@ func TestMain(m *testing.M) {
 		fakeCodex()
 		os.Exit(0)
 	}
+	evalPoll = 20 * time.Millisecond
 	os.Exit(m.Run())
 }
 
@@ -185,6 +187,9 @@ type fakeContainers struct {
 	// stuck containers run and answer nothing, as a VM out of memory: not
 	// their shim, a command or container's rm, until Kill.
 	stuck map[string]bool
+	// runs are the evals started, by "container/run"; a reboot loses
+	// its container's.
+	runs map[string]*fakeRun
 	// dial is what the tunnel connects the daemon to inside: the isolation's
 	// loopback, as the shim allows; nil is a shim from before forwards.
 	dial tunnel.Allow
@@ -485,15 +490,101 @@ func (f *fakeContainers) CopyToEval(ctx context.Context, from, dir, to string) e
 	return nil
 }
 
-func (f *fakeContainers) RunEval(ctx context.Context, name string, argv ...string) (string, error) {
-	cmd := exec.CommandContext(ctx, argv[0], argv[1:]...)
-	cmd.Dir = filepath.Join(f.evalRoot(name), "work")
-	cmd.Env = append(os.Environ(), "HOME="+filepath.Join(f.evalRoot(name), "home"))
-	out, err := cmd.CombinedOutput()
-	if err != nil {
-		err = fmt.Errorf("the eval: %w", err)
+// fakeRun is an eval started apart from the daemon: a process on this
+// Mac that no daemon's context ends.
+type fakeRun struct {
+	cmd  *exec.Cmd
+	out  syncBuffer
+	done chan struct{}
+	exit int
+	lost bool
+}
+
+type syncBuffer struct {
+	mu sync.Mutex
+	b  bytes.Buffer
+}
+
+func (b *syncBuffer) Write(p []byte) (int, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.b.Write(p)
+}
+
+func (b *syncBuffer) String() string {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.b.String()
+}
+
+// EvalStart runs the eval on this Mac: in the eval's copy of the work for
+// an eval isolation, else in the lead's eval directory.
+func (f *fakeContainers) EvalStart(_ context.Context, name, run string, r isolation.EvalRun) error {
+	dir, home := r.Dir, r.Home
+	if dir == isolation.EvalWork {
+		dir, home = filepath.Join(f.evalRoot(name), "work"), filepath.Join(f.evalRoot(name), "home")
 	}
-	return strings.TrimSpace(string(out)), err
+	cmd := exec.Command(r.Argv[0], r.Argv[1:]...)
+	cmd.Dir = dir
+	cmd.Env = append(os.Environ(), "HOME="+home)
+	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	fr := &fakeRun{cmd: cmd, done: make(chan struct{})}
+	cmd.Stdout, cmd.Stderr = &fr.out, &fr.out
+	if err := cmd.Start(); err != nil {
+		return err
+	}
+	go func() {
+		cmd.Wait()
+		fr.exit = cmd.ProcessState.ExitCode()
+		if ws, ok := cmd.ProcessState.Sys().(syscall.WaitStatus); ok && ws.Signaled() {
+			fr.exit = 128 + int(ws.Signal())
+		}
+		close(fr.done)
+	}()
+	f.mu.Lock()
+	if f.runs == nil {
+		f.runs = map[string]*fakeRun{}
+	}
+	f.runs[name+"/"+run] = fr
+	f.mu.Unlock()
+	return nil
+}
+
+func (f *fakeContainers) evalRun(name, run string) *fakeRun {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.runs[name+"/"+run]
+}
+
+func (f *fakeContainers) EvalPoll(_ context.Context, name, run string, max int) (isolation.EvalState, error) {
+	fr := f.evalRun(name, run)
+	if fr == nil || fr.lost {
+		return isolation.EvalState{Lost: true}, nil
+	}
+	select {
+	case <-fr.done:
+	default:
+		return isolation.EvalState{Running: true}, nil
+	}
+	out := fr.out.String()
+	if len(out) > max {
+		out = out[len(out)-max:]
+	}
+	return isolation.EvalState{Exit: fr.exit, Output: strings.TrimSpace(out)}, nil
+}
+
+func (f *fakeContainers) EvalStop(_ context.Context, name, run string) error {
+	if fr := f.evalRun(name, run); fr != nil {
+		syscall.Kill(-fr.cmd.Process.Pid, syscall.SIGKILL)
+	}
+	return nil
+}
+
+func (f *fakeContainers) EvalForget(_ context.Context, name, run string) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	delete(f.runs, name+"/"+run)
+	return nil
 }
 
 func (f *fakeContainers) ShimDialer(name string) shim.Dialer {
@@ -569,6 +660,12 @@ func (f *fakeContainers) lastSync() (shimproto.SyncRequest, int) {
 // the same durable root.
 func (f *fakeContainers) reboot(name string, boot bool) {
 	f.mu.Lock()
+	for k, fr := range f.runs {
+		if strings.HasPrefix(k, name+"/") && !fr.lost {
+			fr.lost = true
+			syscall.Kill(-fr.cmd.Process.Pid, syscall.SIGKILL)
+		}
+	}
 	c := f.ctrs[name]
 	delete(f.ctrs, name)
 	cut := f.tunnels[name]

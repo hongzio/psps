@@ -736,6 +736,16 @@ at most (20), in one of two places:
   refused until it is off again; each refused one shows as `not run` and
   counts for no patience.
 
+Either way the eval runs apart from the daemon, in a session of its own,
+with its output and exit status kept by root in the isolation
+(`/var/lib/gero-eval`, out of the eval user's reach). A daemon that stops
+meanwhile, for an upgrade say, ends nothing of it: the next one follows it
+on and scores it, also when it ended while no daemon was up. One whose
+isolation started again meanwhile (its VM killed or replaced) left nothing
+to score: it shows as `not run`, and counts for no patience. One the daemon
+stopped before it ran, while it readied the eval isolation or copied the
+work, is run again.
+
 A grader for an eval isolation, say `grader`, lives in its agent user's home:
 make it in `gero iso shell grader`, where `~` is `/home/agent` (clone it,
 or write it there). The eval user reads and runs it and cannot change it.
