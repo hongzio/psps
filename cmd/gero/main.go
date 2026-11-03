@@ -27,6 +27,8 @@ const usage = `gero — run coding agents in isolated containers
   gero                          start the daemon if it is not running
   gero daemon run|status|stop|uninstall
   gero version
+  gero backup FILE              the store, settings, credentials and skills in one file; the daemon may run
+  gero restore FILE [--force]   put one back, with no daemon running; --force replaces a store that is here
 
   sudo gero pf install           install the network fence helper (keeps isolations off the Mac and LAN)
   sudo gero pf uninstall
@@ -128,6 +130,10 @@ func run(args []string) error {
 		return nil
 	case "daemon":
 		return daemonCmd(p, args[1:])
+	case "backup":
+		return backupCmd(p, args[1:])
+	case "restore":
+		return restoreCmd(p, args[1:])
 	case "iso", "isolation":
 		return isoCmd(p, args[1:])
 	case "agent":

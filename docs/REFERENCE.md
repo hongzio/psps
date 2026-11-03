@@ -21,6 +21,17 @@ pf install` (in `gero iso ls`, `gero pf status` and the web) and agents wait
 for it. Before
 `brew uninstall gero`, run `gero daemon uninstall` and `sudo gero pf uninstall`.
 
+`gero backup FILE` saves what gero keeps on the Mac to one file: a snapshot
+of the store (taken while the daemon runs), `config.toml`, the credentials,
+your skills, the web token and a bastion's known hosts. It leaves out the
+daemon's socket, locks and log, and the isolations' volumes, which container
+keeps whatever happens to gero. The file holds the credentials, so it is
+the owner's alone (0600). `gero restore FILE` puts it back with no daemon
+running (`gero daemon stop` first); over a store that is there it goes only
+with `--force`. Names in the file are relative (`store.db`, `config/...`,
+`data/...`, `state/...`), so it restores at other paths too, and it then
+says which isolations' volumes container no longer has: those start empty.
+
 A release is `sh scripts/release.sh 1.2.3`: it tags main, builds gero, attaches
 it to the GitHub release and points the tap's formula (from
 [packaging/gero.rb](../packaging/gero.rb)) at it.

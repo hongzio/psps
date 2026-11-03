@@ -902,3 +902,18 @@ func (s *Store) DeletePending(id int64) error {
 	_, err := s.db.Exec(`DELETE FROM outbox WHERE id = ?`, id)
 	return err
 }
+
+// Snapshot writes a consistent copy of the database at path to dst, which
+// must not exist, while a daemon may be using it: SQLite's VACUUM INTO
+// reads one transaction's view, the WAL's committed pages included.
+func Snapshot(path, dst string) error {
+	db, err := sql.Open("sqlite", "file:"+path+"?_pragma=busy_timeout(5000)")
+	if err != nil {
+		return err
+	}
+	defer db.Close()
+	if _, err := db.Exec(`VACUUM INTO ?`, dst); err != nil {
+		return fmt.Errorf("store: snapshot: %w", err)
+	}
+	return os.Chmod(dst, 0o600)
+}
