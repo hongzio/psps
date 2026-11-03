@@ -1,11 +1,8 @@
 package awsproxy
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
-	"errors"
-	"os/exec"
 	"strconv"
 	"strings"
 	"sync"
@@ -38,6 +35,7 @@ type Source struct {
 	AWS         string // the aws binary, pinned to a full path
 	RoleARN     string
 	Profile     string
+	Bastion     string // a tailcat address; with it the bastion assumes the role, not the Mac
 	SessionName string
 	Policy      string // compact JSON
 	Duration    int    // seconds; 3600 when zero
@@ -45,6 +43,7 @@ type Source struct {
 	mu      sync.Mutex
 	creds   *Credentials
 	expires time.Time
+	assumed string
 }
 
 func (s *Source) Get(ctx context.Context, now time.Time) (Credentials, error) {
@@ -69,38 +68,36 @@ func (s *Source) assume(ctx context.Context) (Credentials, error) {
 	if duration == 0 {
 		duration = 3600
 	}
-	ctx, cancel := context.WithTimeout(ctx, 60*time.Second)
-	defer cancel()
-	cmd := exec.CommandContext(ctx, s.AWS, "sts", "assume-role",
-		"--profile", s.Profile,
+	out, err := s.cli().run(ctx, "sts assume-role", 60*time.Second, "sts", "assume-role",
 		"--role-arn", s.RoleARN,
 		"--role-session-name", s.SessionName,
 		"--policy", s.Policy,
 		"--duration-seconds", strconv.Itoa(duration),
 		"--output", "json")
-	var stdout, stderr bytes.Buffer
-	cmd.Stdout, cmd.Stderr = &stdout, &stderr
-	err := cmd.Run()
-	if ctx.Err() == context.DeadlineExceeded {
-		return Credentials{}, proxy.Deny("sts assume-role timed out; is the network up?")
-	}
-	var exit *exec.ExitError
-	if err != nil && !errors.As(err, &exit) {
-		return Credentials{}, proxy.Deny("aws CLI %q is not runnable: %v", s.AWS, err)
-	}
 	if err != nil {
-		return Credentials{}, refusal("sts assume-role", s.Profile, stderr.String())
+		return Credentials{}, err
 	}
-	var out struct {
+	var got struct {
 		Credentials *struct {
 			AccessKeyId, SecretAccessKey, SessionToken, Expiration string
 		}
+		AssumedRoleUser struct{ Arn string }
 	}
-	if json.Unmarshal(stdout.Bytes(), &out) != nil || out.Credentials == nil || out.Credentials.AccessKeyId == "" {
+	if json.Unmarshal(out, &got) != nil || got.Credentials == nil || got.Credentials.AccessKeyId == "" {
 		return Credentials{}, proxy.Deny("sts assume-role returned no credentials")
 	}
-	c := out.Credentials
+	s.assumed = got.AssumedRoleUser.Arn
+	c := got.Credentials
 	return Credentials{AccessKeyId: c.AccessKeyId, SecretAccessKey: c.SecretAccessKey, Token: c.SessionToken, Expiration: c.Expiration}, nil
+}
+
+func (s *Source) cli() CLI { return CLI{AWS: s.AWS, Profile: s.Profile, Bastion: s.Bastion} }
+
+// Assumed is the ARN STS gave the last credentials it issued.
+func (s *Source) Assumed() string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.assumed
 }
 
 // refusal is what a failed aws command tells the operator. A refusal by

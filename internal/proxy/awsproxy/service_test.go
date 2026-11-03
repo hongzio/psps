@@ -36,12 +36,12 @@ func TestNormalizeCanonicalisesAndPinsTheCLI(t *testing.T) {
 func TestNormalizeRefusesWhatCannotWork(t *testing.T) {
 	cli := newFakeAWS(t).path
 	for want, env := range map[string]map[string]any{
-		"--role-arn is required":    {"aws_profile": "dev", "aws_cli": cli},
-		"does not look like":        {"role_arn": "role/x", "aws_profile": "dev", "aws_cli": cli},
-		"--aws-profile is required": {"role_arn": role, "aws_cli": cli},
-		"--aws-cli":                 {"role_arn": role, "aws_profile": "dev", "aws_cli": "/nonexistent/aws"},
-		"unknown capability":        {"role_arn": role, "aws_profile": "dev", "aws_cli": cli, "instances": []string{jp + "=shell"}},
-		"STS caps it at 2048":       {"role_arn": role, "aws_profile": "dev", "aws_cli": cli, "instances": manyInstances(80)},
+		"--role-arn is required":                   {"aws_profile": "dev", "aws_cli": cli},
+		"does not look like":                       {"role_arn": "role/x", "aws_profile": "dev", "aws_cli": cli},
+		"--aws-profile (or --bastion) is required": {"role_arn": role, "aws_cli": cli},
+		"--aws-cli":                                {"role_arn": role, "aws_profile": "dev", "aws_cli": "/nonexistent/aws"},
+		"unknown capability":                       {"role_arn": role, "aws_profile": "dev", "aws_cli": cli, "instances": []string{jp + "=shell"}},
+		"STS caps it at 2048":                      {"role_arn": role, "aws_profile": "dev", "aws_cli": cli, "instances": manyInstances(80)},
 	} {
 		_, err := normalize(t, env)
 		if err == nil || !strings.Contains(err.Error(), want) {
