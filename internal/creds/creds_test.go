@@ -1,6 +1,7 @@
 package creds
 
 import (
+	"encoding/base64"
 	"errors"
 	"os"
 	"path/filepath"
@@ -155,7 +156,7 @@ func TestValuesAreWrittenEncryptedWithTheKeyElsewhere(t *testing.T) {
 		t.Fatalf("file = %s", b)
 	}
 	st, err := os.Stat(s.KeyPath)
-	if err != nil || st.Mode().Perm() != 0o600 {
+	if err != nil || st.Mode().Perm() != 0o600 || st.Size() != 32 {
 		t.Fatalf("key: %v %v", st, err)
 	}
 	if plain, _ := s.Plain(); len(plain) != 0 {
@@ -244,7 +245,7 @@ func TestAWrongKeyOrAMovedValueDoesNotOpen(t *testing.T) {
 
 	s2 := newStore(t)
 	s2.Write("pg", "prod", map[string]string{"password": "pw"})
-	os.WriteFile(s2.KeyPath, []byte("AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=\n"), 0o600)
+	os.WriteFile(s2.KeyPath, make([]byte, 32), 0o600)
 	if _, err := s2.Read("pg", "prod"); err == nil {
 		t.Fatal("a value opened with another key")
 	}
@@ -255,6 +256,25 @@ func TestALooseKeyIsRefused(t *testing.T) {
 	s.Write("pg", "prod", map[string]string{"password": "pw"})
 	os.Chmod(s.KeyPath, 0o644)
 	if r := reason(t, func() error { _, err := s.Read("pg", "prod"); return err }()); !strings.Contains(r, "chmod 600 "+s.KeyPath) {
+		t.Fatal(r)
+	}
+}
+
+func TestABase64KeyFromTheFirstBuildStillOpens(t *testing.T) {
+	s := newStore(t)
+	s.Write("pg", "prod", map[string]string{"password": "pw"})
+	raw, _ := os.ReadFile(s.KeyPath)
+	os.WriteFile(s.KeyPath, []byte(base64.StdEncoding.EncodeToString(raw)+"\n"), 0o600)
+	if got, err := s.Read("pg", "prod"); err != nil || got["password"] != "pw" {
+		t.Fatalf("read = %v %v", got, err)
+	}
+}
+
+func TestAKeyOfTheWrongSizeIsRefused(t *testing.T) {
+	s := newStore(t)
+	s.Write("pg", "prod", map[string]string{"password": "pw"})
+	os.WriteFile(s.KeyPath, []byte("short"), 0o600)
+	if r := reason(t, func() error { _, err := s.Read("pg", "prod"); return err }()); !strings.Contains(r, "not a credentials key") {
 		t.Fatal(r)
 	}
 }

@@ -48,11 +48,15 @@ func (s *Store) readKey() ([]byte, error) {
 	if err != nil {
 		return nil, &Denied{fmt.Sprintf("cannot read %s: %v", s.KeyPath, err)}
 	}
-	key, err := base64.StdEncoding.DecodeString(strings.TrimSpace(string(b)))
-	if err != nil || len(key) != 32 {
-		return nil, &Denied{fmt.Sprintf("%s is not a credentials key (base64 of 32 bytes)", s.KeyPath)}
+	if len(b) == 32 {
+		return b, nil
 	}
-	return key, nil
+	// The first build wrote the key as a base64 line; one made by it in
+	// the moment before an upgrade still opens what it sealed.
+	if key, err := base64.StdEncoding.DecodeString(strings.TrimSpace(string(b))); err == nil && len(key) == 32 {
+		return key, nil
+	}
+	return nil, &Denied{fmt.Sprintf("%s is not a credentials key (32 bytes)", s.KeyPath)}
 }
 
 // key returns the key, making one when there is none yet: only a write
@@ -77,7 +81,9 @@ func (s *Store) key(create bool) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
-	_, werr := f.WriteString(base64.StdEncoding.EncodeToString(key) + "\n")
+	// Raw bytes, not text: a stray cat or editor shows unprintable noise
+	// that cannot be copied or read off a screen as the key.
+	_, werr := f.Write(key)
 	if cerr := f.Close(); werr == nil {
 		werr = cerr
 	}
