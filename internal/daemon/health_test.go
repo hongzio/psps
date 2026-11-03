@@ -4,7 +4,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/hongzio/gero/internal/api"
+	"github.com/hongzio/psps/internal/api"
 )
 
 func TestAnIsolationWithItsMemoryFullIsSaidToBe(t *testing.T) {

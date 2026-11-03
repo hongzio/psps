@@ -7,8 +7,8 @@ import (
 	"time"
 	"unicode"
 
-	"github.com/hongzio/gero/internal/api"
-	"github.com/hongzio/gero/internal/store"
+	"github.com/hongzio/psps/internal/api"
+	"github.com/hongzio/psps/internal/store"
 )
 
 // Teams are every team, oldest first.

@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="docs/assets/hero.svg" alt="gero: a lead agent runs a team of Claude Code and Codex agents toward an eval score, steered from the web, the TUI or a phone" width="100%">
+  <img src="docs/assets/hero.svg" alt="psps: a lead agent runs a team of Claude Code and Codex agents toward an eval score, steered from the web, the TUI or a phone" width="100%">
 </p>
 
 <p align="center">
@@ -20,7 +20,7 @@
 
 ---
 
-**gero is an orchestrator for Claude Code and Codex.** Run as many agents as
+**psps is an orchestrator for Claude Code and Codex.** Run as many agents as
 your work needs, side by side, from one sidebar. Let them mail each other
 and set their own schedules. Hand a goal and a scoring script to a lead
 agent, and it hires a team, runs it round after round, and keeps whatever
@@ -29,14 +29,14 @@ in a fenced VM on your Mac, so you can leave them running unattended.
 
 > [!TIP]
 > If you've ever had six terminal tabs of `claude` open and caught yourself
-> copy-pasting between them, gero is for you.
+> copy-pasting between them, psps is for you.
 
 ## You've become the scheduler
 
 One coding agent is a great pair programmer. Five of them make you a
 full-time dispatcher.
 
-| Today, without gero | 😩 |
+| Today, without psps | 😩 |
 |---|---|
 | **One tab per agent.** Which one finished? Which one is waiting on you? | You alt-tab to find out |
 | **Agents can't talk to each other.** The refactor agent changes an interface, and the test agent never hears about it | You relay the message by hand |
@@ -44,20 +44,20 @@ full-time dispatcher.
 | **Claude or Codex?** Each CLI has its own UI, its own commands, its own login | You pick one and stick with it |
 | **Unattended means risky.** Skipping permissions lets the agent do anything you can do | So you approve each step, and you're the bottleneck again |
 
-**gero takes over the dispatching, so you can get back to the work.**
+**psps takes over the dispatching, so you can get back to the work.**
 
 ## Get going in a minute
 
 ```sh
 brew trust hongzio/tap && brew tap hongzio/tap
-brew install gero                 # brings Apple's container runtime with it
-sudo gero pf install              # once: the network fence helper
+brew install psps                 # brings Apple's container runtime with it
+sudo psps pf install              # once: the network fence helper
 
-gero iso create dev               # a fenced Linux VM for your agents
-gero iso login dev claude         # and codex; also from the web, even on a phone
-gero agent new --iso dev --kind claude "write a tiny HTTP server in Go, with tests"
-gero agent new --iso dev --kind codex  "review what the other agent writes"
-gero web                          # one sidebar for both
+psps iso create dev               # a fenced Linux VM for your agents
+psps iso login dev claude         # and codex; also from the web, even on a phone
+psps agent new --iso dev --kind claude "write a tiny HTTP server in Go, with tests"
+psps agent new --iso dev --kind codex  "review what the other agent writes"
+psps web                          # one sidebar for both
 ```
 
 ## One sidebar for every agent
@@ -71,7 +71,7 @@ the agent until its next turn.
 <td width="33%" valign="top">
 
 ### ⌨️ TUI
-`gero tui`
+`psps tui`
 
 Agents on the left, the conversation in the middle, settings behind
 `ctrl+o`. `ctrl+a` answers an approval. Every key can be rebound.
@@ -80,7 +80,7 @@ Agents on the left, the conversation in the middle, settings behind
 <td width="33%" valign="top">
 
 ### 🌐 Web
-`gero web`
+`psps web`
 
 `/` commands, an `@` file picker and Codex `$skills` as you type. `j`/`k`
 moves between agents, and vim keys scroll the conversation.
@@ -91,7 +91,7 @@ moves between agents, and vim keys scroll the conversation.
 ### 📱 Phone
 `tailscale serve`
 
-`gero web` prints the exact command. Approve a deploy from the train.
+`psps web` prints the exact command. Approve a deploy from the train.
 Answer Claude's question from the couch.
 
 </td>
@@ -115,10 +115,10 @@ This is the main event. **Give a lead a goal, a budget and a scoring
 script, then walk away.**
 
 ```sh
-gero iso expose dev team
-gero team lead lab tara --budget 5M \
+psps iso expose dev team
+psps team lead lab tara --budget 5M \
      --eval-iso grader --eval 'sh /home/agent/grader/run.sh' --patience 3
-gero agent send tara '/gero-team Build what SPEC.md describes.'
+psps agent send tara '/psps-team Build what SPEC.md describes.'
 ```
 
 ```mermaid
@@ -130,18 +130,18 @@ flowchart LR
   A1 & A2 & A3 -->|"turn ends: last answer"| LEAD
   LEAD -->|"round over"| EVAL["eval in a<br/>grader isolation"]
   EVAL -->|"SCORE only"| LEAD
-  EVAL -.->|"best · target · patience · budget"| STOP(["gero stops the run"])
+  EVAL -.->|"best · target · patience · budget"| STOP(["psps stops the run"])
 ```
 
 The lead **designs the team, not the code.** It picks the roles the work
 needs, starts Claude and Codex agents for them, and hears from each one as
-its turn ends. Once the round is over, gero scores it, and the lead uses
+its turn ends. Once the round is over, psps scores it, and the lead uses
 the score to design the next team. The way of working follows EAT (Evolving
 Agent Teams, [arXiv 2610.36848](https://arxiv.org/abs/2610.36848)).
 
-gero keeps the run within your terms:
+psps keeps the run within your terms:
 
-- 🎯 **Scored where the agents can't reach.** Each round, gero copies the
+- 🎯 **Scored where the agents can't reach.** Each round, psps copies the
   work into a separate grader isolation and runs your eval there, as a user
   that can't change the grader. The lead hears only the score.
 - 💸 **Within a budget.** The run stops when the token budget is spent. On a
@@ -152,7 +152,7 @@ gero keeps the run within your terms:
 - 🚦 **It stays within limits.** At most `--max-live` of the lead's agents
   run at once, and a turn that runs past `--turn-minutes` is stopped and
   asked for a report.
-- 👀 **You can watch it.** `gero team show lab`, the team's dialog on the
+- 👀 **You can watch it.** `psps team show lab`, the team's dialog on the
   web or its page in the TUI show the spend, every score and the lead's
   agents. **Run eval now**, **Resume** and **Reset best** are one click away.
 
@@ -167,7 +167,7 @@ know how to use it.
 
 ### ✉️ Mail
 ```sh
-gero iso expose dev mail
+psps iso expose dev mail
 ```
 Every agent has an inbox. A message from a peer waits until the agent is
 idle, then arrives as a turn of its own, marked as coming from another
@@ -180,11 +180,11 @@ replying to each other.
 
 ### ◷ Cron
 ```sh
-gero agent cron ci-bot --add "*/30 9-18 * * 1-5" \
+psps agent cron ci-bot --add "*/30 9-18 * * 1-5" \
   "check CI; fix what is red"
 ```
 Schedule your own messages, or let agents schedule their own with
-`gero iso expose dev cron`. Supports `@every 2h`, `--once`, and `--wait` to
+`psps iso expose dev cron`. Supports `@every 2h`, `--once`, and `--wait` to
 hold a run until the agent is idle. Runs missed while the Mac slept come
 due once, not all at once.
 
@@ -193,10 +193,10 @@ due once, not all at once.
 <tr>
 <td colspan="2" valign="top">
 
-### 🎛️ Control: hand an agent part of the gero command
+### 🎛️ Control: hand an agent part of the psps command
 ```sh
-gero env add control ops --allow agent.ls,agent.log,agent.new,agent.send --max-live 3
-gero iso expose dev control ops
+psps env add control ops --allow agent.ls,agent.log,agent.new,agent.send --max-live 3
+psps iso expose dev control ops
 ```
 Tick the actions an agent may take: list, create, message, fork or archive
 agents, set crons, run evals. Anything an agent makes or sends is marked as
@@ -209,12 +209,12 @@ the fence are never on the list.
 
 ## Never lose a run
 
-- **The daemon can crash.** The agents keep running under `gero-shim` inside
+- **The daemon can crash.** The agents keep running under `psps-shim` inside
   the VM, which keeps a durable, sequenced log of everything they read and
   write. The daemon replays the log and catches up.
 - **The Mac can reboot.** The turn that was running shows `interrupted`, and
   your next message resumes the same session.
-- **gero can upgrade.** After `brew upgrade gero`, the next gero command
+- **psps can upgrade.** After `brew upgrade psps`, the next psps command
   moves the daemon onto the new version, and the agents carry on.
 
 ## Safe enough to leave running
@@ -230,14 +230,14 @@ no one approving each step, inside a box that holds even if it misbehaves:
 | 🙋 **Approvals if you want them** | `never` · `auto` (a reviewer model checks each action) · `ask` · `default`, set per agent at any time |
 
 ```sh
-gero env add git work --allow-repo acme/api     # only this repo
-gero iso expose dev git work                    # dev's agents push with your token, never holding it
-gero iso verify dev                             # check every guarantee, from inside, now
+psps env add git work --allow-repo acme/api     # only this repo
+psps iso expose dev git work                    # dev's agents push with your token, never holding it
+psps iso verify dev                             # check every guarantee, from inside, now
 ```
 
 [How the fence and the proxies work →](docs/REFERENCE.md#network-fence)
 
-## A day with gero
+## A day with psps
 
 > **08:55.** A cron you set last week wakes `ci-bot`: *"check CI; fix what
 > is red."* By 09:10 there's a green build and a PR.
@@ -251,13 +251,13 @@ gero iso verify dev                             # check every guarantee, from in
 > **18:00.** You hand `tara` a spec, a 5M-token budget and a grader. You close
 > the laptop.
 >
-> **08:00 the next day.** `gero team show lab` lists six rounds, the best
+> **08:00 the next day.** `psps team show lab` lists six rounds, the best
 > score after round 4, and how many tokens it spent. Nothing on your Mac was
 > touched.
 
 ## How it compares
 
-| | Tabs of CLIs | In-CLI subagents | Cloud agents | **gero** |
+| | Tabs of CLIs | In-CLI subagents | Cloud agents | **psps** |
 |---|:-:|:-:|:-:|:-:|
 | Many agents, one place to watch and steer | ❌ | ⚠️ *(within one session)* | ✅ | ✅ |
 | Claude Code **and** Codex together | ❌ | ❌ | ❌ | ✅ |
@@ -275,14 +275,14 @@ gero iso verify dev                             # check every guarantee, from in
 
 No. Most people start with a few agents side by side, plus a cron or two.
 Teams are for when you can say what "better" means in a script that prints
-`SCORE: <number>`. `gero team help` walks you through a first team.
+`SCORE: <number>`. `psps team help` walks you through a first team.
 </details>
 
 <details>
 <summary><b>How does a lead not burn through my subscription?</b></summary>
 
 Set `--budget` (in tokens, not counting prompt-cache reads) and
-`--plan-ceiling`, which defaults to 90% of a plan window. gero refuses to
+`--plan-ceiling`, which defaults to 90% of a plan window. psps refuses to
 run a lead without a budget on a pay-per-use API key.
 </details>
 
@@ -290,7 +290,7 @@ run a lead without a budget on a pay-per-use API key.
 <summary><b>Can I use my Claude subscription?</b></summary>
 
 Yes. Run `claude setup-token` once (the token is valid for a year) and
-`gero account add`. Any number of isolations can share it. Codex logs in
+`psps account add`. Any number of isolations can share it. Codex logs in
 once per isolation, because a ChatGPT login can't be shared. You can finish
 that login from any browser, including your phone's.
 </details>
@@ -300,13 +300,13 @@ that login from any browser, including your phone's.
 
 The skill tells them not to answer what needs no answer. An isolation sends
 at most 20 mails a minute, and an inbox holds 50.
-`gero agent inbox <id> --clear` ends a loop on the spot.
+`psps agent inbox <id> --clear` ends a loop on the spot.
 </details>
 
 <details>
 <summary><b>Can I see a dev server an agent runs?</b></summary>
 
-`gero env add port web --port 5173` gives you `http://web.localhost:5173` on
+`psps env add port web --port 5173` gives you `http://web.localhost:5173` on
 your Mac, on the Mac's loopback only. Connections only ever start on the
 Mac.
 </details>
@@ -314,22 +314,22 @@ Mac.
 <details>
 <summary><b>Can I give agents my own skills?</b></summary>
 
-`gero env add skill pdf --path ~/skills/pdf` checks the skill the way both
+`psps env add skill pdf --path ~/skills/pdf` checks the skill the way both
 CLIs read it, refuses a broken one rather than dropping it silently, and
 installs it for Claude Code and Codex alike.
 </details>
 
 ## The fine print
 
-- **Apple silicon Macs only.** gero is built on Apple's `container`.
+- **Apple silicon Macs only.** psps is built on Apple's `container`.
 - **The CLI's own login lives in the VM.** Service credentials stay on the
   Mac, but Claude's account token or Codex's login is in the isolation,
   where the CLI needs it.
 - **Agents in one isolation share a user.** Isolations are the trust
   boundary. A team's agents work in the lead's isolation.
 - **A writable shared folder is a real hole.** Shares are read-only by
-  default, and gero refuses `~/.ssh`, `~/.aws`, `~/Library` and the like.
-- **The CLI versions are pinned.** gero parses what Claude Code and Codex
+  default, and psps refuses `~/.ssh`, `~/.aws`, `~/Library` and the like.
+- **The CLI versions are pinned.** psps parses what Claude Code and Codex
   print, so a new CLI version is checked before an image ships with it
   ([how](docs/REFERENCE.md#claude-code-and-codex-in-the-image)).
 

@@ -10,8 +10,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/hongzio/gero/internal/event"
-	"github.com/hongzio/gero/internal/shimproto"
+	"github.com/hongzio/psps/internal/event"
+	"github.com/hongzio/psps/internal/shimproto"
 )
 
 // tape builds a shim log by hand.

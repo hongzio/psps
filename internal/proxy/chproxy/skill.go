@@ -5,12 +5,12 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/hongzio/gero/internal/proxy"
+	"github.com/hongzio/psps/internal/proxy"
 )
 
 const skillTemplate = `---
-name: gero-clickhouse
-description: How ClickHouse access works inside this gero isolation. Use when a
+name: psps-clickhouse
+description: How ClickHouse access works inside this psps isolation. Use when a
   ClickHouse query needs running, when a query or connection is refused, or
   when deciding whether ClickHouse is reachable from here.
 ---
@@ -54,7 +54,7 @@ switching envs is swapping the password value for one command:
   pins readonly=2 on every request and the server enforces it. INSERT, DDL and
   ` + "`SETTINGS readonly=0`" + ` are all refused, and this cannot be widened from here. If
   a write is genuinely needed, ask the operator to run
-  ` + "`gero env edit clickhouse <env> --read-write`" + `.
+  ` + "`psps env edit clickhouse <env> --read-write`" + `.
 - A refusal naming a path — only the query endpoint (/) and /ping are
   forwarded. /play and every other handler do not exist from here.
 - A 429 with Retry-After is the proxy's own rate budget protecting the shared

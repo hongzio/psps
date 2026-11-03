@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/hongzio/gero/internal/creds"
+	"github.com/hongzio/psps/internal/creds"
 )
 
 // Ported from isolate's test_slackproxy.py: every boundary the isolation
@@ -151,7 +151,7 @@ func TestEachFamilyOpensExactlyItsMethods(t *testing.T) {
 		t.Fatal(d)
 	}
 	// --allow-api replaces the list, so the fix keeps what the env has.
-	mustDeny(t, Allowed(e, "dev", "slackLists.items.list"), `"lists"`, "gero env edit slack dev --allow-api lists --allow-api messages")
+	mustDeny(t, Allowed(e, "dev", "slackLists.items.list"), `"lists"`, "psps env edit slack dev --allow-api lists --allow-api messages")
 }
 
 func TestTheUsersFamilyIsItsOwnChoice(t *testing.T) {
@@ -481,7 +481,7 @@ func TestNormalizeRefusesWhatCannotWork(t *testing.T) {
 
 func TestOpeningChannelReadsWithoutADenyListIsWarned(t *testing.T) {
 	warn, err := Service{}.Normalize("dev", map[string]any{"families": []string{"messages", "lists"}})
-	if err != nil || len(warn) != 1 || !strings.Contains(warn[0], "gero env edit slack dev --deny-channel") {
+	if err != nil || len(warn) != 1 || !strings.Contains(warn[0], "psps env edit slack dev --deny-channel") {
 		t.Fatalf("%v %v", warn, err)
 	}
 	warn, _ = Service{}.Normalize("dev", map[string]any{"families": []string{"messages"}, "deny_channels": []string{"C0666"}})

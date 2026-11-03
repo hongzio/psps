@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/hongzio/gero/internal/proxy"
+	"github.com/hongzio/psps/internal/proxy"
 )
 
 // The skill is the only thing the agent reads before deciding what it may
@@ -12,8 +12,8 @@ import (
 // route around.
 
 const skillTemplate = `---
-name: gero-git
-description: How git and GitHub work inside this gero isolation. Use when a git
+name: psps-git
+description: How git and GitHub work inside this psps isolation. Use when a git
   clone, fetch or push fails with 403, when deciding whether a repository is
   reachable, or when GitHub API work is needed instead of git.
 ---
@@ -39,7 +39,7 @@ The proxy answers with the reason, and git prints it after ` + "`remote:`" + `.
 
 - ` + "`is not in any exposed git environment, and it is not public`" + ` — a private
   repository this isolation may not reach. You cannot add one; ask the operator
-  to run ` + "`gero env edit git <env> --allow-repo owner/repo`" + `.
+  to run ` + "`psps env edit git <env> --allow-repo owner/repo`" + `.
 - ` + "`is public ... but pushing needs one`" + ` — you may read this repository but not
   write to it. Same request to the operator if writing is genuinely needed.
 - an error naming a read-only environment — push is disabled for the env that

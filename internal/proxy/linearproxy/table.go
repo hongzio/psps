@@ -1,7 +1,7 @@
 // Package linearproxy is the Linear proxy, built the way notionproxy is:
 // the isolation speaks MCP to Linear, and writes only by permission.
 //
-// There is no integration and no API key. gero logs in to Linear's hosted
+// There is no integration and no API key. psps logs in to Linear's hosted
 // MCP server the way any MCP client does (dynamic client registration, a
 // browser login, PKCE) and keeps the OAuth tokens in the credentials file:
 //
@@ -173,7 +173,7 @@ func Allowed(e Env, envName, tool string) (string, error) {
 	if isWrite(family) {
 		kind = "write"
 	}
-	return "", deny(403, "linear: %s is in the '%s' %s family, which environment %q does not allow; the operator can open it with `gero env edit linear %s --allow-api %s`",
+	return "", deny(403, "linear: %s is in the '%s' %s family, which environment %q does not allow; the operator can open it with `psps env edit linear %s --allow-api %s`",
 		tool, family, kind, envName, envName, family)
 }
 

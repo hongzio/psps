@@ -12,11 +12,11 @@ import (
 	"testing"
 	"time"
 
-	"github.com/hongzio/gero/internal/api"
-	"github.com/hongzio/gero/internal/creds"
-	"github.com/hongzio/gero/internal/proxy"
-	"github.com/hongzio/gero/internal/proxy/portproxy"
-	"github.com/hongzio/gero/internal/store"
+	"github.com/hongzio/psps/internal/api"
+	"github.com/hongzio/psps/internal/creds"
+	"github.com/hongzio/psps/internal/proxy"
+	"github.com/hongzio/psps/internal/proxy/portproxy"
+	"github.com/hongzio/psps/internal/store"
 )
 
 // The fake tunnel runs in this process, so the isolation's loopback is
@@ -103,7 +103,7 @@ func TestAPortOfTheIsolationsIsReachedFromTheMac(t *testing.T) {
 	}
 	e.tunnelUp(m)
 	url := fmt.Sprintf("http://127.0.0.1:%d/", host)
-	if code, body := get(t, url, "gero_session=the-web-token; app=1"); code != 200 || body != "from the isolation" {
+	if code, body := get(t, url, "psps_session=the-web-token; app=1"); code != 200 || body != "from the isolation" {
 		t.Fatalf("%d %q", code, body)
 	}
 	if cookie != "app=1" {
@@ -114,7 +114,7 @@ func TestAPortOfTheIsolationsIsReachedFromTheMac(t *testing.T) {
 	req, _ := e.fc.lastSync()
 	var skill string
 	for _, f := range req.Files {
-		if strings.HasSuffix(f.Path, "gero-port/SKILL.md") {
+		if strings.HasSuffix(f.Path, "psps-port/SKILL.md") {
 			skill = f.Content
 		}
 	}
@@ -309,7 +309,7 @@ func TestAnOldImageIsToldToUpgrade(t *testing.T) {
 	m.mu.Unlock()
 	deadline := time.Now().Add(time.Second)
 	for time.Now().Before(deadline) {
-		if code, body := get(t, fmt.Sprintf("http://127.0.0.1:%d/", host), ""); code == http.StatusBadGateway && strings.Contains(body, "`gero iso upgrade dev`") {
+		if code, body := get(t, fmt.Sprintf("http://127.0.0.1:%d/", host), ""); code == http.StatusBadGateway && strings.Contains(body, "`psps iso upgrade dev`") {
 			return
 		}
 	}

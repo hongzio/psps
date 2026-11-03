@@ -6,10 +6,10 @@ import (
 	"io"
 	"strings"
 
-	"github.com/hongzio/gero/internal/api"
+	"github.com/hongzio/psps/internal/api"
 )
 
-// renderVerify prints `gero iso verify` the way isolate does: a line per
+// renderVerify prints `psps iso verify` the way isolate does: a line per
 // check, the reason under each failure, a count at the end. FAIL is a
 // broken guarantee, WARN something set up wrong. It returns the exit code,
 // the worst over every isolation.

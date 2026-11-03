@@ -35,7 +35,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/hongzio/gero/internal/proxy"
+	"github.com/hongzio/psps/internal/proxy"
 )
 
 // Git's smart HTTP surface and nothing else. The dumb protocol would expose
@@ -147,7 +147,7 @@ func NewPolicy(envs map[string]Env, public Checker) *Policy {
 func (p *Policy) Check(owner, repo, service string) (string, string, error) {
 	full := strings.ToLower(owner + "/" + repo)
 	if names, ok := p.overlaps[full]; ok {
-		return "", "", proxy.Deny("%s is listed by environments %s at once; remove it from all but one (`gero env edit git <env> ...`)",
+		return "", "", proxy.Deny("%s is listed by environments %s at once; remove it from all but one (`psps env edit git <env> ...`)",
 			full, strings.Join(names, ", "))
 	}
 	if env, ok := p.route[full]; ok {
@@ -161,9 +161,9 @@ func (p *Policy) Check(owner, repo, service string) (string, string, error) {
 	case public && !IsWrite(service):
 		return Anonymous, "", nil
 	case public:
-		return "", "", proxy.Deny("%s is public, so it is readable here without a credential, but pushing needs one: add it to a git environment with `gero env edit git <env> --allow-repo %s`", full, full)
+		return "", "", proxy.Deny("%s is public, so it is readable here without a credential, but pushing needs one: add it to a git environment with `psps env edit git <env> --allow-repo %s`", full, full)
 	case len(p.route) == 0:
-		return "", "", proxy.Deny("%s is not public and no exposed git environment lists any repository; add one with `gero env add git <name> --allow-repo owner/repo`", full)
+		return "", "", proxy.Deny("%s is not public and no exposed git environment lists any repository; add one with `psps env add git <name> --allow-repo owner/repo`", full)
 	}
 	return "", "", proxy.Deny("%s is not in any exposed git environment, and it is not public", full)
 }
@@ -205,7 +205,7 @@ func NewPublicRepos(base *url.URL, rt http.RoundTripper, logf func(string)) *Pub
 			return nil, err
 		}
 		req.Header.Set("Accept", "*/*")
-		req.Header.Set("User-Agent", "gero-gitproxy")
+		req.Header.Set("User-Agent", "psps-gitproxy")
 		resp, err := rt.RoundTrip(req)
 		if err != nil {
 			return nil, err

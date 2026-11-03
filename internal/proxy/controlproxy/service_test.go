@@ -6,8 +6,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/hongzio/gero/internal/proxy"
-	"github.com/hongzio/gero/internal/store"
+	"github.com/hongzio/psps/internal/proxy"
+	"github.com/hongzio/psps/internal/store"
 )
 
 func TestAnEnvOpensTheReadsUnlessItSays(t *testing.T) {
@@ -69,7 +69,7 @@ func TestTheSkillShowsWhatItsEnvOpens(t *testing.T) {
 		t.Fatalf("%v %v", ws, err)
 	}
 	s := ws.Files[0].Content
-	for _, want := range []string{"name: gero-control", "gero command (agent.ls, agent.new)\n  through $GERO_CONTROL_URL.", "## agent.ls", "## agent.new", "may have 2 made this way live at once"} {
+	for _, want := range []string{"name: psps-control", "psps command (agent.ls, agent.new)\n  through $PSPS_CONTROL_URL.", "## agent.ls", "## agent.new", "may have 2 made this way live at once"} {
 		if !strings.Contains(s, want) {
 			t.Errorf("lacks %q", want)
 		}

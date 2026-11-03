@@ -67,13 +67,13 @@ func TestTheScriptRunsTheCommandUnquotedAndSaysAsWhom(t *testing.T) {
 	cmd := `echo "it's $((1+2))"; echo oops >&2; exit 3`
 	out, err := exec.Command("sh", "-c", runScript(cmd)).CombinedOutput()
 	var exit *exec.ExitError
-	if !strings.Contains(string(out), "it's 3") || !strings.Contains(string(out), "gero-user: ") || !strings.Contains(string(out), "oops") {
+	if !strings.Contains(string(out), "it's 3") || !strings.Contains(string(out), "psps-user: ") || !strings.Contains(string(out), "oops") {
 		t.Fatalf("out = %q", out)
 	}
 	if err == nil || !errorAs(err, &exit) || exit.ExitCode() != 3 {
 		t.Fatalf("err = %v", err)
 	}
-	if rest, user := splitUser("gero-user: ssm-user\nwarn"); user != "ssm-user" || rest != "warn" {
+	if rest, user := splitUser("psps-user: ssm-user\nwarn"); user != "ssm-user" || rest != "warn" {
 		t.Fatalf("%q %q", rest, user)
 	}
 }
@@ -100,8 +100,8 @@ case "$1 $2" in
 "ssm send-command")
   for a in "$@"; do [ "$prev" = --cli-input-json ] && printf '%%s' "$a" > "$d/input"; prev="$a"; done
   echo cmd-123 ;;
-"ssm get-command-invocation") printf '%%s\n' '{"Status":"Success","ResponseCode":0,"StandardOutputContent":"hello\n","StandardErrorContent":"gero-user: ssm-user\nwarn"}' ;;
-"ssm describe-sessions") echo '["gero-dev-0abc"]' ;;
+"ssm get-command-invocation") printf '%%s\n' '{"Status":"Success","ResponseCode":0,"StandardOutputContent":"hello\n","StandardErrorContent":"psps-user: ssm-user\nwarn"}' ;;
+"ssm describe-sessions") echo '["psps-dev-0abc"]' ;;
 "ssm terminate-session") echo "$@" >> "$d/terminated" ;;
 *) echo "unexpected $*" >&2; exit 2 ;;
 esac
@@ -145,8 +145,8 @@ func TestRunSendsTheCommandThroughTheBastionAndHandsBackTheOutput(t *testing.T) 
 	if strings.Contains(strings.Join(b.sshArgv(), " "), "secret") {
 		t.Fatal("the secret key is on the ssh command line")
 	}
-	// Assumed as gero's own session, with only that instance open.
-	if got := b.flag("--role-session-name"); got != "gero-run-dev" || strings.Contains(b.flag("--policy"), kr) {
+	// Assumed as psps's own session, with only that instance open.
+	if got := b.flag("--role-session-name"); got != "psps-run-dev" || strings.Contains(b.flag("--policy"), kr) {
 		t.Fatalf("session name %q, policy %s", got, b.flag("--policy"))
 	}
 }
@@ -159,7 +159,7 @@ func TestEndSessionsEndsTheIsolationsOpenOnes(t *testing.T) {
 	if err != nil || n != 1 {
 		t.Fatalf("%d %v", n, err)
 	}
-	if got := read(t, filepath.Join(b.fakeAWS.dir, "terminated")); !strings.Contains(got, "gero-dev-0abc") || !strings.Contains(got, "ap-northeast-1") {
+	if got := read(t, filepath.Join(b.fakeAWS.dir, "terminated")); !strings.Contains(got, "psps-dev-0abc") || !strings.Contains(got, "ap-northeast-1") {
 		t.Fatalf("terminated: %q", got)
 	}
 }

@@ -12,7 +12,7 @@ import (
 	"path/filepath"
 )
 
-// assets holds the linux gero-shim, cross-compiled by `mise run shim` before
+// assets holds the linux psps-shim, cross-compiled by `mise run shim` before
 // the daemon is built. A plain `go build` embeds only the README, and image
 // builds then fail with a message saying so.
 //
@@ -40,20 +40,20 @@ RUN npm install -g @anthropic-ai/claude-code@` + claudeCodeVersion + ` @openai/c
  && npm cache clean --force
 RUN usermod -l agent -d ` + AgentHome + ` -m node && groupmod -n agent node
 # The credential proxies' side of the isolation lives in /etc/gero, written by
-# ` + "`gero-shim sync`" + `: git's URL rewrite (included; git ignores it while absent)
+# ` + "`psps-shim sync`" + `: git's URL rewrite (included; git ignores it while absent)
 # and the proxies' environment, for login and interactive shells alike.
 RUN mkdir -p /etc/gero \
  && printf '[include]\n\tpath = /etc/gero/gitconfig\n' >> /etc/gitconfig \
  && printf '[ -r /etc/gero/env.sh ] && . /etc/gero/env.sh\n' > /etc/profile.d/gero.sh \
  && printf '[ -r /etc/gero/env.sh ] && . /etc/gero/env.sh\n' >> /etc/bash.bashrc
-COPY gero-shim ` + shimPath + `
+COPY psps-shim ` + shimPath + `
 ENTRYPOINT ["` + shimPath + `", "serve", "--uid", "1000", "--gid", "1000", "--user", "agent", "--home", "` + AgentHome + `"]
 `
 
 func shimBinary() ([]byte, error) {
-	b, err := assets.ReadFile("assets/gero-shim")
+	b, err := assets.ReadFile("assets/psps-shim")
 	if errors.Is(err, fs.ErrNotExist) {
-		return nil, errors.New("this gero was built without the linux shim; build with `mise run build`")
+		return nil, errors.New("this psps was built without the linux shim; build with `mise run build`")
 	}
 	return b, err
 }
@@ -68,7 +68,7 @@ func ImageTag() (string, error) {
 	h := sha256.New()
 	h.Write([]byte(dockerfile))
 	h.Write(shim)
-	return "gero-base:" + hex.EncodeToString(h.Sum(nil))[:12], nil
+	return "psps-base:" + hex.EncodeToString(h.Sum(nil))[:12], nil
 }
 
 // EnsureImage builds the base image unless it already exists.
@@ -81,7 +81,7 @@ func (c CLI) EnsureImage(ctx context.Context, progress io.Writer) (string, error
 		return tag, nil
 	}
 	shim, _ := shimBinary()
-	dir, err := os.MkdirTemp("", "gero-image")
+	dir, err := os.MkdirTemp("", "psps-image")
 	if err != nil {
 		return "", err
 	}
@@ -89,7 +89,7 @@ func (c CLI) EnsureImage(ctx context.Context, progress io.Writer) (string, error
 	if err := os.WriteFile(filepath.Join(dir, "Dockerfile"), []byte(dockerfile), 0o644); err != nil {
 		return "", err
 	}
-	if err := os.WriteFile(filepath.Join(dir, "gero-shim"), shim, 0o755); err != nil {
+	if err := os.WriteFile(filepath.Join(dir, "psps-shim"), shim, 0o755); err != nil {
 		return "", err
 	}
 	return tag, c.Build(ctx, tag, dir, progress)

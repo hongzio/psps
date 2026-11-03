@@ -12,7 +12,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/hongzio/gero/internal/proxy"
+	"github.com/hongzio/psps/internal/proxy"
 )
 
 // Choices is what an aws env's fields can take, as the Mac's AWS CLI sees

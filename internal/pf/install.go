@@ -15,7 +15,7 @@ import (
 )
 
 // Install puts the helper in place for uid and starts it. It must run as
-// root. The helper is a root-owned copy of the gero binary: a LaunchDaemon
+// root. The helper is a root-owned copy of the psps binary: a LaunchDaemon
 // pointing at a file the user can write would hand root to anything running
 // as that user.
 func Install(exe string, uid int) error {

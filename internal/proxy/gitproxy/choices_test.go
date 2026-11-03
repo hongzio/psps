@@ -11,8 +11,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/hongzio/gero/internal/creds"
-	"github.com/hongzio/gero/internal/proxy"
+	"github.com/hongzio/psps/internal/creds"
+	"github.com/hongzio/psps/internal/proxy"
 )
 
 // fakeUserRepos is GitHub for the token "good": /user, and /user/repos in
@@ -94,7 +94,7 @@ func TestAStoredTokenWinsOverTheTokenCommand(t *testing.T) {
 		t.Fatalf("%q %v", out, err)
 	}
 	if _, err := s.Check(context.Background(), "solo", json.RawMessage(`{"repos":[]}`), c); err == nil ||
-		!strings.Contains(err.Error(), "gero env secret git solo") {
+		!strings.Contains(err.Error(), "psps env secret git solo") {
 		t.Fatalf("no credential at all: %v", err)
 	}
 }

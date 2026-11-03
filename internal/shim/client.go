@@ -10,11 +10,11 @@ import (
 	"net"
 	"sync"
 
-	"github.com/hongzio/gero/internal/shimproto"
+	"github.com/hongzio/psps/internal/shimproto"
 )
 
 // Dialer opens one connection to a shim. In production that is a
-// `container exec -i <ctr> gero-shim client` process's stdio; in tests it is
+// `container exec -i <ctr> psps-shim client` process's stdio; in tests it is
 // the shim's unix socket.
 type Dialer func(ctx context.Context) (io.ReadWriteCloser, error)
 

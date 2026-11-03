@@ -14,29 +14,29 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/hongzio/gero/internal/api"
-	"github.com/hongzio/gero/internal/driver"
-	"github.com/hongzio/gero/internal/event"
-	"github.com/hongzio/gero/internal/isolation"
-	"github.com/hongzio/gero/internal/proxy/controlproxy"
-	"github.com/hongzio/gero/internal/store"
+	"github.com/hongzio/psps/internal/api"
+	"github.com/hongzio/psps/internal/driver"
+	"github.com/hongzio/psps/internal/event"
+	"github.com/hongzio/psps/internal/isolation"
+	"github.com/hongzio/psps/internal/proxy/controlproxy"
+	"github.com/hongzio/psps/internal/store"
 )
 
 // Leads (store.Lead): a team's line that makes agents of its own in the
-// team, through the team service (leadapi.go). gero keeps the lead's run
+// team, through the team service (leadapi.go). psps keeps the lead's run
 // going and within its operator's terms:
 //
 //   - a turn of an agent the lead made ends, or waits for an approval:
 //     that is news for the lead, with the agent's last answer;
-//   - a turn runs past its limit: gero stops it and asks for a final
+//   - a turn runs past its limit: psps stops it and asks for a final
 //     report, whose end is the news;
 //   - the lead's agents have all ended their turns: the lead hears of
 //     them together, and may go on with the round's next step;
 //   - its turn on them ended with none of its agents at work, the round is
-//     over: gero runs the team's eval and tells the lead the score, and
+//     over: psps runs the team's eval and tells the lead the score, and
 //     that nothing of the team runs (once per eval);
 //   - the budget (if it has one) is used, the target reached, or no new
-//     best has come for Patience evals: gero stops the run, and makes no
+//     best has come for Patience evals: psps stops the run, and makes no
 //     more agents of the lead's until the operator resumes it.
 //
 // News waits in the store and goes to the lead's live session in one
@@ -99,14 +99,14 @@ func (m *Manager) SetLead(ctx context.Context, teamRef string, req api.PutLead) 
 	defer m.teamMu.Unlock()
 	if other, err := m.store.LeadOfLine(line); err == nil && other.Team != t.ID {
 		o, _ := m.store.Team(other.Team)
-		return api.TeamRun{}, httpError{http.StatusConflict, fmt.Errorf("agent %s leads team %q; take it off that first (`gero team lead %q --clear`)", shownID(a), o.Name, o.Name)}
+		return api.TeamRun{}, httpError{http.StatusConflict, fmt.Errorf("agent %s leads team %q; take it off that first (`psps team lead %q --clear`)", shownID(a), o.Name, o.Name)}
 	}
 	l, err := m.store.Lead(t.ID)
 	had := err == nil
 	if err != nil && !errors.Is(err, store.ErrNotFound) {
 		return api.TeamRun{}, err
 	}
-	// A run gero stopped goes on, and its lead hears so, unless it is
+	// A run psps stopped goes on, and its lead hears so, unless it is
 	// another lead's now.
 	stopped, resumes := l.Stopped, had && l.Stopped != "" && l.Line == line
 	if !had || l.Line != line {
@@ -167,7 +167,7 @@ func (m *Manager) SetLead(ctx context.Context, teamRef string, req api.PutLead) 
 	return m.teamRun(t, l)
 }
 
-// stopsAgain says why l's run, which gero stopped, would stop again under
+// stopsAgain says why l's run, which psps stopped, would stop again under
 // its terms now, so resuming it would only stop it; "" if it would not.
 // Patience never does: a resumed run counts no eval before it.
 func (m *Manager) stopsAgain(l store.Lead, evals []store.Eval) (string, error) {
@@ -184,11 +184,11 @@ func (m *Manager) stopsAgain(l store.Lead, evals []store.Eval) (string, error) {
 	return "", nil
 }
 
-// resumedNews tells l's lead its operator resumed the run gero had stopped
+// resumedNews tells l's lead its operator resumed the run psps had stopped
 // for why, and, with nothing of its team at work, asks for the next team:
 // without it the lead would wait, told only that the run stopped.
 func (m *Manager) resumedNews(l store.Lead, why string, evals []store.Eval) {
-	msg := "Your operator resumed the run, which gero had stopped (" + why + ")."
+	msg := "Your operator resumed the run, which psps had stopped (" + why + ")."
 	if l.Settings.Eval != "" {
 		msg += " The evals so far count no more toward its patience."
 		if best, _ := bestOf(evals, l); best != nil {
@@ -324,7 +324,7 @@ func (m *Manager) TeamRun(teamRef string) (api.TeamRun, error) {
 	}
 	l, err := m.store.Lead(t.ID)
 	if errors.Is(err, store.ErrNotFound) {
-		return api.TeamRun{}, fmt.Errorf("team %q has no lead (`gero team lead %q AGENT`): %w", t.Name, t.Name, store.ErrNotFound)
+		return api.TeamRun{}, fmt.Errorf("team %q has no lead (`psps team lead %q AGENT`): %w", t.Name, t.Name, store.ErrNotFound)
 	}
 	if err != nil {
 		return api.TeamRun{}, err
@@ -665,17 +665,17 @@ func spentText(used, budget int64) string {
 
 // perUse says why kind's CLI in the isolation (by ID) needs a budget: it
 // is logged in with something billed per use, which no plan window holds
-// back, or gero cannot tell how it is. "" when it runs on a subscription,
+// back, or psps cannot tell how it is. "" when it runs on a subscription,
 // or is logged in to nothing and runs nothing.
 func (m *Manager) perUse(ctx context.Context, isoID string, kind driver.Kind) string {
 	iso, err := m.store.Isolation(isoID)
 	if err != nil {
-		return fmt.Sprintf("gero cannot tell how %s is logged in there (%v)", kind, err)
+		return fmt.Sprintf("psps cannot tell how %s is logged in there (%v)", kind, err)
 	}
 	c := m.cliStatus(ctx, iso, kind)
 	switch {
 	case c.Error != "":
-		return fmt.Sprintf("gero cannot tell how %s is logged in there (%s)", kind, c.Error)
+		return fmt.Sprintf("psps cannot tell how %s is logged in there (%s)", kind, c.Error)
 	case !c.LoggedIn, c.Method == "ChatGPT", c.Method == "CLAUDE_CODE_OAUTH_TOKEN", strings.HasPrefix(c.Method, "Claude subscription"):
 		return ""
 	}
@@ -833,7 +833,7 @@ func (m *Manager) stopRunLocked(l store.Lead, why string) {
 		return
 	}
 	m.log.Printf("team %s: run stopped: %s", l.Team, why)
-	m.store.AddTeamNews(l.Team, "gero stopped the run: "+why+". Until your operator resumes it, no agent of yours can be made or written to; the ones at work finish their turns.")
+	m.store.AddTeamNews(l.Team, "psps stopped the run: "+why+". Until your operator resumes it, no agent of yours can be made or written to; the ones at work finish their turns.")
 	go m.teamNewsChanged(l.Team)
 }
 
@@ -904,7 +904,7 @@ func (m *Manager) evalRunning(team string) bool {
 // startEval runs l's eval, unless it runs already; its result is news.
 func (m *Manager) startEval(l store.Lead, why string) error {
 	if l.Settings.Eval == "" {
-		return httpError{http.StatusConflict, errors.New("the team has no eval; its operator sets one with `gero team lead TEAM AGENT --eval CMD`")}
+		return httpError{http.StatusConflict, errors.New("the team has no eval; its operator sets one with `psps team lead TEAM AGENT --eval CMD`")}
 	}
 	m.mu.Lock()
 	if m.evaluating[l.Team] {
@@ -1018,11 +1018,11 @@ func (m *Manager) runEval(run store.EvalRun) {
 	switch {
 	case e.Score != nil:
 	case e.NotRun:
-		// gero's own words: nothing of what is scored is in them.
-		msg += "\ngero says: " + tail(err.Error(), 1500) +
-			"\nYour operator is to fix that. Until then a round's end or your asking runs into the same, counting for nothing; once it is fixed, have the eval run (POST $GERO_TEAM_URL/eval)."
+		// psps's own words: nothing of what is scored is in them.
+		msg += "\npsps says: " + tail(err.Error(), 1500) +
+			"\nYour operator is to fix that. Until then a round's end or your asking runs into the same, counting for nothing; once it is fixed, have the eval run (POST $PSPS_TEAM_URL/eval)."
 	case e.Private && err != nil:
-		msg += "\nIts output is your operator's alone, as it ran in an isolation of its own. gero says: " + tail(err.Error(), 1500)
+		msg += "\nIts output is your operator's alone, as it ran in an isolation of its own. psps says: " + tail(err.Error(), 1500)
 	case e.Private:
 		msg += "\nIts output is your operator's alone, as it ran in an isolation of its own."
 	default:
@@ -1090,11 +1090,11 @@ func nextTeam(l store.Lead) string {
 	if l.Settings.Eval == "" {
 		return "Design the next team, or say why you stop."
 	}
-	return "Before you design the next team, write in EVOLUTION.md which signs of a stuck team yours shows (drifting to easy paths, findings lost between teams, stuck debugging, only tuning what is there), and give each role the problem and the measurements, not a list of ideas (the gero-team skill, Leading)." +
-		" Then design the next team, have the eval run on a change of your own (POST $GERO_TEAM_URL/eval), or say why you stop."
+	return "Before you design the next team, write in EVOLUTION.md which signs of a stuck team yours shows (drifting to easy paths, findings lost between teams, stuck debugging, only tuning what is there), and give each role the problem and the measurements, not a list of ideas (the psps-team skill, Leading)." +
+		" Then design the next team, have the eval run on a change of your own (POST $PSPS_TEAM_URL/eval), or say why you stop."
 }
 
-// notRun is an error of gero's that kept an eval from running: what is
+// notRun is an error of psps's that kept an eval from running: what is
 // scored never ran, so the eval counts for no patience.
 type notRun struct{ error }
 
@@ -1307,13 +1307,13 @@ func (m *Manager) evalIsoWarning(iso store.Isolation, service string) string {
 	if len(teams) == 0 {
 		return ""
 	}
-	return fmt.Sprintf("isolation %s runs the eval of team %s: while it has %s, gero refuses to run it, as what is scored could use it (a refused eval counts for no patience); `gero iso unexpose %s %s` lets it run again",
+	return fmt.Sprintf("isolation %s runs the eval of team %s: while it has %s, psps refuses to run it, as what is scored could use it (a refused eval counts for no patience); `psps iso unexpose %s %s` lets it run again",
 		iso.Name, strings.Join(teams, ", "), service, iso.Name, service)
 }
 
 // bestOf is the best scored of evals under l, those up to its BestFrom
 // not counted, and how many evals since it came without a new best, those
-// up to its StaleFrom not counted, nor those gero could not run.
+// up to its StaleFrom not counted, nor those psps could not run.
 func bestOf(evals []store.Eval, l store.Lead) (*store.Eval, int) {
 	var best *store.Eval
 	stale := 0
@@ -1336,7 +1336,7 @@ func bestOf(evals []store.Eval, l store.Lead) (*store.Eval, int) {
 // scoreLine says what e scored against the best.
 func scoreLine(e store.Eval, best *store.Eval, stale, patience int) string {
 	if e.NotRun {
-		s := "gero could not run it, so the work was not scored, and it counts for no patience"
+		s := "psps could not run it, so the work was not scored, and it counts for no patience"
 		if best != nil {
 			s += fmt.Sprintf("; the best is %g, at eval #%d", *best.Score, best.ID)
 		}
@@ -1387,12 +1387,12 @@ func (r *runtime) teamTurnLocked(ended event.Status, waited string, at time.Time
 	case overStopping:
 		// Its end is the report's.
 		r.overtime = overReporting
-		if err := r.sendLocked(fmt.Sprintf("[gero team: your turn ran past its %d minutes, and gero stopped it.] Start no new work, edits or measurements. Reply now with your final report: what you changed, what you measured and how, what is unfinished, and where your notes and files are.", r.agent.TurnMinutes)); err != nil {
+		if err := r.sendLocked(fmt.Sprintf("[psps team: your turn ran past its %d minutes, and psps stopped it.] Start no new work, edits or measurements. Reply now with your final report: what you changed, what you measured and how, what is unfinished, and where your notes and files are.", r.agent.TurnMinutes)); err != nil {
 			r.m.log.Printf("agent %s: report: %v", r.agent.ID, err)
 		}
 		return
 	case overReporting, overStopped:
-		note = fmt.Sprintf(" gero stopped its turn at its %d-minute limit and asked for a final report; this is it.", r.agent.TurnMinutes)
+		note = fmt.Sprintf(" psps stopped its turn at its %d-minute limit and asked for a final report; this is it.", r.agent.TurnMinutes)
 	}
 	r.overtime = overNone
 	st := r.drv.State()
@@ -1465,7 +1465,7 @@ func (r *runtime) deliverNewsLocked() {
 	}
 	after := max(r.lastSeen, r.agent.LastSrc)
 	p, err := r.m.store.DeliverTeamNews(l.Team, r.agent.ID, after, func(news []string) string {
-		head := fmt.Sprintf("[gero team news for you as lead of team %q: %d item(s). Your operator may not be watching.]", t.Name, len(news))
+		head := fmt.Sprintf("[psps team news for you as lead of team %q: %d item(s). Your operator may not be watching.]", t.Name, len(news))
 		if len(news) == 1 {
 			return head + "\n\n" + news[0]
 		}

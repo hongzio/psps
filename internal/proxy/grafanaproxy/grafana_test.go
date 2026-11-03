@@ -6,9 +6,9 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/hongzio/gero/internal/creds"
-	"github.com/hongzio/gero/internal/proxy"
-	"github.com/hongzio/gero/internal/store"
+	"github.com/hongzio/psps/internal/creds"
+	"github.com/hongzio/psps/internal/proxy"
+	"github.com/hongzio/psps/internal/store"
 )
 
 // Ported from isolate's test_grafanaproxy.py: the decisions, pinned before
@@ -211,7 +211,7 @@ func TestAFreshDashboardIntoAnAllowedFolderPasses(t *testing.T) {
 
 func TestAFolderOffTheAllowlistNamesTheOperatorCommand(t *testing.T) {
 	_, err := save(t, dash("dashboard", dash("title", "t"), "folderUid", "prod"), nil)
-	mustDeny(t, err, 403, "gero env edit grafana <env> --allow-folder prod")
+	mustDeny(t, err, 403, "psps env edit grafana <env> --allow-folder prod")
 }
 
 func TestTheGeneralFolderIsNeverWritable(t *testing.T) {
@@ -494,7 +494,7 @@ func TestTheWorkspaceGetsATokenPerEnv(t *testing.T) {
 			t.Errorf("missing %s in\n%s", want, env)
 		}
 	}
-	if len(ws.Files) != 2 || !strings.HasSuffix(ws.Files[0].Path, "gero-grafana/SKILL.md") {
+	if len(ws.Files) != 2 || !strings.HasSuffix(ws.Files[0].Path, "psps-grafana/SKILL.md") {
 		t.Fatalf("%+v", ws.Files)
 	}
 }

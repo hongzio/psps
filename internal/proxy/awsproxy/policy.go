@@ -35,7 +35,7 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/hongzio/gero/internal/proxy"
+	"github.com/hongzio/psps/internal/proxy"
 )
 
 // What the policy may name: instance IDs as EC2 issues them, bucket names

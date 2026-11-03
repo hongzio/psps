@@ -13,12 +13,12 @@ import (
 	"sync"
 	"time"
 
-	"github.com/hongzio/gero/internal/api"
-	"github.com/hongzio/gero/internal/proxy"
-	"github.com/hongzio/gero/internal/proxy/portproxy"
-	"github.com/hongzio/gero/internal/shimproto"
-	"github.com/hongzio/gero/internal/tunnel"
-	"github.com/hongzio/gero/internal/web"
+	"github.com/hongzio/psps/internal/api"
+	"github.com/hongzio/psps/internal/proxy"
+	"github.com/hongzio/psps/internal/proxy/portproxy"
+	"github.com/hongzio/psps/internal/shimproto"
+	"github.com/hongzio/psps/internal/tunnel"
+	"github.com/hongzio/psps/internal/web"
 )
 
 // A forwarded port (port) is a listener the daemon holds on the Mac's
@@ -286,10 +286,10 @@ func (m *Manager) listenForward(w wantedForward) (*hostForward, error) {
 	return o, nil
 }
 
-// ownPort names what of gero's holds a Mac port, if anything does.
+// ownPort names what of psps's holds a Mac port, if anything does.
 func (m *Manager) ownPort(port int) string {
 	if m.webURL != "" && strings.HasSuffix(m.webURL, ":"+strconv.Itoa(port)) {
-		return " (gero's own web UI)"
+		return " (psps's own web UI)"
 	}
 	return ""
 }
@@ -345,7 +345,7 @@ func (m *Manager) forwardTunnel(ctx context.Context, id string) (*tunnel.Tunnel,
 	name := m.isoName(id)
 	if t := m.liveTunnel(id); t != nil {
 		if v := m.shimVersion(id); v != "" && v < shimproto.ForwardsVersion {
-			return nil, proxy.Deny("isolation %s's image predates forwarded ports: `gero iso upgrade %s` replaces its container with one that has them", name, name)
+			return nil, proxy.Deny("isolation %s's image predates forwarded ports: `psps iso upgrade %s` replaces its container with one that has them", name, name)
 		}
 		return t, nil
 	}

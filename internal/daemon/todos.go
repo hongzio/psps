@@ -4,7 +4,7 @@ import (
 	"errors"
 	"strings"
 
-	"github.com/hongzio/gero/internal/store"
+	"github.com/hongzio/psps/internal/store"
 )
 
 // maxTodo is the longest prompt put aside, in bytes.

@@ -1,4 +1,4 @@
-module github.com/hongzio/gero
+module github.com/hongzio/psps
 
 go 1.27
 

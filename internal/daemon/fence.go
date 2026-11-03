@@ -10,8 +10,8 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/hongzio/gero/internal/pf"
-	"github.com/hongzio/gero/internal/store"
+	"github.com/hongzio/psps/internal/pf"
+	"github.com/hongzio/psps/internal/store"
 )
 
 // The fence is trusted only once measured. After the helper reports the
@@ -240,7 +240,7 @@ func fenceFailed(why string) fenceResult { return fenceResult{why: why} }
 
 func (m *Manager) verifyFence(ctx context.Context, iso store.Isolation) fenceResult {
 	if iso.Network == "" {
-		return fenceFailed(fmt.Sprintf("it is on the shared default network; run `gero iso upgrade %s` to move it onto its own fenced network", iso.Name))
+		return fenceFailed(fmt.Sprintf("it is on the shared default network; run `psps iso upgrade %s` to move it onto its own fenced network", iso.Name))
 	}
 	if m.fence == nil {
 		return fenceFailed(pf.ErrNotInstalled.Error())
@@ -266,7 +266,7 @@ func (m *Manager) verifyFence(ctx context.Context, iso store.Isolation) fenceRes
 			return fenceFailed(err.Error())
 		}
 		if v := st.Running(); v < helperVersion {
-			return fenceFailed(fmt.Sprintf("the network fence helper is older than this gero (version %d, it needs %d); run `sudo gero pf install`", v, helperVersion))
+			return fenceFailed(fmt.Sprintf("the network fence helper is older than this psps (version %d, it needs %d); run `sudo psps pf install`", v, helperVersion))
 		}
 		if !st.Enabled {
 			return fenceFailed("pf is not enabled")
@@ -377,7 +377,7 @@ func (m *Manager) measureFence(ctx context.Context, iso store.Isolation, bridge 
 		r.why = "waiting to measure the fence: " + strings.Join(unmeasured, ", ")
 	case res.Resolve != "ok":
 		r.ok, r.why = true, "verified, but DNS failed: "+res.Resolve+
-			" (behind a local DNS proxy on the Mac, like Cloudflare WARP, set dns in ~/.config/gero/config.toml)"
+			" (behind a local DNS proxy on the Mac, like Cloudflare WARP, set dns in ~/.config/psps/config.toml)"
 	default:
 		r.ok, r.why = true, "verified"
 	}

@@ -6,7 +6,7 @@ import (
 	"testing"
 )
 
-var dev = Network{Name: "gero-dev", Subnet4: "192.168.65.0/24", Gateway4: "192.168.65.1", Subnet6: "fd62::/64"}
+var dev = Network{Name: "psps-dev", Subnet4: "192.168.65.0/24", Gateway4: "192.168.65.1", Subnet6: "fd62::/64"}
 
 func bridge(name string) func(string) string { return func(string) string { return name } }
 
@@ -21,9 +21,9 @@ func TestRulesMatchTheMeasuredFence(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, want := range []string{
-		"table <gero_private4> const {",
+		"table <psps_private4> const {",
 		"pass  quick inet proto { udp tcp } from 192.168.65.0/24 to 192.168.65.1 port 53",
-		"block drop quick inet from 192.168.65.0/24 to <gero_private4>",
+		"block drop quick inet from 192.168.65.0/24 to <psps_private4>",
 		"pass  quick on bridge101 inet6 proto icmp6",
 		"block drop in quick on bridge101 inet6 to { ::1 fc00::/7 fe80::/10 ff00::/8 }",
 	} {
@@ -32,11 +32,11 @@ func TestRulesMatchTheMeasuredFence(t *testing.T) {
 		}
 	}
 	// Every host address here is private: no per-address tables needed.
-	if strings.Contains(got, "gero_host4") || strings.Contains(got, "gero_host6") {
+	if strings.Contains(got, "psps_host4") || strings.Contains(got, "psps_host6") {
 		t.Errorf("private host addresses listed explicitly:\n%s", got)
 	}
 	// DNS must be allowed before the gateway is blocked.
-	if strings.Index(got, "port 53") > strings.Index(got, "<gero_private4>\n") {
+	if strings.Index(got, "port 53") > strings.Index(got, "<psps_private4>\n") {
 		t.Error("DNS exception comes after the block")
 	}
 }
@@ -49,10 +49,10 @@ func TestPublicHostAddressesAreFenced(t *testing.T) {
 	}
 	got, _ := Rules([]Network{dev}, host, bridge("bridge101"))
 	for _, want := range []string{
-		"table <gero_host4> { 203.0.113.0/24 203.0.113.7 }",
-		"table <gero_host6> { 2001:db8:1:2::/64 2001:db8:1:2::5 }",
-		"block drop quick inet from 192.168.65.0/24 to <gero_host4>",
-		"block drop in quick on bridge101 inet6 to <gero_host6>",
+		"table <psps_host4> { 203.0.113.0/24 203.0.113.7 }",
+		"table <psps_host6> { 2001:db8:1:2::/64 2001:db8:1:2::5 }",
+		"block drop quick inet from 192.168.65.0/24 to <psps_host4>",
+		"block drop in quick on bridge101 inet6 to <psps_host6>",
 	} {
 		if !strings.Contains(got, want) {
 			t.Errorf("missing %q in:\n%s", want, got)
@@ -90,7 +90,7 @@ func TestCoversBridgeReadsTheLoadedRules(t *testing.T) {
 	// What pfctl printed on the Mac for one fenced network.
 	loaded := []string{
 		"pass quick inet proto udp from 192.168.65.0/24 to 192.168.65.1 port = 53 keep state",
-		"block drop quick inet from 192.168.65.0/24 to <gero_private4>",
+		"block drop quick inet from 192.168.65.0/24 to <psps_private4>",
 		"pass quick on bridge101 inet6 proto ipv6-icmp all icmp6-type neighbrsol keep state",
 		"block drop in quick on bridge101 inet6 from any to ::1",
 		"block drop in quick on bridge101 inet6 from any to fc00::/7",

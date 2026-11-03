@@ -10,7 +10,7 @@ import (
 	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
 
-	"github.com/hongzio/gero/internal/api"
+	"github.com/hongzio/psps/internal/api"
 )
 
 // The isolations page: create isolations, set their environment, log the
@@ -350,7 +350,7 @@ func (m *Model) renderIsolations(width int) string {
 		b.WriteString(th.dim.Render(fmt.Sprintf("  %s save · %s cancel", k.Label("submit"), k.Label("back"))) + "\n")
 	case isoVerify:
 		b.WriteString(m.renderVerify(*p.report, width))
-		b.WriteString(th.dim.Render("  any key closes · `gero iso verify "+p.report.Isolation+" --json` for the full record") + "\n")
+		b.WriteString(th.dim.Render("  any key closes · `psps iso verify "+p.report.Isolation+" --json` for the full record") + "\n")
 	default:
 		hints := []string{
 			k.Label("iso_new") + " new", k.Label("iso_settings") + " settings", k.Label("iso_env") + " env", k.Label("iso_login") + " accounts",

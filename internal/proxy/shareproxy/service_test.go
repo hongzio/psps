@@ -8,20 +8,20 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/hongzio/gero/internal/isolation"
-	"github.com/hongzio/gero/internal/proxy"
-	"github.com/hongzio/gero/internal/store"
+	"github.com/hongzio/psps/internal/isolation"
+	"github.com/hongzio/psps/internal/proxy"
+	"github.com/hongzio/psps/internal/store"
 )
 
-// fakeHome is a home folder with gero's directories in it, as the XDG
+// fakeHome is a home folder with psps's directories in it, as the XDG
 // layout puts them.
 func fakeHome(t *testing.T) (Service, string) {
 	t.Helper()
 	home, _ := filepath.EvalSymlinks(t.TempDir())
-	for _, d := range []string{"Projects/notes/sub", ".ssh", ".config/gero", "Library/Mobile Documents", "Documents/x", "Downloads", "Desktop", "work/.local-not-dot"} {
+	for _, d := range []string{"Projects/notes/sub", ".ssh", ".config/psps", "Library/Mobile Documents", "Documents/x", "Downloads", "Desktop", "work/.local-not-dot"} {
 		os.MkdirAll(filepath.Join(home, d), 0o755)
 	}
-	return Service{Home: home, Protected: []string{filepath.Join(home, ".config/gero"), filepath.Join(home, "Projects/gero-state")}}, home
+	return Service{Home: home, Protected: []string{filepath.Join(home, ".config/psps"), filepath.Join(home, "Projects/psps-state")}}, home
 }
 
 func normalize(s Service, env map[string]any) (map[string]any, []string, error) {
@@ -56,21 +56,21 @@ func TestAFolderInTheHomeIsSharedReadOnlyByDefault(t *testing.T) {
 func TestFoldersThatAreNeverShared(t *testing.T) {
 	s, home := fakeHome(t)
 	os.Symlink(filepath.Join(home, ".ssh"), filepath.Join(home, "Projects/keys"))
-	os.MkdirAll(filepath.Join(home, "Projects/gero-state/x"), 0o755)
+	os.MkdirAll(filepath.Join(home, "Projects/psps-state/x"), 0o755)
 	for path, want := range map[string]string{
 		"":                                   "--path is required",
 		"Projects/notes":                     "not an absolute path",
 		home:                                 "home folder itself",
 		home + "/":                           "home folder itself",
 		filepath.Join(home, ".ssh"):          "dot folders",
-		filepath.Join(home, ".config/gero"):  "dot folders",
+		filepath.Join(home, ".config/psps"):  "dot folders",
 		filepath.Join(home, "Projects/keys"): "dot folders", // a link into one
 		filepath.Join(home, "Library/Mobile Documents"): "~/Library",
 		filepath.Join(home, "Documents/x"):              "privacy protection",
 		filepath.Join(home, "downloads"):                "privacy protection", // the disk ignores case
 		filepath.Join(home, "Desktop"):                  "privacy protection",
-		filepath.Join(home, "Projects/gero-state/x"):    "gero's own",
-		filepath.Join(home, "Projects"):                 "gero's own", // it holds gero's directory
+		filepath.Join(home, "Projects/psps-state/x"):    "psps's own",
+		filepath.Join(home, "Projects"):                 "psps's own", // it holds psps's directory
 		filepath.Dir(home):                              "not inside your home",
 		"/etc":                                          "not inside your home",
 		filepath.Join(home, "nope"):                     "does not exist",

@@ -99,7 +99,7 @@ func (u Upstream) url(pathAndQuery string) string {
 }
 
 // UpstreamParts validates a base URL here rather than at the socket, so
-// `gero env add` can refuse one the proxy could never dial.
+// `psps env add` can refuse one the proxy could never dial.
 func UpstreamParts(base string) (Upstream, error) {
 	u, err := url.Parse(base)
 	if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" || u.Opaque != "" {
@@ -111,7 +111,7 @@ func UpstreamParts(base string) (Upstream, error) {
 	if u.User != nil {
 		// A credential in the URL would be a second copy of the token
 		// outside the credentials file.
-		return Upstream{}, deny(502, "a Grafana base URL takes no user or password: %q; the token goes in `gero env secret grafana <env>`", base)
+		return Upstream{}, deny(502, "a Grafana base URL takes no user or password: %q; the token goes in `psps env secret grafana <env>`", base)
 	}
 	return Upstream{Scheme: u.Scheme, Host: u.Host, Prefix: strings.TrimRight(u.EscapedPath(), "/")}, nil
 }
@@ -195,7 +195,7 @@ func Route(method, rawPath string) (family, kind string, err error) {
 
 // --- bodies ------------------------------------------------------------------
 
-// UID is Grafana's own UID alphabet, enforced at `gero env add` so the
+// UID is Grafana's own UID alphabet, enforced at `psps env add` so the
 // allowlist only holds values the route table's uid patterns can express.
 var UID = regexp.MustCompile(`^[A-Za-z0-9_-]{1,64}$`)
 
@@ -239,7 +239,7 @@ func contains(l []string, s string) bool {
 // is one.
 func AuthorizeQueryBody(raw []byte, allowed []string) ([]byte, error) {
 	if len(allowed) == 0 {
-		return nil, deny(403, "grafana: no data sources are allowlisted for queries in this environment. Ask the operator to run:\n  gero env edit grafana <env> --allow-datasource <uid>")
+		return nil, deny(403, "grafana: no data sources are allowlisted for queries in this environment. Ask the operator to run:\n  psps env edit grafana <env> --allow-datasource <uid>")
 	}
 	body, ok := decodeObject(raw)
 	queries, isList := body["queries"].([]any)
@@ -263,14 +263,14 @@ func AuthorizeQueryBody(raw []byte, allowed []string) ([]byte, error) {
 			return nil, deny(400, "grafana: each query must name its data source by UID (datasource: {uid: ...}); the legacy name form is refused")
 		}
 		if !contains(allowed, uid) {
-			return nil, deny(403, "grafana: data source %q is not in the query allowlist for this environment. Ask the operator to run:\n  gero env edit grafana <env> --allow-datasource %s", uid, uid)
+			return nil, deny(403, "grafana: data source %q is not in the query allowlist for this environment. Ask the operator to run:\n  psps env edit grafana <env> --allow-datasource %s", uid, uid)
 		}
 	}
 	return encode(body), nil
 }
 
 func folderRefusal(uid, what string) *Denied {
-	return deny(403, "grafana: %s folder %q, which is not in the folder allowlist for this environment. Ask the operator to run:\n  gero env edit grafana <env> --allow-folder %s", what, uid, uid)
+	return deny(403, "grafana: %s folder %q, which is not in the folder allowlist for this environment. Ask the operator to run:\n  psps env edit grafana <env> --allow-folder %s", what, uid, uid)
 }
 
 func isZero(v any) bool {
@@ -296,7 +296,7 @@ func isZero(v any) bool {
 // UID is dropped, because that is the shape Grafana's own GET hands back.
 func AuthorizeDashboardBody(raw []byte, allowed []string) ([]byte, string, error) {
 	if len(allowed) == 0 {
-		return nil, "", deny(403, "grafana: no folders are allowlisted for dashboard saves in this environment. Ask the operator to run:\n  gero env edit grafana <env> --allow-folder <uid>")
+		return nil, "", deny(403, "grafana: no folders are allowlisted for dashboard saves in this environment. Ask the operator to run:\n  psps env edit grafana <env> --allow-folder <uid>")
 	}
 	body, ok := decodeObject(raw)
 	dash, isObj := body["dashboard"].(map[string]any)

@@ -24,10 +24,10 @@ import (
 	"strings"
 	"time"
 
-	"github.com/hongzio/gero/internal/creds"
-	"github.com/hongzio/gero/internal/isolation"
-	"github.com/hongzio/gero/internal/shimproto"
-	"github.com/hongzio/gero/internal/store"
+	"github.com/hongzio/psps/internal/creds"
+	"github.com/hongzio/psps/internal/isolation"
+	"github.com/hongzio/psps/internal/shimproto"
+	"github.com/hongzio/psps/internal/store"
 )
 
 // Denied is a refusal whose Reason names the decision and the fix. Proxies
@@ -272,9 +272,9 @@ func contains(l []string, s string) bool {
 type Workspace struct {
 	// Env reaches every agent process and every shell in the isolation.
 	Env []string
-	// Files are written by `gero-shim sync`.
+	// Files are written by `psps-shim sync`.
 	Files []shimproto.SyncFile
-	// MCP servers are handed to every agent gero starts, at launch: Claude
+	// MCP servers are handed to every agent psps starts, at launch: Claude
 	// Code through --mcp-config, Codex through -c overrides. Neither tool's
 	// own configuration is touched.
 	MCP []MCPServer
@@ -360,7 +360,7 @@ type OneEnv interface {
 }
 
 // Forward is one port of the isolation's, on the Mac's 127.0.0.1:HostPort.
-// An HTTP one goes through an HTTP proxy that keeps gero's own cookies from
+// An HTTP one goes through an HTTP proxy that keeps psps's own cookies from
 // the isolation; otherwise bytes pass unchanged.
 type Forward struct {
 	Env      string `json:"env"`
@@ -369,7 +369,7 @@ type Forward struct {
 	HTTP     bool   `json:"http"`
 }
 
-// Refusal is a request a proxy must refuse, which `gero iso verify` makes
+// Refusal is a request a proxy must refuse, which `psps iso verify` makes
 // from inside the isolation, as the agent, through the tunnel: what the
 // boundary does is measured, not read off the code. Want is text only this
 // proxy's refusal carries, so a refusal relayed from upstream (GitHub's own
@@ -392,7 +392,7 @@ type Refusal struct {
 
 // WrongToken is the token every Refusal presents in place of the workspace
 // token.
-const WrongToken = "gero-verify-not-the-token"
+const WrongToken = "psps-verify-not-the-token"
 
 var nameRE = regexp.MustCompile(`^[A-Za-z0-9_-]{1,32}$`)
 
@@ -410,7 +410,7 @@ func EnvSuffix(name string) string {
 	return strings.ToUpper(regexp.MustCompile(`[^A-Za-z0-9]`).ReplaceAllString(name, "_"))
 }
 
-// Registry is every service gero has, by name.
+// Registry is every service psps has, by name.
 type Registry struct {
 	order []Service
 	by    map[string]Service
@@ -450,9 +450,26 @@ func SkillFiles(name, body string) []shimproto.SyncFile {
 
 func SkillDirs(name string) []string {
 	return []string{
-		"/home/agent/.claude/skills/gero-" + name,
-		"/home/agent/.codex/skills/gero-" + name,
+		"/home/agent/.claude/skills/psps-" + name,
+		"/home/agent/.codex/skills/psps-" + name,
 	}
+}
+
+// GeroSkills are where the skills were while psps was called gero, as
+// prune prefixes: nothing is written there any more.
+var GeroSkills = []string{"/home/agent/.claude/skills/gero-", "/home/agent/.codex/skills/gero-"}
+
+// AsGero moves a skill's path back to where a shim from before the rename
+// (shimproto.RenameVersion) keeps it, as gero-*: it writes nothing named
+// psps. Other paths are as they were.
+func AsGero(path string) string {
+	return strings.Replace(path, "/skills/psps-", "/skills/gero-", 1)
+}
+
+// AgentEnv is an agent's variable NAME=value as PSPS_NAME and, for agents
+// that still know psps's name before, as GERO_NAME too.
+func AgentEnv(name, value string) []string {
+	return []string{"PSPS_" + name + "=" + value, "GERO_" + name + "=" + value}
 }
 
 // Strings reads a list setting from a patched definition, whatever JSON

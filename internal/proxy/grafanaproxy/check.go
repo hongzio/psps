@@ -8,7 +8,7 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/hongzio/gero/internal/creds"
+	"github.com/hongzio/psps/internal/creds"
 )
 
 // CheckResult is what each probe answered: a family's status (0 for the

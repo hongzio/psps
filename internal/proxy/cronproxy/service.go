@@ -5,7 +5,7 @@
 // open in every isolation's tunnel and the address already says which
 // agent asks; the daemon answers it itself, since it keeps the crons.
 //
-//	isolation  curl "$GERO_CRON_URL" --json '{"schedule":"@every 1h","prompt":"check CI"}'
+//	isolation  curl "$PSPS_CRON_URL" --json '{"schedule":"@every 1h","prompt":"check CI"}'
 //	             |  (the isolation's tunnel, mail's port)
 //	daemon     the cron is the agent's whose address it is, and comes
 //	           like the operator's, saying the agent set it
@@ -24,10 +24,10 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/hongzio/gero/internal/creds"
-	"github.com/hongzio/gero/internal/proxy"
-	"github.com/hongzio/gero/internal/proxy/mailproxy"
-	"github.com/hongzio/gero/internal/store"
+	"github.com/hongzio/psps/internal/creds"
+	"github.com/hongzio/psps/internal/proxy"
+	"github.com/hongzio/psps/internal/proxy/mailproxy"
+	"github.com/hongzio/psps/internal/store"
 )
 
 const (
@@ -41,7 +41,7 @@ const (
 // URL is an agent's crons, at its own address on mail's port.
 func URL(token string) string { return mailproxy.URL(token) + "/crons" }
 
-var errNoEnvs = errors.New("cron has no environments: turn it on for an isolation with `gero iso expose ISOLATION cron`")
+var errNoEnvs = errors.New("cron has no environments: turn it on for an isolation with `psps iso expose ISOLATION cron`")
 
 type Service struct{}
 

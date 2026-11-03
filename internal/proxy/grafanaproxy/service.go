@@ -12,9 +12,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/hongzio/gero/internal/creds"
-	"github.com/hongzio/gero/internal/proxy"
-	"github.com/hongzio/gero/internal/store"
+	"github.com/hongzio/psps/internal/creds"
+	"github.com/hongzio/psps/internal/proxy"
+	"github.com/hongzio/psps/internal/store"
 )
 
 const (
@@ -126,7 +126,7 @@ func (Service) Normalize(name string, env map[string]any) ([]string, error) {
 
 	var warn []string
 	for _, f := range dropped {
-		warn = append(warn, fmt.Sprintf("env %q: the %s write was dropped because %s is not read-open; `gero env edit grafana %s --allow-api ... --allow-api %s --allow-write %s` keeps both", name, f, f, name, f, f))
+		warn = append(warn, fmt.Sprintf("env %q: the %s write was dropped because %s is not read-open; `psps env edit grafana %s --allow-api ... --allow-api %s --allow-write %s` keeps both", name, f, f, name, f, f))
 	}
 	fams := env["families"].([]string)
 	if len(fams) == 0 {
@@ -301,7 +301,7 @@ func (in *instance) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if !v.Enabled {
-		in.refuse(w, r, 503, fmt.Sprintf("grafana: the grafana proxy is off for isolation %s; the operator turns it on with `gero iso expose %s grafana <env>`", in.h.Name(), in.h.Name()), 0)
+		in.refuse(w, r, 503, fmt.Sprintf("grafana: the grafana proxy is off for isolation %s; the operator turns it on with `psps iso expose %s grafana <env>`", in.h.Name(), in.h.Name()), 0)
 		return
 	}
 	name := ResolveEnv(v.Tokens, v.Exposure.Envs, presented(r))
@@ -320,7 +320,7 @@ func (in *instance) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	e, ok := envs[name]
 	if !ok {
-		in.refuse(w, r, 503, fmt.Sprintf("grafana: environment %q was removed from gero's registry but is still exposed here; the operator re-exposes with `gero iso expose %s grafana ...`", name, in.h.Name()), 0)
+		in.refuse(w, r, 503, fmt.Sprintf("grafana: environment %q was removed from psps's registry but is still exposed here; the operator re-exposes with `psps iso expose %s grafana ...`", name, in.h.Name()), 0)
 		return
 	}
 	rawPath, rawQuery := proxy.RawTarget(r)
@@ -333,11 +333,11 @@ func (in *instance) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	// neither hears about the half to fix first, and --allow-write opens
 	// both anyway.
 	if family != "" && !contains(e.Families, family) {
-		in.refuse(w, r, 403, fmt.Sprintf("grafana: endpoint family %q is not in the allowlist for environment %q. Ask the operator to run:\n  gero env edit grafana %s --allow-api %s", family, name, name, family), 0)
+		in.refuse(w, r, 403, fmt.Sprintf("grafana: endpoint family %q is not in the allowlist for environment %q. Ask the operator to run:\n  psps env edit grafana %s --allow-api %s", family, name, name, family), 0)
 		return
 	}
 	if WriteKinds[kind] && !contains(e.Writes, family) {
-		in.refuse(w, r, 403, fmt.Sprintf("grafana: %s %s is a write to the %q family, which environment %q reads but does not write. Ask the operator to run:\n  gero env edit grafana %s --allow-write %s --allow-folder <uid>", r.Method, rawPath, family, name, name, family), 0)
+		in.refuse(w, r, 403, fmt.Sprintf("grafana: %s %s is a write to the %q family, which environment %q reads but does not write. Ask the operator to run:\n  psps env edit grafana %s --allow-write %s --allow-folder <uid>", r.Method, rawPath, family, name, name, family), 0)
 		return
 	}
 	up, err := UpstreamParts(e.BaseURL)

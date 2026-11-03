@@ -1,4 +1,4 @@
-// Package controlproxy opens some of what the operator does with the gero
+// Package controlproxy opens some of what the operator does with the psps
 // command to an isolation's agents: list agents and read them, make and
 // write to them, stop, archive and fork them, and the like. An env is a
 // set of those, ticked one by one; an isolation has one env, and reaches
@@ -8,7 +8,7 @@
 // address, so the daemon knows which agent asks; the daemon answers it
 // itself, since it keeps the agents.
 //
-//	isolation  curl "$GERO_CONTROL_URL/agents"
+//	isolation  curl "$PSPS_CONTROL_URL/agents"
 //	             |  (the isolation's tunnel, mail's port)
 //	daemon     the address is an agent's: what its isolation's env opens,
 //	           on the agents of the isolations it reaches
@@ -32,10 +32,10 @@ import (
 	"net/http"
 	"strings"
 
-	"github.com/hongzio/gero/internal/creds"
-	"github.com/hongzio/gero/internal/proxy"
-	"github.com/hongzio/gero/internal/proxy/mailproxy"
-	"github.com/hongzio/gero/internal/store"
+	"github.com/hongzio/psps/internal/creds"
+	"github.com/hongzio/psps/internal/proxy"
+	"github.com/hongzio/psps/internal/proxy/mailproxy"
+	"github.com/hongzio/psps/internal/store"
 )
 
 const Name = "control"
@@ -43,7 +43,7 @@ const Name = "control"
 // URL is an agent's control address, at its own address on mail's port.
 func URL(token string) string { return mailproxy.URL(token) + "/control" }
 
-// An Action is one thing an env may open, named after the gero command
+// An Action is one thing an env may open, named after the psps command
 // that does it.
 type Action struct {
 	Name string
@@ -141,13 +141,13 @@ func (Service) Name() string { return Name }
 func (Service) Ports() []int { return nil }
 
 func (Service) Summary() string {
-	return "an isolation's agents do some of what you do with the gero command: the actions its env ticks"
+	return "an isolation's agents do some of what you do with the psps command: the actions its env ticks"
 }
 
 func (Service) Fields() []proxy.Field {
 	return []proxy.Field{
 		{Key: "allow", Kind: proxy.List, Flag: "allow", Clear: "clear-allow", Metavar: "ACTION", Choices: names(),
-			Help: "a gero command to open to the agents (repeat; replaces the list; default the reads: " + strings.Join(Reads(), ", ") + ")"},
+			Help: "a psps command to open to the agents (repeat; replaces the list; default the reads: " + strings.Join(Reads(), ", ") + ")"},
 		{Key: "max_live", Kind: proxy.Int, Flag: "max-live", Metavar: "N",
 			Help: fmt.Sprintf("how many agents an isolation's agents may have made through it (agent.new, agent.fork), live at once (default %d)", DefaultMaxLive)},
 	}
@@ -176,7 +176,7 @@ func (Service) Normalize(name string, env map[string]any) ([]string, error) {
 		}
 		env["allow"] = allow
 	} else {
-		// Explicit on every add and edit, so `gero env ls` shows what opens.
+		// Explicit on every add and edit, so `psps env ls` shows what opens.
 		env["allow"] = Reads()
 	}
 	switch n := env["max_live"].(type) {
@@ -202,7 +202,7 @@ func (Service) Normalize(name string, env map[string]any) ([]string, error) {
 	}
 	var warn []string
 	if len(writes) > 0 {
-		warn = append(warn, fmt.Sprintf("env %q lets agents change gero (%s), on the agents they reach", name, strings.Join(writes, ", ")))
+		warn = append(warn, fmt.Sprintf("env %q lets agents change psps (%s), on the agents they reach", name, strings.Join(writes, ", ")))
 	}
 	if len(env["allow"].([]string)) == 0 {
 		warn = append(warn, fmt.Sprintf("env %q opens nothing", name))
@@ -250,14 +250,14 @@ func (Service) Workspace(v proxy.View) (proxy.Workspace, error) {
 
 func (Service) Managed() []string { return proxy.SkillDirs(Name) }
 
-// Check: there is nothing outside gero to reach; it says what the env
+// Check: there is nothing outside psps to reach; it says what the env
 // opens.
 func (Service) Check(_ context.Context, _ string, cfg json.RawMessage, _ *creds.Store) (string, error) {
 	var e Env
 	if err := json.Unmarshal(cfg, &e); err != nil {
 		return "", err
 	}
-	return fmt.Sprintf("opens %s; it reaches nothing outside gero", orNothing(strings.Join(e.Allow, ", "))), nil
+	return fmt.Sprintf("opens %s; it reaches nothing outside psps", orNothing(strings.Join(e.Allow, ", "))), nil
 }
 
 // Refusals: an address whose token is no agent's.

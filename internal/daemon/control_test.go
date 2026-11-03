@@ -9,14 +9,14 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/hongzio/gero/internal/api"
-	"github.com/hongzio/gero/internal/creds"
-	"github.com/hongzio/gero/internal/driver"
-	"github.com/hongzio/gero/internal/event"
-	"github.com/hongzio/gero/internal/proxy"
-	"github.com/hongzio/gero/internal/proxy/controlproxy"
-	"github.com/hongzio/gero/internal/proxy/mailproxy"
-	"github.com/hongzio/gero/internal/store"
+	"github.com/hongzio/psps/internal/api"
+	"github.com/hongzio/psps/internal/creds"
+	"github.com/hongzio/psps/internal/driver"
+	"github.com/hongzio/psps/internal/event"
+	"github.com/hongzio/psps/internal/proxy"
+	"github.com/hongzio/psps/internal/proxy/controlproxy"
+	"github.com/hongzio/psps/internal/proxy/mailproxy"
+	"github.com/hongzio/psps/internal/store"
 )
 
 // An isolation's agents do, through the control service, what its env
@@ -53,7 +53,7 @@ func TestControlOpensWhatItsEnvTicksOnTheAgentsItReaches(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(v.Warnings) != 1 || !strings.Contains(v.Warnings[0], "lets agents change gero (agent.new, agent.send, agent.set, agent.cron)") {
+	if len(v.Warnings) != 1 || !strings.Contains(v.Warnings[0], "lets agents change psps (agent.new, agent.send, agent.set, agent.cron)") {
 		t.Fatalf("%q", v.Warnings)
 	}
 	if _, err := m.PutEnv(ctx, "control", "ro", proxy.Patch{}, true); err != nil {
@@ -71,7 +71,7 @@ func TestControlOpensWhatItsEnvTicksOnTheAgentsItReaches(t *testing.T) {
 	if _, err := m.Expose(ctx, "dev", "control", api.Expose{Envs: []string{"ops"}, Settings: proxy.Patch{Set: map[string]any{"reach": []string{"far"}}}}); err != nil {
 		t.Fatal(err)
 	}
-	if env := m.controlEnv(boss); len(env) != 1 || !strings.HasPrefix(env[0], "GERO_CONTROL_URL=http://127.0.0.1:") || !strings.HasSuffix(env[0], "/control") {
+	if env := m.controlEnv(boss); len(env) != 2 || !strings.HasPrefix(env[1], "GERO_CONTROL_URL=") || !strings.HasPrefix(env[0], "PSPS_CONTROL_URL=http://127.0.0.1:") || !strings.HasSuffix(env[0], "/control") {
 		t.Fatalf("%q", env)
 	}
 	ctl := func(from store.Agent, method, path, body string) (int, string) {
@@ -117,7 +117,7 @@ func TestControlOpensWhatItsEnvTicksOnTheAgentsItReaches(t *testing.T) {
 		t.Fatalf("%d %s", code, out)
 	}
 	e.waitFor("mate's message", func() bool {
-		return slices.Contains(users(e, mate.ID), "[gero control: from agent boss in isolation dev, through gero's control service]\n\nthe notes are in notes.md")
+		return slices.Contains(users(e, mate.ID), "[psps control: from agent boss in isolation dev, through psps's control service]\n\nthe notes are in notes.md")
 	})
 	if code, out := ctl(boss, "POST", "/agents/boss/send", "me"); code != http.StatusBadRequest || !strings.Contains(out, "that is you") {
 		t.Fatalf("%d %s", code, out)
@@ -147,7 +147,7 @@ func TestControlOpensWhatItsEnvTicksOnTheAgentsItReaches(t *testing.T) {
 		t.Fatalf("%d %s", code, out)
 	}
 	e.waitFor("its prompt", func() bool {
-		return slices.Contains(users(e, made.ID), "[gero control: agent boss in isolation dev made you, through gero's control service. Your operator may not be watching.]\n\nmeasure it")
+		return slices.Contains(users(e, made.ID), "[psps control: agent boss in isolation dev made you, through psps's control service. Your operator may not be watching.]\n\nmeasure it")
 	})
 	if code, out := ctl(boss, "POST", "/agents", `{"kind": "codex", "prompt": "more"}`); code != http.StatusTooManyRequests || !strings.Contains(out, "1 agents made through it") {
 		t.Fatalf("past max live: %d %s", code, out)
@@ -206,7 +206,7 @@ func TestControlOpensWhatItsEnvTicksOnTheAgentsItReaches(t *testing.T) {
 	if code != http.StatusCreated || cr.SetBy != "boss in isolation dev" {
 		t.Fatalf("%d %s", code, out)
 	}
-	if l := cronLetter(cr); !strings.Contains(l, "Agent boss in isolation dev set this message, through gero's control service") {
+	if l := cronLetter(cr); !strings.Contains(l, "Agent boss in isolation dev set this message, through psps's control service") {
 		t.Fatal(l)
 	}
 	if code, out := ctl(boss, "POST", "/agents/mate/crons", `{"schedule": "@every 1m", "prompt": "spam"}`); code != http.StatusBadRequest {
@@ -288,7 +288,7 @@ func TestControlSetsATeamsEvalToRunWhereItMayRunCommands(t *testing.T) {
 		t.Fatalf("from the lead's isolation: %d %s", code, out)
 	}
 
-	// A run gero stopped stays stopped; a round that ended before the eval
+	// A run psps stopped stays stopped; a round that ended before the eval
 	// is not its to score.
 	if err := m.store.SetLeadStopped(team.ID, "the budget is used"); err != nil {
 		t.Fatal(err)

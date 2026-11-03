@@ -8,10 +8,10 @@ import (
 	"testing"
 	"time"
 
-	"github.com/hongzio/gero/internal/api"
-	"github.com/hongzio/gero/internal/driver"
-	"github.com/hongzio/gero/internal/event"
-	"github.com/hongzio/gero/internal/store"
+	"github.com/hongzio/psps/internal/api"
+	"github.com/hongzio/psps/internal/driver"
+	"github.com/hongzio/psps/internal/event"
+	"github.com/hongzio/psps/internal/store"
 )
 
 func cronOf(t *testing.T, m *Manager, agent string, id int64) store.Cron {
@@ -49,7 +49,7 @@ func TestACronIsSentWhenItComesDue(t *testing.T) {
 	}
 	m.cronTick(due)
 	e.waitFor("the cron's turn", func() bool { return e.hasAssistant(a.ID, "echo: "+cronLetter(c)) })
-	if got := users(e, a.ID); len(got) != 1 || !strings.HasPrefix(got[0], `[gero cron #1, on schedule "@every 1m". `) || !strings.HasSuffix(got[0], "]\n\ntick") {
+	if got := users(e, a.ID); len(got) != 1 || !strings.HasPrefix(got[0], `[psps cron #1, on schedule "@every 1m". `) || !strings.HasSuffix(got[0], "]\n\ntick") {
 		t.Fatalf("turns %q", got)
 	}
 	// An agent made without a prompt is named after the cron's message.
@@ -245,7 +245,7 @@ func TestACronThatComesOnceIsRemovedAsItIsSent(t *testing.T) {
 		t.Fatal(err)
 	}
 	e.waitFor("the cron", func() bool { return e.hasAssistant(a.ID, "echo: "+cronLetter(c)) })
-	if !strings.Contains(cronLetter(c), "It comes this once: gero has removed it.") {
+	if !strings.Contains(cronLetter(c), "It comes this once: psps has removed it.") {
 		t.Fatalf("%q", cronLetter(c))
 	}
 	if _, err := m.store.Cron(a.ID, c.ID); !errors.Is(err, store.ErrNotFound) {

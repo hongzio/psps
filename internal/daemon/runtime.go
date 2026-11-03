@@ -12,11 +12,11 @@ import (
 	"sync"
 	"time"
 
-	"github.com/hongzio/gero/internal/driver"
-	"github.com/hongzio/gero/internal/event"
-	"github.com/hongzio/gero/internal/shim"
-	"github.com/hongzio/gero/internal/shimproto"
-	"github.com/hongzio/gero/internal/store"
+	"github.com/hongzio/psps/internal/driver"
+	"github.com/hongzio/psps/internal/event"
+	"github.com/hongzio/psps/internal/shim"
+	"github.com/hongzio/psps/internal/shimproto"
+	"github.com/hongzio/psps/internal/store"
 )
 
 // runtime is the daemon's side of one agent: a driver folding the agent's
@@ -66,7 +66,7 @@ type runtime struct {
 	news int
 	// turnSince is when the turn it is in began, answer the last thing it
 	// said in it, and waits the approval it waits for: what its lead hears
-	// of it. overtime is how far gero is in stopping a turn at its limit.
+	// of it. overtime is how far psps is in stopping a turn at its limit.
 	turnSince time.Time
 	answer    string
 	waits     string

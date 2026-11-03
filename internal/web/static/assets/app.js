@@ -1,4 +1,4 @@
-// gero web UI. Plain DOM, no framework, no build step.
+// psps web UI. Plain DOM, no framework, no build step.
 //
 // Everything an agent says is untrusted (a repository or a web page can put
 // words in its mouth), so agent text only ever reaches the page through
@@ -50,7 +50,7 @@ async function api(method, path, body) {
   const res = await fetch(path, {
     method,
     credentials: 'same-origin',
-    headers: { 'Content-Type': 'application/json', 'X-Gero-Request': '1' },
+    headers: { 'Content-Type': 'application/json', 'X-Psps-Request': '1' },
     body: body === undefined ? undefined : JSON.stringify(body),
   })
   if (res.status === 401) throw new Unauthorized()
@@ -72,7 +72,7 @@ const S = {
   openLines: new Set(),
   // Teams folded to their heads in the sidebar, by ID: this browser's,
   // kept across visits.
-  foldedTeams: new Set((() => { try { return JSON.parse(localStorage.getItem('gero.foldedTeams') || '[]') } catch { return [] } })()),
+  foldedTeams: new Set((() => { try { return JSON.parse(localStorage.getItem('psps.foldedTeams') || '[]') } catch { return [] } })()),
   // A sidebar row is held or being moved: the sidebar is not redrawn under
   // it, but once it is let go.
   sorting: false,
@@ -135,22 +135,22 @@ const agentById = (id) => S.agents.find((a) => a.id === id)
 // prompt has no name until its first message.
 const agentTitle = (a) => a.name || 'New agent'
 // shownID is the ID an agent goes by: its own, the one it went by until a
-// new session took it, or the key gero gave it.
+// new session took it, or the key psps gave it.
 const shownID = (a) => a.handle || a.was || a.id
 // letter reads a mail from another agent as the agent got it (the daemon's
 // mailproxy.Letter): who wrote it, from where, and what it says.
-const LETTER = /^\[gero mail #(\d+) from agent (\S+) in isolation (\S+)\. [^\n]*\]\n\n/
+const LETTER = /^\[psps mail #(\d+) from agent (\S+) in isolation (\S+)\. [^\n]*\]\n\n/
 function letter(text) {
   const m = LETTER.exec(text)
   return m && { id: m[1], from: m[2], iso: m[3], body: text.slice(m[0].length) }
 }
 // A cron's message as its agent got it (internal/daemon/crons.go).
-const CRON = /^\[gero cron #(\d+), on schedule "([^"\n]*)"\. [^\n]*\]\n\n/
+const CRON = /^\[psps cron #(\d+), on schedule "([^"\n]*)"\. [^\n]*\]\n\n/
 function cronMsg(text) {
   const m = CRON.exec(text)
   // One the agent set itself says so, and one another set through the
   // control service says whose it is (cronLetter).
-  const by = m && /Agent (.+?) set this message, through gero's control service/.exec(m[0])
+  const by = m && /Agent (.+?) set this message, through psps's control service/.exec(m[0])
   return m && { id: m[1], schedule: m[2], self: m[0].includes('You set this message yourself'), by: by?.[1], body: text.slice(m[0].length) }
 }
 
@@ -493,7 +493,7 @@ function apply(c, e) {
     case 'status':
       // Drivers report blocked after every approval and leave it only when
       // none is open: any other status means nothing is pending. Not so
-      // for gero's own (ssm), which the daemon holds, not the agent's CLI.
+      // for psps's own (ssm), which the daemon holds, not the agent's CLI.
       if (e.status !== 'blocked') for (const en of c.entries) if (en.kind === 'approval' && !en.decision && en.akind !== 'ssm') en.decision = 'void'
       break
     case 'turn_end':
@@ -901,7 +901,7 @@ window.addEventListener('popstate', route)
 async function send(text) {
   const id = S.sel
   await guarded(async () => {
-    // One of gero's own commands is done, not sent, and says what it did.
+    // One of psps's own commands is done, not sent, and says what it did.
     const r = await api('POST', `/v1/agents/${id}/messages`, { text })
     if (r.done) {
       toast(r.done)
@@ -924,7 +924,7 @@ function setSidebarWidth(w) {
   root.style.setProperty('--sidebar-w', w + 'px')
   return w
 }
-try { const w = +localStorage.getItem('gero.sidebarWidth'); if (w) setSidebarWidth(w) } catch {}
+try { const w = +localStorage.getItem('psps.sidebarWidth'); if (w) setSidebarWidth(w) } catch {}
 
 function sidebarResizer() {
   const bar = h('div', { class: 'sidebar-resizer', role: 'separator', 'aria-orientation': 'vertical', title: 'Drag to resize · double-click to reset' })
@@ -937,7 +937,7 @@ function sidebarResizer() {
     bar.classList.remove('dragging')
     document.body.classList.remove('resizing')
     bar.removeEventListener('pointermove', move)
-    try { if (w) localStorage.setItem('gero.sidebarWidth', String(w)) } catch {}
+    try { if (w) localStorage.setItem('psps.sidebarWidth', String(w)) } catch {}
   }
   bar.addEventListener('pointerdown', (e) => {
     if (e.button !== 0) return
@@ -954,7 +954,7 @@ function sidebarResizer() {
   bar.addEventListener('pointercancel', end)
   bar.addEventListener('dblclick', () => {
     setSidebarWidth(null)
-    try { localStorage.removeItem('gero.sidebarWidth') } catch {}
+    try { localStorage.removeItem('psps.sidebarWidth') } catch {}
     fitTopbar()
   })
   return bar
@@ -1068,7 +1068,7 @@ function renderSidebar() {
   // Polling redraws the sidebar: the list stays where it was scrolled.
   const scrolled = el.querySelector('.agent-list')?.scrollTop || 0
   el.replaceChildren(
-    h('div', { class: 'brand' }, 'gero', h('span', { class: 'count' }, `${live.length} agent${live.length === 1 ? '' : 's'}`),
+    h('div', { class: 'brand' }, 'psps', h('span', { class: 'count' }, `${live.length} agent${live.length === 1 ? '' : 's'}`),
       h('button', { class: 'add-divider', title: 'Add a divider at the bottom; hold it to move it', 'aria-label': 'Add a divider', onclick: addDivider },
         icon('separator-horizontal')),
       h('button', { class: 'brand-settings', title: 'Settings', 'aria-label': 'Settings', onclick: openSettings }, icon('settings'))),
@@ -1245,7 +1245,7 @@ function teamGroup(t, members, row) {
   const folded = S.foldedTeams.has(t.id)
   const toggle = () => {
     folded ? S.foldedTeams.delete(t.id) : S.foldedTeams.add(t.id)
-    try { localStorage.setItem('gero.foldedTeams', JSON.stringify([...S.foldedTeams])) } catch {}
+    try { localStorage.setItem('psps.foldedTeams', JSON.stringify([...S.foldedTeams])) } catch {}
     renderSidebar()
   }
   // Folded, the head has a dot for each of its agents, those that want a
@@ -1317,7 +1317,7 @@ async function editTeam(t) {
   const warn = () => {
     noBudget.hidden = parseTokens(budget.value) !== 0
     noBudget.textContent = "No budget: only the plan ceiling holds the run back, and it counts the account's whole use, yours too; lower it to keep some of the week." +
-      (evalCmd.value.trim() ? '' : ' With no eval either, gero never ends the run or wakes the lead: the team spends while the lead keeps work going, and stands idle once it stops.')
+      (evalCmd.value.trim() ? '' : ' With no eval either, psps never ends the run or wakes the lead: the team spends while the lead keeps work going, and stands idle once it stops.')
   }
   budget.addEventListener('input', warn)
   evalCmd.addEventListener('input', warn)
@@ -1529,7 +1529,7 @@ function agentView() {
   S.drawn = null
   if (!a) {
     const frag = document.createDocumentFragment()
-    frag.append(topbar('gero'), h('div', { class: 'page' }, h('div', { class: 'empty' },
+    frag.append(topbar('psps'), h('div', { class: 'page' }, h('div', { class: 'empty' },
       h('p', null, S.agents.length ? 'No agent selected.' : 'No agents yet.'),
       h('button', { class: 'btn primary', onclick: () => show('new') }, 'Start an agent'))))
     return frag
@@ -1552,7 +1552,7 @@ function agentView() {
   return frag
 }
 
-// forkedFrom is the ID of the agent a was forked from, while gero has it.
+// forkedFrom is the ID of the agent a was forked from, while psps has it.
 function forkedFrom(a) {
   const from = a.forked_from && agentById(a.forked_from)
   return from ? shownID(from) : ''
@@ -1729,7 +1729,7 @@ async function editAgent(a) {
   let saved = null
   const ok = await ask({
     title: 'Name, ID and team',
-    body: `Only what it is called changes; a running turn carries on. Its ID is unique among all agents; left empty, it goes by ${a.id}, the one gero gave it. A team groups agents in the sidebar; a name no team has makes one.`,
+    body: `Only what it is called changes; a running turn carries on. Its ID is unique among all agents; left empty, it goes by ${a.id}, the one psps gave it. A team groups agents in the sidebar; a name no team has makes one.`,
     fields: [h('label', { class: 'dialog-field' }, 'Name', name), h('label', { class: 'dialog-field' }, 'ID', id),
       h('label', { class: 'dialog-field' }, 'Team', team, teams)],
     ok: 'Save',
@@ -1980,7 +1980,7 @@ function cronForm(a, c, zone, saved, cancel) {
   save.addEventListener('click', go)
   const form = h('div', { class: 'cron-form' },
     h('div', { class: 'dialog-field' }, 'When', seg, panes.every, panes.at, panes.cron,
-      h('span', { class: 'hint' }, `The Mac's time: ${zone}. Runs missed while the Mac slept or gero was down come due once, as soon as they can.`)),
+      h('span', { class: 'hint' }, `The Mac's time: ${zone}. Runs missed while the Mac slept or psps was down come due once, as soon as they can.`)),
     h('label', { class: 'dialog-field' }, 'Message', prompt),
     h('div', { class: 'dialog-field' }, 'If the agent is busy when it comes', h('div', { class: 'busy' }, skip, wait)),
     h('div', { class: 'dialog-field' }, h('div', { class: 'busy' }, once)),
@@ -2429,7 +2429,7 @@ function renderAskJump() {
 }
 
 // ---- Completion in the message box: commands typed at the start of a
-// message (/; gero's own, then the agent CLI's), Codex's skills anywhere in
+// message (/; psps's own, then the agent CLI's), Codex's skills anywhere in
 // one ($), and files of the agent's workspace (@).
 
 // fuzzy scores how well q matches s, its letters in order: higher is
@@ -2521,7 +2521,7 @@ function completer(a, ta, submit) {
       },
         h('span', { class: 'ci-name' }, it.label, it.hint ? h('span', { class: 'ci-hint' }, ' ' + it.hint) : null),
         it.desc ? h('span', { class: 'ci-desc' }, it.desc) : null,
-        it.gero ? h('span', { class: 'ci-tag', title: 'gero does this itself; the agent is not sent it' }, 'gero') : null)),
+        it.psps ? h('span', { class: 'ci-tag', title: 'psps does this itself; the agent is not sent it' }, 'psps') : null)),
       note ? h('div', { class: 'complete-note' }, note) : null,
     ].filter(Boolean))
     box.hidden = !rows.length && !note
@@ -2561,9 +2561,9 @@ function completer(a, ta, submit) {
     }
     const rows = cmds.filter((x) => x.prefix === t.prefix)
       .map((x) => [fuzzy(t.q, x.name), x]).filter(([s]) => s >= 0)
-      // Typed: the best match first; not yet: gero's own, then the agent's.
+      // Typed: the best match first; not yet: psps's own, then the agent's.
       .sort((x, y) => (t.q ? y[0] - x[0] : 0))
-      .map(([, x]) => ({ label: x.prefix + x.name, value: x.prefix + x.name, hint: x.hint, desc: x.description, gero: x.gero,
+      .map(([, x]) => ({ label: x.prefix + x.name, value: x.prefix + x.name, hint: x.hint, desc: x.description, psps: x.psps,
         whole: x.prefix === '/' && !x.hint && !x.args, typed: x.name === t.q }))
     show(rows)
   }
@@ -2898,14 +2898,14 @@ function renderSettings(a) {
 // The working directory last given for a new agent, per isolation. It
 // is a convenience of this browser only.
 function recentDir(iso) {
-  try { return JSON.parse(localStorage.getItem('gero.recentDirs') || '{}')[iso] || null } catch { return null }
+  try { return JSON.parse(localStorage.getItem('psps.recentDirs') || '{}')[iso] || null } catch { return null }
 }
 
 function rememberDir(iso, dir) {
   try {
-    const all = JSON.parse(localStorage.getItem('gero.recentDirs') || '{}')
+    const all = JSON.parse(localStorage.getItem('psps.recentDirs') || '{}')
     all[iso] = dir
-    localStorage.setItem('gero.recentDirs', JSON.stringify(all))
+    localStorage.setItem('psps.recentDirs', JSON.stringify(all))
   } catch {}
 }
 
@@ -3226,7 +3226,7 @@ function isoOverview(i) {
 const SERVICE_GROUPS = [
   { name: 'Credentials', note: 'your logins, used on the Mac within an allowlist' },
   { name: 'Into the isolation', note: 'folders, skills and ports of the Mac’s' },
-  { name: 'Between agents', note: 'gero’s own' },
+  { name: 'Between agents', note: 'psps’s own' },
 ]
 const serviceGroup = (s) => ['share', 'skill', 'port'].includes(s.name) ? 1 : ['mail', 'cron', 'team', 'control'].includes(s.name) ? 2 : 0
 const grouped = (services) => SERVICE_GROUPS.map((g, n) => ({ ...g, services: services.filter((s) => serviceGroup(s) === n) })).filter((g) => g.services.length)
@@ -3457,7 +3457,7 @@ function newIsolationView() {
   memory.addEventListener('input', () => { d.memory = memory.value })
   fence.addEventListener('change', () => { d.fence = fence.checked })
   const create = h('button', { class: 'btn primary', disabled: busy },
-    busy ? `Creating ${S.isoCreating}… (building its image first when gero has changed)` : 'Create isolation')
+    busy ? `Creating ${S.isoCreating}… (building its image first when psps has changed)` : 'Create isolation')
   create.addEventListener('click', async () => {
     const n = d.name.trim()
     if (!n) return
@@ -3495,7 +3495,7 @@ function newIsolationView() {
 }
 
 // NO_KERNEL is container refusing to start a VM before a Linux kernel is
-// set up, which a fresh install of container is: nothing in gero fixes it,
+// set up, which a fresh install of container is: nothing in psps fixes it,
 // so noKernel tells the operator the command that does.
 const NO_KERNEL = /default kernel not configured/
 function noKernel() {
@@ -4082,7 +4082,7 @@ async function checkEnv(s, e, key) {
   })
 }
 
-// ---- Verify: an isolation's guarantees, measured now (gero iso verify)
+// ---- Verify: an isolation's guarantees, measured now (psps iso verify)
 
 async function verifyIsolation(i) {
   S.verifying = i.name
@@ -4206,8 +4206,8 @@ function loginView() {
   }
   tok.addEventListener('keydown', (e) => { if (e.key === 'Enter') go() })
   return h('div', { class: 'login' },
-    h('h2', null, 'Sign in to gero'),
-    h('p', { class: 'note' }, 'Run ', h('code', null, 'gero web'), ' on the Mac: it opens a signed-in link, and prints one for your phone.'),
+    h('h2', null, 'Sign in to psps'),
+    h('p', { class: 'note' }, 'Run ', h('code', null, 'psps web'), ' on the Mac: it opens a signed-in link, and prints one for your phone.'),
     h('div', { class: 'field' }, h('label', null, 'Or paste the token'), tok),
     err,
     h('button', { class: 'btn primary', onclick: go }, 'Sign in'))
@@ -4624,7 +4624,7 @@ async function askStop(a) {
 
 const THEMES = [['system', 'System'], ['light', 'Light'], ['dark', 'Dark']]
 function savedTheme() {
-  try { const t = localStorage.getItem('gero.theme'); return THEMES.some(([v]) => v === t) ? t : 'system' } catch { return 'system' }
+  try { const t = localStorage.getItem('psps.theme'); return THEMES.some(([v]) => v === t) ? t : 'system' } catch { return 'system' }
 }
 // applyTheme sets data-theme for a picked one, and the browser's bar color
 // with it; the system's leaves both to the media queries.
@@ -4648,7 +4648,7 @@ function openSettings() {
       type: 'button', role: 'radio', 'aria-checked': String(v === now), class: v === now ? 'on' : '',
       onclick: (e) => {
         e.preventDefault()
-        try { localStorage.setItem('gero.theme', v) } catch {}
+        try { localStorage.setItem('psps.theme', v) } catch {}
         applyTheme(v)
         draw()
         seg.querySelector('.on')?.focus()

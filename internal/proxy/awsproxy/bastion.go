@@ -15,8 +15,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/hongzio/gero/internal/paths"
-	"github.com/hongzio/gero/internal/proxy"
+	"github.com/hongzio/psps/internal/paths"
+	"github.com/hongzio/psps/internal/proxy"
 )
 
 // An env may name a bastion: an EC2 instance, reached over tailcat
@@ -29,7 +29,7 @@ import (
 //
 // and every aws command is run there over ssh. `tailcat ssh` passes no
 // ssh options, so the system ssh is run with tailcat as its ProxyCommand:
-// BatchMode and a known_hosts of gero's own keep a prompt from ever
+// BatchMode and a known_hosts of psps's own keep a prompt from ever
 // hanging the daemon.
 //
 // Each tailcat client is a WireGuard peer, and two at once with the Mac's
@@ -50,7 +50,7 @@ var (
 	// tailcatDirs is where tailcat is looked for when the daemon's PATH,
 	// launchd's minimal one, does not have it.
 	tailcatDirs = []string{"/opt/homebrew/bin", "/usr/local/bin"}
-	// knownHosts is gero's own known_hosts for bastions.
+	// knownHosts is psps's own known_hosts for bastions.
 	knownHosts = func() string { return filepath.Join(paths.Default().State, "bastion_known_hosts") }
 	// controlPath is the masters' sockets; %C is a hash of the destination,
 	// which HostKeyAlias makes one per bastion.
@@ -91,7 +91,7 @@ func (c CLI) Command(ctx context.Context, args ...string) (*exec.Cmd, error) {
 		return nil, err
 	}
 	ensureMaster(ctx, tc, c.Bastion)
-	argv := append(sshOpts(tc, c.Bastion), "-o", "ControlMaster=no", "gero@bastion", shellJoin(append([]string{"aws"}, args...)))
+	argv := append(sshOpts(tc, c.Bastion), "-o", "ControlMaster=no", "psps@bastion", shellJoin(append([]string{"aws"}, args...)))
 	return exec.CommandContext(ctx, sshBin, argv...), nil
 }
 
@@ -109,7 +109,7 @@ func ensureMaster(ctx context.Context, tc, addr string) {
 	mu.Lock()
 	defer mu.Unlock()
 	opts := sshOpts(tc, addr)
-	if exec.CommandContext(ctx, sshBin, append(opts, "-O", "check", "gero@bastion")...).Run() == nil {
+	if exec.CommandContext(ctx, sshBin, append(opts, "-O", "check", "psps@bastion")...).Run() == nil {
 		return
 	}
 	// -f: ssh returns once connected and the master stays behind it. No
@@ -117,7 +117,7 @@ func ensureMaster(ctx context.Context, tc, addr string) {
 	exec.CommandContext(ctx, sshBin, append(opts, "-f", "-N",
 		"-o", "ControlMaster=yes", "-o", "ControlPersist="+masterPersist,
 		"-o", "ServerAliveInterval=15", "-o", "ServerAliveCountMax=2",
-		"gero@bastion")...).Run()
+		"psps@bastion")...).Run()
 }
 
 func sshOpts(tailcat, addr string) []string {
@@ -129,6 +129,8 @@ func sshOpts(tailcat, addr string) []string {
 		"-o", "ConnectTimeout=20",
 		"-o", "LogLevel=ERROR",
 		"-o", "ProxyCommand=" + shellQuote(tailcat) + " " + shellQuote(addr) + " 22",
+		// Named as when psps was gero, so a bastion's host key recorded
+		// then still holds.
 		"-o", "HostKeyAlias=gero-bastion-" + hex.EncodeToString(sum[:6]),
 		"-o", "UserKnownHostsFile=" + knownHosts(),
 		"-o", "StrictHostKeyChecking=accept-new",

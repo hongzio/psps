@@ -13,9 +13,9 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/x/ansi"
 
-	"github.com/hongzio/gero/internal/api"
-	"github.com/hongzio/gero/internal/client"
-	"github.com/hongzio/gero/internal/proxy"
+	"github.com/hongzio/psps/internal/api"
+	"github.com/hongzio/psps/internal/client"
+	"github.com/hongzio/psps/internal/proxy"
 )
 
 // The services page: the credential proxies' environments, defined once on
@@ -187,7 +187,7 @@ func (m *Model) handleSvcKey(msg tea.KeyMsg) tea.Cmd {
 			prompt = fmt.Sprintf("remove %s env %s? %s stop serving it (y/n)", svc, name, strings.Join(exposed, ", "))
 		}
 		m.confirm = &confirmation{prompt: prompt, onYes: func() tea.Cmd {
-			return m.do("removed "+svc+"/"+name+"; its secret, if any, stays until `gero env secret "+svc+" "+name+" --clear`", true,
+			return m.do("removed "+svc+"/"+name+"; its secret, if any, stays until `psps env secret "+svc+" "+name+" --clear`", true,
 				func(ctx context.Context) error { return be.DeleteEnv(ctx, svc, name, len(exposed) > 0) })
 		}}
 	}

@@ -19,9 +19,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/hongzio/gero/internal/creds"
-	"github.com/hongzio/gero/internal/proxy"
-	"github.com/hongzio/gero/internal/store"
+	"github.com/hongzio/psps/internal/creds"
+	"github.com/hongzio/psps/internal/proxy"
+	"github.com/hongzio/psps/internal/store"
 )
 
 // Ported from isolate's test_pgproxy.py. The SCRAM math is pinned to the
@@ -483,7 +483,7 @@ func TestAWrongTokenIsRefusedBeforeUpstreamIsDialed(t *testing.T) {
 	}
 }
 
-// What `gero iso verify` tries from inside the isolation with psql is what
+// What `psps iso verify` tries from inside the isolation with psql is what
 // this proxy refuses, with the text verify looks for.
 func TestVerifysRefusalIsRefused(t *testing.T) {
 	up := newUpstream(t, "cleartext", "real-pass")
@@ -584,7 +584,7 @@ func TestAMissingSecretNamesTheFix(t *testing.T) {
 		v.Exposure.Envs = append(v.Exposure.Envs, "ghost")
 	})
 	_, seen := h.handshake("ghost", "app", token, false)
-	if kinds(seen) != "E" || !strings.Contains(parseError(seen[0].payload)["M"], "gero env secret pg ghost") {
+	if kinds(seen) != "E" || !strings.Contains(parseError(seen[0].payload)["M"], "psps env secret pg ghost") {
 		t.Fatalf("%v", parseError(seen[0].payload))
 	}
 }
@@ -595,7 +595,7 @@ func TestAnIsolationWithoutTheServiceIsToldHowToGetIt(t *testing.T) {
 	cl := h.dial()
 	cl.c.Write(startupMessage(map[string]string{"user": "dev", "database": "app"}))
 	kind, payload, _ := readMessage(cl.r, 0)
-	if kind != 'E' || !strings.Contains(parseError(payload)["M"], "gero iso expose dev pg") {
+	if kind != 'E' || !strings.Contains(parseError(payload)["M"], "psps iso expose dev pg") {
 		t.Fatalf("%c %v", kind, parseError(payload))
 	}
 }
@@ -626,7 +626,7 @@ func TestAnOversizedPasswordMessageIsRefusedUnread(t *testing.T) {
 	}
 }
 
-// --- `gero env check pg` exercises the same client path, from the Mac ---
+// --- `psps env check pg` exercises the same client path, from the Mac ---
 
 func TestCheckEnvReportsTheServerVersion(t *testing.T) {
 	up := newUpstream(t, "scram", "real-pass")

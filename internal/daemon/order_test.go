@@ -6,10 +6,10 @@ import (
 	"testing"
 	"time"
 
-	"github.com/hongzio/gero/internal/api"
-	"github.com/hongzio/gero/internal/driver"
-	"github.com/hongzio/gero/internal/event"
-	"github.com/hongzio/gero/internal/store"
+	"github.com/hongzio/psps/internal/api"
+	"github.com/hongzio/psps/internal/driver"
+	"github.com/hongzio/psps/internal/event"
+	"github.com/hongzio/psps/internal/store"
 )
 
 func TestTheOperatorsOrderComesFirstInTheLiveList(t *testing.T) {

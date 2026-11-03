@@ -3,7 +3,7 @@
 //
 // It is the desired state the daemon reconciles toward, not a cache of the
 // world. Agent processes and their native session files live in the
-// isolation; the store remembers which ones gero owns and how far into each
+// isolation; the store remembers which ones psps owns and how far into each
 // agent's shim log it has read.
 package store
 
@@ -17,14 +17,14 @@ import (
 
 	_ "modernc.org/sqlite"
 
-	"github.com/hongzio/gero/internal/driver"
-	"github.com/hongzio/gero/internal/event"
+	"github.com/hongzio/psps/internal/driver"
+	"github.com/hongzio/psps/internal/event"
 )
 
 var ErrNotFound = errors.New("not found")
 
 type Isolation struct {
-	// ID is what an isolation is to gero, for good: every row that belongs
+	// ID is what an isolation is to psps, for good: every row that belongs
 	// to it names it by ID, and its container, network and volumes are
 	// named after it. Name is what people call it, and can change.
 	ID        string `json:"id"`
@@ -50,7 +50,7 @@ type Isolation struct {
 }
 
 type Agent struct {
-	// ID is the key gero gave it: its workspace, its log and every row
+	// ID is the key psps gave it: its workspace, its log and every row
 	// about it are named after it.
 	ID string `json:"id"`
 	// Handle is the ID the operator gave it, if any: unique among all
@@ -83,7 +83,7 @@ type Agent struct {
 	ForkOf     string `json:"fork_of,omitempty"`
 	// MadeBy is the line of the team lead that made it, if one did: its
 	// turns' ends go to that lead. TurnMinutes is how long a turn of its may
-	// run before gero stops it, 0 for as long as it likes.
+	// run before psps stops it, 0 for as long as it likes.
 	MadeBy      string `json:"made_by,omitempty"`
 	TurnMinutes int    `json:"turn_minutes,omitempty"`
 	// MadeVia is the agent that made it through the control service, if
@@ -246,8 +246,8 @@ func migrate(db *sql.DB) error {
 			}
 		}
 	}
-	// An eval from before not_run that gero could not run printed nothing:
-	// its output is gero's refusal alone, from its start.
+	// An eval from before not_run that psps could not run printed nothing:
+	// its output is psps's refusal alone, from its start.
 	if !hadNotRun {
 		if _, err := db.Exec(`UPDATE team_evals SET not_run = 1 WHERE score IS NULL AND (output LIKE 'isolation % cannot run the eval: %' OR output LIKE 'isolation % has no verified network fence: %')`); err != nil {
 			return err

@@ -13,10 +13,10 @@ import (
 	"sync"
 	"time"
 
-	"github.com/hongzio/gero/internal/api"
-	"github.com/hongzio/gero/internal/driver"
-	"github.com/hongzio/gero/internal/isolation"
-	"github.com/hongzio/gero/internal/store"
+	"github.com/hongzio/psps/internal/api"
+	"github.com/hongzio/psps/internal/driver"
+	"github.com/hongzio/psps/internal/isolation"
+	"github.com/hongzio/psps/internal/store"
 )
 
 // The agent CLIs' own logins. Claude Code and Codex keep their credentials
@@ -159,7 +159,7 @@ func (m *Manager) CLIs(ctx context.Context, name string) ([]api.CLI, error) {
 	return out, nil
 }
 
-const cliSep = "--gero--"
+const cliSep = "--psps--"
 
 func (m *Manager) cliStatus(ctx context.Context, iso store.Isolation, tool driver.Kind) api.CLI {
 	c := api.CLI{Tool: tool}

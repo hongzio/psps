@@ -1,4 +1,4 @@
-// Package paths says where gero keeps things on the host.
+// Package paths says where psps keeps things on the host.
 package paths
 
 import (
@@ -7,15 +7,15 @@ import (
 )
 
 type Paths struct {
-	Config string // ~/.config/gero: user-edited settings, keybindings
-	Data   string // ~/.local/share/gero: the database
-	State  string // ~/.local/state/gero: socket, lock, logs
+	Config string // ~/.config/psps: user-edited settings, keybindings
+	Data   string // ~/.local/share/psps: the database
+	State  string // ~/.local/state/psps: socket, lock, logs
 }
 
-// Default follows the XDG layout. GERO_HOME puts everything under one
+// Default follows the XDG layout. PSPS_HOME puts everything under one
 // directory instead, for development and tests.
 func Default() Paths {
-	if h := os.Getenv("GERO_HOME"); h != "" {
+	if h := os.Getenv("PSPS_HOME"); h != "" {
 		return Paths{Config: filepath.Join(h, "config"), Data: filepath.Join(h, "data"), State: filepath.Join(h, "state")}
 	}
 	home, _ := os.UserHomeDir()
@@ -26,9 +26,9 @@ func Default() Paths {
 		return filepath.Join(home, def)
 	}
 	return Paths{
-		Config: filepath.Join(env("XDG_CONFIG_HOME", ".config"), "gero"),
-		Data:   filepath.Join(env("XDG_DATA_HOME", ".local/share"), "gero"),
-		State:  filepath.Join(env("XDG_STATE_HOME", ".local/state"), "gero"),
+		Config: filepath.Join(env("XDG_CONFIG_HOME", ".config"), "psps"),
+		Data:   filepath.Join(env("XDG_DATA_HOME", ".local/share"), "psps"),
+		State:  filepath.Join(env("XDG_STATE_HOME", ".local/state"), "psps"),
 	}
 }
 
@@ -41,10 +41,10 @@ func (p Paths) Ensure() error {
 	return nil
 }
 
-func (p Paths) Socket() string { return filepath.Join(p.State, "gero.sock") }
+func (p Paths) Socket() string { return filepath.Join(p.State, "psps.sock") }
 func (p Paths) Lock() string   { return filepath.Join(p.State, "daemon.lock") }
 func (p Paths) Log() string    { return filepath.Join(p.State, "daemon.log") }
-func (p Paths) DB() string     { return filepath.Join(p.Data, "gero.db") }
+func (p Paths) DB() string     { return filepath.Join(p.Data, "psps.db") }
 
 // Credentials is the one file the credential proxies read their secrets
 // from: an INI of [<service> <env>] sections, 0600.

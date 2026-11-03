@@ -8,7 +8,7 @@ import (
 
 	"github.com/BurntSushi/toml"
 
-	"github.com/hongzio/gero/internal/pf"
+	"github.com/hongzio/psps/internal/pf"
 )
 
 // Settings is config.toml, read once when the daemon starts.

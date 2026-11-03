@@ -15,19 +15,19 @@ import (
 	"strings"
 	"time"
 
-	"github.com/hongzio/gero/internal/api"
-	"github.com/hongzio/gero/internal/creds"
-	"github.com/hongzio/gero/internal/driver"
-	"github.com/hongzio/gero/internal/isolation"
-	"github.com/hongzio/gero/internal/proxy"
-	"github.com/hongzio/gero/internal/proxy/awsproxy"
-	"github.com/hongzio/gero/internal/proxy/controlproxy"
-	"github.com/hongzio/gero/internal/proxy/cronproxy"
-	"github.com/hongzio/gero/internal/proxy/mailproxy"
-	"github.com/hongzio/gero/internal/proxy/teamproxy"
-	"github.com/hongzio/gero/internal/shimproto"
-	"github.com/hongzio/gero/internal/store"
-	"github.com/hongzio/gero/internal/tunnel"
+	"github.com/hongzio/psps/internal/api"
+	"github.com/hongzio/psps/internal/creds"
+	"github.com/hongzio/psps/internal/driver"
+	"github.com/hongzio/psps/internal/isolation"
+	"github.com/hongzio/psps/internal/proxy"
+	"github.com/hongzio/psps/internal/proxy/awsproxy"
+	"github.com/hongzio/psps/internal/proxy/controlproxy"
+	"github.com/hongzio/psps/internal/proxy/cronproxy"
+	"github.com/hongzio/psps/internal/proxy/mailproxy"
+	"github.com/hongzio/psps/internal/proxy/teamproxy"
+	"github.com/hongzio/psps/internal/shimproto"
+	"github.com/hongzio/psps/internal/store"
+	"github.com/hongzio/psps/internal/tunnel"
 )
 
 // The credential proxies run in this process. Each isolation that is up has
@@ -35,7 +35,7 @@ import (
 // goes straight to that isolation's Instance of the service, so the caller
 // is identified by the tunnel it came through and nothing listens on the
 // Mac. What a service puts in the isolation — its environment variables,
-// git's URL rewrite, its skill — is written by `gero-shim sync` whenever the
+// git's URL rewrite, its skill — is written by `psps-shim sync` whenever the
 // container (re)starts or an exposure or env changes.
 
 // EnvFile carries the proxies' environment to shells; agents get the same
@@ -208,7 +208,7 @@ func (m *Manager) runTunnel(iso string, ts *tunnelState) error {
 		return err
 	}
 	if v := m.shimVersion(iso); v != "" && v < shimproto.ProxiesVersion {
-		return fmt.Errorf("the isolation's image predates the credential proxies; run `gero iso upgrade %s`", rec.Name)
+		return fmt.Errorf("the isolation's image predates the credential proxies; run `psps iso upgrade %s`", rec.Name)
 	}
 	conn, err := m.cli.DialTunnel(m.ctx, rec.Container)
 	if err != nil {
@@ -258,7 +258,7 @@ func (m *Manager) runTunnel(iso string, ts *tunnelState) error {
 	if m.tunnelStatus(iso) != "up" {
 		m.log.Printf("isolation %s: proxy tunnel up", rec.Name)
 		if len(older) > 0 {
-			m.log.Printf("isolation %s: its image predates %s; `gero iso upgrade %s` opens them", rec.Name, strings.Join(older, ", "), rec.Name)
+			m.log.Printf("isolation %s: its image predates %s; `psps iso upgrade %s` opens them", rec.Name, strings.Join(older, ", "), rec.Name)
 		}
 	}
 	m.setTunnelStatus(ts, status)
@@ -303,7 +303,7 @@ type isoWorkspace struct {
 	team bool
 	// control: its agents have a control address (controlEnv).
 	control bool
-	// awsStrict: its agents ask gero to run SSM commands (awsEnv).
+	// awsStrict: its agents ask psps to run SSM commands (awsEnv).
 	awsStrict bool
 	// skills are the files of the services whose files come and go
 	// (proxy.Pruner), each with its content's hash: an agent CLI lists
@@ -379,7 +379,7 @@ func (m *Manager) workspace(iso string) (isoWorkspace, error) {
 	}
 	sort.Strings(w.env)
 	var b strings.Builder
-	b.WriteString("# Written by gero: the credential proxies' addresses and workspace tokens.\n" +
+	b.WriteString("# Written by psps: the credential proxies' addresses and workspace tokens.\n" +
 		"# No real credential is here; the proxies hold those outside the isolation.\n")
 	for _, kv := range w.env {
 		k, v, _ := strings.Cut(kv, "=")
@@ -482,6 +482,12 @@ func (m *Manager) syncLocked(ctx context.Context, iso store.Isolation) {
 		// It would write a binary file as its base64 and cannot prune.
 		req.Files = slices.DeleteFunc(slices.Clone(req.Files), func(f shimproto.SyncFile) bool { return f.Base64 })
 		req.Prune = nil
+	}
+	if v := m.shimVersion(iso.ID); v != "" && v < shimproto.RenameVersion {
+		req = asGero(req)
+	} else {
+		// The skills written while psps was gero go.
+		req.Prune = append(slices.Clone(req.Prune), proxy.GeroSkills...)
 	}
 	b, _ := json.Marshal(req)
 	m.mu.Lock()
@@ -615,7 +621,7 @@ func (m *Manager) PutEnv(ctx context.Context, service, name string, p proxy.Patc
 	cur, err := m.store.Env(service, name)
 	switch {
 	case err == nil && create:
-		return api.Env{}, badRequest(fmt.Errorf("%s env %s already exists; edit it with `gero env edit %s %s`", service, name, service, name))
+		return api.Env{}, badRequest(fmt.Errorf("%s env %s already exists; edit it with `psps env edit %s %s`", service, name, service, name))
 	case errors.Is(err, store.ErrNotFound) && !create:
 		return api.Env{}, err
 	case err != nil && !errors.Is(err, store.ErrNotFound):
@@ -858,7 +864,7 @@ func (m *Manager) Expose(ctx context.Context, name, service string, req api.Expo
 			for _, e := range have {
 				names = append(names, e.Name)
 			}
-			return api.Exposure{}, badRequest(fmt.Errorf("no %s env named %s; create it with `gero env add %s <name> ...` (have: %s)",
+			return api.Exposure{}, badRequest(fmt.Errorf("no %s env named %s; create it with `psps env add %s <name> ...` (have: %s)",
 				service, strings.Join(missing, ", "), service, orNone(strings.Join(names, ", "))))
 		}
 	}
@@ -1000,7 +1006,7 @@ func (m *Manager) StartLogin(ctx context.Context, service, name, redirect string
 	}
 	ls, ok := svc.(proxy.LoginService)
 	if !ok {
-		return api.Login{}, badRequest(fmt.Errorf("%s does not log in through the browser; `gero env secret %s %s` stores its secret", service, service, name))
+		return api.Login{}, badRequest(fmt.Errorf("%s does not log in through the browser; `psps env secret %s %s` stores its secret", service, service, name))
 	}
 	if _, err := m.store.Env(service, name); err != nil {
 		return api.Login{}, err
@@ -1043,7 +1049,7 @@ func (m *Manager) FinishLogin(ctx context.Context, service, name, id, pasted str
 	delete(m.logins, id)
 	m.mu.Unlock()
 	if !ok || p.service != service || p.env != name {
-		return httpError{404, fmt.Errorf("no %s login %s in progress for %s; start one with `gero env secret %s %s`", service, id, name, service, name)}
+		return httpError{404, fmt.Errorf("no %s login %s in progress for %s; start one with `psps env secret %s %s`", service, id, name, service, name)}
 	}
 	svc, err := m.registry().Get(service)
 	if err != nil {
@@ -1054,4 +1060,23 @@ func (m *Manager) FinishLogin(ctx context.Context, service, name, id, pasted str
 	}
 	m.log.Printf("%s/%s: logged in; stored [%s %s]", service, name, service, name)
 	return nil
+}
+
+// asGero is req for a shim from before the rename, which manages nothing
+// named psps: its skills stay where it has them, under gero-*.
+func asGero(req shimproto.SyncRequest) shimproto.SyncRequest {
+	files := make([]shimproto.SyncFile, len(req.Files))
+	for i, f := range req.Files {
+		f.Path = proxy.AsGero(f.Path)
+		files[i] = f
+	}
+	req.Files = files
+	for _, l := range []*[]string{&req.Remove, &req.Prune} {
+		out := make([]string, len(*l))
+		for i, p := range *l {
+			out[i] = proxy.AsGero(p)
+		}
+		*l = out
+	}
+	return req
 }

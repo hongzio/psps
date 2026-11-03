@@ -15,9 +15,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/hongzio/gero/internal/creds"
-	"github.com/hongzio/gero/internal/proxy"
-	"github.com/hongzio/gero/internal/store"
+	"github.com/hongzio/psps/internal/creds"
+	"github.com/hongzio/psps/internal/proxy"
+	"github.com/hongzio/psps/internal/store"
 )
 
 const (
@@ -139,7 +139,7 @@ func (Service) Normalize(name string, env map[string]any) ([]string, error) {
 		if contains(families, f) {
 			kept = append(kept, f)
 		} else {
-			warn = append(warn, fmt.Sprintf("env %q: the %s write was dropped because %s is not read-open; `gero env edit datadog %s --allow-api ... --allow-api %s --allow-write %s` keeps both", name, f, f, name, f, f))
+			warn = append(warn, fmt.Sprintf("env %q: the %s write was dropped because %s is not read-open; `psps env edit datadog %s --allow-api ... --allow-api %s --allow-write %s` keeps both", name, f, f, name, f, f))
 		}
 	}
 	env["writes"] = kept
@@ -277,7 +277,7 @@ func (in *instance) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if !v.Enabled {
-		in.refuse(w, r, 503, fmt.Sprintf("datadog: the proxy is off for isolation %s; the operator turns it on with `gero iso expose %s datadog <env>`", in.h.Name(), in.h.Name()), 0)
+		in.refuse(w, r, 503, fmt.Sprintf("datadog: the proxy is off for isolation %s; the operator turns it on with `psps iso expose %s datadog <env>`", in.h.Name(), in.h.Name()), 0)
 		return
 	}
 	// The caller's proof, from the header SDKs use or the parameter
@@ -307,20 +307,20 @@ func (in *instance) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	e, ok := envs[name]
 	if !ok {
-		in.refuse(w, r, 503, fmt.Sprintf("datadog: environment %q was removed from gero's registry but is still exposed here; the operator re-exposes with `gero iso expose %s datadog ...`", name, in.h.Name()), 0)
+		in.refuse(w, r, 503, fmt.Sprintf("datadog: environment %q was removed from psps's registry but is still exposed here; the operator re-exposes with `psps iso expose %s datadog ...`", name, in.h.Name()), 0)
 		return
 	}
 	// The read family is checked first even for a write: an operator whose
 	// env has neither hears about the half they must fix first.
 	if m.Family != "" && !contains(e.Families, m.Family) {
-		in.refuse(w, r, 403, fmt.Sprintf("datadog: endpoint family %q is not in the allowlist for environment %q. Ask the operator to run:\n  gero env edit datadog %s --allow-api %s", m.Family, name, name, m.Family), 0)
+		in.refuse(w, r, 403, fmt.Sprintf("datadog: endpoint family %q is not in the allowlist for environment %q. Ask the operator to run:\n  psps env edit datadog %s --allow-api %s", m.Family, name, name, m.Family), 0)
 		return
 	}
 	// Naming the family, not just the request: opening writes is a
 	// per-family decision, so the refusal must not read as "writes are off".
 	if m.Write && !contains(WritesFor(e), m.Family) {
 		path, _, _ := strings.Cut(rawPath, "?")
-		in.refuse(w, r, 403, fmt.Sprintf("datadog: %s %s is a write to the %q family, which environment %q reads but does not write. Ask the operator to run:\n  gero env edit datadog %s --allow-write %s", r.Method, path, m.Family, name, name, m.Family), 0)
+		in.refuse(w, r, 403, fmt.Sprintf("datadog: %s %s is a write to the %q family, which environment %q reads but does not write. Ask the operator to run:\n  psps env edit datadog %s --allow-write %s", r.Method, path, m.Family, name, name, m.Family), 0)
 		return
 	}
 	apiKey, appKey, err := readKeys(in.h.Creds, name)

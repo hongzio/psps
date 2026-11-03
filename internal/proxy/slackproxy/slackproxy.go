@@ -59,7 +59,7 @@ var Families = map[string][]string{
 }
 
 // RequiredScopes is what each family needs from the stored token, checked
-// by `gero env check`. search.messages additionally answers only to a user
+// by `psps env check`. search.messages additionally answers only to a user
 // token (xoxp-...), which the same check surfaces as a missing scope;
 // users.lookupByEmail and the email in a profile also need users:read.email.
 var RequiredScopes = map[string]string{
@@ -227,7 +227,7 @@ func Allowed(e Env, envName, method string) *Denied {
 		for i, w := range want {
 			flags[i] = "--allow-api " + w
 		}
-		return deny(404, "slack: %s is the %q method family, which environment %q does not allow; the operator can open it with `gero env edit slack %s %s`",
+		return deny(404, "slack: %s is the %q method family, which environment %q does not allow; the operator can open it with `psps env edit slack %s %s`",
 			method, f, envName, envName, strings.Join(flags, " "))
 	}
 	return deny(404, "slack: %s is not a modeled read method", method)
@@ -328,7 +328,7 @@ func GuardChannel(e Env, envName, method, query string, body []byte, ctype strin
 	}
 	for _, c := range channels {
 		if contains(e.DenyChannels, c) {
-			return deny(403, "slack: channel %s is denied in environment %q; that is the operator's decision (`gero env edit slack %s --deny-channel ...` is where it is drawn)", c, envName, envName)
+			return deny(403, "slack: channel %s is denied in environment %q; that is the operator's decision (`psps env edit slack %s --deny-channel ...` is where it is drawn)", c, envName, envName)
 		}
 	}
 	return nil
@@ -373,7 +373,7 @@ func GuardFile(e Env, envName string, file map[string]any) *Denied {
 			if id == "" {
 				id = "?"
 			}
-			return deny(403, "slack: file %s is shared in channel %s, which is denied in environment %q; that is the operator's decision (`gero env edit slack %s --deny-channel ...` is where it is drawn)", id, c, envName, envName)
+			return deny(403, "slack: file %s is shared in channel %s, which is denied in environment %q; that is the operator's decision (`psps env edit slack %s --deny-channel ...` is where it is drawn)", id, c, envName, envName)
 		}
 	}
 	return nil

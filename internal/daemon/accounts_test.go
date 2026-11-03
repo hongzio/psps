@@ -8,12 +8,12 @@ import (
 	"testing"
 	"time"
 
-	"github.com/hongzio/gero/internal/api"
-	"github.com/hongzio/gero/internal/creds"
-	"github.com/hongzio/gero/internal/driver"
-	"github.com/hongzio/gero/internal/event"
-	"github.com/hongzio/gero/internal/proxy"
-	"github.com/hongzio/gero/internal/store"
+	"github.com/hongzio/psps/internal/api"
+	"github.com/hongzio/psps/internal/creds"
+	"github.com/hongzio/psps/internal/driver"
+	"github.com/hongzio/psps/internal/event"
+	"github.com/hongzio/psps/internal/proxy"
+	"github.com/hongzio/psps/internal/store"
 )
 
 // withCreds gives the manager a credentials file of its own.
@@ -119,7 +119,7 @@ func TestAnAccountIsSharedByIsolationsAndReachesTheirAgents(t *testing.T) {
 // is given, and again onto its replaced secret.
 func TestAgentsRestartOntoTheirAccount(t *testing.T) {
 	was := api.AccountKinds
-	api.AccountKinds = append(slices.Clone(was), api.AccountKind{Name: "test-codex", Tool: driver.Codex, Env: "GERO_TEST_VAR"})
+	api.AccountKinds = append(slices.Clone(was), api.AccountKind{Name: "test-codex", Tool: driver.Codex, Env: "PSPS_TEST_VAR"})
 	t.Cleanup(func() { api.AccountKinds = was })
 
 	e := newTestEnv(t)

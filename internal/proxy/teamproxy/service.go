@@ -5,7 +5,7 @@
 // mail's port, at each agent's own address; the daemon answers it itself,
 // since it keeps the agents.
 //
-//	isolation  curl "$GERO_TEAM_URL/agents" --json '{"role":"profiler","kind":"claude","prompt":"..."}'
+//	isolation  curl "$PSPS_TEAM_URL/agents" --json '{"role":"profiler","kind":"claude","prompt":"..."}'
 //	             |  (the isolation's tunnel, mail's port)
 //	daemon     the address is the lead's: an agent of its own, in its
 //	           team and its isolation, within the operator's terms
@@ -22,10 +22,10 @@ import (
 	"net"
 	"net/http"
 
-	"github.com/hongzio/gero/internal/creds"
-	"github.com/hongzio/gero/internal/proxy"
-	"github.com/hongzio/gero/internal/proxy/mailproxy"
-	"github.com/hongzio/gero/internal/store"
+	"github.com/hongzio/psps/internal/creds"
+	"github.com/hongzio/psps/internal/proxy"
+	"github.com/hongzio/psps/internal/proxy/mailproxy"
+	"github.com/hongzio/psps/internal/store"
 )
 
 const Name = "team"
@@ -33,7 +33,7 @@ const Name = "team"
 // URL is an agent's team, at its own address on mail's port.
 func URL(token string) string { return mailproxy.URL(token) + "/team" }
 
-var errNoEnvs = errors.New("team has no environments: turn it on for an isolation with `gero iso expose ISOLATION team`")
+var errNoEnvs = errors.New("team has no environments: turn it on for an isolation with `psps iso expose ISOLATION team`")
 
 type Service struct{}
 

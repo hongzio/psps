@@ -12,9 +12,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/hongzio/gero/internal/api"
-	"github.com/hongzio/gero/internal/client"
-	"github.com/hongzio/gero/internal/driver"
+	"github.com/hongzio/psps/internal/api"
+	"github.com/hongzio/psps/internal/client"
+	"github.com/hongzio/psps/internal/driver"
 )
 
 // fakeCLIDaemon runs the daemon's side of an agent CLI login: Claude's

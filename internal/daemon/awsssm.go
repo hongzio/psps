@@ -13,17 +13,18 @@ import (
 	"sync"
 	"time"
 
-	"github.com/hongzio/gero/internal/driver"
-	"github.com/hongzio/gero/internal/event"
-	"github.com/hongzio/gero/internal/proxy/awsproxy"
-	"github.com/hongzio/gero/internal/proxy/mailproxy"
-	"github.com/hongzio/gero/internal/store"
+	"github.com/hongzio/psps/internal/driver"
+	"github.com/hongzio/psps/internal/event"
+	"github.com/hongzio/psps/internal/proxy"
+	"github.com/hongzio/psps/internal/proxy/awsproxy"
+	"github.com/hongzio/psps/internal/proxy/mailproxy"
+	"github.com/hongzio/psps/internal/store"
 )
 
 // Strict SSM, the daemon's half (awsproxy has the AWS half): an agent of
 // an isolation in strict mode asks, at its own address, for a command on
 // an instance; the request is an approval in its conversation, held by
-// the daemon rather than by the agent's CLI; accepted, gero runs it and
+// the daemon rather than by the agent's CLI; accepted, psps runs it and
 // the agent's request answers with what it printed.
 
 const (
@@ -77,7 +78,7 @@ func (r *ssmRun) answer() ssmAnswer {
 		res := r.Result
 		a.RunResult = &res
 	case "pending", "running":
-		a.Note = fmt.Sprintf(`no outcome yet; fetch it with curl -sS "$GERO_AWS_URL/ssm/%s", which waits again`, r.ID)
+		a.Note = fmt.Sprintf(`no outcome yet; fetch it with curl -sS "$PSPS_AWS_URL/ssm/%s", which waits again`, r.ID)
 	case "declined":
 		a.Note = "the operator declined this command; do not send it again, and say in your reply what you needed it for"
 	}
@@ -138,7 +139,7 @@ func (m *Manager) awsStrict(iso string) (store.Exposure, bool) {
 	return x, st.Strict()
 }
 
-// awsEnv is an agent process's address for asking gero to run SSM
+// awsEnv is an agent process's address for asking psps to run SSM
 // commands, while its isolation is in strict mode.
 func (m *Manager) awsEnv(a store.Agent) []string {
 	if _, strict := m.awsStrict(a.IsolationID); !strict {
@@ -149,7 +150,7 @@ func (m *Manager) awsEnv(a store.Agent) []string {
 		m.log.Printf("agent %s: aws token: %v", a.ID, err)
 		return nil
 	}
-	return []string{"GERO_AWS_URL=" + mailproxy.URL(tok) + "/aws"}
+	return proxy.AgentEnv("AWS_URL", mailproxy.URL(tok)+"/aws")
 }
 
 func (m *Manager) awsRoutes(mux *http.ServeMux, iso string) {
@@ -157,11 +158,11 @@ func (m *Manager) awsRoutes(mux *http.ServeMux, iso string) {
 		name := m.isoName(iso)
 		a, err := m.store.AgentByMailToken(tok)
 		if err != nil || a.IsolationID != iso || a.ArchivedAt != nil {
-			return a, store.Exposure{}, httpError{http.StatusForbidden, fmt.Errorf("aws: this is not the address of an agent in isolation %s; use $GERO_AWS_URL as your process was started with it", name)}
+			return a, store.Exposure{}, httpError{http.StatusForbidden, fmt.Errorf("aws: this is not the address of an agent in isolation %s; use $PSPS_AWS_URL as your process was started with it", name)}
 		}
 		x, strict := m.awsStrict(iso)
 		if !strict {
-			return a, x, httpError{http.StatusConflict, fmt.Errorf("aws: isolation %s is not in strict SSM mode; its AWS credentials open SSM themselves (the gero-aws skill)", name)}
+			return a, x, httpError{http.StatusConflict, fmt.Errorf("aws: isolation %s is not in strict SSM mode; its AWS credentials open SSM themselves (the psps-aws skill)", name)}
 		}
 		return a, x, nil
 	}
@@ -244,7 +245,7 @@ func (m *Manager) askSSM(a store.Agent, x store.Exposure, req awsproxy.RunReques
 		ID:      run.ID,
 		Kind:    ssmApprovalKind,
 		Summary: fmt.Sprintf("run on %s (aws env %s) through SSM: %s", req.Instance, req.Env, first),
-		Reason:  fmt.Sprintf("strict SSM: gero runs it as ssm-user if you accept, for up to %ds, and gives the agent what it prints", timeout),
+		Reason:  fmt.Sprintf("strict SSM: psps runs it as ssm-user if you accept, for up to %ds, and gives the agent what it prints", timeout),
 		Detail:  req.Command,
 	}})
 	m.log.Printf("aws: %s of isolation %s asks to run on %s (env %s): %s", shownID(a), run.IsoName, req.Instance, req.Env, run.ID)

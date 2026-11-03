@@ -10,8 +10,8 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/hongzio/gero/internal/proxy"
-	"github.com/hongzio/gero/internal/store"
+	"github.com/hongzio/psps/internal/proxy"
+	"github.com/hongzio/psps/internal/store"
 )
 
 // The endpoint as botocore speaks to it, on a live socket, with the real
@@ -102,7 +102,7 @@ func TestCredentialsFlowWithTheRightToken(t *testing.T) {
 	if code != 200 || body["AccessKeyId"] != "ASIAEXAMPLE" || body["Token"] != "token" {
 		t.Fatalf("%d %v", code, body)
 	}
-	if got := h.aws.flag("--role-session-name"); got != "gero-dev" {
+	if got := h.aws.flag("--role-session-name"); got != "psps-dev" {
 		t.Fatalf("session name = %q", got)
 	}
 }
@@ -142,7 +142,7 @@ func TestAnEmptyAllowlistStillAnswersWithTheReason(t *testing.T) {
 	// refused" teaches nothing while a 503 names the fix.
 	h := newHarness(t, map[string]Env{"dev": {RoleARN: role, Profile: "dev"}}, "dev")
 	code, body := h.fetch("GET", "/creds", str(token))
-	if code != 503 || !strings.Contains(body["reason"], "--allow-instance") || !strings.Contains(body["reason"], "gero env edit aws dev") {
+	if code != 503 || !strings.Contains(body["reason"], "--allow-instance") || !strings.Contains(body["reason"], "psps env edit aws dev") {
 		t.Fatalf("%d %v", code, body)
 	}
 	if h.aws.calls() != 0 {
@@ -227,7 +227,7 @@ func TestAnIsolationWithoutTheServiceIsToldHowToGetIt(t *testing.T) {
 	h := newHarness(t, devEnv(), "dev")
 	h.edit(func() { h.enabled = false })
 	code, body := h.fetch("GET", "/creds", str(token))
-	if code != 503 || !strings.Contains(body["reason"], "gero iso expose dev aws") {
+	if code != 503 || !strings.Contains(body["reason"], "psps iso expose dev aws") {
 		t.Fatalf("%d %v", code, body)
 	}
 }

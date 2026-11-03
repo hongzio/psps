@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/hongzio/gero/internal/proxy"
+	"github.com/hongzio/psps/internal/proxy"
 )
 
 // Ported from isolate's tests/test_gitproxy.py. The repository allowlist is
@@ -105,7 +105,7 @@ func check(t *testing.T, p *Policy, owner, repo, svc string) (string, string) {
 
 func TestDeniesEverythingWhenNoEnvListsARepo(t *testing.T) {
 	_, _, err := NewPolicy(nil, nil).Check("octocat", "Hello-World", "git-upload-pack")
-	if r := denied(t, err); !strings.Contains(r, "gero env add git") {
+	if r := denied(t, err); !strings.Contains(r, "psps env add git") {
 		t.Fatal(r)
 	}
 }

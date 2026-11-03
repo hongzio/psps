@@ -14,10 +14,10 @@ import (
 	"sync"
 	"time"
 
-	"github.com/hongzio/gero/internal/creds"
-	"github.com/hongzio/gero/internal/proxy"
-	"github.com/hongzio/gero/internal/shimproto"
-	"github.com/hongzio/gero/internal/store"
+	"github.com/hongzio/psps/internal/creds"
+	"github.com/hongzio/psps/internal/proxy"
+	"github.com/hongzio/psps/internal/shimproto"
+	"github.com/hongzio/psps/internal/store"
 )
 
 const (
@@ -97,7 +97,7 @@ func (Service) Normalize(name string, env map[string]any) ([]string, error) {
 	env["repos"] = proxy.SortedSet(repos)
 	env["read_only"] = proxy.BoolOr(env, "read_only", false)
 	if _, ok := env["api_writes"]; !ok {
-		// Explicit on every add and edit, so `gero env ls` shows what the API
+		// Explicit on every add and edit, so `psps env ls` shows what the API
 		// side will permit rather than a default the reader must know.
 		env["api_writes"] = append([]string(nil), DefaultWrites...)
 	}
@@ -114,7 +114,7 @@ func (Service) Normalize(name string, env map[string]any) ([]string, error) {
 	}
 	var warn []string
 	if len(env["repos"].([]string)) == 0 {
-		warn = append(warn, fmt.Sprintf("env %q lists no repositories; it routes nothing until `gero env edit git %s --allow-repo owner/repo`", name, name))
+		warn = append(warn, fmt.Sprintf("env %q lists no repositories; it routes nothing until `psps env edit git %s --allow-repo owner/repo`", name, name))
 	}
 	for _, w := range env["api_writes"].([]string) {
 		if w == "merge" {
@@ -197,8 +197,8 @@ func (Service) Workspace(v proxy.View) (proxy.Workspace, error) {
 	ws := proxy.Workspace{}
 	base := fmt.Sprintf("http://127.0.0.1:%d/", GitPort)
 	ws.Files = append(ws.Files, shimproto.SyncFile{Path: GitConfig, Mode: 0o644, Content: "" +
-		"# Written by gero. GitHub URLs go through the git proxy, which holds the\n" +
-		"# credential; this is a default, not a fence. See the gero-git skill.\n" +
+		"# Written by psps. GitHub URLs go through the git proxy, which holds the\n" +
+		"# credential; this is a default, not a fence. See the psps-git skill.\n" +
 		"[url \"" + base + "\"]\n" +
 		"\tinsteadOf = https://github.com/\n" +
 		"\tinsteadOf = git@github.com:\n" +
@@ -275,7 +275,7 @@ func (in *instance) config() (liveConfig, error) {
 		return liveConfig{}, err
 	}
 	if !v.Enabled {
-		return liveConfig{}, fmt.Errorf("the git proxy is off for isolation %s; the operator turns it on with `gero iso expose %s git <env>`", in.h.Name(), in.h.Name())
+		return liveConfig{}, fmt.Errorf("the git proxy is off for isolation %s; the operator turns it on with `psps iso expose %s git <env>`", in.h.Name(), in.h.Name())
 	}
 	envs, err := decodeEnvs(v)
 	if err != nil {
@@ -293,7 +293,7 @@ func (in *instance) credential(env string, e Env) (string, error) {
 		return token, nil
 	}
 	if len(e.TokenCommand) == 0 {
-		return "", proxy.Deny("git env %s has no credential; store a token with `gero env secret git %s`", env, env)
+		return "", proxy.Deny("git env %s has no credential; store a token with `psps env secret git %s`", env, env)
 	}
 	return in.token(env, e.TokenCommand).Get()
 }
@@ -329,11 +329,11 @@ func (in *instance) token(env string, cmd []string) *TokenSource {
 func (Service) Refusals(v proxy.View) []proxy.Refusal {
 	s := defaultSettings()
 	v.Settings(&s)
-	r := proxy.Refusal{Port: APIPort, Method: "GET", Path: "/repos/gero-verify/not-a-listed-repo/pulls"}
+	r := proxy.Refusal{Port: APIPort, Method: "GET", Path: "/repos/psps-verify/not-a-listed-repo/pulls"}
 	if !s.API {
-		r.What, r.Status, r.Want = "the API side, which is off", 503, "gero github api proxy: the GitHub API side is off"
+		r.What, r.Status, r.Want = "the API side, which is off", 503, "psps github api proxy: the GitHub API side is off"
 	} else {
-		r.What, r.Status, r.Want = "a repository no env lists", 404, "gero github api proxy: gero-verify/not-a-listed-repo is not in any exposed git environment"
+		r.What, r.Status, r.Want = "a repository no env lists", 404, "psps github api proxy: psps-verify/not-a-listed-repo is not in any exposed git environment"
 	}
 	return []proxy.Refusal{r}
 }
@@ -348,7 +348,7 @@ func (s Service) Check(ctx context.Context, name string, cfg json.RawMessage, c 
 	token, ok := storedToken(c, name)
 	if !ok {
 		if len(e.TokenCommand) == 0 {
-			return "", proxy.Deny("git env %s has no credential; store a token with `gero env secret git %s`", name, name)
+			return "", proxy.Deny("git env %s has no credential; store a token with `psps env secret git %s`", name, name)
 		}
 		var err error
 		if token, err = NewTokenSource(e.TokenCommand, 0).Get(); err != nil {
@@ -382,7 +382,7 @@ func probeUser(ctx context.Context, base, token string) (string, map[string]bool
 	req, _ := http.NewRequestWithContext(ctx, "GET", strings.TrimSuffix(base, "/")+"/user", nil)
 	req.Header.Set("Authorization", "Bearer "+token)
 	req.Header.Set("Accept", "application/vnd.github+json")
-	req.Header.Set("User-Agent", "gero-ghapi")
+	req.Header.Set("User-Agent", "psps-ghapi")
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
 		return "", nil, fmt.Errorf("could not reach %s: %w", base, err)

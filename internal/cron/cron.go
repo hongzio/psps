@@ -1,4 +1,4 @@
-// Package cron reads the schedules gero sends an agent messages on: a
+// Package cron reads the schedules psps sends an agent messages on: a
 // five-field cron expression as crontab(5) has it, read in the Mac's local
 // time, one of its @ names, or "@every" an interval.
 package cron
@@ -75,7 +75,7 @@ func ParseIn(spec string, loc *time.Location) (Schedule, error) {
 	if strings.HasPrefix(spec, "@") {
 		e, ok := named[strings.ToLower(spec)]
 		if !ok {
-			return s, fmt.Errorf("%s is not a schedule gero knows: there are @hourly, @daily, @weekly, @monthly, @yearly and @every", spec)
+			return s, fmt.Errorf("%s is not a schedule psps knows: there are @hourly, @daily, @weekly, @monthly, @yearly and @every", spec)
 		}
 		expr = e
 	}

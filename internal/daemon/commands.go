@@ -11,21 +11,21 @@ import (
 	"strings"
 	"time"
 
-	"github.com/hongzio/gero/internal/api"
-	"github.com/hongzio/gero/internal/driver"
-	"github.com/hongzio/gero/internal/proxy/skillproxy"
+	"github.com/hongzio/psps/internal/api"
+	"github.com/hongzio/psps/internal/driver"
+	"github.com/hongzio/psps/internal/proxy/skillproxy"
 )
 
-// Commands, for a message box to offer as they are typed: gero's own, which
+// Commands, for a message box to offer as they are typed: psps's own, which
 // a message that is one of runs instead of being sent, then those of the
 // agent's CLI, as its process last told its driver. Files are the
 // workspace's, for a message to name one with @.
 
-// geroCommands are the ones gero runs itself: the agent's settings, which
-// are gero's to keep (what its CLI changes of them lasts only until gero
+// pspsCommands are the ones psps runs itself: the agent's settings, which
+// are psps's to keep (what its CLI changes of them lasts only until psps
 // next starts it), and stopping its turn. models are the ones its CLI
 // said it runs.
-func geroCommands(kind driver.Kind, models []driver.Choice) []api.Command {
+func pspsCommands(kind driver.Kind, models []driver.Choice) []api.Command {
 	ms := []driver.Choice{{Value: "default", Description: "the CLI's default"}}
 	for _, md := range models {
 		if md.Value != "default" {
@@ -37,10 +37,10 @@ func geroCommands(kind driver.Kind, models []driver.Choice) []api.Command {
 		efforts = append(efforts, driver.Choice{Value: e})
 	}
 	cmd := func(name, desc, hint string, args []driver.Choice) api.Command {
-		return api.Command{Command: driver.Command{Prefix: "/", Name: name, Description: desc, Hint: hint, Args: args}, Gero: true}
+		return api.Command{Command: driver.Command{Prefix: "/", Name: name, Description: desc, Hint: hint, Args: args}, Psps: true}
 	}
 	return []api.Command{
-		cmd("model", "Set the model gero runs it with", "<model>", ms),
+		cmd("model", "Set the model psps runs it with", "<model>", ms),
 		cmd("effort", "Set how hard it thinks", "<level>", efforts),
 		cmd("approvals", "Set what it asks you first", "<mode>", []driver.Choice{
 			{Value: "never", Description: "run unattended"},
@@ -59,7 +59,7 @@ func (m *Manager) Commands(id string) (api.Commands, error) {
 		return api.Commands{}, err
 	}
 	kind, cmds, models := r.commands()
-	out := geroCommands(kind, models)
+	out := pspsCommands(kind, models)
 	for _, c := range slices.Concat(cmds, m.skillCommands(kind, r.isolationID())) {
 		if !slices.ContainsFunc(out, func(g api.Command) bool { return g.Prefix == c.Prefix && g.Name == c.Name }) {
 			out = append(out, api.Command{Command: c})
@@ -107,9 +107,9 @@ func (r *runtime) commands() (driver.Kind, []driver.Command, []driver.Choice) {
 	return r.agent.Kind, r.drv.Commands(), r.drv.Models()
 }
 
-// geroCommand reads a message that is one of gero's commands: one line, the
+// pspsCommand reads a message that is one of psps's commands: one line, the
 // command and what it takes.
-func geroCommand(text string) (name string, args []string, ok bool) {
+func pspsCommand(text string) (name string, args []string, ok bool) {
 	t := strings.TrimSpace(text)
 	if !strings.HasPrefix(t, "/") || strings.Contains(t, "\n") {
 		return "", nil, false
@@ -123,9 +123,9 @@ func geroCommand(text string) (name string, args []string, ok bool) {
 }
 
 // Message sends text to the agent, or does what it says instead when it is
-// one of gero's commands.
+// one of psps's commands.
 func (m *Manager) Message(id, text string) (api.Sent, error) {
-	name, args, ok := geroCommand(text)
+	name, args, ok := pspsCommand(text)
 	if !ok {
 		return api.Sent{}, m.Send(id, text)
 	}

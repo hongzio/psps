@@ -9,10 +9,11 @@ import (
 	"strconv"
 	"time"
 
-	"github.com/hongzio/gero/internal/api"
-	"github.com/hongzio/gero/internal/cron"
-	"github.com/hongzio/gero/internal/proxy/cronproxy"
-	"github.com/hongzio/gero/internal/store"
+	"github.com/hongzio/psps/internal/api"
+	"github.com/hongzio/psps/internal/cron"
+	"github.com/hongzio/psps/internal/proxy"
+	"github.com/hongzio/psps/internal/proxy/cronproxy"
+	"github.com/hongzio/psps/internal/store"
 )
 
 // Crons agents set themselves (internal/proxy/cronproxy). The daemon
@@ -42,7 +43,7 @@ func (m *Manager) cronEnv(a store.Agent) []string {
 		m.log.Printf("agent %s: cron token: %v", a.ID, err)
 		return nil
 	}
-	return []string{"GERO_CRON_URL=" + cronproxy.URL(tok)}
+	return proxy.AgentEnv("CRON_URL", cronproxy.URL(tok))
 }
 
 // cronRoutes adds the agents' crons to isolation iso's mail port. Nothing
@@ -106,11 +107,11 @@ func (m *Manager) cronAgent(iso, tok string) (store.Agent, error) {
 	}
 	name := m.isoName(iso)
 	if !on {
-		return store.Agent{}, httpError{http.StatusForbidden, fmt.Errorf("cron: isolation %s's agents set no crons; the operator turns that on with `gero iso expose %s cron`", name, name)}
+		return store.Agent{}, httpError{http.StatusForbidden, fmt.Errorf("cron: isolation %s's agents set no crons; the operator turns that on with `psps iso expose %s cron`", name, name)}
 	}
 	a, err := m.store.AgentByMailToken(tok)
 	if err != nil || a.IsolationID != iso || a.ArchivedAt != nil {
-		return store.Agent{}, httpError{http.StatusForbidden, fmt.Errorf("cron: this is not the address of an agent in isolation %s; use $GERO_CRON_URL as your process was started with it", name)}
+		return store.Agent{}, httpError{http.StatusForbidden, fmt.Errorf("cron: this is not the address of an agent in isolation %s; use $PSPS_CRON_URL as your process was started with it", name)}
 	}
 	return a, nil
 }

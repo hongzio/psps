@@ -20,11 +20,11 @@ type Tunnel struct {
 	err    error
 }
 
-// Open handshakes over rw, which is the stdio of `gero-shim tunnel` in the
+// Open handshakes over rw, which is the stdio of `psps-shim tunnel` in the
 // isolation.
 func Open(rw io.ReadWriteCloser) (*Tunnel, error) {
 	cfg := &ssh.ClientConfig{
-		User: "gero",
+		User: "psps",
 		// The peer is a process this daemon just started through a pipe; see
 		// the package comment.
 		HostKeyCallback: ssh.InsecureIgnoreHostKey(),
@@ -89,7 +89,7 @@ func (t *Tunnel) keepalive() {
 		}
 		res := make(chan error, 1)
 		go func() {
-			_, _, err := t.client.SendRequest("keepalive@gero", true, nil)
+			_, _, err := t.client.SendRequest("keepalive@psps", true, nil)
 			res <- err
 		}()
 		select {

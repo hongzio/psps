@@ -9,11 +9,11 @@ import (
 	"strings"
 	"time"
 
-	"github.com/hongzio/gero/internal/api"
-	"github.com/hongzio/gero/internal/cron"
-	"github.com/hongzio/gero/internal/driver"
-	"github.com/hongzio/gero/internal/event"
-	"github.com/hongzio/gero/internal/store"
+	"github.com/hongzio/psps/internal/api"
+	"github.com/hongzio/psps/internal/cron"
+	"github.com/hongzio/psps/internal/driver"
+	"github.com/hongzio/psps/internal/event"
+	"github.com/hongzio/psps/internal/store"
 )
 
 // Crons: messages the operator set to be sent to an agent on a schedule.
@@ -33,14 +33,14 @@ func cronLetter(c store.Cron) string {
 	who := "Your operator set this message to be sent on a schedule and may not be watching."
 	switch {
 	case c.Self:
-		who = "You set this message yourself, with the gero-cron skill, to be sent to you on a schedule; your operator may not be watching."
+		who = "You set this message yourself, with the psps-cron skill, to be sent to you on a schedule; your operator may not be watching."
 	case c.SetBy != "":
-		who = "Agent " + c.SetBy + " set this message, through gero's control service, to be sent to you on a schedule; your operator may not be watching."
+		who = "Agent " + c.SetBy + " set this message, through psps's control service, to be sent to you on a schedule; your operator may not be watching."
 	}
 	if c.Once {
-		who += " It comes this once: gero has removed it."
+		who += " It comes this once: psps has removed it."
 	}
-	return fmt.Sprintf("[gero cron #%d, on schedule %q. %s]\n\n%s", c.ID, c.Schedule, who, c.Prompt)
+	return fmt.Sprintf("[psps cron #%d, on schedule %q. %s]\n\n%s", c.ID, c.Schedule, who, c.Prompt)
 }
 
 // zoneName is what the Mac's time zone is called: its tz name if there is

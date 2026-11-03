@@ -7,7 +7,7 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/hongzio/gero/internal/proxy"
+	"github.com/hongzio/psps/internal/proxy"
 )
 
 // Forms for env definitions and exposure settings are drawn from the
@@ -132,7 +132,7 @@ func decodeMap(raw json.RawMessage) map[string]any {
 	return m
 }
 
-// compact is a definition on one line, keys in order: what `gero env ls`
+// compact is a definition on one line, keys in order: what `psps env ls`
 // shows.
 func compact(raw json.RawMessage) string {
 	m := decodeMap(raw)

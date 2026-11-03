@@ -4,13 +4,13 @@
 // fixed port, and is turned on per isolation the same way; the daemon
 // answers it itself (proxy.Host.Mail), since it keeps the inboxes.
 //
-//	isolation  curl "$GERO_MAIL_URL/send?to=brave-otter" --data-binary @-
+//	isolation  curl "$PSPS_MAIL_URL/send?to=brave-otter" --data-binary @-
 //	             |  (the isolation's tunnel)
 //	daemon     the sender is the agent whose address it is; the mail waits
 //	           in the recipient's inbox until that agent is idle, and
 //	           arrives as a turn of its own, one at a time, oldest first
 //
-// GERO_MAIL_URL is each agent's own: it carries a token only that agent's
+// PSPS_MAIL_URL is each agent's own: it carries a token only that agent's
 // process is started with, which is how the daemon knows who writes. Agents
 // in one isolation run as one user and can read each other's environment,
 // so within an isolation the token names the sender rather than proving
@@ -34,9 +34,9 @@ import (
 	"strconv"
 	"time"
 
-	"github.com/hongzio/gero/internal/creds"
-	"github.com/hongzio/gero/internal/proxy"
-	"github.com/hongzio/gero/internal/store"
+	"github.com/hongzio/psps/internal/creds"
+	"github.com/hongzio/psps/internal/proxy"
+	"github.com/hongzio/psps/internal/store"
 )
 
 const (
@@ -58,8 +58,8 @@ func URL(token string) string { return fmt.Sprintf("http://127.0.0.1:%d/a/%s", P
 // Letter is a mail as its recipient reads it: who wrote it, and that it is
 // not the operator, ahead of what it says.
 func Letter(id int64, from, isolation, body string) string {
-	return fmt.Sprintf("[gero mail #%d from agent %s in isolation %s. Another agent wrote this, not your operator; "+
-		"reply only if a reply is needed, with the gero-mail skill (to=%s).]\n\n%s", id, from, isolation, from, body)
+	return fmt.Sprintf("[psps mail #%d from agent %s in isolation %s. Another agent wrote this, not your operator; "+
+		"reply only if a reply is needed, with the psps-mail skill (to=%s).]\n\n%s", id, from, isolation, from, body)
 }
 
 // Envelope is a delivered mail taken apart.
@@ -69,7 +69,7 @@ type Envelope struct {
 	Body            string
 }
 
-var letterHead = regexp.MustCompile(`^\[gero mail #(\d+) from agent (\S+) in isolation (\S+)\. [^\n]*\]\n\n`)
+var letterHead = regexp.MustCompile(`^\[psps mail #(\d+) from agent (\S+) in isolation (\S+)\. [^\n]*\]\n\n`)
 
 // ReadLetter is Letter's reverse, for showing a mail as mail rather than as
 // the operator's message.
@@ -82,7 +82,7 @@ func ReadLetter(text string) (Envelope, bool) {
 	return Envelope{ID: id, From: m[2], Isolation: m[3], Body: text[len(m[0]):]}, true
 }
 
-var errNoEnvs = errors.New("mail has no environments: turn it on for an isolation with `gero iso expose ISOLATION mail [--to ISOLATION]`")
+var errNoEnvs = errors.New("mail has no environments: turn it on for an isolation with `psps iso expose ISOLATION mail [--to ISOLATION]`")
 
 type Service struct{}
 

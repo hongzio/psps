@@ -9,8 +9,8 @@ import (
 	"slices"
 	"strings"
 
-	"github.com/hongzio/gero/internal/event"
-	"github.com/hongzio/gero/internal/shimproto"
+	"github.com/hongzio/psps/internal/event"
+	"github.com/hongzio/psps/internal/shimproto"
 )
 
 // Claude speaks `claude -p` with stream-json on both sides: one JSON message
@@ -27,7 +27,7 @@ type clPending struct {
 	publicID  string
 	subtype   string
 	input     json.RawMessage
-	approval  bool // false: a control request gero answers with an error
+	approval  bool // false: a control request psps answers with an error
 	decision  Decision
 	sent      bool
 	// questions: an AskUserQuestion, which accepting answers.
@@ -78,9 +78,9 @@ type claude struct {
 	usage    Usage
 }
 
-// clHidden are claude's commands gero keeps out of its list: /model and
-// /effort are gero's to set, on the command line of each process, and
-// /clear starts a session gero does not follow.
+// clHidden are claude's commands psps keeps out of its list: /model and
+// /effort are psps's to set, on the command line of each process, and
+// /clear starts a session psps does not follow.
 var clHidden = []string{"clear", "model", "effort"}
 
 // clRewind is a generation that takes the conversation back: resumed up to
@@ -133,11 +133,11 @@ func (c *claude) Command() []string {
 		argv = append(argv, "--permission-mode", "manual", "--permission-prompt-tool", "stdio")
 	case ApprovalsAuto:
 		// The classifier decides; an action it keeps blocking falls back to
-		// the prompt tool, which is the person in gero.
+		// the prompt tool, which is the person in psps.
 		argv = append(argv, "--permission-mode", "auto", "--permission-prompt-tool", "stdio")
 	case ApprovalsDefault:
 		// No mode: settings.json's defaultMode decides (manual if it has
-		// none), and whatever that mode would ask comes to gero.
+		// none), and whatever that mode would ask comes to psps.
 		argv = append(argv, "--permission-prompt-tool", "stdio")
 	default:
 		argv = append(argv, "--permission-mode", "bypassPermissions")
@@ -303,11 +303,11 @@ func (c *claude) Next() [][]byte {
 	var out [][]byte
 	if !c.asked {
 		// Asked once a process: it costs no turn, and claude answers it
-		// even mid-conversation, so one started before gero asked is asked
-		// when gero next attaches.
+		// even mid-conversation, so one started before psps asked is asked
+		// when psps next attaches.
 		c.asked = true
 		out = append(out, line(map[string]any{"type": "control_request",
-			"request_id": fmt.Sprintf("gero-init-%d", c.gen),
+			"request_id": fmt.Sprintf("psps-init-%d", c.gen),
 			"request":    map[string]any{"subtype": "initialize"}}))
 	}
 	for _, p := range c.pending {
@@ -318,7 +318,7 @@ func (c *claude) Next() [][]byte {
 		switch {
 		case !p.approval:
 			resp = map[string]any{"subtype": "error", "request_id": p.requestID,
-				"error": "gero does not support control request " + p.subtype}
+				"error": "psps does not support control request " + p.subtype}
 		case p.decision == Accept && p.questions != nil:
 			// Claude reads the answers from the input it is handed back.
 			var in map[string]any
@@ -331,9 +331,9 @@ func (c *claude) Next() [][]byte {
 		case p.decision == Accept:
 			resp["response"] = map[string]any{"behavior": "allow", "updatedInput": p.input}
 		case p.decision == Decline:
-			resp["response"] = map[string]any{"behavior": "deny", "message": "The user declined this in gero."}
+			resp["response"] = map[string]any{"behavior": "deny", "message": "The user declined this in psps."}
 		case p.decision == Cancel:
-			resp["response"] = map[string]any{"behavior": "deny", "message": "The user declined this in gero and stopped the turn.", "interrupt": true}
+			resp["response"] = map[string]any{"behavior": "deny", "message": "The user declined this in psps and stopped the turn.", "interrupt": true}
 		default:
 			continue
 		}
@@ -345,7 +345,7 @@ func (c *claude) Next() [][]byte {
 		if c.busy {
 			c.ctlSeq++
 			out = append(out, line(map[string]any{"type": "control_request",
-				"request_id": fmt.Sprintf("gero-%d-%d", c.gen, c.ctlSeq),
+				"request_id": fmt.Sprintf("psps-%d-%d", c.gen, c.ctlSeq),
 				"request":    map[string]any{"subtype": "interrupt"}}))
 		}
 	}
@@ -687,7 +687,7 @@ func (c *claude) observeOut(rec shimproto.Record, m clMessage) []event.Event {
 				msg = "claude turn failed (" + m.Subtype + ")"
 			}
 			if strings.Contains(msg, "Not logged in") || strings.Contains(msg, "authenticate") {
-				msg += "; run `gero iso login <isolation> claude`"
+				msg += "; run `psps iso login <isolation> claude`"
 			}
 			c.errText = msg
 			evs = append(evs, c.text(rec, event.KindError, "", msg))
@@ -731,7 +731,7 @@ func (c *claude) observeOut(rec shimproto.Record, m clMessage) []event.Event {
 	return nil
 }
 
-// answered takes claude's commands and models from its answer to gero's
+// answered takes claude's commands and models from its answer to psps's
 // initialize request.
 func (c *claude) answered(raw json.RawMessage) {
 	var r struct {
@@ -750,7 +750,7 @@ func (c *claude) answered(raw json.RawMessage) {
 			} `json:"models"`
 		} `json:"response"`
 	}
-	if json.Unmarshal(raw, &r) != nil || r.Subtype != "success" || !strings.HasPrefix(r.RequestID, "gero-init-") {
+	if json.Unmarshal(raw, &r) != nil || r.Subtype != "success" || !strings.HasPrefix(r.RequestID, "psps-init-") {
 		return
 	}
 	c.commands, c.models = nil, nil

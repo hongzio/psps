@@ -11,15 +11,15 @@ import (
 	"testing"
 	"time"
 
-	"github.com/hongzio/gero/internal/api"
-	"github.com/hongzio/gero/internal/creds"
-	"github.com/hongzio/gero/internal/driver"
-	"github.com/hongzio/gero/internal/event"
-	"github.com/hongzio/gero/internal/proxy"
-	"github.com/hongzio/gero/internal/proxy/controlproxy"
-	"github.com/hongzio/gero/internal/proxy/mailproxy"
-	"github.com/hongzio/gero/internal/proxy/teamproxy"
-	"github.com/hongzio/gero/internal/store"
+	"github.com/hongzio/psps/internal/api"
+	"github.com/hongzio/psps/internal/creds"
+	"github.com/hongzio/psps/internal/driver"
+	"github.com/hongzio/psps/internal/event"
+	"github.com/hongzio/psps/internal/proxy"
+	"github.com/hongzio/psps/internal/proxy/controlproxy"
+	"github.com/hongzio/psps/internal/proxy/mailproxy"
+	"github.com/hongzio/psps/internal/proxy/teamproxy"
+	"github.com/hongzio/psps/internal/store"
 )
 
 // withTeams gives the manager the team service, on for dev, and a lead:
@@ -80,7 +80,7 @@ func free(m *Manager, id string) bool {
 func news(e *testEnv, boss string) []string {
 	var out []string
 	for _, u := range users(e, boss) {
-		if strings.HasPrefix(u, "[gero team news for you as lead of team ") {
+		if strings.HasPrefix(u, "[psps team news for you as lead of team ") {
 			out = append(out, u)
 		}
 	}
@@ -113,7 +113,7 @@ func TestALeadMakesAgentsOfItsOwnAndHearsOfTheirTurns(t *testing.T) {
 	e.waitFor("the lead's news", func() bool { return len(news(e, boss.ID)) == 1 })
 	n := news(e, boss.ID)[0]
 	for _, want := range []string{`team "lab": 1 item(s)`, a.ID + ` ("Prof iler!", codex) ended its turn: idle, after `, "It has used 1.1k tokens.",
-		"Its last answer:\n\necho: [gero team: you are \"Prof iler!\" in team \"lab\", an agent its lead boss made.", "]\n\nhello"} {
+		"Its last answer:\n\necho: [psps team: you are \"Prof iler!\" in team \"lab\", an agent its lead boss made.", "]\n\nhello"} {
 		if !strings.Contains(n, want) {
 			t.Fatalf("news lacks %q:\n%s", want, n)
 		}
@@ -140,7 +140,7 @@ func TestALeadMakesAgentsOfItsOwnAndHearsOfTheirTurns(t *testing.T) {
 	if code, out := teamAs(t, m, boss.ID, "POST", "/agents/"+a.ID+"/send", "again"); code != http.StatusAccepted {
 		t.Fatalf("%d %s", code, out)
 	}
-	e.waitFor("the lead's message", func() bool { return e.hasAssistant(made.ID, "echo: [gero team: from your lead boss]\n\nagain") })
+	e.waitFor("the lead's message", func() bool { return e.hasAssistant(made.ID, "echo: [psps team: from your lead boss]\n\nagain") })
 	e.waitFor("the second news", func() bool { return len(news(e, boss.ID)) == 2 })
 	e.waitFor("the lead's turn", func() bool { return status(m, boss.ID) == event.StatusIdle && len(e.events(boss.ID)) > 0 })
 	time.Sleep(100 * time.Millisecond)
@@ -160,7 +160,7 @@ func TestALeadMakesAgentsOfItsOwnAndHearsOfTheirTurns(t *testing.T) {
 	b := makeAgent(t, m, boss.ID, api.TeamAgentNew{Role: "two", Kind: driver.Codex, Prompt: "hi", TurnMinutes: 5})
 	e.waitFor("its news", func() bool { return len(news(e, boss.ID)) == 3 })
 
-	// The budget used, gero stops the run until the operator resumes it.
+	// The budget used, psps stops the run until the operator resumes it.
 	if _, err := m.SetLead(context.Background(), "lab", api.PutLead{Agent: "boss", Budget: ptr(int64(3000))}); err != nil {
 		t.Fatal(err)
 	}
@@ -169,7 +169,7 @@ func TestALeadMakesAgentsOfItsOwnAndHearsOfTheirTurns(t *testing.T) {
 		t.Fatalf("%+v", r)
 	}
 	e.waitFor("the stop's news", func() bool { return len(news(e, boss.ID)) == 4 })
-	if n := news(e, boss.ID)[3]; !strings.Contains(n, "gero stopped the run: the budget is used") {
+	if n := news(e, boss.ID)[3]; !strings.Contains(n, "psps stopped the run: the budget is used") {
 		t.Fatal(n)
 	}
 	if code, out := teamAs(t, m, boss.ID, "POST", "/agents/"+b.ID+"/send", "more"); code != http.StatusConflict {
@@ -193,7 +193,7 @@ func TestALeadMakesAgentsOfItsOwnAndHearsOfTheirTurns(t *testing.T) {
 	for _, n := range news(e, boss.ID)[4:] {
 		if i := strings.Index(n, "Your operator resumed the run"); i >= 0 {
 			n = n[i:]
-			for _, want := range []string{"Your operator resumed the run, which gero had stopped (the budget is used: ", " of 3.0k tokens). Nothing of your team is running. The team has used ",
+			for _, want := range []string{"Your operator resumed the run, which psps had stopped (the budget is used: ", " of 3.0k tokens). Nothing of your team is running. The team has used ",
 				" of 1.0M tokens. Design the next team, or say why you stop."} {
 				if !strings.Contains(n, want) {
 					t.Fatalf("news lacks %q:\n%s", want, n)
@@ -302,7 +302,7 @@ func TestARoundEndsWithTheEvalAndARunWithoutProgressStops(t *testing.T) {
 	e.waitFor("the eval's news", func() bool { return len(news(e, boss.ID)) == before+1 })
 	n := news(e, boss.ID)[before]
 	for _, want := range []string{"1 item(s)", "Eval #1 (the round ended) took ", "SCORE 1.5, a new best.",
-		"Nothing of your team is running. The team has used ", "which signs of a stuck team yours shows", "Then design the next team, have the eval run on a change of your own (POST $GERO_TEAM_URL/eval), or say why you stop."} {
+		"Nothing of your team is running. The team has used ", "which signs of a stuck team yours shows", "Then design the next team, have the eval run on a change of your own (POST $PSPS_TEAM_URL/eval), or say why you stop."} {
 		if !strings.Contains(n, want) {
 			t.Fatalf("news lacks %q:\n%s", want, n)
 		}
@@ -327,7 +327,7 @@ func TestARoundEndsWithTheEvalAndARunWithoutProgressStops(t *testing.T) {
 		}
 		e.waitFor("the lead idle", func() bool { return status(m, boss.ID) == event.StatusIdle })
 	}
-	if n := news(e, boss.ID)[before+2]; !strings.Contains(n, "gero stopped the run: 2 evals in a row came without a new best") {
+	if n := news(e, boss.ID)[before+2]; !strings.Contains(n, "psps stopped the run: 2 evals in a row came without a new best") {
 		t.Fatal(n)
 	}
 	if code, out := teamAs(t, m, boss.ID, "POST", "/agents", `{"role":"three","kind":"codex","prompt":"hi"}`); code != http.StatusConflict {
@@ -348,8 +348,8 @@ func TestARoundEndsWithTheEvalAndARunWithoutProgressStops(t *testing.T) {
 	}
 	e.waitFor("the resume's news", func() bool { return len(news(e, boss.ID)) == before+4 })
 	n = news(e, boss.ID)[before+3]
-	for _, want := range []string{"1 item(s)", "Your operator resumed the run, which gero had stopped (2 evals in a row came without a new best). The evals so far count no more toward its patience. The best is 1.5, at eval #1. Nothing of your team is running. The team has used ",
-		"which signs of a stuck team yours shows", "Then design the next team, have the eval run on a change of your own (POST $GERO_TEAM_URL/eval), or say why you stop."} {
+	for _, want := range []string{"1 item(s)", "Your operator resumed the run, which psps had stopped (2 evals in a row came without a new best). The evals so far count no more toward its patience. The best is 1.5, at eval #1. Nothing of your team is running. The team has used ",
+		"which signs of a stuck team yours shows", "Then design the next team, have the eval run on a change of your own (POST $PSPS_TEAM_URL/eval), or say why you stop."} {
 		if !strings.Contains(n, want) {
 			t.Fatalf("news lacks %q:\n%s", want, n)
 		}
@@ -607,7 +607,7 @@ func TestAnEvalRunsInItsIsolationOnACopyOfTheWork(t *testing.T) {
 	}
 	m.EvalTeam("lab")
 	e.waitFor("the unscored eval's news", func() bool { return len(news(e, boss.ID)) == 2 })
-	if n := news(e, boss.ID)[1]; strings.Contains(n, "the-grader-says") || !strings.Contains(n, "Its output is your operator's alone, as it ran in an isolation of its own. gero says: the eval: exit status 3") {
+	if n := news(e, boss.ID)[1]; strings.Contains(n, "the-grader-says") || !strings.Contains(n, "Its output is your operator's alone, as it ran in an isolation of its own. psps says: the eval: exit status 3") {
 		t.Fatal(n)
 	}
 	if _, out := teamAs(t, m, boss.ID, "GET", "", ""); strings.Contains(out, "the-grader-says") || !strings.Contains(out, `"private":true`) {
@@ -642,14 +642,14 @@ func TestAnEvalRunsInItsIsolationOnACopyOfTheWork(t *testing.T) {
 	// A service the operator turns on there anyway says what it costs, and
 	// the eval it keeps from running counts for no patience.
 	x, err := m.Expose(ctx, "ev", "team", api.Expose{})
-	if err != nil || !strings.Contains(x.Warning, `isolation ev runs the eval of team "lab": while it has team, gero refuses to run it`) {
+	if err != nil || !strings.Contains(x.Warning, `isolation ev runs the eval of team "lab": while it has team, psps refuses to run it`) {
 		t.Fatalf("the warning: %q %v", x.Warning, err)
 	}
 	before, _ := m.TeamRun("lab")
 	m.EvalTeam("lab")
 	e.waitFor("the refused eval's news", func() bool { return len(news(e, boss.ID)) == 3 })
-	if n := news(e, boss.ID)[2]; !strings.Contains(n, "gero could not run it, so the work was not scored, and it counts for no patience") ||
-		!strings.Contains(n, "gero says: isolation ev cannot run the eval: it has the team service") {
+	if n := news(e, boss.ID)[2]; !strings.Contains(n, "psps could not run it, so the work was not scored, and it counts for no patience") ||
+		!strings.Contains(n, "psps says: isolation ev cannot run the eval: it has the team service") {
 		t.Fatal(n)
 	}
 	if run, _ := m.TeamRun("lab"); !run.Evals[len(run.Evals)-1].NotRun || run.Stale != before.Stale {
@@ -670,7 +670,7 @@ func TestAnEvalRunsInItsIsolationOnACopyOfTheWork(t *testing.T) {
 	}
 	m.EvalTeam("lab")
 	e.waitFor("the eval's news", func() bool { return len(news(e, boss.ID)) == 4 })
-	if n := news(e, boss.ID)[3]; strings.Contains(n, "cannot run the eval") || !strings.Contains(n, "gero says: the eval: exit status 3") {
+	if n := news(e, boss.ID)[3]; strings.Contains(n, "cannot run the eval") || !strings.Contains(n, "psps says: the eval: exit status 3") {
 		t.Fatal(n)
 	}
 	if _, err := m.SetLead(ctx, "lab", api.PutLead{Agent: "boss", EvalIsolation: ptr("")}); err != nil {
@@ -776,8 +776,8 @@ func TestATurnPastItsLimitIsStoppedForAFinalReport(t *testing.T) {
 	m.turnLimits(time.Now().Add(2 * time.Minute))
 	e.waitFor("its report's news", func() bool { return len(news(e, boss.ID)) == 1 })
 	n := news(e, boss.ID)[0]
-	for _, want := range []string{"ended its turn: idle", "gero stopped its turn at its 1-minute limit and asked for a final report; this is it.",
-		"echo: [gero team: your turn ran past its 1 minutes, and gero stopped it.]"} {
+	for _, want := range []string{"ended its turn: idle", "psps stopped its turn at its 1-minute limit and asked for a final report; this is it.",
+		"echo: [psps team: your turn ran past its 1 minutes, and psps stopped it.]"} {
 		if !strings.Contains(n, want) {
 			t.Fatalf("news lacks %q:\n%s", want, n)
 		}

@@ -9,19 +9,19 @@ import (
 	"path/filepath"
 	"time"
 
-	"github.com/hongzio/gero/internal/backup"
-	"github.com/hongzio/gero/internal/isolation"
-	"github.com/hongzio/gero/internal/paths"
-	"github.com/hongzio/gero/internal/store"
+	"github.com/hongzio/psps/internal/backup"
+	"github.com/hongzio/psps/internal/isolation"
+	"github.com/hongzio/psps/internal/paths"
+	"github.com/hongzio/psps/internal/store"
 )
 
-// backupCmd saves gero's files on the Mac to one archive, written beside
+// backupCmd saves psps's files on the Mac to one archive, written beside
 // FILE first so an old one is replaced only by a whole new one.
 func backupCmd(p paths.Paths, args []string) error {
 	fs := flag.NewFlagSet("backup", flag.ContinueOnError)
 	pos := parse(fs, args)
 	if len(pos) != 1 {
-		return errors.New("usage: gero backup FILE")
+		return errors.New("usage: psps backup FILE")
 	}
 	file := pos[0]
 	f, err := os.CreateTemp(filepath.Dir(file), "."+filepath.Base(file)+".*")
@@ -54,7 +54,7 @@ func restoreCmd(p paths.Paths, args []string) error {
 	force := fs.Bool("force", false, "replace the store that is here")
 	pos := parse(fs, args)
 	if len(pos) != 1 {
-		return errors.New("usage: gero restore FILE [--force]")
+		return errors.New("usage: psps restore FILE [--force]")
 	}
 	sum, err := backup.Restore(pos[0], p, *force)
 	if errors.Is(err, backup.ErrExists) {
@@ -88,7 +88,7 @@ func restoreCmd(p paths.Paths, args []string) error {
 			}
 		}
 	}
-	fmt.Println("Start the daemon with: gero")
+	fmt.Println("Start the daemon with: psps")
 	return nil
 }
 

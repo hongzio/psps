@@ -16,7 +16,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/hongzio/gero/internal/creds"
+	"github.com/hongzio/psps/internal/creds"
 )
 
 const (
@@ -75,7 +75,7 @@ func (o oauth) tokenRequest(ctx context.Context, form url.Values, env string) (m
 		if code == "" {
 			code = fmt.Sprintf("HTTP %d", status)
 		}
-		return nil, deny(503, "notion: the Notion login in [notion %s] has expired or was revoked (%s); run `gero env secret notion %s` to log in again", env, code, env)
+		return nil, deny(503, "notion: the Notion login in [notion %s] has expired or was revoked (%s); run `psps env secret notion %s` to log in again", env, code, env)
 	}
 	if code == "" {
 		code = "no error code"
@@ -203,7 +203,7 @@ func PKCEPair() (verifier, challenge string) {
 // login, so a lost one costs nothing) and returns the URL to approve.
 func (o oauth) startLogin(ctx context.Context, env, redirect string) (Pending, error) {
 	body, _ := json.Marshal(map[string]any{
-		"client_name":                "gero (" + env + ")",
+		"client_name":                "psps (" + env + ")",
 		"redirect_uris":              []string{redirect},
 		"grant_types":                []string{"authorization_code", "refresh_token"},
 		"response_types":             []string{"code"},

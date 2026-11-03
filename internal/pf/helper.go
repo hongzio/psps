@@ -22,7 +22,7 @@ import (
 )
 
 // The helper runs as root under launchd. It holds three things and nothing
-// else: a pf enable reference, the gero anchor's rules, and the list of
+// else: a pf enable reference, the psps anchor's rules, and the list of
 // networks to fence (persisted, so the fence is back at boot before anyone
 // logs in). It is level-triggered: every few seconds it recomputes the rules
 // from the Mac's current addresses and bridges and reloads them if they
@@ -30,12 +30,12 @@ import (
 // fence by one interval; it can never leave it stale.
 
 const (
-	HelperLabel = "dev.gero.pfd"
-	HelperPath  = "/Library/PrivilegedHelperTools/dev.gero.pfd"
-	HelperPlist = "/Library/LaunchDaemons/dev.gero.pfd.plist"
-	StateDir    = "/var/db/gero-pfd"
-	SocketPath  = "/var/run/gero-pfd.sock"
-	LogPath     = "/var/log/gero-pfd.log"
+	HelperLabel = "dev.psps.pfd"
+	HelperPath  = "/Library/PrivilegedHelperTools/dev.psps.pfd"
+	HelperPlist = "/Library/LaunchDaemons/dev.psps.pfd.plist"
+	StateDir    = "/var/db/psps-pfd"
+	SocketPath  = "/var/run/psps-pfd.sock"
+	LogPath     = "/var/log/psps-pfd.log"
 )
 
 // Runner runs pfctl.
@@ -67,8 +67,8 @@ type Request struct {
 
 // HelperVersion is how the helper behaves: the rules it loads and the
 // protocol it speaks. It goes up only when a daemon needs a helper that
-// behaves differently, and only then does an upgrade of gero take a new
-// `sudo gero pf install`; the helper is a copy of gero that a brew upgrade
+// behaves differently, and only then does an upgrade of psps take a new
+// `sudo psps pf install`; the helper is a copy of psps that a brew upgrade
 // leaves as it was. Helpers from before it reported none, and are 1.
 const HelperVersion = 1
 
@@ -149,7 +149,7 @@ func (h *Helper) Serve(ctx context.Context) error {
 			}
 		}
 	}()
-	h.Log.Printf("gero-pfd serving %s for uid %d", h.Socket, h.UID)
+	h.Log.Printf("psps-pfd serving %s for uid %d", h.Socket, h.UID)
 	for {
 		c, err := l.Accept()
 		if err != nil {
@@ -292,7 +292,7 @@ func (h *Helper) loaded() []string {
 
 var tokenRE = regexp.MustCompile(`Token\s*:\s*(\d+)`)
 
-// ensureEnabled keeps one pf enable reference for gero. The token is kept
+// ensureEnabled keeps one pf enable reference for psps. The token is kept
 // on disk so a restarted helper reuses it instead of piling up references.
 // It is never released while installed: releasing the last reference
 // would turn pf off, and the fence with it.
@@ -360,7 +360,7 @@ func (h *Helper) reconcile() {
 	setErr(nil)
 }
 
-// Teardown removes the fence: flushes the anchor and releases gero's pf
+// Teardown removes the fence: flushes the anchor and releases psps's pf
 // enable reference. pf stays on if anything else holds one.
 func Teardown(r Runner, stateDir string) error {
 	var errs []error

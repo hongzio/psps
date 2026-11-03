@@ -1,4 +1,4 @@
-// Package shimproto is the wire format between the gero daemon and gero-shim,
+// Package shimproto is the wire format between the psps daemon and psps-shim,
 // the process that owns agents inside an isolation.
 //
 // A connection carries one Request line and one Response line. For attach it
@@ -14,20 +14,23 @@ package shimproto
 import "time"
 
 // Version is reported by ping so the daemon can tell an outdated shim apart.
-// 2 added `gero-shim tunnel` and `gero-shim sync`, which the credential
+// 2 added `psps-shim tunnel` and `psps-shim sync`, which the credential
 // proxies need; 3 lets the tunnel connect the daemon to the isolation's own
 // loopback, which forwarded ports need; 4 opens 3030 (Linear's) as well; 5
-// syncs binary files and prunes what a skill no longer has.
-const Version = "5"
+// syncs binary files and prunes what a skill no longer has; 6 manages paths
+// named psps as well as gero, gero's name before.
+const Version = "6"
 
 // ProxiesVersion and ForwardsVersion are the first shims that serve the
 // credential proxies and forwarded ports, SkillsVersion the first that
 // syncs the operator's skills whole: an isolation whose image predates one
-// goes without it until `gero iso upgrade`.
+// goes without it until `psps iso upgrade`. RenameVersion is the first that
+// writes psps-* skills: one before has its skills under gero-* still.
 const (
 	ProxiesVersion  = "2"
 	ForwardsVersion = "3"
 	SkillsVersion   = "5"
+	RenameVersion   = "6"
 )
 
 // Dir says which stream a Record came from.
@@ -119,7 +122,7 @@ type AgentInfo struct {
 }
 
 // The credential proxies' addresses inside an isolation. They are fixed, as
-// in isolate, so the address an agent types never varies; `gero-shim tunnel`
+// in isolate, so the address an agent types never varies; `psps-shim tunnel`
 // opens nothing outside this range.
 const (
 	TunnelPortLo = 3020
@@ -135,8 +138,8 @@ func PortVersion(port int) string {
 	return ProxiesVersion
 }
 
-// SyncRequest is what `gero-shim sync` makes true inside the isolation: the
-// files gero manages there (skills, the proxies' environment, git's URL
+// SyncRequest is what `psps-shim sync` makes true inside the isolation: the
+// files psps manages there (skills, the proxies' environment, git's URL
 // rewrite) and the ones it no longer wants. It is idempotent; the daemon
 // sends the whole desired set every time.
 type SyncRequest struct {

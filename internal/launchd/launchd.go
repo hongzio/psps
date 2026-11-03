@@ -13,10 +13,10 @@ import (
 	"strings"
 	"time"
 
-	"github.com/hongzio/gero/internal/paths"
+	"github.com/hongzio/psps/internal/paths"
 )
 
-const Label = "dev.gero.daemon"
+const Label = "dev.psps.daemon"
 
 // launchd starts jobs with /usr/bin:/bin:/usr/sbin:/sbin, which has no
 // Homebrew; `container` and git live there.
@@ -96,7 +96,7 @@ func Ensure(exe string, p paths.Paths) error {
 		}
 	}
 	if !loaded {
-		// A job just booted out (here, or by `gero daemon stop`) takes a
+		// A job just booted out (here, or by `psps daemon stop`) takes a
 		// moment to go, and bootstrap fails with an I/O error until it has.
 		var out string
 		var err error
@@ -131,7 +131,7 @@ func Restart() error {
 
 // Stop unloads the job; KeepAlive would otherwise restart a killed daemon.
 // It returns once the job is gone: bootout returns before that, and a
-// `gero` right after would find the job still loaded, kick it, and watch
+// `psps` right after would find the job still loaded, kick it, and watch
 // it go.
 func Stop() error {
 	if !Loaded() {

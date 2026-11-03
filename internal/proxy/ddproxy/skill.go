@@ -5,7 +5,7 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/hongzio/gero/internal/proxy"
+	"github.com/hongzio/psps/internal/proxy"
 )
 
 // The skill is the only Datadog document the agent reads before deciding
@@ -14,8 +14,8 @@ import (
 // the flags that widen them.
 
 const skillTemplate = `---
-name: gero-datadog
-description: How Datadog access works inside this gero isolation. Use when a
+name: psps-datadog
+description: How Datadog access works inside this psps isolation. Use when a
   Datadog API call fails or is refused, when alert triage needs a monitor
   definition, log search or metric history, or when deciding whether Datadog is
   reachable from here.
@@ -59,11 +59,11 @@ swapping the key value for one command:
 - A refusal naming an endpoint family — that family is outside the operator's
   allowlist. That is a decision, not a fault to retry or route around. If
   access is genuinely needed, ask the operator to run
-  ` + "`gero env edit datadog <env> --allow-api <family>`" + `.
+  ` + "`psps env edit datadog <env> --allow-api <family>`" + `.
 - A refusal naming a write — the family is readable here but not writable. The
   list above is the whole truth about which families this environment writes;
   no way of reshaping the request gets past it. Ask the operator for
-  ` + "`gero env edit datadog <env> --allow-write <family>`" + `, and say what you
+  ` + "`psps env edit datadog <env> --allow-write <family>`" + `, and say what you
   intend to change and why — opening a write is a decision they make per
   family, not a formality.
 - Some writes exist in Datadog and nowhere here, no matter what is open:

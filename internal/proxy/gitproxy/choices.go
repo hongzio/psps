@@ -11,7 +11,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/hongzio/gero/internal/proxy"
+	"github.com/hongzio/psps/internal/proxy"
 )
 
 // maxRepoPages bounds a listing at 1,000 repositories.
@@ -77,7 +77,7 @@ func listRepos(ctx context.Context, base, token string) ([]proxy.Choice, error) 
 		}
 		req.Header.Set("Authorization", "Bearer "+token)
 		req.Header.Set("Accept", "application/vnd.github+json")
-		req.Header.Set("User-Agent", "gero-ghapi")
+		req.Header.Set("User-Agent", "psps-ghapi")
 		resp, err := http.DefaultClient.Do(req)
 		if err != nil {
 			return nil, fmt.Errorf("could not reach %s: %w", base, err)

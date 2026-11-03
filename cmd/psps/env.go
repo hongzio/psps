@@ -15,20 +15,20 @@ import (
 
 	"golang.org/x/term"
 
-	"github.com/hongzio/gero/internal/api"
-	"github.com/hongzio/gero/internal/creds"
-	"github.com/hongzio/gero/internal/paths"
-	"github.com/hongzio/gero/internal/proxy"
-	"github.com/hongzio/gero/internal/services"
+	"github.com/hongzio/psps/internal/api"
+	"github.com/hongzio/psps/internal/creds"
+	"github.com/hongzio/psps/internal/paths"
+	"github.com/hongzio/psps/internal/proxy"
+	"github.com/hongzio/psps/internal/services"
 )
 
 // Environments are defined once and exposed per isolation. Defining one
-// (`gero env`) is a host-level act; exposing it (`gero iso expose`) is where
+// (`psps env`) is a host-level act; exposing it (`psps iso expose`) is where
 // an isolation's view changes.
 
 func envCmd(p paths.Paths, args []string) error {
 	if len(args) == 0 {
-		return errors.New("usage: gero env ls|add|edit|rm|secret|choices|check ...  (gero env help SERVICE for its flags)")
+		return errors.New("usage: psps env ls|add|edit|rm|secret|choices|check ...  (psps env help SERVICE for its flags)")
 	}
 	reg := services.Registry()
 	if args[0] == "help" {
@@ -72,7 +72,7 @@ func envCmd(p paths.Paths, args []string) error {
 
 	case "add", "edit":
 		if len(args) < 3 {
-			return fmt.Errorf("usage: gero env %s SERVICE NAME [flags]  (gero env help SERVICE)", args[0])
+			return fmt.Errorf("usage: psps env %s SERVICE NAME [flags]  (psps env help SERVICE)", args[0])
 		}
 		svc, err := reg.Get(args[1])
 		if err != nil {
@@ -83,7 +83,7 @@ func envCmd(p paths.Paths, args []string) error {
 			return err
 		}
 		if len(pos) != 1 {
-			return fmt.Errorf("usage: gero env %s %s NAME [flags]", args[0], svc.Name())
+			return fmt.Errorf("usage: psps env %s %s NAME [flags]", args[0], svc.Name())
 		}
 		var e api.Env
 		if args[0] == "add" {
@@ -99,7 +99,7 @@ func envCmd(p paths.Paths, args []string) error {
 		}
 		fmt.Printf("%s env %s: %s\n", e.Service, e.Name, compact(e.Config))
 		if args[0] == "add" && len(e.MissingSecrets) > 0 {
-			fmt.Printf("store its secret with: gero env secret %s %s\n", e.Service, e.Name)
+			fmt.Printf("store its secret with: psps env secret %s %s\n", e.Service, e.Name)
 		}
 		_, forwards := svc.(proxy.Forwarder)
 		if _, ok := svc.(proxy.Mounter); ok && len(e.ExposedTo) > 0 {
@@ -116,14 +116,14 @@ func envCmd(p paths.Paths, args []string) error {
 		force := fs.Bool("force", false, "also unexpose it from every isolation that serves it")
 		pos := parse(fs, args[1:])
 		if len(pos) != 2 {
-			return errors.New("usage: gero env rm SERVICE NAME [--force]")
+			return errors.New("usage: psps env rm SERVICE NAME [--force]")
 		}
 		if err := c.DeleteEnv(ctx, pos[0], pos[1], *force); err != nil {
 			return err
 		}
 		fmt.Printf("removed %s/%s\n", pos[0], pos[1])
 		if _, keeps := creds.Fields[pos[0]]; keeps {
-			fmt.Printf("its secret, if any, is still in %s; `gero env secret %s %s --clear` deletes it\n",
+			fmt.Printf("its secret, if any, is still in %s; `psps env secret %s %s --clear` deletes it\n",
 				p.Credentials(), pos[0], pos[1])
 		}
 		return nil
@@ -133,7 +133,7 @@ func envCmd(p paths.Paths, args []string) error {
 		clear := fs.Bool("clear", false, "remove the stored secret")
 		pos := parse(fs, args[1:])
 		if len(pos) != 2 {
-			return errors.New("usage: gero env secret SERVICE NAME [--clear]")
+			return errors.New("usage: psps env secret SERVICE NAME [--clear]")
 		}
 		service, name := pos[0], pos[1]
 		if *clear {
@@ -161,7 +161,7 @@ func envCmd(p paths.Paths, args []string) error {
 		return nil
 
 	case "choices":
-		const usage = "usage: gero env choices SERVICE NAME FIELD [flags]  (e.g. gero env choices git work repos; flags stand in for the env's own: gero env choices aws dev role_arn --aws-profile admin)"
+		const usage = "usage: psps env choices SERVICE NAME FIELD [flags]  (e.g. psps env choices git work repos; flags stand in for the env's own: psps env choices aws dev role_arn --aws-profile admin)"
 		if len(args) < 2 {
 			return errors.New(usage)
 		}
@@ -195,17 +195,17 @@ func envCmd(p paths.Paths, args []string) error {
 			for _, c := range f.Caps {
 				names = append(names, c.Name)
 			}
-			fmt.Fprintf(os.Stderr, "%d; list them with --%s, e.g. gero env edit %s %s --%s VALUE  (VALUE=%s narrows one)\n", len(cs), f.Flag, svc.Name(), name, f.Flag, strings.Join(names, ","))
+			fmt.Fprintf(os.Stderr, "%d; list them with --%s, e.g. psps env edit %s %s --%s VALUE  (VALUE=%s narrows one)\n", len(cs), f.Flag, svc.Name(), name, f.Flag, strings.Join(names, ","))
 		case f.Kind == proxy.List:
-			fmt.Fprintf(os.Stderr, "%d; list them with --%s, e.g. gero env edit %s %s --%s VALUE\n", len(cs), f.Flag, svc.Name(), name, f.Flag)
+			fmt.Fprintf(os.Stderr, "%d; list them with --%s, e.g. psps env edit %s %s --%s VALUE\n", len(cs), f.Flag, svc.Name(), name, f.Flag)
 		default:
-			fmt.Fprintf(os.Stderr, "%d; pick one with --%s, e.g. gero env edit %s %s --%s VALUE\n", len(cs), f.Flag, svc.Name(), name, f.Flag)
+			fmt.Fprintf(os.Stderr, "%d; pick one with --%s, e.g. psps env edit %s %s --%s VALUE\n", len(cs), f.Flag, svc.Name(), name, f.Flag)
 		}
 		return nil
 
 	case "check":
 		if len(args) != 3 {
-			return errors.New("usage: gero env check SERVICE NAME")
+			return errors.New("usage: psps env check SERVICE NAME")
 		}
 		res, err := c.CheckEnv(ctx, args[1], args[2])
 		if err != nil {
@@ -236,14 +236,14 @@ func envHelp(reg *proxy.Registry, args []string) error {
 	if err != nil {
 		return err
 	}
-	fmt.Printf("gero env add|edit %s NAME [flags] — %s\n\n", svc.Name(), svc.Summary())
+	fmt.Printf("psps env add|edit %s NAME [flags] — %s\n\n", svc.Name(), svc.Summary())
 	printFields(svc.Fields())
 	if len(svc.Settings()) > 0 {
-		fmt.Printf("\ngero iso expose ISOLATION %s [ENV,...] [--default-env NAME] [flags]\n\n", svc.Name())
+		fmt.Printf("\npsps iso expose ISOLATION %s [ENV,...] [--default-env NAME] [flags]\n\n", svc.Name())
 		printFields(svc.Settings())
 	}
 	if f, ok := creds.Fields[svc.Name()]; ok {
-		fmt.Printf("\nsecret (gero env secret %s NAME): %s\n", svc.Name(), strings.Join(f, ", "))
+		fmt.Printf("\nsecret (psps env secret %s NAME): %s\n", svc.Name(), strings.Join(f, ", "))
 	}
 	return nil
 }

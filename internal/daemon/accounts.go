@@ -6,11 +6,11 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/hongzio/gero/internal/api"
-	"github.com/hongzio/gero/internal/creds"
-	"github.com/hongzio/gero/internal/driver"
-	"github.com/hongzio/gero/internal/proxy"
-	"github.com/hongzio/gero/internal/store"
+	"github.com/hongzio/psps/internal/api"
+	"github.com/hongzio/psps/internal/creds"
+	"github.com/hongzio/psps/internal/driver"
+	"github.com/hongzio/psps/internal/proxy"
+	"github.com/hongzio/psps/internal/store"
 )
 
 // Accounts are agent CLI credentials defined once and used by any number of
@@ -42,7 +42,7 @@ func (m *Manager) accountSecret(name string) (string, error) {
 	if err != nil {
 		var d *creds.Denied
 		if errors.As(err, &d) {
-			return "", fmt.Errorf("account %s has no secret stored; set it with `gero account set %s`", name, name)
+			return "", fmt.Errorf("account %s has no secret stored; set it with `psps account set %s`", name, name)
 		}
 		return "", err
 	}
@@ -87,7 +87,7 @@ func (m *Manager) PutAccount(name string, req api.PutAccount, create bool) (api.
 	cur, err := m.store.Account(name)
 	switch {
 	case create && err == nil:
-		return api.Account{}, badRequest(fmt.Errorf("account %s already exists; replace its secret with `gero account set %s`", name, name))
+		return api.Account{}, badRequest(fmt.Errorf("account %s already exists; replace its secret with `psps account set %s`", name, name))
 	case !create && err != nil:
 		return api.Account{}, err
 	case create:

@@ -15,10 +15,10 @@ import (
 	"sync"
 	"time"
 
-	"github.com/hongzio/gero/internal/creds"
-	"github.com/hongzio/gero/internal/proxy"
-	"github.com/hongzio/gero/internal/shimproto"
-	"github.com/hongzio/gero/internal/store"
+	"github.com/hongzio/psps/internal/creds"
+	"github.com/hongzio/psps/internal/proxy"
+	"github.com/hongzio/psps/internal/shimproto"
+	"github.com/hongzio/psps/internal/store"
 )
 
 const (
@@ -190,7 +190,7 @@ func (in *instance) handle(c net.Conn) {
 		return
 	}
 	if !v.Enabled {
-		in.refuse(c, deny("the pg proxy is off for isolation %s; the operator turns it on with `gero iso expose %s pg <env>`", in.h.Name(), in.h.Name()))
+		in.refuse(c, deny("the pg proxy is off for isolation %s; the operator turns it on with `psps iso expose %s pg <env>`", in.h.Name(), in.h.Name()))
 		return
 	}
 	if err := in.checkToken(c, r, v, envName); err != nil {
@@ -340,13 +340,13 @@ func (in *instance) policy(v proxy.View, envName, database string) (Env, error) 
 	if !ok {
 		for _, m := range v.Missing {
 			if m == envName {
-				return Env{}, deny("environment %q was removed from gero's registry but is still exposed here; the operator re-exposes with `gero iso expose %s pg ...`", envName, v.Isolation)
+				return Env{}, deny("environment %q was removed from psps's registry but is still exposed here; the operator re-exposes with `psps iso expose %s pg ...`", envName, v.Isolation)
 			}
 		}
 		return Env{}, deny("no environment named %q here; this proxy serves: %s. Connect with the environment name as the user (postgres://<env>@...)", envName, names(envs))
 	}
 	if len(e.Databases) == 0 {
-		return Env{}, deny("environment %q allows no databases; the operator must add one with `gero env edit pg %s --allow-db <name>`", envName, envName)
+		return Env{}, deny("environment %q allows no databases; the operator must add one with `psps env edit pg %s --allow-db <name>`", envName, envName)
 	}
 	for _, d := range e.Databases {
 		if d == database {
@@ -406,7 +406,7 @@ func (in *instance) cancel(payload []byte) {
 func (Service) Refusals(v proxy.View) []proxy.Refusal {
 	user := v.Exposure.Default
 	if user == "" {
-		user = "gero-verify"
+		user = "psps-verify"
 	}
 	return []proxy.Refusal{{What: "a wrong workspace token", Port: Port, Postgres: user, Want: "missing or wrong workspace token"}}
 }
@@ -418,7 +418,7 @@ func (Service) Check(ctx context.Context, name string, cfg json.RawMessage, c *c
 		return "", err
 	}
 	if len(e.Databases) == 0 {
-		return "", deny("no databases allowed yet; add one with `gero env edit pg %s --allow-db <name>` first", name)
+		return "", deny("no databases allowed yet; add one with `psps env edit pg %s --allow-db <name>` first", name)
 	}
 	secret, err := c.Read("pg", name)
 	if err != nil {

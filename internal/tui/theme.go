@@ -3,8 +3,8 @@ package tui
 import (
 	"github.com/charmbracelet/lipgloss"
 
-	"github.com/hongzio/gero/internal/api"
-	"github.com/hongzio/gero/internal/event"
+	"github.com/hongzio/psps/internal/api"
+	"github.com/hongzio/psps/internal/event"
 )
 
 type theme struct {

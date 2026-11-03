@@ -2,7 +2,7 @@
 // notionproxy.py: the isolation speaks MCP to Notion, and writes only by
 // permission.
 //
-// There is no integration. gero logs in to Notion's hosted MCP server the
+// There is no integration. psps logs in to Notion's hosted MCP server the
 // way any MCP client does (dynamic client registration, a browser login,
 // PKCE) and keeps the OAuth tokens in the credentials file. Nobody needs
 // the right to create a workspace integration, which is the point:
@@ -60,7 +60,7 @@ var Families = map[string][]string{
 		"notion-calendar-list-calendar-resources", "notion-calendar-list-contacts",
 	},
 	// Slack, Google Drive, GitHub, read through Notion, around whatever
-	// boundary gero draws for those services directly.
+	// boundary psps draws for those services directly.
 	"connectors": {"notion-connector-search"},
 	"memory":     {"notion-memory-search"},
 	"skills":     {"notion-download-skill", "notion-get-enabled-skills"},
@@ -93,7 +93,7 @@ var (
 	DefaultFamilies = []string{"content", "search"}
 )
 
-// Probe tools answer for every env, outside every family, so `gero env
+// Probe tools answer for every env, outside every family, so `psps env
 // check` and an agent's first sanity check always have an answer.
 const Probe = "probe"
 
@@ -191,7 +191,7 @@ func Allowed(e Env, envName, tool string) (string, error) {
 	if isWrite(family) {
 		kind = "write"
 	}
-	return "", deny(403, "notion: %s is in the '%s' %s family, which environment %q does not allow; the operator can open it with `gero env edit notion %s --allow-api %s`",
+	return "", deny(403, "notion: %s is in the '%s' %s family, which environment %q does not allow; the operator can open it with `psps env edit notion %s --allow-api %s`",
 		tool, family, kind, envName, envName, family)
 }
 

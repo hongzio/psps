@@ -1,25 +1,25 @@
 #!/bin/sh
 # Shows what moving the isolation image's Claude Code and Codex from the
 # versions pinned in internal/isolation/image.go to newer ones changes of
-# what gero's drivers parse, before an agent runs on them. It spends no
+# what psps's drivers parse, before an agent runs on them. It spends no
 # tokens and touches no login: both CLIs run from a scratch directory, with
 # a scratch home, only to print their help and protocol schema.
-#   Codex: every method gero's driver names is still in the app-server
+#   Codex: every method psps's driver names is still in the app-server
 #     schema, the schema's diff, and the release notes in between.
-#   Claude Code: every flag gero's driver passes is still in the binary
+#   Claude Code: every flag psps's driver passes is still in the binary
 #     (some are hidden from --help), the --help diff, and the changelog in
 #     between.
 # The diffs stay in a directory it names at the end. What it cannot see,
 # behaviour, is the live check in the README.
 # Usage: sh scripts/cli-check.sh [CLAUDE_VERSION [CODEX_VERSION]]
-#   (npm's latest by default; Apple silicon, like gero)
+#   (npm's latest by default; Apple silicon, like psps)
 set -eu
 
 root=$(cd "$(dirname "$0")/.." && pwd)
 tmp=$(mktemp -d)
 trap 'rm -rf "$tmp"' EXIT
 # The diffs are kept here, and shown only when they are short.
-keep=$(mktemp -d -t gero-cli-check)
+keep=$(mktemp -d -t psps-cli-check)
 
 die() {
     echo "cli-check: $*" >&2
@@ -71,7 +71,7 @@ done
 for method in $(grep -v -E '^[[:space:]]*"[^"]*"$' "$root/internal/driver/codex.go" |
     grep -o '"[a-z][a-zA-Z]*/[a-zA-Z/]*"' | sort -u); do
     if ! grep -rqF -- "$method" "$tmp/schema-$codex_new"; then
-        echo "MISSING: gero uses $method; codex $codex_new's schema has no such method"
+        echo "MISSING: psps uses $method; codex $codex_new's schema has no such method"
         broken=1
     fi
 done
@@ -104,7 +104,7 @@ done
 # The flags the driver passes, hidden ones (--resume-session-at) included.
 for flag in $(grep -o '"--[a-z-]*"' "$root/internal/driver/claude.go" | tr -d '"' | sort -u); do
     if ! grep -qaF -e "$flag" "$tmp/claude-$claude_new"; then
-        echo "MISSING: gero passes $flag; claude $claude_new has no such flag"
+        echo "MISSING: psps passes $flag; claude $claude_new has no such flag"
         broken=1
     fi
 done
@@ -120,7 +120,7 @@ awk -v new="## $claude_new" -v old="## $claude_old" '$0 == new { p = 1 } $0 == o
 echo
 echo "The diffs are in $keep."
 if [ "$broken" = 1 ]; then
-    echo "gero's drivers use something the new versions no longer have: see MISSING above"
+    echo "psps's drivers use something the new versions no longer have: see MISSING above"
     exit 1
 fi
-echo "Everything gero's drivers name is still there. Read the diffs and notes above, then run the live check (README)."
+echo "Everything psps's drivers name is still there. Read the diffs and notes above, then run the live check (README)."

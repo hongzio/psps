@@ -13,9 +13,9 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/hongzio/gero/internal/creds"
-	"github.com/hongzio/gero/internal/proxy"
-	"github.com/hongzio/gero/internal/store"
+	"github.com/hongzio/psps/internal/creds"
+	"github.com/hongzio/psps/internal/proxy"
+	"github.com/hongzio/psps/internal/store"
 )
 
 // Ported from isolate's test_ddproxy_wire.py: what actually leaves the Mac,
@@ -205,7 +205,7 @@ func TestTheDatadogpyParamFormIsAcceptedAndStripped(t *testing.T) {
 func TestAFamilyOffTheAllowlistNamesTheOperatorCommand(t *testing.T) {
 	h := newHarness(t, readEnv())
 	code, body, _ := h.do("GET", "/api/v1/dashboard", key(token), "")
-	if code != 403 || !strings.Contains(reason(t, body), "gero env edit datadog prod --allow-api dashboards") || len(h.tap.all()) != 0 {
+	if code != 403 || !strings.Contains(reason(t, body), "psps env edit datadog prod --allow-api dashboards") || len(h.tap.all()) != 0 {
 		t.Fatalf("%d %q", code, body)
 	}
 }
@@ -214,7 +214,7 @@ func TestAWriteNeverReachesUpstreamWhenNoneAreOpen(t *testing.T) {
 	h := newHarness(t, readEnv())
 	code, body, _ := h.do("POST", "/api/v1/monitor", key(token), "{}")
 	r := reason(t, body)
-	if code != 403 || !strings.Contains(r, "is a write") || !strings.Contains(r, "gero env edit datadog prod --allow-write monitors") || len(h.tap.all()) != 0 {
+	if code != 403 || !strings.Contains(r, "is a write") || !strings.Contains(r, "psps env edit datadog prod --allow-write monitors") || len(h.tap.all()) != 0 {
 		t.Fatalf("%d %q", code, r)
 	}
 }
@@ -335,7 +335,7 @@ func TestAWriteToAFamilyThatIsNotEvenReadOpenNamesTheRead(t *testing.T) {
 	}
 }
 
-// --- gero ---
+// --- psps ---
 
 func TestAChunkedBodyIsRefused(t *testing.T) {
 	h := newHarness(t, writeEnv())
@@ -365,7 +365,7 @@ func TestAnIsolationWithoutTheServiceIsToldHowToGetIt(t *testing.T) {
 	h := newHarness(t, readEnv())
 	h.edit(func(v *proxy.View) { v.Enabled = false })
 	code, body, _ := h.do("GET", "/api/v1/monitor", key(token), "")
-	if code != 503 || !strings.Contains(reason(t, body), "gero iso expose work datadog") || len(h.tap.all()) != 0 {
+	if code != 503 || !strings.Contains(reason(t, body), "psps iso expose work datadog") || len(h.tap.all()) != 0 {
 		t.Fatalf("%d %q", code, body)
 	}
 }
@@ -390,7 +390,7 @@ func TestARemovedEnvironmentSaysSo(t *testing.T) {
 		v.Missing = []string{"prod"}
 	})
 	code, body, _ := h.do("GET", "/api/v1/monitor", key(token), "")
-	if code != 503 || !strings.Contains(reason(t, body), "removed from gero's registry") || len(h.tap.all()) != 0 {
+	if code != 503 || !strings.Contains(reason(t, body), "removed from psps's registry") || len(h.tap.all()) != 0 {
 		t.Fatalf("%d %q", code, body)
 	}
 }
@@ -412,7 +412,7 @@ func TestTheSiteDecidesTheUpstreamHost(t *testing.T) {
 	}
 }
 
-// --- `gero env check datadog` ---
+// --- `psps env check datadog` ---
 
 func TestEveryAllowedFamilyIsProbedWithBothKeys(t *testing.T) {
 	tp := newTap(t)

@@ -5,9 +5,9 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/hongzio/gero/internal/api"
-	"github.com/hongzio/gero/internal/proxy"
-	"github.com/hongzio/gero/internal/store"
+	"github.com/hongzio/psps/internal/api"
+	"github.com/hongzio/psps/internal/proxy"
+	"github.com/hongzio/psps/internal/store"
 )
 
 var gitFields = []proxy.Field{
@@ -181,10 +181,10 @@ func TestAGitEnvAsksForItsTokenThenOffersTheRepositoriesItOpens(t *testing.T) {
 		t.Fatal("the token is shown while typed")
 	}
 	h.key("tab") // onto repos: the lookup runs with the typed token
-	h.viewHas("0 of 2 ticked", "hongzio/gero", "private", "hongzio/isolate")
-	h.key(" ") // space ticks hongzio/gero
+	h.viewHas("0 of 2 ticked", "hongzio/psps", "private", "hongzio/isolate")
+	h.key(" ") // space ticks hongzio/psps
 	h.key("ctrl+s")
-	if len(h.be.patches) != 1 || h.be.patches[0] != "add git/work repos=[hongzio/gero]" {
+	if len(h.be.patches) != 1 || h.be.patches[0] != "add git/work repos=[hongzio/psps]" {
 		t.Fatalf("patches %v", h.be.patches)
 	}
 	if len(h.be.secrets) != 1 || h.be.secrets[0] != "git/work map[token:ghp_secret]" {

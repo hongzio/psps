@@ -62,7 +62,7 @@ func TestAMissingFileNamesPathSectionAndFields(t *testing.T) {
 	s := newStore(t)
 	_, err := s.Read("pg", "prod")
 	r := reason(t, err)
-	for _, needle := range []string{s.Path, "[pg prod]", "password", "gero env secret pg prod"} {
+	for _, needle := range []string{s.Path, "[pg prod]", "password", "psps env secret pg prod"} {
 		if !strings.Contains(r, needle) {
 			t.Errorf("refusal lacks %q: %s", needle, r)
 		}

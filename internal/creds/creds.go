@@ -64,18 +64,18 @@ type Store struct {
 
 func section(service, env string) string { return service + " " + env }
 
-// Stanza is the edit that fixes a refusal, which is also what `gero env
+// Stanza is the edit that fixes a refusal, which is also what `psps env
 // secret` writes.
 func (s *Store) Stanza(service, env string) string {
 	if LoginServices[service] {
-		return fmt.Sprintf("run `gero env secret %s %s` to log in in the browser (it writes [%s] in %s)",
+		return fmt.Sprintf("run `psps env secret %s %s` to log in in the browser (it writes [%s] in %s)",
 			service, env, section(service, env), s.Path)
 	}
 	var lines []string
 	for _, f := range Fields[service] {
 		lines = append(lines, f+" = <"+f+">")
 	}
-	return fmt.Sprintf("add to %s (mode 0600):\n[%s]\n%s\nor run `gero env secret %s %s`",
+	return fmt.Sprintf("add to %s (mode 0600):\n[%s]\n%s\nor run `psps env secret %s %s`",
 		s.Path, section(service, env), strings.Join(lines, "\n"), service, env)
 }
 

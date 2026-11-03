@@ -75,7 +75,7 @@ var defaultBindings = []binding{
 	{"iso_upgrade", []string{"u"}, "isolations", "upgrade to the current image"},
 	{"iso_delete", []string{"d"}, "isolations", "delete"},
 	{"iso_services", []string{"p"}, "isolations", "what the isolation's credential proxies serve"},
-	{"iso_verify", []string{"v"}, "isolations", "measure the isolation's guarantees now (gero iso verify)"},
+	{"iso_verify", []string{"v"}, "isolations", "measure the isolation's guarantees now (psps iso verify)"},
 
 	{"cli_login", []string{"l"}, "clis", "log the CLI in inside the isolation (from any browser)"},
 	{"cli_logout", []string{"o"}, "clis", "log the CLI out inside the isolation"},
@@ -168,10 +168,10 @@ func LoadKeymap(path string) (Keymap, []string) {
 }
 
 // DefaultKeysTOML is a complete keys.toml with every default, for
-// `gero tui --keys > ~/.config/gero/keys.toml`.
+// `psps tui --keys > ~/.config/psps/keys.toml`.
 func DefaultKeysTOML() string {
 	var b strings.Builder
-	b.WriteString("# gero TUI key bindings. Each action takes a key or a list of keys.\n")
+	b.WriteString("# psps TUI key bindings. Each action takes a key or a list of keys.\n")
 	b.WriteString("# Key names: \"ctrl+n\", \"alt+enter\", \"shift+tab\", \"pgup\", \"f1\", \"a\".\n\n[keys]\n")
 	ctx := ""
 	for _, bd := range defaultBindings {

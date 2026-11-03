@@ -10,7 +10,7 @@ import (
 )
 
 // An eval isolation scores a team's work away from the agents who made it:
-// for each eval gero copies the work in and runs the eval there as
+// for each eval psps copies the work in and runs the eval there as
 // EvalUser, who is not the agent user, so neither the work nor anything it
 // runs can change what the operator put in the isolation (the agent user's
 // files, the image's). Each eval starts with EvalUser's processes ended and
@@ -49,7 +49,7 @@ func (c CLI) EvalReset(ctx context.Context, name string, wipe bool) error {
 	if wipe {
 		arg = "wipe"
 	}
-	out, err := c.Exec(ctx, name, ExecOpts{User: "0:0"}, "sh", "-c", evalReset, "gero-eval-reset", arg).CombinedOutput()
+	out, err := c.Exec(ctx, name, ExecOpts{User: "0:0"}, "sh", "-c", evalReset, "psps-eval-reset", arg).CombinedOutput()
 	if err != nil {
 		return fmt.Errorf("readying the eval isolation: %w: %s", err, strings.TrimSpace(string(out)))
 	}
@@ -116,7 +116,7 @@ d=$1 uid=$2 dir=$3 home=$4
 shift 4
 echo $$ > "$d/pid"
 (cd -- "$dir" && exec env HOME="$home" setpriv --reuid="$uid" --regid="$uid" --clear-groups "$@") > "$d/out" 2>&1 < /dev/null
-echo $? > "$d/exit.new" && mv "$d/exit.new" "$d/exit"' gero-eval "$d" "$uid" "$dir" "$home" "$@" < /dev/null > /dev/null 2>&1 &`
+echo $? > "$d/exit.new" && mv "$d/exit.new" "$d/exit"' psps-eval "$d" "$uid" "$dir" "$home" "$@" < /dev/null > /dev/null 2>&1 &`
 
 // evalPoll says how a run is: "done CODE" and then the end of its output,
 // "running", or "lost": its directory gone with the container, or its
@@ -136,7 +136,7 @@ type EvalState struct {
 
 // EvalStart starts r as run, apart from the daemon (evalStart).
 func (c CLI) EvalStart(ctx context.Context, name, run string, r EvalRun) error {
-	argv := append([]string{"sh", "-c", evalStart, "gero-eval-start", run, r.UID, r.Dir, r.Home}, r.Argv...)
+	argv := append([]string{"sh", "-c", evalStart, "psps-eval-start", run, r.UID, r.Dir, r.Home}, r.Argv...)
 	out, err := c.Exec(ctx, name, ExecOpts{User: "0:0"}, argv...).CombinedOutput()
 	if err != nil {
 		return fmt.Errorf("starting the eval: %w: %s", err, strings.TrimSpace(string(out)))
@@ -147,7 +147,7 @@ func (c CLI) EvalStart(ctx context.Context, name, run string, r EvalRun) error {
 // EvalPoll says how run is, with the last max bytes of its output once it
 // is done.
 func (c CLI) EvalPoll(ctx context.Context, name, run string, max int) (EvalState, error) {
-	out, err := c.Exec(ctx, name, ExecOpts{User: "0:0"}, "sh", "-c", evalPoll, "gero-eval-poll", run, strconv.Itoa(max)).Output()
+	out, err := c.Exec(ctx, name, ExecOpts{User: "0:0"}, "sh", "-c", evalPoll, "psps-eval-poll", run, strconv.Itoa(max)).Output()
 	if err != nil {
 		return EvalState{}, fmt.Errorf("looking at the eval: %w", err)
 	}
@@ -170,7 +170,7 @@ func (c CLI) EvalPoll(ctx context.Context, name, run string, max int) (EvalState
 // EvalStop ends run's processes, all of its session, as its time is up
 // and its timeout(1) has not ended it.
 func (c CLI) EvalStop(ctx context.Context, name, run string) error {
-	_, err := c.Exec(ctx, name, ExecOpts{User: "0:0"}, "sh", "-c", `p=$(cat `+EvalRuns+`/$1/pid 2>/dev/null) && pkill -KILL -s "$p"; true`, "gero-eval-stop", run).Output()
+	_, err := c.Exec(ctx, name, ExecOpts{User: "0:0"}, "sh", "-c", `p=$(cat `+EvalRuns+`/$1/pid 2>/dev/null) && pkill -KILL -s "$p"; true`, "psps-eval-stop", run).Output()
 	return err
 }
 

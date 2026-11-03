@@ -15,9 +15,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/hongzio/gero/internal/creds"
-	"github.com/hongzio/gero/internal/proxy"
-	"github.com/hongzio/gero/internal/store"
+	"github.com/hongzio/psps/internal/creds"
+	"github.com/hongzio/psps/internal/proxy"
+	"github.com/hongzio/psps/internal/store"
 )
 
 // Ported from isolate's test_slackproxy_wire.py: what actually leaves the
@@ -326,13 +326,13 @@ func TestAChunkedBodyIsRefused(t *testing.T) {
 	}
 }
 
-// --- gero's own ---
+// --- psps's own ---
 
 func TestAnIsolationWithoutTheServiceIsToldHowToGetIt(t *testing.T) {
 	h := newHarness(t)
 	h.edit(func(v *proxy.View) { v.Enabled = false })
 	code, body, _ := h.do("GET", "/api/auth.test", auth(token), "")
-	if code != 503 || !strings.Contains(errorOf(t, body), "gero iso expose work slack") {
+	if code != 503 || !strings.Contains(errorOf(t, body), "psps iso expose work slack") {
 		t.Fatalf("%d %q", code, body)
 	}
 }
@@ -562,7 +562,7 @@ func TestAnUnresolvableDeniedChannelRefusesSearchOnTheWire(t *testing.T) {
 	}
 }
 
-// --- `gero env check slack` ---
+// --- `psps env check slack` ---
 
 func checkHarness(t *testing.T, answer string, scopes string) (*harness, *creds.Store, Service) {
 	h := newHarness(t)
@@ -622,7 +622,7 @@ func TestTheWorkspaceGetsATokenPerEnv(t *testing.T) {
 		}
 	}
 	skill := ws.Files[0].Content
-	for _, want := range []string{"name: gero-slack", "- `main` (default) — messages — denied channels: C0666", "- `us-east` — lists", "${SLACK_API_URL%/api}/files/<F...>"} {
+	for _, want := range []string{"name: psps-slack", "- `main` (default) — messages — denied channels: C0666", "- `us-east` — lists", "${SLACK_API_URL%/api}/files/<F...>"} {
 		if !strings.Contains(skill, want) {
 			t.Errorf("the skill lacks %q", want)
 		}

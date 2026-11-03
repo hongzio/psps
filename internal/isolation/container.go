@@ -20,8 +20,8 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/hongzio/gero/internal/shim"
-	"github.com/hongzio/gero/internal/shimproto"
+	"github.com/hongzio/psps/internal/shim"
+	"github.com/hongzio/psps/internal/shimproto"
 )
 
 // AgentUser is the uid:gid agents run as. The image's node user is renamed to
@@ -222,7 +222,7 @@ func (c CLI) Build(ctx context.Context, tag, dir string, progress io.Writer) err
 
 // memorySize is container's --memory with its unit: K to P, 1024-based,
 // written 4G, 4GB or 4GiB. container also takes a bare number, as bytes;
-// gero does not, since "4096" is never meant as 4 KiB.
+// psps does not, since "4096" is never meant as 4 KiB.
 var memorySize = regexp.MustCompile(`(?i)^([0-9]+(?:\.[0-9]+)?) ?([KMGTP])(?:i?B)?$`)
 
 // MinMemory is the least container starts a VM with.
@@ -305,7 +305,7 @@ func (c CLI) NetworkInspect(ctx context.Context, name string) (NetworkInfo, erro
 }
 
 // NetworkEnsure creates a network unless it exists. Each isolation gets its
-// own: the fence then applies to gero's containers only, and isolations
+// own: the fence then applies to psps's containers only, and isolations
 // cannot reach one another.
 func (c CLI) NetworkEnsure(ctx context.Context, name string) error {
 	if _, err := c.NetworkInspect(ctx, name); err == nil {
@@ -323,7 +323,7 @@ func (c CLI) NetworkRemove(ctx context.Context, name string) error {
 	return err
 }
 
-// ProbeResult is what gero-shim's probe saw from inside a container.
+// ProbeResult is what psps-shim's probe saw from inside a container.
 type ProbeResult struct {
 	Resolve string            `json:"resolve"` // "ok" or the error
 	TCP     map[string]string `json:"tcp"`     // target -> open, blocked, refused, error...
@@ -483,7 +483,7 @@ func StartProc(cmd *exec.Cmd) (Proc, error) {
 	return Proc{Stdin: stdin, Output: r, Wait: cmd.Wait}, nil
 }
 
-// ShimDialer reaches the shim through `container exec -i ... gero-shim client`.
+// ShimDialer reaches the shim through `container exec -i ... psps-shim client`.
 // Every connection is one exec process whose stdio is the byte stream.
 func (c CLI) ShimDialer(name string) shim.Dialer {
 	return func(ctx context.Context) (io.ReadWriteCloser, error) {
@@ -541,7 +541,7 @@ func (e *execConn) Close() error {
 	return nil
 }
 
-// TunnelConn is the exec stream of `gero-shim tunnel`. Stderr says why it
+// TunnelConn is the exec stream of `psps-shim tunnel`. Stderr says why it
 // ended when it ends early (an image whose shim predates the tunnel says
 // "unknown command").
 type TunnelConn interface {
@@ -598,7 +598,7 @@ func (b *tailBuffer) String() string {
 	return string(b.buf)
 }
 
-// Sync writes the files gero manages in the isolation (see shimproto).
+// Sync writes the files psps manages in the isolation (see shimproto).
 func (c CLI) Sync(ctx context.Context, name string, req shimproto.SyncRequest) (shimproto.SyncResult, error) {
 	in, _ := json.Marshal(req)
 	cmd := exec.CommandContext(ctx, c.Bin, "exec", "-i", name, shimPath, "sync")

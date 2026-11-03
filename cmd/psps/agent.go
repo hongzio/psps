@@ -8,16 +8,16 @@ import (
 	"strings"
 	"text/tabwriter"
 
-	"github.com/hongzio/gero/internal/api"
-	"github.com/hongzio/gero/internal/driver"
-	"github.com/hongzio/gero/internal/event"
-	"github.com/hongzio/gero/internal/paths"
-	"github.com/hongzio/gero/internal/store"
+	"github.com/hongzio/psps/internal/api"
+	"github.com/hongzio/psps/internal/driver"
+	"github.com/hongzio/psps/internal/event"
+	"github.com/hongzio/psps/internal/paths"
+	"github.com/hongzio/psps/internal/store"
 )
 
 func agentCmd(p paths.Paths, args []string) error {
 	if len(args) == 0 {
-		return errors.New("usage: gero agent new|ls|log|send|inbox|mail|cron|approve|interrupt|set|rename|id|team|archive|restore|fork|rm")
+		return errors.New("usage: psps agent new|ls|log|send|inbox|mail|cron|approve|interrupt|set|rename|id|team|archive|restore|fork|rm")
 	}
 	c, err := connect(p)
 	if err != nil {
@@ -48,7 +48,7 @@ func agentCmd(p paths.Paths, args []string) error {
 		opts := optFlags()
 		prompt := strings.Join(parse(fs, args[1:]), " ")
 		if *iso == "" {
-			return errors.New("usage: gero agent new --iso NAME --kind claude|codex [--id ID] [--team TEAM] [--repo URL] [--workdir DIR] [PROMPT...]")
+			return errors.New("usage: psps agent new --iso NAME --kind claude|codex [--id ID] [--team TEAM] [--repo URL] [--workdir DIR] [PROMPT...]")
 		}
 		a, err := c.CreateAgent(ctx, api.CreateAgent{Isolation: *iso, Kind: driver.Kind(*kind), Prompt: prompt,
 			Name: *name, Handle: *handle, Repo: *repo, Workdir: *workdir, Options: opts(), Team: *team})
@@ -57,10 +57,10 @@ func agentCmd(p paths.Paths, args []string) error {
 		}
 		id := shownID(a)
 		if prompt == "" {
-			fmt.Printf("agent %s created in %s (%s); its first message starts it:\n  gero agent send %s TEXT...\n", id, a.Isolation, a.Workdir, id)
+			fmt.Printf("agent %s created in %s (%s); its first message starts it:\n  psps agent send %s TEXT...\n", id, a.Isolation, a.Workdir, id)
 			return nil
 		}
-		fmt.Printf("agent %s started in %s (%s)\nfollow it:  gero agent log %s -f\n", id, a.Isolation, a.Workdir, id)
+		fmt.Printf("agent %s started in %s (%s)\nfollow it:  psps agent log %s -f\n", id, a.Isolation, a.Workdir, id)
 		return nil
 
 	case "ls":
@@ -96,7 +96,7 @@ func agentCmd(p paths.Paths, args []string) error {
 		stream := fs.Bool("stream", false, "also print partial output as it streams")
 		pos := parse(fs, args[1:])
 		if len(pos) != 1 {
-			return errors.New("usage: gero agent log ID [-f]")
+			return errors.New("usage: psps agent log ID [-f]")
 		}
 		a, err := c.Agent(ctx, pos[0])
 		if err != nil {
@@ -122,7 +122,7 @@ func agentCmd(p paths.Paths, args []string) error {
 	case "send":
 		pos := parse(fs, args[1:])
 		if len(pos) < 2 {
-			return errors.New("usage: gero agent send ID TEXT...")
+			return errors.New("usage: psps agent send ID TEXT...")
 		}
 		sent, err := c.Send(ctx, pos[0], strings.Join(pos[1:], " "))
 		if sent.Done != "" {
@@ -133,7 +133,7 @@ func agentCmd(p paths.Paths, args []string) error {
 	case "approve":
 		pos := parse(fs, args[1:])
 		if len(pos) != 3 {
-			return errors.New("usage: gero agent approve ID APPROVAL accept|decline|cancel")
+			return errors.New("usage: psps agent approve ID APPROVAL accept|decline|cancel")
 		}
 		d, err := driver.ParseDecision(pos[2])
 		if err != nil {
@@ -144,7 +144,7 @@ func agentCmd(p paths.Paths, args []string) error {
 	case "answer":
 		pos := parse(fs, args[1:])
 		if len(pos) < 3 {
-			return errors.New("usage: gero agent answer ID APPROVAL ANSWER... (one per question, in order)")
+			return errors.New("usage: psps agent answer ID APPROVAL ANSWER... (one per question, in order)")
 		}
 		a, err := c.Agent(ctx, pos[0])
 		if err != nil {
@@ -175,7 +175,7 @@ func agentCmd(p paths.Paths, args []string) error {
 	case "interrupt":
 		pos := parse(fs, args[1:])
 		if len(pos) != 1 {
-			return errors.New("usage: gero agent interrupt ID")
+			return errors.New("usage: psps agent interrupt ID")
 		}
 		return c.Interrupt(ctx, pos[0])
 
@@ -183,7 +183,7 @@ func agentCmd(p paths.Paths, args []string) error {
 		opts := optFlags()
 		pos := parse(fs, args[1:])
 		if len(pos) != 1 {
-			return errors.New("usage: gero agent set ID [--model M] [--effort E] [--approvals never|auto|ask|default]")
+			return errors.New("usage: psps agent set ID [--model M] [--effort E] [--approvals never|auto|ask|default]")
 		}
 		a, err := c.Agent(ctx, pos[0])
 		if err != nil {
@@ -204,7 +204,7 @@ func agentCmd(p paths.Paths, args []string) error {
 	case "rename":
 		pos := parse(fs, args[1:])
 		if len(pos) < 2 {
-			return errors.New("usage: gero agent rename ID NAME...")
+			return errors.New("usage: psps agent rename ID NAME...")
 		}
 		name := strings.Join(pos[1:], " ")
 		a, err := c.UpdateAgent(ctx, pos[0], api.UpdateAgent{Name: &name})
@@ -215,10 +215,10 @@ func agentCmd(p paths.Paths, args []string) error {
 		return nil
 
 	case "id":
-		clear := fs.Bool("clear", false, "take its own ID away: it goes by the one gero gave it")
+		clear := fs.Bool("clear", false, "take its own ID away: it goes by the one psps gave it")
 		pos := parse(fs, args[1:])
 		if len(pos) != 2 && !(len(pos) == 1 && *clear) {
-			return errors.New("usage: gero agent id AGENT NEW-ID | gero agent id AGENT --clear")
+			return errors.New("usage: psps agent id AGENT NEW-ID | psps agent id AGENT --clear")
 		}
 		handle := ""
 		if !*clear {
@@ -239,7 +239,7 @@ func agentCmd(p paths.Paths, args []string) error {
 		clear := fs.Bool("clear", false, "take it out of its team")
 		pos := parse(fs, args[1:])
 		if len(pos) < 2 && !(len(pos) == 1 && *clear) {
-			return errors.New("usage: gero agent team AGENT TEAM... | gero agent team AGENT --clear")
+			return errors.New("usage: psps agent team AGENT TEAM... | psps agent team AGENT --clear")
 		}
 		team := ""
 		if !*clear {
@@ -261,7 +261,7 @@ func agentCmd(p paths.Paths, args []string) error {
 		rm := fs.Int64("rm", 0, "take mail `N` out, unread")
 		pos := parse(fs, args[1:])
 		if len(pos) != 1 || (*clear && *rm != 0) {
-			return errors.New("usage: gero agent inbox AGENT [--rm N | --clear]")
+			return errors.New("usage: psps agent inbox AGENT [--rm N | --clear]")
 		}
 		switch {
 		case *clear:
@@ -298,7 +298,7 @@ func agentCmd(p paths.Paths, args []string) error {
 	case "mail":
 		pos := parse(fs, args[1:])
 		if len(pos) != 1 {
-			return errors.New("usage: gero agent mail AGENT   (what it was sent and what it wrote, newest first)")
+			return errors.New("usage: psps agent mail AGENT   (what it was sent and what it wrote, newest first)")
 		}
 		mails, err := c.Mail(ctx, pos[0])
 		if err != nil {
@@ -331,10 +331,10 @@ func agentCmd(p paths.Paths, args []string) error {
 		off := fs.Int64("off", 0, "turn cron `N` off")
 		rm := fs.Int64("rm", 0, "delete cron `N`")
 		pos := parse(fs, args[1:])
-		usage := errors.New(`usage: gero agent cron AGENT                                   its crons
-       gero agent cron AGENT --add SCHEDULE [--wait] [--once] MESSAGE...
-       gero agent cron AGENT --set N [--schedule SCHEDULE] [--wait|--skip] [--once|--every-time] [MESSAGE...]
-       gero agent cron AGENT --on N | --off N | --rm N`)
+		usage := errors.New(`usage: psps agent cron AGENT                                   its crons
+       psps agent cron AGENT --add SCHEDULE [--wait] [--once] MESSAGE...
+       psps agent cron AGENT --set N [--schedule SCHEDULE] [--wait|--skip] [--once|--every-time] [MESSAGE...]
+       psps agent cron AGENT --on N | --off N | --rm N`)
 		acts := 0
 		for _, x := range []bool{*add != "", *set != 0, *on != 0, *off != 0, *rm != 0} {
 			if x {
@@ -436,14 +436,14 @@ func agentCmd(p paths.Paths, args []string) error {
 	case "archive":
 		pos := parse(fs, args[1:])
 		if len(pos) != 1 {
-			return errors.New("usage: gero agent archive ID")
+			return errors.New("usage: psps agent archive ID")
 		}
 		return c.Archive(ctx, pos[0])
 
 	case "fork":
 		pos := parse(fs, args[1:])
 		if len(pos) != 1 {
-			return errors.New("usage: gero agent fork ID   (live or archived)")
+			return errors.New("usage: psps agent fork ID   (live or archived)")
 		}
 		a, err := c.Fork(ctx, pos[0])
 		if err != nil {
@@ -455,7 +455,7 @@ func agentCmd(p paths.Paths, args []string) error {
 	case "restore":
 		pos := parse(fs, args[1:])
 		if len(pos) != 1 {
-			return errors.New("usage: gero agent restore ID   (an archived agent)")
+			return errors.New("usage: psps agent restore ID   (an archived agent)")
 		}
 		a, err := c.Restore(ctx, pos[0])
 		if err != nil {
@@ -468,7 +468,7 @@ func agentCmd(p paths.Paths, args []string) error {
 		purge := fs.Bool("purge", false, "also remove its workspace and its CLI's session transcript from the isolation")
 		pos := parse(fs, args[1:])
 		if len(pos) != 1 {
-			return errors.New("usage: gero agent rm ID [--purge]   (an archived agent)")
+			return errors.New("usage: psps agent rm ID [--purge]   (an archived agent)")
 		}
 		a, err := c.Agent(ctx, pos[0])
 		if err != nil {
@@ -513,7 +513,7 @@ func mailLine(text string) string {
 	return first
 }
 
-// shownID is the ID an agent goes by: its own, or the key gero gave it.
+// shownID is the ID an agent goes by: its own, or the key psps gave it.
 func shownID(a api.Agent) string { return orStr(a.Handle, a.ID) }
 
 type printer struct {
@@ -573,9 +573,9 @@ func (p *printer) print(e event.Event) {
 			}
 		}
 		if a.Questions != nil {
-			p.line("", fmt.Sprintf("gero agent answer %s %s ANSWER... · gero agent approve %s %s decline|cancel", e.Agent, a.ID, e.Agent, a.ID))
+			p.line("", fmt.Sprintf("psps agent answer %s %s ANSWER... · psps agent approve %s %s decline|cancel", e.Agent, a.ID, e.Agent, a.ID))
 		} else {
-			p.line("", fmt.Sprintf("gero agent approve %s %s accept|decline|cancel", e.Agent, a.ID))
+			p.line("", fmt.Sprintf("psps agent approve %s %s accept|decline|cancel", e.Agent, a.ID))
 		}
 	case event.KindApprovalDone:
 		p.line("approval", e.Approval.ID+" "+e.Approval.Decision)

@@ -1,4 +1,4 @@
-// Package tui is gero's terminal interface: agents on the left, the selected
+// Package tui is psps's terminal interface: agents on the left, the selected
 // agent's conversation in the middle, the message input at the bottom.
 // Everything is driven from the keyboard, with bindings from keys.toml.
 package tui
@@ -19,11 +19,11 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 
-	"github.com/hongzio/gero/internal/api"
-	"github.com/hongzio/gero/internal/driver"
-	"github.com/hongzio/gero/internal/event"
-	"github.com/hongzio/gero/internal/proxy"
-	"github.com/hongzio/gero/internal/store"
+	"github.com/hongzio/psps/internal/api"
+	"github.com/hongzio/psps/internal/driver"
+	"github.com/hongzio/psps/internal/event"
+	"github.com/hongzio/psps/internal/proxy"
+	"github.com/hongzio/psps/internal/store"
 )
 
 // Backend is the daemon API the TUI uses; *client.Client implements it.
@@ -468,7 +468,7 @@ func (m *Model) openAgent(id string) {
 	m.refreshConvo(true)
 }
 
-// shownID is the ID an agent goes by: its own, or the key gero gave it.
+// shownID is the ID an agent goes by: its own, or the key psps gave it.
 func shownID(a api.Agent) string {
 	switch {
 	case a.Handle != "":
@@ -1079,7 +1079,7 @@ func (m *Model) handleSidebarKey(msg tea.KeyMsg) tea.Cmd {
 			return nil
 		}
 		be, id := m.be, a.ID
-		m.openPrompt(fmt.Sprintf("ID for %q (empty: %s, the one gero gave it):", title(a), a.ID), a.Handle, func(handle string) tea.Cmd {
+		m.openPrompt(fmt.Sprintf("ID for %q (empty: %s, the one psps gave it):", title(a), a.ID), a.Handle, func(handle string) tea.Cmd {
 			if handle == a.Handle {
 				m.setFlash("ID unchanged", false)
 				return nil
@@ -1249,7 +1249,7 @@ func (m *Model) handleInputKey(msg tea.KeyMsg) tea.Cmd {
 		m.drafts[a.ID] = ""
 		m.layout()
 		be, id := m.be, a.ID
-		// One of gero's commands says what gero did instead of sending it.
+		// One of psps's commands says what psps did instead of sending it.
 		return func() tea.Msg {
 			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
 			defer cancel()

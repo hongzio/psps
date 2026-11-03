@@ -8,15 +8,15 @@ import (
 	"strings"
 	"text/tabwriter"
 
-	"github.com/hongzio/gero/internal/api"
-	"github.com/hongzio/gero/internal/paths"
+	"github.com/hongzio/psps/internal/api"
+	"github.com/hongzio/psps/internal/paths"
 )
 
 // accountCmd manages agent CLI accounts: a credential defined once on the
-// Mac and used by any number of isolations (`gero iso account`).
+// Mac and used by any number of isolations (`psps iso account`).
 func accountCmd(p paths.Paths, args []string) error {
 	if len(args) == 0 {
-		return errors.New("usage: gero account ls|add|set|rm")
+		return errors.New("usage: psps account ls|add|set|rm")
 	}
 	c, err := connect(p)
 	if err != nil {
@@ -47,7 +47,7 @@ func accountCmd(p paths.Paths, args []string) error {
 		kind := fs.String("kind", "", "what it holds: "+accountKinds())
 		pos := parse(fs, args[1:])
 		if len(pos) != 1 || *kind == "" {
-			return errors.New("usage: gero account add NAME --kind KIND  (" + accountKinds() + ")\n" + kindHelp())
+			return errors.New("usage: psps account add NAME --kind KIND  (" + accountKinds() + ")\n" + kindHelp())
 		}
 		secret, err := promptSecret("account", pos[0], []string{"token"})
 		if err != nil {
@@ -58,13 +58,13 @@ func accountCmd(p paths.Paths, args []string) error {
 			return err
 		}
 		fmt.Printf("added account %s (%s), stored in %s\n", a.Name, a.Kind, p.Credentials())
-		fmt.Printf("use it in an isolation: gero iso account ISOLATION %s %s\n", a.Tool, a.Name)
+		fmt.Printf("use it in an isolation: psps iso account ISOLATION %s %s\n", a.Tool, a.Name)
 		return nil
 
 	case "set":
 		pos := parse(fs, args[1:])
 		if len(pos) != 1 {
-			return errors.New("usage: gero account set NAME  (replaces its secret)")
+			return errors.New("usage: psps account set NAME  (replaces its secret)")
 		}
 		secret, err := promptSecret("account", pos[0], []string{"token"})
 		if err != nil {
@@ -85,7 +85,7 @@ func accountCmd(p paths.Paths, args []string) error {
 		force := fs.Bool("force", false, "also stop every isolation using it from doing so")
 		pos := parse(fs, args[1:])
 		if len(pos) != 1 {
-			return errors.New("usage: gero account rm NAME [--force]")
+			return errors.New("usage: psps account rm NAME [--force]")
 		}
 		if err := c.DeleteAccount(ctx, pos[0], *force); err != nil {
 			return err

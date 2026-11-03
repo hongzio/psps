@@ -9,7 +9,7 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 
-	"github.com/hongzio/gero/internal/api"
+	"github.com/hongzio/psps/internal/api"
 )
 
 // The team page: a team's lead and the lead's terms, set in a form, over
@@ -136,7 +136,7 @@ func (m *Model) leadForm(g liveGroup, run *api.TeamRun) *form {
 		lead,
 		text("Budget", "none", "tokens sent anew and written by the lead and its agents, as 5M or 800k; none leaves only the plan ceiling", s.budget),
 		text("Live at most", "3", "agents of the lead's live at once", num(s.live)),
-		text("Turn limit", "60", "minutes a turn of one of them runs before gero stops it and asks for a report", num(s.turn)),
+		text("Turn limit", "60", "minutes a turn of one of them runs before psps stops it and asks for a report", num(s.turn)),
 		text("Plan ceiling", "90", "percent of a plan window, the account's whole use (yours too), past which nothing new starts on it", num(s.ceiling)),
 		text("Eval", "none", `a shell command; its last "SCORE: x" line is the score, higher better`, s.eval),
 		text("Eval directory", "the lead's directory", "where in the lead's isolation the eval runs, or what is copied to the eval isolation", s.dir),
@@ -174,7 +174,7 @@ type leadSavedMsg struct {
 }
 
 // saveLead sets the team's lead and its terms from the form, or takes its
-// lead away. Setting a lead resumes a run gero stopped.
+// lead away. Setting a lead resumes a run psps stopped.
 func (m *Model) saveLead() tea.Cmd {
 	p := m.teamPage
 	fs := p.form.fields

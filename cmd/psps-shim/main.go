@@ -1,13 +1,13 @@
-// gero-shim runs inside an isolation container.
+// psps-shim runs inside an isolation container.
 //
-//	gero-shim serve    the container's main process: owns agents, keeps logs
-//	gero-shim client   relays stdio to the serve socket; the daemon runs this
+//	psps-shim serve    the container's main process: owns agents, keeps logs
+//	psps-shim client   relays stdio to the serve socket; the daemon runs this
 //	                   through `container exec -i` so it needs no IP route
-//	gero-shim probe    tries TCP targets and a DNS lookup, for the daemon to
+//	psps-shim probe    tries TCP targets and a DNS lookup, for the daemon to
 //	                   measure the network fence from inside the isolation
-//	gero-shim tunnel   the isolation end of the credential proxies' tunnel,
+//	psps-shim tunnel   the isolation end of the credential proxies' tunnel,
 //	                   an SSH server on stdio (see internal/tunnel)
-//	gero-shim sync     writes the files gero manages in the isolation, from
+//	psps-shim sync     writes the files psps manages in the isolation, from
 //	                   a JSON request on stdin
 package main
 
@@ -27,16 +27,16 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/hongzio/gero/internal/shim"
-	"github.com/hongzio/gero/internal/shimproto"
-	"github.com/hongzio/gero/internal/tunnel"
+	"github.com/hongzio/psps/internal/shim"
+	"github.com/hongzio/psps/internal/shimproto"
+	"github.com/hongzio/psps/internal/tunnel"
 )
 
 const defaultRoot = "/var/lib/gero"
 
 func main() {
 	if len(os.Args) < 2 {
-		fmt.Fprintln(os.Stderr, "usage: gero-shim serve|client|probe|tunnel|sync|version [flags]")
+		fmt.Fprintln(os.Stderr, "usage: psps-shim serve|client|probe|tunnel|sync|version [flags]")
 		os.Exit(2)
 	}
 	var err error
@@ -57,7 +57,7 @@ func main() {
 		err = fmt.Errorf("unknown command %q", os.Args[1])
 	}
 	if err != nil {
-		fmt.Fprintln(os.Stderr, "gero-shim:", err)
+		fmt.Fprintln(os.Stderr, "psps-shim:", err)
 		os.Exit(1)
 	}
 }
@@ -127,7 +127,7 @@ func serve(args []string) error {
 		srv.Shutdown(4 * time.Second)
 		close(stopped)
 	}()
-	fmt.Fprintf(os.Stderr, "gero-shim: serving %s\n", sock)
+	fmt.Fprintf(os.Stderr, "psps-shim: serving %s\n", sock)
 	err = srv.Serve(l)
 	select {
 	case <-stopping:
@@ -235,7 +235,7 @@ func tunnelCmd(args []string) error {
 	if err := shim.TakeOver(*pidfile, "tunnel"); err != nil {
 		return err
 	}
-	logf := func(format string, a ...any) { fmt.Fprintf(os.Stderr, "gero-shim tunnel: "+format+"\n", a...) }
+	logf := func(format string, a ...any) { fmt.Fprintf(os.Stderr, "psps-shim tunnel: "+format+"\n", a...) }
 	err := tunnel.Serve(stdio{}, tunnel.LoopbackPorts(shimproto.TunnelPortLo, shimproto.TunnelPortHi),
 		tunnel.LoopbackExcept(shimproto.TunnelPortLo, shimproto.TunnelPortHi), logf)
 	if b, rerr := os.ReadFile(*pidfile); rerr == nil && strings.TrimSpace(string(b)) == fmt.Sprint(os.Getpid()) {

@@ -11,8 +11,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/hongzio/gero/internal/paths"
-	"github.com/hongzio/gero/internal/store"
+	"github.com/hongzio/psps/internal/paths"
+	"github.com/hongzio/psps/internal/store"
 )
 
 func home(t *testing.T) paths.Paths {

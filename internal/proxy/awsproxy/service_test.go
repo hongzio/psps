@@ -8,8 +8,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/hongzio/gero/internal/proxy"
-	"github.com/hongzio/gero/internal/store"
+	"github.com/hongzio/psps/internal/proxy"
+	"github.com/hongzio/psps/internal/store"
 )
 
 func normalize(t *testing.T, env map[string]any) ([]string, error) {
@@ -90,8 +90,8 @@ func TestTheWorkspaceGetsTheContainerVariablesAndTheSkill(t *testing.T) {
 		t.Fatalf("files = %+v", ws.Files)
 	}
 	skill := ws.Files[0].Content
-	for _, want := range []string{"name: gero-aws", "- `dev` — instances: " + jp, "- `prod` — instances: " + kr + "=session; buckets: (none)",
-		"is\n`dev`", "127.0.0.1:3021/creds/<env>", "gero env edit aws <env>"} {
+	for _, want := range []string{"name: psps-aws", "- `dev` — instances: " + jp, "- `prod` — instances: " + kr + "=session; buckets: (none)",
+		"is\n`dev`", "127.0.0.1:3021/creds/<env>", "psps env edit aws <env>"} {
 		if !strings.Contains(skill, want) {
 			t.Errorf("the skill lacks %q", want)
 		}

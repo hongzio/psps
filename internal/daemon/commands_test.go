@@ -10,9 +10,9 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/hongzio/gero/internal/api"
-	"github.com/hongzio/gero/internal/driver"
-	"github.com/hongzio/gero/internal/event"
+	"github.com/hongzio/psps/internal/api"
+	"github.com/hongzio/psps/internal/driver"
+	"github.com/hongzio/psps/internal/event"
 )
 
 func commandNames(cs api.Commands) []string {
@@ -23,7 +23,7 @@ func commandNames(cs api.Commands) []string {
 	return out
 }
 
-// gero's commands come first and are done, not sent; the agent's own come
+// psps's commands come first and are done, not sent; the agent's own come
 // after, and /compact is codex compacting.
 func TestCommands(t *testing.T) {
 	e := newTestEnv(t)
@@ -40,7 +40,7 @@ func TestCommands(t *testing.T) {
 	if got := strings.Join(commandNames(cs), " "); got != "/model /effort /approvals /stop /new /compact $tidy" {
 		t.Fatal(got)
 	}
-	if !cs.Commands[0].Gero || !cs.Commands[4].Gero || cs.Commands[5].Gero {
+	if !cs.Commands[0].Psps || !cs.Commands[4].Psps || cs.Commands[5].Psps {
 		t.Fatalf("%+v", cs.Commands)
 	}
 	if args := cs.Commands[0].Args; len(args) != 2 || args[1].Value != "gpt-fake" || args[1].Description != "Fake · A fake" {
@@ -79,7 +79,7 @@ func TestCommands(t *testing.T) {
 		}
 	}
 	if got := users(e, a.ID); len(got) != 1 {
-		t.Fatalf("gero's commands were sent: %q", got)
+		t.Fatalf("psps's commands were sent: %q", got)
 	}
 	if err := m.Send(a.ID, "hang"); err != nil {
 		t.Fatal(err)
@@ -91,7 +91,7 @@ func TestCommands(t *testing.T) {
 	e.waitFor("the turn to stop", func() bool { return status(m, a.ID) != event.StatusWorking })
 
 	// Anything else is a message: a command of the agent's, or text that
-	// only starts like one of gero's.
+	// only starts like one of psps's.
 	for _, text := range []string{"/compact", "/models", "/model\nplease"} {
 		if sent, err := m.Message(a.ID, text); err != nil || sent.Done != "" {
 			t.Fatalf("%q: %+v %v", text, sent, err)

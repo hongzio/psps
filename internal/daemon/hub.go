@@ -3,7 +3,7 @@ package daemon
 import (
 	"sync"
 
-	"github.com/hongzio/gero/internal/event"
+	"github.com/hongzio/psps/internal/event"
 )
 
 // hub fans events out to live subscribers. A subscriber that cannot keep up

@@ -104,7 +104,7 @@ func probe(ctx context.Context, o oauth, token string) (map[string]any, []string
 	c := &mcpClient{o: o, token: token}
 	defer c.close(ctx)
 	if _, err := c.call(ctx, "initialize", map[string]any{"protocolVersion": ProtocolVersion, "capabilities": map[string]any{},
-		"clientInfo": map[string]any{"name": "gero-check", "version": "1"}}); err != nil {
+		"clientInfo": map[string]any{"name": "psps-check", "version": "1"}}); err != nil {
 		return nil, nil, err
 	}
 	c.notify(ctx, "notifications/initialized")
