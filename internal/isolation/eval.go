@@ -5,6 +5,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"strconv"
 	"strings"
 )
 
@@ -16,10 +17,10 @@ import (
 // its files gone.
 
 const (
-	evalUID = "1001"
+	EvalUID = "1001"
 	// EvalUser is the uid:gid the work runs as in an eval isolation. No
 	// account has it; its home is EvalHome.
-	EvalUser = evalUID + ":" + evalUID
+	EvalUser = EvalUID + ":" + EvalUID
 	// EvalRoot holds the eval's copy of the work, EvalWork, where the eval
 	// runs, and EvalHome; both are made anew for each eval.
 	EvalRoot = "/eval"
@@ -35,9 +36,9 @@ const (
 // System V IPC objects, as itself: root here may not remove another's.
 // Given "wipe", it makes EvalRoot anew, empty.
 const evalReset = `i=0
-while [ $i -lt 50 ] && ps -u ` + evalUID + ` -o stat= | grep -qv '^Z'; do pkill -KILL -u ` + evalUID + `; i=$((i+1)); sleep 0.1; done
-find / ` + AgentHome + ` /dev/shm /dev/mqueue -xdev ! -path '` + EvalRoot + `' ! -path '` + EvalRoot + `/*' -user ` + evalUID + ` -delete 2>/dev/null
-setpriv --reuid=` + evalUID + ` --regid=` + evalUID + ` --clear-groups ipcrm -a 2>/dev/null
+while [ $i -lt 50 ] && ps -u ` + EvalUID + ` -o stat= | grep -qv '^Z'; do pkill -KILL -u ` + EvalUID + `; i=$((i+1)); sleep 0.1; done
+find / ` + AgentHome + ` /dev/shm /dev/mqueue -xdev ! -path '` + EvalRoot + `' ! -path '` + EvalRoot + `/*' -user ` + EvalUID + ` -delete 2>/dev/null
+setpriv --reuid=` + EvalUID + ` --regid=` + EvalUID + ` --clear-groups ipcrm -a 2>/dev/null
 [ "$1" = wipe ] || exit 0
 rm -rf ` + EvalRoot + ` && mkdir -p ` + EvalWork + ` ` + EvalHome + ` && chown -R ` + EvalUser + ` ` + EvalRoot
 
@@ -90,16 +91,91 @@ func (c CLI) CopyToEval(ctx context.Context, from, dir, to string) error {
 	return nil
 }
 
-// RunEval runs argv as EvalUser in EvalWork, EvalHome its home, and returns
-// its output, whatever it exited with. The error says how it exited, and
-// nothing of what it printed: that is what the work could write.
-func (c CLI) RunEval(ctx context.Context, name string, argv ...string) (string, error) {
-	cmd := c.Exec(ctx, name, ExecOpts{User: EvalUser, Workdir: EvalWork, Env: []string{"HOME=" + EvalHome}}, argv...)
-	var out bytes.Buffer
-	cmd.Stdout, cmd.Stderr = &out, &out
-	err := cmd.Run()
+// An EvalRun is how an eval is started in an isolation: argv as the user
+// with that UID (and GID), in Dir with Home its home.
+type EvalRun struct {
+	UID  string
+	Dir  string
+	Home string
+	Argv []string
+}
+
+// EvalRuns is where root keeps each eval's output, exit status, process
+// and the boot it ran in, by run, out of the eval user's reach.
+const EvalRuns = "/var/lib/gero-eval"
+
+// evalStart starts the eval apart from `container exec`, in a session of
+// its own: it runs on when the daemon that started it stops, and its
+// output and exit status wait in its run's directory for one to read them.
+const evalStart = `d=` + EvalRuns + `/$1 uid=$2 dir=$3 home=$4
+shift 4
+mkdir -p -m 700 ` + EvalRuns + ` && rm -rf "$d" && mkdir -m 700 "$d" || exit 1
+cat /proc/sys/kernel/random/boot_id > "$d/boot"
+setsid sh -c '
+d=$1 uid=$2 dir=$3 home=$4
+shift 4
+echo $$ > "$d/pid"
+(cd -- "$dir" && exec env HOME="$home" setpriv --reuid="$uid" --regid="$uid" --clear-groups "$@") > "$d/out" 2>&1 < /dev/null
+echo $? > "$d/exit.new" && mv "$d/exit.new" "$d/exit"' gero-eval "$d" "$uid" "$dir" "$home" "$@" < /dev/null > /dev/null 2>&1 &`
+
+// evalPoll says how a run is: "done CODE" and then the end of its output,
+// "running", or "lost": its directory gone with the container, or its
+// process gone (with the VM it ran in, or killed) without an exit status.
+const evalPoll = `d=` + EvalRuns + `/$1
+[ -d "$d" ] || { echo lost; exit 0; }
+if [ -f "$d/exit" ]; then echo "done $(cat "$d/exit")"; tail -c $2 "$d/out"; exit 0; fi
+p=$(cat "$d/pid" 2>/dev/null)
+if [ "$(cat "$d/boot")" = "$(cat /proc/sys/kernel/random/boot_id)" ] && [ -n "$p" ] && ps -o stat= -p "$p" | grep -qv Z; then echo running; else echo lost; fi`
+
+// EvalState is what EvalPoll found of a run.
+type EvalState struct {
+	Running, Lost bool
+	Exit          int
+	Output        string // the end of it
+}
+
+// EvalStart starts r as run, apart from the daemon (evalStart).
+func (c CLI) EvalStart(ctx context.Context, name, run string, r EvalRun) error {
+	argv := append([]string{"sh", "-c", evalStart, "gero-eval-start", run, r.UID, r.Dir, r.Home}, r.Argv...)
+	out, err := c.Exec(ctx, name, ExecOpts{User: "0:0"}, argv...).CombinedOutput()
 	if err != nil {
-		err = fmt.Errorf("the eval: %w", err)
+		return fmt.Errorf("starting the eval: %w: %s", err, strings.TrimSpace(string(out)))
 	}
-	return strings.TrimSpace(out.String()), err
+	return nil
+}
+
+// EvalPoll says how run is, with the last max bytes of its output once it
+// is done.
+func (c CLI) EvalPoll(ctx context.Context, name, run string, max int) (EvalState, error) {
+	out, err := c.Exec(ctx, name, ExecOpts{User: "0:0"}, "sh", "-c", evalPoll, "gero-eval-poll", run, strconv.Itoa(max)).Output()
+	if err != nil {
+		return EvalState{}, fmt.Errorf("looking at the eval: %w", err)
+	}
+	head, rest, _ := strings.Cut(string(out), "\n")
+	switch {
+	case head == "running":
+		return EvalState{Running: true}, nil
+	case head == "lost":
+		return EvalState{Lost: true}, nil
+	case strings.HasPrefix(head, "done "):
+		code, err := strconv.Atoi(strings.TrimPrefix(head, "done "))
+		if err != nil {
+			return EvalState{}, fmt.Errorf("looking at the eval: exit status %q", head)
+		}
+		return EvalState{Exit: code, Output: strings.TrimSpace(rest)}, nil
+	}
+	return EvalState{}, fmt.Errorf("looking at the eval: unexpected %q", head)
+}
+
+// EvalStop ends run's processes, all of its session, as its time is up
+// and its timeout(1) has not ended it.
+func (c CLI) EvalStop(ctx context.Context, name, run string) error {
+	_, err := c.Exec(ctx, name, ExecOpts{User: "0:0"}, "sh", "-c", `p=$(cat `+EvalRuns+`/$1/pid 2>/dev/null) && pkill -KILL -s "$p"; true`, "gero-eval-stop", run).Output()
+	return err
+}
+
+// EvalForget removes what run left in EvalRuns.
+func (c CLI) EvalForget(ctx context.Context, name, run string) error {
+	_, err := c.Exec(ctx, name, ExecOpts{User: "0:0"}, "rm", "-rf", "--", EvalRuns+"/"+run).Output()
+	return err
 }

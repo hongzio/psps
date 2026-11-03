@@ -27,7 +27,8 @@ import (
 // AgentUser is the uid:gid agents run as. The image's node user is renamed to
 // it; Claude Code refuses to bypass permissions as root.
 const (
-	AgentUser = "1000:1000"
+	AgentUser = AgentUID + ":" + AgentUID
+	AgentUID  = "1000"
 	AgentHome = "/home/agent"
 	WorkRoot  = AgentHome + "/work"
 	shimPath  = "/usr/local/bin/gero-shim"

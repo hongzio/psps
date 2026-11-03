@@ -48,6 +48,15 @@ CREATE TABLE IF NOT EXISTS team_evals (
 	private INTEGER NOT NULL DEFAULT 0,
 	not_run INTEGER NOT NULL DEFAULT 0
 );
+CREATE TABLE IF NOT EXISTS team_eval_runs (
+	team       TEXT PRIMARY KEY REFERENCES teams(id) ON DELETE CASCADE,
+	at         TEXT NOT NULL,
+	why        TEXT NOT NULL,
+	run        TEXT NOT NULL,
+	isolation  TEXT NOT NULL DEFAULT '',
+	private    INTEGER NOT NULL DEFAULT 0,
+	limit_s    INTEGER NOT NULL DEFAULT 0
+);
 CREATE TABLE IF NOT EXISTS spent (
 	agent  TEXT PRIMARY KEY REFERENCES agents(id),
 	input  INTEGER NOT NULL,
@@ -312,6 +321,56 @@ func (s *Store) AddEval(e Eval) (Eval, error) {
 	}
 	e.ID, err = res.LastInsertId()
 	return e, err
+}
+
+// An EvalRun is a team's eval under way. The eval runs in its isolation
+// apart from the daemon, so one that outlives a daemon is followed by the
+// next. Isolation is "" until what is scored has started; Limit is how
+// long it may run.
+type EvalRun struct {
+	Team      string        `json:"team"`
+	At        time.Time     `json:"at"`
+	Why       string        `json:"why"`
+	Run       string        `json:"run"`
+	Isolation string        `json:"isolation,omitempty"`
+	Private   bool          `json:"private,omitempty"`
+	Limit     time.Duration `json:"limit"`
+}
+
+// PutEvalRun keeps r as its team's eval under way.
+func (s *Store) PutEvalRun(r EvalRun) error {
+	_, err := s.db.Exec(`INSERT INTO team_eval_runs (team, at, why, run, isolation, private, limit_s) VALUES (?, ?, ?, ?, ?, ?, ?)
+		ON CONFLICT(team) DO UPDATE SET at=excluded.at, why=excluded.why, run=excluded.run, isolation=excluded.isolation,
+			private=excluded.private, limit_s=excluded.limit_s`,
+		r.Team, ts(r.At), r.Why, r.Run, r.Isolation, r.Private, int64(r.Limit/time.Second))
+	return err
+}
+
+// EvalRuns are the evals under way.
+func (s *Store) EvalRuns() ([]EvalRun, error) {
+	rows, err := s.db.Query(`SELECT team, at, why, run, isolation, private, limit_s FROM team_eval_runs ORDER BY at`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []EvalRun
+	for rows.Next() {
+		var r EvalRun
+		var at string
+		var limit int64
+		if err := rows.Scan(&r.Team, &at, &r.Why, &r.Run, &r.Isolation, &r.Private, &limit); err != nil {
+			return nil, err
+		}
+		r.At, r.Limit = parseTS(at), time.Duration(limit)*time.Second
+		out = append(out, r)
+	}
+	return out, rows.Err()
+}
+
+// DeleteEvalRun says team has no eval under way.
+func (s *Store) DeleteEvalRun(team string) error {
+	_, err := s.db.Exec(`DELETE FROM team_eval_runs WHERE team = ?`, team)
+	return err
 }
 
 // Evals are team's evals, oldest first.
