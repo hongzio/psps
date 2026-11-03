@@ -183,8 +183,13 @@ func (c CLI) ImageExists(ctx context.Context, ref string) bool {
 	return err == nil
 }
 
+func (c CLI) VolumeExists(ctx context.Context, name string) bool {
+	_, err := c.run(ctx, "volume", "inspect", name)
+	return err == nil
+}
+
 func (c CLI) VolumeEnsure(ctx context.Context, name string) error {
-	if _, err := c.run(ctx, "volume", "inspect", name); err == nil {
+	if c.VolumeExists(ctx, name) {
 		return nil
 	}
 	_, err := c.run(ctx, "volume", "create", name)
