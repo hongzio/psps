@@ -28,7 +28,7 @@ func TestControlOpensWhatItsEnvTicksOnTheAgentsItReaches(t *testing.T) {
 	m, stop := e.daemon()
 	defer stop()
 	ctx := context.Background()
-	m.SetProxies(proxy.NewRegistry(mailproxy.Service{}, controlproxy.Service{}), &creds.Store{Path: filepath.Join(t.TempDir(), "credentials")})
+	m.SetProxies(proxy.NewRegistry(mailproxy.Service{}, controlproxy.Service{}), creds.TestStore(filepath.Join(t.TempDir(), "credentials")))
 	m.tunnelPort = func(int) int { return freePort(t) }
 	for _, name := range []string{"far", "other"} {
 		if _, err := m.CreateIsolation(ctx, api.CreateIsolation{Name: name}, nil); err != nil {
@@ -345,7 +345,7 @@ func TestControlRunsACommandWhereAnAgentItMadeWouldRunUnderAuto(t *testing.T) {
 	defer stop()
 	ctx := context.Background()
 	fakeTimeout(t)
-	m.SetProxies(proxy.NewRegistry(mailproxy.Service{}, controlproxy.Service{}), &creds.Store{Path: filepath.Join(t.TempDir(), "credentials")})
+	m.SetProxies(proxy.NewRegistry(mailproxy.Service{}, controlproxy.Service{}), creds.TestStore(filepath.Join(t.TempDir(), "credentials")))
 	m.tunnelPort = func(int) int { return freePort(t) }
 	if _, err := m.CreateIsolation(ctx, api.CreateIsolation{Name: "far"}, nil); err != nil {
 		t.Fatal(err)

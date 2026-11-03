@@ -347,7 +347,7 @@ func clock(sec int64) func() time.Time { return func() time.Time { return time.U
 
 func refreshSetup(t *testing.T, extra map[string]string) (*fakeNotion, oauth, *creds.Store) {
 	n := newNotion(t)
-	c := &creds.Store{Path: filepath.Join(t.TempDir(), "credentials")}
+	c := creds.TestStore(filepath.Join(t.TempDir(), "credentials"))
 	vals := map[string]string{"client_id": "cid", "refresh_token": "r1"}
 	for k, v := range extra {
 		vals[k] = v
@@ -418,7 +418,7 @@ func TestARevokedLoginNamesTheFix(t *testing.T) {
 func TestNoLoginAtAllNamesTheFix(t *testing.T) {
 	n := newNotion(t)
 	o := oauth{issuer: n.srv.URL, transport: http.DefaultTransport, now: clock(1000)}
-	_, err := o.accessToken(t.Context(), &creds.Store{Path: filepath.Join(t.TempDir(), "credentials")}, "main", "")
+	_, err := o.accessToken(t.Context(), creds.TestStore(filepath.Join(t.TempDir(), "credentials")), "main", "")
 	if status(err) != 503 || !strings.Contains(err.Error(), "psps env secret notion main") {
 		t.Fatalf("%v", err)
 	}
@@ -446,7 +446,7 @@ func TestConcurrentRefreshesSpendTheRefreshTokenOnce(t *testing.T) {
 
 func TestALoginRegistersAuthorizesAndStores(t *testing.T) {
 	n := newNotion(t)
-	c := &creds.Store{Path: filepath.Join(t.TempDir(), "credentials")}
+	c := creds.TestStore(filepath.Join(t.TempDir(), "credentials"))
 	svc := Service{Issuer: n.srv.URL, Transport: http.DefaultTransport, Now: clock(1000)}
 	p, err := svc.StartLogin(t.Context(), "main", "http://127.0.0.1:5555/callback")
 	if err != nil {
@@ -480,7 +480,7 @@ func TestACodeWithTheWrongStateIsWorthless(t *testing.T) {
 	n := newNotion(t)
 	svc := Service{Issuer: n.srv.URL, Transport: http.DefaultTransport}
 	p, _ := svc.StartLogin(t.Context(), "main", "http://127.0.0.1:5555/callback")
-	err := svc.FinishLogin(t.Context(), &creds.Store{Path: filepath.Join(t.TempDir(), "c")}, "main", p, "?code=the-code&state=forged")
+	err := svc.FinishLogin(t.Context(), creds.TestStore(filepath.Join(t.TempDir(), "c")), "main", p, "?code=the-code&state=forged")
 	if err == nil || !strings.Contains(err.Error(), "wrong state") || len(n.forms) != 0 {
 		t.Fatalf("%v, exchanged %d", err, len(n.forms))
 	}
@@ -490,7 +490,7 @@ func TestARefusedLoginSaysWhy(t *testing.T) {
 	n := newNotion(t)
 	svc := Service{Issuer: n.srv.URL, Transport: http.DefaultTransport}
 	p, _ := svc.StartLogin(t.Context(), "main", "http://127.0.0.1:5555/callback")
-	err := svc.FinishLogin(t.Context(), &creds.Store{Path: filepath.Join(t.TempDir(), "c")}, "main", p, "code=&error=access_denied&state="+url.QueryEscape(p.State.(Pending).State))
+	err := svc.FinishLogin(t.Context(), creds.TestStore(filepath.Join(t.TempDir(), "c")), "main", p, "code=&error=access_denied&state="+url.QueryEscape(p.State.(Pending).State))
 	if err == nil || !strings.Contains(err.Error(), "access_denied") {
 		t.Fatalf("%v", err)
 	}
@@ -501,7 +501,7 @@ func TestALoginFromAnotherIssuerOrTooLateIsRefused(t *testing.T) {
 	now := int64(1000)
 	svc := Service{Issuer: n.srv.URL, Transport: http.DefaultTransport, Now: func() time.Time { return time.Unix(now, 0) }}
 	p, _ := svc.StartLogin(t.Context(), "main", "http://127.0.0.1:5555/callback")
-	c := &creds.Store{Path: filepath.Join(t.TempDir(), "c")}
+	c := creds.TestStore(filepath.Join(t.TempDir(), "c"))
 	if err := svc.FinishLogin(t.Context(), c, "main", p, "code=x&iss=https://evil.example&state="+url.QueryEscape(p.State.(Pending).State)); err == nil || !strings.Contains(err.Error(), "issuer") {
 		t.Fatalf("%v", err)
 	}
@@ -529,7 +529,7 @@ type harness struct {
 func newHarness(t *testing.T) *harness {
 	t.Helper()
 	n := newNotion(t)
-	c := &creds.Store{Path: filepath.Join(t.TempDir(), "credentials")}
+	c := creds.TestStore(filepath.Join(t.TempDir(), "credentials"))
 	c.Write("notion", "main", map[string]string{"client_id": "cid", "refresh_token": "r1", "access_token": "real-access", "expires_at": "99999999999"})
 	h := &harness{t: t, n: n, c: c}
 	h.setEnv("main", Env{}, token)

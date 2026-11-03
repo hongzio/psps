@@ -25,7 +25,7 @@ func TestStrictSSMAsksThePersonInTheAgentsConversation(t *testing.T) {
 	m, stop := e.daemon()
 	defer stop()
 	ctx := context.Background()
-	m.SetProxies(proxy.NewRegistry(mailproxy.Service{}, awsproxy.Service{}), &creds.Store{Path: filepath.Join(t.TempDir(), "credentials")})
+	m.SetProxies(proxy.NewRegistry(mailproxy.Service{}, awsproxy.Service{}), creds.TestStore(filepath.Join(t.TempDir(), "credentials")))
 	m.tunnelPort = func(int) int { return freePort(t) }
 	a, err := m.CreateAgent(ctx, api.CreateAgent{Isolation: "dev", Kind: driver.Codex, Handle: "ops"})
 	if err != nil {

@@ -28,7 +28,7 @@ import (
 // would run out of.
 func withMail(t *testing.T, m *Manager) {
 	t.Helper()
-	m.SetProxies(proxy.NewRegistry(mailproxy.Service{}), &creds.Store{Path: filepath.Join(t.TempDir(), "credentials")})
+	m.SetProxies(proxy.NewRegistry(mailproxy.Service{}), creds.TestStore(filepath.Join(t.TempDir(), "credentials")))
 	m.tunnelPort = func(int) int { return freePort(t) }
 	if _, err := m.Expose(context.Background(), "dev", "mail", api.Expose{}); err != nil {
 		t.Fatal(err)
@@ -218,7 +218,7 @@ func TestAnAgentsOwnAddressReachesTheDaemonThroughTheTunnel(t *testing.T) {
 	m, stop := e.daemon()
 	defer stop()
 	port := freePort(t)
-	m.SetProxies(proxy.NewRegistry(mailproxy.Service{}), &creds.Store{Path: filepath.Join(t.TempDir(), "credentials")})
+	m.SetProxies(proxy.NewRegistry(mailproxy.Service{}), creds.TestStore(filepath.Join(t.TempDir(), "credentials")))
 	m.tunnelPort = func(int) int { return port }
 	a, _ := m.CreateAgent(ctx, api.CreateAgent{Isolation: "dev", Kind: driver.Codex, Handle: "alice"})
 	m.Send(a.ID, "mail address")
@@ -366,7 +366,7 @@ func TestMailRefusesWhatItCannotDeliver(t *testing.T) {
 	ctx := context.Background()
 	m, stop := e.daemon()
 	defer stop()
-	m.SetProxies(proxy.NewRegistry(mailproxy.Service{}), &creds.Store{Path: filepath.Join(t.TempDir(), "credentials")})
+	m.SetProxies(proxy.NewRegistry(mailproxy.Service{}), creds.TestStore(filepath.Join(t.TempDir(), "credentials")))
 	m.tunnelPort = func(int) int { return freePort(t) }
 	a, _ := m.CreateAgent(ctx, api.CreateAgent{Isolation: "dev", Kind: driver.Codex, Handle: "alice"})
 	b, _ := m.CreateAgent(ctx, api.CreateAgent{Isolation: "dev", Kind: driver.Codex, Handle: "bob"})

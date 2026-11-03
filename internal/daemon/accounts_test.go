@@ -19,7 +19,7 @@ import (
 // withCreds gives the manager a credentials file of its own.
 func withCreds(t *testing.T, m *Manager) *creds.Store {
 	t.Helper()
-	c := &creds.Store{Path: filepath.Join(t.TempDir(), "credentials")}
+	c := creds.TestStore(filepath.Join(t.TempDir(), "credentials"))
 	m.SetProxies(proxy.NewRegistry(), c)
 	return c
 }

@@ -4,6 +4,8 @@ package paths
 import (
 	"os"
 	"path/filepath"
+
+	"github.com/hongzio/psps/internal/creds"
 )
 
 type Paths struct {
@@ -49,6 +51,16 @@ func (p Paths) DB() string     { return filepath.Join(p.Data, "psps.db") }
 // Credentials is the one file the credential proxies read their secrets
 // from: an INI of [<service> <env>] sections, 0600.
 func (p Paths) Credentials() string { return filepath.Join(p.Config, "credentials") }
+
+// CredentialsKey seals the credentials file's values. It lives in the state
+// directory, apart from the file, so a commit or copy of ~/.config carries
+// ciphertext alone.
+func (p Paths) CredentialsKey() string { return filepath.Join(p.State, "credentials.key") }
+
+// CredStore is the credentials file with its key.
+func (p Paths) CredStore() *creds.Store {
+	return &creds.Store{Path: p.Credentials(), KeyPath: p.CredentialsKey()}
+}
 
 // Skills holds the operator's own skills, one folder each, which the skill
 // service puts in isolations.

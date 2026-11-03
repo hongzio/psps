@@ -47,6 +47,9 @@ func (m *Manager) Verify(ctx context.Context, name string) (api.Verify, error) {
 	if c, ok := m.verifyCredsFile(); ok {
 		add(c)
 	}
+	if c, ok := m.verifyCredsSealed(); ok {
+		add(c)
+	}
 	add(m.verifyEgress(ctx, rec))
 	return v, nil
 }
@@ -419,6 +422,27 @@ func (m *Manager) verifyCredsFile() (api.VerifyCheck, bool) {
 			"the proxies refuse to read it until it is: run `chmod 600 "+m.creds.Path+"`"), true
 	}
 	return pass(check, api.SevConfig, mode), true
+}
+
+// verifyCredsSealed warns of values left in plain text, put there by hand,
+// that a stray cat or commit would show.
+func (m *Manager) verifyCredsSealed() (api.VerifyCheck, bool) {
+	const check = "credentials file values are encrypted"
+	if m.creds == nil {
+		return api.VerifyCheck{}, false
+	}
+	plain, err := m.creds.Plain()
+	if err != nil {
+		return api.VerifyCheck{}, false // verifyCredsFile reports why it cannot be read
+	}
+	if _, err := os.Stat(m.creds.Path); errors.Is(err, os.ErrNotExist) {
+		return api.VerifyCheck{}, false
+	}
+	if len(plain) > 0 {
+		return fail(check, api.SevConfig, "all", "plain in "+strings.Join(plain, ", "),
+			"run `psps env encrypt` to encrypt them with "+m.creds.KeyPath), true
+	}
+	return pass(check, api.SevConfig, "all"), true
 }
 
 // egressURL is what the isolation must still reach: the fence keeps it off

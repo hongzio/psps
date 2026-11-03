@@ -13,7 +13,6 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/hongzio/psps/internal/creds"
 	"github.com/hongzio/psps/internal/isolation"
 	"github.com/hongzio/psps/internal/paths"
 	"github.com/hongzio/psps/internal/pf"
@@ -69,7 +68,7 @@ func Run(ctx context.Context, p paths.Paths, logger *log.Logger) error {
 	// The helper fences every daemon's networks; this one's are filed under
 	// its state directory, so a second daemon (a dev one) cannot drop them.
 	m := NewManager(ctx, st, cli, pf.Client{Socket: pf.SocketPath, Owner: p.State}, logger)
-	m.SetProxies(services.Registry(), &creds.Store{Path: p.Credentials()})
+	m.SetProxies(services.Registry(), p.CredStore())
 	if err := m.migrateEnvAccounts(); err != nil {
 		logger.Printf("moving tokens from isolation environments into accounts: %v", err)
 	}

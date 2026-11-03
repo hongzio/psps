@@ -27,7 +27,7 @@ import (
 func withTeams(t *testing.T, e *testEnv, m *Manager, terms api.PutLead) (store.Agent, store.Team) {
 	t.Helper()
 	ctx := context.Background()
-	m.SetProxies(proxy.NewRegistry(mailproxy.Service{}, teamproxy.Service{}, controlproxy.Service{}), &creds.Store{Path: filepath.Join(t.TempDir(), "credentials")})
+	m.SetProxies(proxy.NewRegistry(mailproxy.Service{}, teamproxy.Service{}, controlproxy.Service{}), creds.TestStore(filepath.Join(t.TempDir(), "credentials")))
 	m.tunnelPort = func(int) int { return freePort(t) }
 	if _, err := m.Expose(ctx, "dev", "team", api.Expose{}); err != nil {
 		t.Fatal(err)

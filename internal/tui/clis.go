@@ -448,7 +448,7 @@ func (m *Model) renderCLIs(width int) string {
 			for _, kd := range api.AccountKinds {
 				b.WriteString(th.dim.Render(fmt.Sprintf("  %s: %s", kd.Name, kd.Summary)) + "\n")
 			}
-			b.WriteString(th.dim.Render("  the secret goes to the Mac's credentials file (0600) and is never shown again") + "\n")
+			b.WriteString(th.dim.Render("  the secret goes to the Mac's credentials file, encrypted, and is never shown again") + "\n")
 		case formUse:
 			b.WriteString(th.dim.Render("  ←/→ choose; its idle agents restart with it") + "\n")
 		}

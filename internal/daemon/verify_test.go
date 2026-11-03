@@ -29,7 +29,7 @@ func verifyEnv(t *testing.T, reg *proxy.Registry) (*testEnv, *Manager, *creds.St
 	ctx := context.Background()
 	m, stop := e.daemon()
 	t.Cleanup(stop)
-	c := &creds.Store{Path: filepath.Join(t.TempDir(), "credentials")}
+	c := creds.TestStore(filepath.Join(t.TempDir(), "credentials"))
 	m.SetProxies(reg, c)
 	ports := map[int]int{}
 	for _, svc := range reg.All() {

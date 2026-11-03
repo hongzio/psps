@@ -35,7 +35,7 @@ func mustDeny(t *testing.T, err error, status int, want string) {
 // --- the credential ---
 
 func TestTheStoreYieldsTheToken(t *testing.T) {
-	cs := &creds.Store{Path: filepath.Join(t.TempDir(), "credentials")}
+	cs := creds.TestStore(filepath.Join(t.TempDir(), "credentials"))
 	cs.Write("grafana", "prod", map[string]string{"token": "glsa_secret"})
 	if tok, err := readToken(cs, "prod"); err != nil || tok != "glsa_secret" {
 		t.Fatalf("%q %v", tok, err)
@@ -43,7 +43,7 @@ func TestTheStoreYieldsTheToken(t *testing.T) {
 }
 
 func TestAMissingStoreNamesTheStanzaAsA503(t *testing.T) {
-	_, err := readToken(&creds.Store{Path: filepath.Join(t.TempDir(), "credentials")}, "prod")
+	_, err := readToken(creds.TestStore(filepath.Join(t.TempDir(), "credentials")), "prod")
 	mustDeny(t, err, 503, "[grafana prod]")
 	mustDeny(t, err, 503, "token")
 }

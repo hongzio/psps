@@ -199,7 +199,7 @@ func newHarness(t *testing.T, secure bool) *harness {
 		up = httptest.NewServer(tp)
 	}
 	t.Cleanup(up.Close)
-	cs := &creds.Store{Path: filepath.Join(t.TempDir(), "credentials")}
+	cs := creds.TestStore(filepath.Join(t.TempDir(), "credentials"))
 	cs.Write("clickhouse", "main", map[string]string{"user": "real-user", "password": "real-password"})
 	h := &harness{t: t, tap: tp, up: up}
 	u, _ := url.Parse(up.URL)
@@ -406,7 +406,7 @@ func TestTheProbeCarriesTheRealLoginAndTheClamp(t *testing.T) {
 	h.mu.Lock()
 	cfg := h.view.Envs["main"]
 	h.mu.Unlock()
-	cs := &creds.Store{Path: filepath.Join(t.TempDir(), "credentials")}
+	cs := creds.TestStore(filepath.Join(t.TempDir(), "credentials"))
 	cs.Write("clickhouse", "main", map[string]string{"user": "real-user", "password": "real-password"})
 	out, err := Service{Transport: h.up.Client().Transport}.Check(t.Context(), "main", cfg, cs)
 	if err != nil || !strings.Contains(out, "ClickHouse 24.8.1") {

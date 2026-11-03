@@ -618,7 +618,7 @@ func (m *Model) renderServices(width int) string {
 			k.Label("submit"), k.Label("focus_next"), k.Label("back"))) + "\n")
 	case svcSecret:
 		b.WriteString(th.title.Render("Secret for "+p.formSvc.Name+"/"+p.formEnv) + "\n" + p.form.render(th, width))
-		b.WriteString(th.dim.Render(fmt.Sprintf("  written to the Mac's credentials file (0600); %s save · %s cancel", k.Label("submit"), k.Label("back"))) + "\n")
+		b.WriteString(th.dim.Render(fmt.Sprintf("  written to the Mac's credentials file, encrypted; %s save · %s cancel", k.Label("submit"), k.Label("back"))) + "\n")
 	case svcLogin:
 		l := p.login
 		b.WriteString(th.title.Render("Log in to "+l.svc+" for "+l.env) + "\n\n")

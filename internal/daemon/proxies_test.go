@@ -107,7 +107,7 @@ func TestProxiesReachTheIsolationAndFollowItsConfiguration(t *testing.T) {
 	m, stop := e.daemon()
 	defer stop()
 	port := freePort(t)
-	m.SetProxies(proxy.NewRegistry(echoService{}), &creds.Store{Path: filepath.Join(t.TempDir(), "credentials")})
+	m.SetProxies(proxy.NewRegistry(echoService{}), creds.TestStore(filepath.Join(t.TempDir(), "credentials")))
 	m.tunnelPort = func(int) int { return port }
 
 	if _, err := m.PutEnv(ctx, "echo", "prod", proxy.Patch{}, true); err != nil {
@@ -177,7 +177,7 @@ func TestATunnelComesBackAfterTheContainerRestarts(t *testing.T) {
 	m, stop := e.daemon()
 	defer stop()
 	port := freePort(t)
-	m.SetProxies(proxy.NewRegistry(echoService{}), &creds.Store{Path: filepath.Join(t.TempDir(), "credentials")})
+	m.SetProxies(proxy.NewRegistry(echoService{}), creds.TestStore(filepath.Join(t.TempDir(), "credentials")))
 	m.tunnelPort = func(int) int { return port }
 	m.PutEnv(ctx, "echo", "prod", proxy.Patch{}, true)
 	m.Expose(ctx, "dev", "echo", api.Expose{Envs: []string{"prod"}})
@@ -220,7 +220,7 @@ func TestTheAWSBrokerIssuesThroughTheTunnel(t *testing.T) {
 	m, stop := e.daemon()
 	defer stop()
 	port := freePort(t)
-	m.SetProxies(proxy.NewRegistry(awsproxy.Service{}), &creds.Store{Path: filepath.Join(t.TempDir(), "credentials")})
+	m.SetProxies(proxy.NewRegistry(awsproxy.Service{}), creds.TestStore(filepath.Join(t.TempDir(), "credentials")))
 	m.tunnelPort = func(int) int { return port }
 
 	dir := t.TempDir()
@@ -306,7 +306,7 @@ func TestMCPServersReachTheLaunchAndAnAgentOwnedConfig(t *testing.T) {
 	ctx := context.Background()
 	m, stop := e.daemon()
 	defer stop()
-	m.SetProxies(proxy.NewRegistry(mcpService{finished: new([]string)}), &creds.Store{Path: filepath.Join(t.TempDir(), "credentials")})
+	m.SetProxies(proxy.NewRegistry(mcpService{finished: new([]string)}), creds.TestStore(filepath.Join(t.TempDir(), "credentials")))
 	m.tunnelPort = func(int) int { return freePort(t) }
 	m.PutEnv(ctx, "mcpx", "main", proxy.Patch{}, true)
 	if _, err := m.Expose(ctx, "dev", "mcpx", api.Expose{Envs: []string{"main"}}); err != nil {
@@ -368,7 +368,7 @@ func TestABrowserLoginIsHeldByTheDaemonAndSpentOnce(t *testing.T) {
 	m, stop := e.daemon()
 	defer stop()
 	finished := new([]string)
-	m.SetProxies(proxy.NewRegistry(mcpService{finished: finished}, echoService{}), &creds.Store{Path: filepath.Join(t.TempDir(), "credentials")})
+	m.SetProxies(proxy.NewRegistry(mcpService{finished: finished}, echoService{}), creds.TestStore(filepath.Join(t.TempDir(), "credentials")))
 	m.PutEnv(ctx, "mcpx", "main", proxy.Patch{}, true)
 	m.PutEnv(ctx, "echo", "main", proxy.Patch{}, true)
 
@@ -412,7 +412,7 @@ func TestARenamedIsolationsProxiesServeItUnderItsNewName(t *testing.T) {
 	m, stop := e.daemon()
 	defer stop()
 	port := freePort(t)
-	m.SetProxies(proxy.NewRegistry(echoService{}), &creds.Store{Path: filepath.Join(t.TempDir(), "credentials")})
+	m.SetProxies(proxy.NewRegistry(echoService{}), creds.TestStore(filepath.Join(t.TempDir(), "credentials")))
 	m.tunnelPort = func(int) int { return port }
 	if _, err := m.PutEnv(ctx, "echo", "prod", proxy.Patch{}, true); err != nil {
 		t.Fatal(err)
