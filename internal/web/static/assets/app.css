@@ -451,6 +451,7 @@ a.btn { display: inline-flex; align-items: center; color: var(--text); text-deco
 .approval .head { font-weight: 600; color: var(--warn); }
 .approval .what { font-family: var(--mono); font-size: 13px; margin: 4px 0; overflow-wrap: anywhere; }
 .approval .why { color: var(--muted); font-size: 13px; }
+.approval pre.detail { font-family: var(--mono); font-size: 12.5px; margin: 6px 0; padding: 8px 10px; background: var(--code); border-radius: 6px; white-space: pre-wrap; overflow-wrap: anywhere; max-height: 50vh; overflow: auto; }
 .approval .actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 8px; }
 .approval .q { margin-top: 10px; display: grid; gap: 6px; }
 .approval .q-head { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; font-size: 14px; }

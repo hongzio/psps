@@ -24,13 +24,14 @@ type harness struct {
 	aws  *fakeAWS
 	base string
 
-	mu      sync.Mutex
-	enabled bool
-	envs    map[string]Env
-	order   []string
-	def     string
-	tokens  map[string]string
-	missing []string
+	mu       sync.Mutex
+	enabled  bool
+	envs     map[string]Env
+	order    []string
+	def      string
+	tokens   map[string]string
+	missing  []string
+	settings json.RawMessage
 }
 
 func newHarness(t *testing.T, envs map[string]Env, def string) *harness {
@@ -60,7 +61,7 @@ func (h *harness) view() (proxy.View, error) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	v := proxy.View{Isolation: "dev", Enabled: h.enabled, Envs: map[string]json.RawMessage{}, Tokens: h.tokens, Missing: h.missing}
-	v.Exposure = store.Exposure{IsolationID: "dev", Service: "aws", Envs: append(h.order, h.missing...), Default: h.def}
+	v.Exposure = store.Exposure{IsolationID: "dev", Service: "aws", Envs: append(h.order, h.missing...), Default: h.def, Settings: h.settings}
 	for name, e := range h.envs {
 		b, _ := json.Marshal(e)
 		v.Envs[name] = b

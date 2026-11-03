@@ -20,6 +20,7 @@ import (
 	"github.com/hongzio/gero/internal/driver"
 	"github.com/hongzio/gero/internal/isolation"
 	"github.com/hongzio/gero/internal/proxy"
+	"github.com/hongzio/gero/internal/proxy/awsproxy"
 	"github.com/hongzio/gero/internal/proxy/controlproxy"
 	"github.com/hongzio/gero/internal/proxy/cronproxy"
 	"github.com/hongzio/gero/internal/proxy/mailproxy"
@@ -302,6 +303,8 @@ type isoWorkspace struct {
 	team bool
 	// control: its agents have a control address (controlEnv).
 	control bool
+	// awsStrict: its agents ask gero to run SSM commands (awsEnv).
+	awsStrict bool
 	// skills are the files of the services whose files come and go
 	// (proxy.Pruner), each with its content's hash: an agent CLI lists
 	// skills as it starts, so a change to them wants a new process.
@@ -325,6 +328,9 @@ func (w isoWorkspace) signature() string {
 	}
 	if w.control {
 		sig += "\ncontrol"
+	}
+	if w.awsStrict {
+		sig += "\naws-strict"
 	}
 	for _, f := range w.skills {
 		sig += "\nskill " + f
@@ -357,6 +363,9 @@ func (m *Manager) workspace(iso string) (isoWorkspace, error) {
 		w.cron = w.cron || svc.Name() == cronproxy.Name
 		w.team = w.team || svc.Name() == teamproxy.Name
 		w.control = w.control || svc.Name() == controlproxy.Name
+		if svc.Name() == awsService {
+			_, w.awsStrict = m.awsStrict(iso)
+		}
 		// Control's skill says what its env opens, in the description a
 		// CLI lists as it starts.
 		if _, ok := svc.(proxy.Pruner); ok || svc.Name() == controlproxy.Name {
@@ -920,6 +929,16 @@ func (m *Manager) Expose(ctx context.Context, name, service string, req api.Expo
 		}
 	}
 	m.servicesChanged(ctx, iso.ID)
+	if service == awsService {
+		_, strict := m.awsStrict(iso.ID)
+		var was awsproxy.Settings
+		if had && len(cur.Settings) > 0 {
+			json.Unmarshal(cur.Settings, &was)
+		}
+		if strict && !was.Strict() {
+			go m.endSSMSessions(iso.ID, x)
+		}
+	}
 	x.Settings = m.settingsOut(svc, x.Settings)
 	out := api.Exposure{Service: service, Enabled: true, Exposure: x, Warning: m.evalIsoWarning(iso, service)}
 	if v, err := m.viewFor(iso.ID, svc); err == nil {

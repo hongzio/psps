@@ -213,9 +213,12 @@ func (c *convo) pending() []*event.Approval {
 }
 
 // voidApprovals clears approvals a dead process can no longer receive.
+// gero's own (ssm) are the daemon's to hold, not the process's.
 func (c *convo) voidApprovals() {
 	for _, a := range c.pending() {
-		a.Decision = "void"
+		if a.Kind != "ssm" {
+			a.Decision = "void"
+		}
 	}
 }
 
@@ -303,6 +306,9 @@ func (en *entry) render(width int, agentLabel string, th theme) string {
 			line += "  " + th.err.Render("✗ declined")
 		}
 		b.WriteString(lipgloss.NewStyle().Width(width).PaddingLeft(2).Render(line) + "\n")
+		if a.Kind == "ssm" && a.Detail != "" && a.Decision == "" {
+			b.WriteString(th.tool.Width(width-4).PaddingLeft(4).Render(strings.TrimRight(a.Detail, "\n")) + "\n")
+		}
 		if a.Reason != "" && a.Decision == "" {
 			b.WriteString(th.dim.Width(width-4).PaddingLeft(4).Render(a.Reason) + "\n")
 		}
