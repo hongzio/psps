@@ -61,7 +61,7 @@ name permits its full set. The narrowing is inside the issued credentials
 themselves, so a refused action fails at AWS with the session-policy message
 below, not at the broker.
 
-## When a call is refused
+%[4]s## When a call is refused
 
 - ` + "`AccessDeniedException ... because no session policy allows <action>`" + ` — the
   resource or capability is outside this environment's allowlist. That is the
@@ -90,6 +90,42 @@ credential in this isolation to fall back to — only the scoped ones the broker
 issues, and the broker is the only thing the token in this environment opens.
 `
 
+// strictSection is the skill's word on strict SSM, there only while the
+// isolation is in it.
+const strictSection = `## SSM goes through gero here (strict mode)
+
+This isolation is in strict SSM mode. The credentials here open no SSM at all:
+` + "`aws ssm start-session`" + `, ` + "`aws ssm send-command`" + `, boto3's ssm client and ansible's
+aws_ssm connection are all refused by AWS, by design, and no other route exists.
+Do not look for one. To run a command on an instance, ask gero, which shows the
+command to your operator in this conversation; they accept or decline it, and
+gero runs it and hands back what it printed:
+
+    curl -sS "$GERO_AWS_URL/ssm" --json @- <<'REQ'
+    {"env": "prod", "instance": "i-0123456789abcdef0",
+     "command": "tail -n 200 /var/log/app/app.log", "timeout": 120}
+    REQ
+
+The call waits for the decision and the run (curl's own timeout must allow
+for a person: up to about nine minutes). The answer is JSON:
+
+- ` + "`\"state\": \"done\"`" + ` with ` + "`exit_code`" + `, ` + "`stdout`" + `, ` + "`stderr`" + `, ` + "`status`" + ` (SSM's: Success, Failed,
+  TimedOut) and ` + "`user`" + ` (who it ran as).
+- ` + "`\"state\": \"declined\"`" + ` — the operator said no. That is a decision, not a fault:
+  do not send the same command again; say in your reply what you needed it for.
+- ` + "`\"state\": \"pending\"`" + ` with an ` + "`id`" + ` — no decision yet; fetch the outcome later with
+  ` + "`curl -sS \"$GERO_AWS_URL/ssm/<id>\"`" + `, which waits again.
+
+What it is like: AWS-RunShellScript, one non-interactive bash script per
+request, as ssm-user (root only where the instance has never had a session),
+with nothing kept between requests (cd, variables). SSM keeps at most 24,000
+characters of each of stdout and stderr: send long output to a file and read
+it in pieces. Each request is a person's decision, so put the reads you need
+into one script instead of many small ones, and say in the command's first
+line, as a comment, what it is for.
+
+`
+
 func skillBody(v proxy.View, envs map[string]Env) string {
 	names := make([]string, 0, len(envs))
 	for n := range envs {
@@ -109,5 +145,11 @@ func skillBody(v proxy.View, envs map[string]Env) string {
 	if def == "" {
 		def = "(none)"
 	}
-	return fmt.Sprintf(skillTemplate, list, def, Port)
+	var st Settings
+	v.Settings(&st)
+	strict := ""
+	if st.Strict() {
+		strict = strictSection
+	}
+	return fmt.Sprintf(skillTemplate, list, def, Port, strict)
 }

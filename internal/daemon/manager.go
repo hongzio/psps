@@ -122,6 +122,7 @@ type Manager struct {
 	versions  map[string]string
 	lastEnv   map[string]string
 	health    map[string]isoHealth    // what was last seen inside, by isolation (health.go)
+	ssm       *ssmBook                // strict SSM requests, from asking to outcome (awsssm.go)
 	logins    map[string]pendingLogin // browser logins in progress, by id
 	cliLogins map[string]*cliLogin    // agent CLI logins, by isolation/tool
 	// mailBuckets are each isolation's budget for sending mail.
@@ -189,7 +190,7 @@ func NewManager(ctx context.Context, st *store.Store, cli Containers, fence Fenc
 		log: logger, hub: newHub(), workRoot: isolation.WorkRoot, home: isolation.AgentHome,
 		runtimes: map[string]*runtime{}, isos: map[string]*isoState{}, fences: map[string]*fenceState{},
 		tunnelPort: func(p int) int { return p }, instances: map[string]map[string]proxy.Instance{},
-		tunnels: map[string]*tunnelState{}, synced: map[string]string{}, swapped: map[string]string{}, versions: map[string]string{}, lastEnv: map[string]string{}, health: map[string]isoHealth{},
+		tunnels: map[string]*tunnelState{}, synced: map[string]string{}, swapped: map[string]string{}, versions: map[string]string{}, lastEnv: map[string]string{}, health: map[string]isoHealth{}, ssm: newSSMBook(),
 		mailBuckets: map[string]*proxy.TokenBucket{}, cronWake: make(chan struct{}, 1),
 		teamsDue: map[string]bool{}, teamWake: make(chan struct{}, 1), evaluating: map[string]bool{}, busy: map[string]map[string]bool{}}
 	m.loops.Add(1)
@@ -1167,6 +1168,10 @@ func (m *Manager) Approve(id, approvalID string, d driver.Decision, answers map[
 	r, err := m.runtime(id)
 	if err != nil {
 		return err
+	}
+	// The daemon's own approvals (strict SSM) are not the agent CLI's.
+	if strings.HasPrefix(approvalID, "ssm-") {
+		return m.decideSSM(r.agent.ID, approvalID, d)
 	}
 	return r.approve(approvalID, d, answers)
 }

@@ -98,8 +98,19 @@ func (Service) Fields() []proxy.Field {
 	}
 }
 
-func (Service) Settings() []proxy.Field                { return nil }
-func (Service) NormalizeSettings(map[string]any) error { return nil }
+func (Service) Settings() []proxy.Field {
+	return []proxy.Field{
+		{Key: "ssm", Kind: proxy.String, Flag: "ssm", Metavar: "MODE", Choices: []string{SSMDirect, SSMStrict},
+			Help: "direct (default): the isolation's credentials open SSM sessions and commands on the allowlisted instances; strict: they open no SSM at all, and its agents ask gero to run each command, which you accept or decline in their conversation"},
+	}
+}
+
+func (Service) NormalizeSettings(st map[string]any) error {
+	if v, _ := st["ssm"].(string); v == "" || v == SSMDirect {
+		delete(st, "ssm")
+	}
+	return nil
+}
 
 func (Service) Normalize(name string, env map[string]any) ([]string, error) {
 	// Canonical, capability-merged spellings, so a bad capability fails
@@ -227,6 +238,8 @@ func (in *instance) Serve(port int, l net.Listener) error {
 func (in *instance) logf(format string, a ...any) { in.h.Logf("aws", format, a...) }
 
 func (in *instance) source(env string, e Env, policy string) *Source {
+	// The policy is in the key, so strict mode, which changes it, is new
+	// credentials at once rather than the old ones until they expire.
 	key := strings.Join([]string{e.cli(), e.RoleARN, e.Profile, e.Bastion, policy}, "\x00")
 	in.mu.Lock()
 	defer in.mu.Unlock()
@@ -234,7 +247,7 @@ func (in *instance) source(env string, e Env, policy string) *Source {
 		return c.src
 	}
 	src := &Source{AWS: e.cli(), RoleARN: e.RoleARN, Profile: e.Profile, Bastion: e.Bastion,
-		SessionName: "gero-" + in.h.Name(), Policy: policy}
+		SessionName: SessionName(in.h.Name()), Policy: policy}
 	in.sources[env] = &cached{key: key, src: src}
 	return src
 }
@@ -303,12 +316,17 @@ func (in *instance) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		in.logf("FAIL %s: %s", r.URL.Path, msg)
 		return
 	}
+	var st Settings
+	v.Settings(&st)
 	policy, err := SessionPolicy(e.Instances, e.Buckets)
+	if st.Strict() {
+		policy, err = strictPolicy(e.Instances, e.Buckets)
+	}
 	if err == nil {
 		var c Credentials
 		if c, err = in.source(name, e, policy.JSON()).Get(r.Context(), time.Now()); err == nil {
 			send(w, 200, c)
-			in.logf("ISSUE %s expires %s", name, c.Expiration)
+			in.logf("ISSUE %s%s expires %s", name, map[bool]string{true: " (strict: no SSM)"}[st.Strict()], c.Expiration)
 			return
 		}
 	}

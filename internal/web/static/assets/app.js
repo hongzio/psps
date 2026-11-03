@@ -492,8 +492,9 @@ function apply(c, e) {
       break
     case 'status':
       // Drivers report blocked after every approval and leave it only when
-      // none is open: any other status means nothing is pending.
-      if (e.status !== 'blocked') for (const en of c.entries) if (en.kind === 'approval' && !en.decision) en.decision = 'void'
+      // none is open: any other status means nothing is pending. Not so
+      // for gero's own (ssm), which the daemon holds, not the agent's CLI.
+      if (e.status !== 'blocked') for (const en of c.entries) if (en.kind === 'approval' && !en.decision && en.akind !== 'ssm') en.decision = 'void'
       break
     case 'turn_end':
       if (e.text === 'interrupted') add({ kind: 'interrupted' })
@@ -545,7 +546,7 @@ async function resend(a, en) {
 }
 
 const decisionText = (d) => ({ accept: 'accepted', decline: 'declined', cancel: 'declined, turn stopped', void: 'the process ended' })[d] || d
-const askText = (kind) => ({ command: 'run a command', file_change: 'change files', tool: 'use a tool', question: 'know' })[kind] || kind
+const askText = (kind) => ({ command: 'run a command', file_change: 'change files', tool: 'use a tool', question: 'know', ssm: 'run a command on an instance' })[kind] || kind
 
 // markdown draws what an agent writes, which is GitHub markdown, from
 // marked's tokens. Raw HTML in it is shown as written. Only a web address
@@ -2280,6 +2281,7 @@ function approvalCard(a, ap) {
   return h('div', { class: 'approval asking' },
     h('div', { class: 'head' }, `${label(a)} asks to ${askText(ap.akind)}`),
     h('div', { class: 'what' }, ap.summary),
+    ap.akind === 'ssm' && ap.detail ? h('pre', { class: 'detail' }, ap.detail) : null,
     ap.reason ? h('div', { class: 'why' }, ap.reason) : null,
     h('div', { class: 'actions' },
       h('button', { class: 'btn primary', onclick: () => decide(ap.id, 'accept') }, 'Accept'),

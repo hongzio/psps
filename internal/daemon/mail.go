@@ -187,6 +187,7 @@ func (m *Manager) mailHandler(iso string) http.Handler {
 	m.cronRoutes(mux, iso)
 	m.teamRoutes(mux, iso)
 	m.controlRoutes(mux, iso)
+	m.awsRoutes(mux, iso)
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		reply(w, nil, httpError{http.StatusNotFound, errors.New(`mail: there is GET "$GERO_MAIL_URL/agents" and POST "$GERO_MAIL_URL/send?to=AGENT" (the gero-mail skill), "$GERO_CRON_URL" (the gero-cron skill), "$GERO_TEAM_URL" (the gero-team skill), and "$GERO_CONTROL_URL" (the gero-control skill)`)})
 	})

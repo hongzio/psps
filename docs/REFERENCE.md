@@ -463,6 +463,39 @@ tailcat as its ProxyCommand, in batch mode, with its own
 `~/.local/state/gero/bastion_known_hosts`: the first connection records the
 bastion's host key, and a changed one is refused.
 
+An SSM session is a shell: what goes over it is keystrokes, which nothing
+shows anyone before they run. **Strict SSM** takes it away from an
+isolation's agents and puts you in the way of each command instead:
+
+```sh
+gero iso expose dev aws prod --ssm strict       # back with --ssm direct
+```
+
+The isolation's credentials then open no SSM at all (sessions, commands,
+their outputs), by AWS's own refusal, while S3 stays as the allowlist says.
+Credentials it had from before stay valid until they expire (an hour at
+most; STS cannot revoke them), but the sessions they opened are ended as
+strict mode starts. An agent asks gero instead, at its own address
+(`$GERO_AWS_URL`; the gero-aws skill says how):
+
+```sh
+curl -sS "$GERO_AWS_URL/ssm" --json '{"env": "prod", "instance": "i-...", "command": "tail -n 200 /var/log/app.log"}'
+```
+
+The request is an approval in that agent's conversation, with the whole
+command, in the web and the TUI (or `gero agent approve AGENT ID
+accept|decline|cancel`). Accepted, gero assumes the env's role as
+`gero-run-ISOLATION` with that one instance open, runs the command through
+AWS-RunShellScript as ssm-user (root where the instance has never had a
+session, which it says), waits for it, and the agent's request answers with
+its exit code, stdout and stderr (24,000 characters of each, SSM's limit).
+Declined, it answers that you said no. A request waits nine minutes for both;
+after that the agent fetches the outcome by its ID. The daemon keeps
+requests in memory: one asked before a restart is closed when you answer it.
+Ending the sessions needs `ssm:DescribeSessions` for the identity the
+lookups use (the bastion's role, or the Mac's profile); without it the
+sessions stay open until they end, and the daemon's log says why.
+
 PostgreSQL is terminated on both sides, the way pgbouncer does it: the
 isolation signs in with its workspace token (from PGPASSFILE), the env name
 as the user and a database on the allowlist; the proxy then opens its own
