@@ -3201,7 +3201,7 @@ function isoOverview(i) {
       ['Network fence', i.fence_state === 'verified' ? 'Verified' : i.fence_state === 'off' ? 'Off: it reaches the Mac and the LAN' : cap(i.fence_state)],
       i.proxies && i.proxies !== 'up' ? ['Proxies', i.proxies] : null,
       ['Image', h('code', null, i.image)],
-      ['CPUs, memory', isoSize(i.cpus, i.memory)],
+      ['CPUs, memory', isoSize(i.cpus, i.memory, i.swap)],
       ['Network', h('code', null, i.network || 'default')],
     ])),
     block(`Agents · ${agents.length}`, agents.length
@@ -3386,7 +3386,7 @@ function isoSettings(i) {
   const key = `settings:${i.name}`
   return [
     block('Name and size', S.openForm === key ? isoSettingsForm(i) : [
-      kv([['Name', i.name], ['CPUs', i.cpus ? String(i.cpus) : 'container’s default'], ['Memory', i.memory || 'container’s default']]),
+      kv([['Name', i.name], ['CPUs', i.cpus ? String(i.cpus) : 'container’s default'], ['Memory', i.memory || 'container’s default'], ['Swap', i.swap || 'none']]),
       h('div', { class: 'actions' }, h('button', { class: 'btn', onclick: () => openForm(key) }, 'Edit')),
     ]),
     block('Delete', h('p', { class: 'note' }, 'The isolation and its container go; its volumes are kept.'),
@@ -3505,18 +3505,20 @@ function noKernel() {
   })
 }
 
-// isoSize is a VM's CPUs and memory; none set is container's default.
-function isoSize(cpus, memory) {
-  return `${cpus ? cpus + ' CPUs' : 'default CPUs'}, ${memory || 'default memory'}`
+// isoSize is a VM's CPUs, memory and swap; none set is container's
+// default, and no swap.
+function isoSize(cpus, memory, swap) {
+  return `${cpus ? cpus + ' CPUs' : 'default CPUs'}, ${memory || 'default memory'}${swap ? `, ${swap} swap` : ''}`
 }
 
-// isoSettingsForm renames an isolation or resizes its VM. A new name
-// changes nothing in the VM and goes straight through; a new size replaces
-// the container, so it asks first.
+// isoSettingsForm renames an isolation, resizes its VM or sets its swap. A
+// new name, or a later swap, goes straight through; a new size or the
+// first swap replaces the container, so it asks first.
 function isoSettingsForm(i) {
   const name = h('input', { value: i.name, autocomplete: 'off' })
   const cpus = h('input', { value: i.cpus ? String(i.cpus) : '', inputmode: 'numeric', placeholder: 'default', autocomplete: 'off' })
   const memory = h('input', { value: i.memory || '', placeholder: 'default', autocomplete: 'off' })
+  const swap = h('input', { value: i.swap || '', placeholder: 'none', autocomplete: 'off' })
   const err = h('p', { class: 'form-error' })
   const save = h('button', { class: 'btn primary' }, 'Save')
   save.addEventListener('click', async () => {
@@ -3530,10 +3532,12 @@ function isoSettingsForm(i) {
     if (c !== (i.cpus || 0)) body.cpus = c
     const m = memory.value.trim()
     if (m !== (i.memory || '')) body.memory = m
+    const sw = swap.value.trim() === '0' ? '' : swap.value.trim()
+    if (sw !== (i.swap || '')) body.swap = sw
     if (!Object.keys(body).length) { closeForm(); return }
-    const resize = 'cpus' in body || 'memory' in body
+    const resize = 'cpus' in body || 'memory' in body || (!i.swap && sw !== '')
     if (resize && !await ask({
-      title: `Resize ${i.name} to ${isoSize(c, m)}?`,
+      title: `Resize ${i.name} to ${isoSize(c, m, sw)}?`,
       body: 'The container is replaced: running agents restart. Sessions and workspaces are kept.',
       ok: 'Resize',
     })) return
@@ -3548,7 +3552,7 @@ function isoSettingsForm(i) {
         history.replaceState(null, '', isoHash(v.name, S.isoTab))
         S.routed = location.hash
       }
-      toast(!resize ? `${i.name} is now ${v.name}; its agents kept running`
+      toast(!resize ? (body.name ? `${i.name} is now ${v.name}; its agents kept running` : `${v.name} has ${isoSize(v.cpus, v.memory, v.swap)}; its agents kept running`)
         : body.name ? `${i.name} is now ${v.name}, resized; sessions and workspaces were kept`
           : `${v.name} resized; sessions and workspaces were kept`)
       await refreshIsolations()
@@ -3565,7 +3569,8 @@ function isoSettingsForm(i) {
       h('span', { class: 'hint' }, 'Only the name changes; agents keep running.')),
     h('div', { class: 'row spaced' },
       h('div', { class: 'field' }, h('label', null, 'CPUs'), cpus),
-      h('div', { class: 'field' }, h('label', null, 'Memory'), memory, h('span', { class: 'hint' }, 'Like 8G. A new size replaces the container.'))),
+      h('div', { class: 'field' }, h('label', null, 'Memory'), memory, h('span', { class: 'hint' }, 'Like 8G. A new size replaces the container.')),
+      h('div', { class: 'field' }, h('label', null, 'Swap'), swap, h('span', { class: 'hint' }, 'Like 8G. The first replaces the container; later ones go on in the running VM.'))),
     err,
     h('div', { class: 'actions' }, save, h('button', { class: 'btn', onclick: closeForm }, 'Cancel')))
 }

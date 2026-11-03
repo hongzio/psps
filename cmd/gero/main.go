@@ -32,10 +32,10 @@ const usage = `gero — run coding agents in isolated containers
   sudo gero pf uninstall
   gero pf status [-v]
 
-  gero iso create NAME [--cpus N] [--memory 4G] [--fence off]
+  gero iso create NAME [--cpus N] [--memory 4G] [--swap 8G] [--fence off]
   gero iso ls
   gero iso rename NAME NEW-NAME     nothing else changes; agents keep running
-  gero iso set NAME [--cpus N] [--memory 8G]   resize the VM: replaces the container, keeping volumes
+  gero iso set NAME [--cpus N] [--memory 8G] [--swap 8G]   resize the VM (replaces the container, keeping volumes) or set its swap
   gero iso upgrade NAME         move onto the current base image, keeping volumes
   gero iso rm NAME [--purge]
   gero iso env NAME KEY=VALUE... | KEY=

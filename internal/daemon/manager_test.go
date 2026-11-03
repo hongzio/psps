@@ -166,10 +166,13 @@ type fakeContainers struct {
 	tunnels map[string][]pipeRW
 	// bin goes first on PATH for StartAsAgent: the agent CLIs' fakes.
 	bin string
-	// created is every Create, as "base cpus memory"; refuse is a memory
-	// size Create fails for, the way container refuses one.
+	// created is every Create, as "base cpus memory", with " swap" for one
+	// that may have swap; refuse is a memory size Create fails for, the way
+	// container refuses one.
 	created []string
 	refuse  string
+	// swaps are the swaps root turned on, as "container bytes".
+	swaps []string
 	// shares are the Mac's folders each container was started with, and
 	// refuseShare a folder Create fails for, as macOS privacy protection
 	// makes container fail.
@@ -236,9 +239,12 @@ func (f *fakeContainers) boot(name string) error {
 }
 
 func (f *fakeContainers) Start(_ context.Context, name string) error { return f.boot(name) }
-func (f *fakeContainers) Create(_ context.Context, base, _ string, cpus int, memory, _ string, mounts []isolation.Mount) error {
+func (f *fakeContainers) Create(_ context.Context, base, _ string, cpus int, memory string, swap bool, _ string, mounts []isolation.Mount) error {
 	f.mu.Lock()
 	c := fmt.Sprintf("%s %d %s", base, cpus, memory)
+	if swap {
+		c += " swap"
+	}
 	for _, m := range mounts {
 		c += fmt.Sprintf(" %s:%s:ro=%v", m.Source, m.Target, m.ReadOnly)
 	}
@@ -389,6 +395,14 @@ func (f *fakeContainers) RunAsAgent(ctx context.Context, name string, argv ...st
 
 // StartAsAgent runs argv on this Mac with the fakes in bin first on PATH,
 // and HOME the container's own directory, as the agent's home.
+// RunAsRoot is the swap script alone, which is what root runs.
+func (f *fakeContainers) RunAsRoot(_ context.Context, name string, argv ...string) (string, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.swaps = append(f.swaps, name+" "+argv[len(argv)-1])
+	return "", nil
+}
+
 func (f *fakeContainers) StartAsAgent(ctx context.Context, name string, env []string, argv ...string) (isolation.Proc, error) {
 	f.mu.Lock()
 	bin := f.bin
@@ -1330,6 +1344,81 @@ func TestResizingAnIsolationReplacesItsContainer(t *testing.T) {
 }
 
 func ptr[T any](v T) *T { return &v }
+
+// container has no option for swap: root turns a swap file on, in a
+// container that may, each time it starts and when the swap changes.
+func TestAnIsolationsSwapIsTurnedOnWhenItStartsAndWhenItChanges(t *testing.T) {
+	e := newTestEnv(t)
+	ctx := context.Background()
+	m, stop := e.daemon()
+	defer stop()
+	swaps := func() []string {
+		e.fc.mu.Lock()
+		defer e.fc.mu.Unlock()
+		return slices.Clone(e.fc.swaps)
+	}
+	created := func() int {
+		e.fc.mu.Lock()
+		defer e.fc.mu.Unlock()
+		return len(e.fc.created)
+	}
+	if got := swaps(); len(got) != 0 {
+		t.Fatalf("an isolation with no swap: %v", got)
+	}
+
+	// The first swap replaces the container with one that may turn it on.
+	iso, err := m.UpdateIsolation(ctx, "dev", api.UpdateIsolation{Swap: ptr("8G")})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if iso.Swap != "8G" || !strings.HasSuffix(e.fc.lastCreated(), " swap") || iso.State != "running" {
+		t.Fatalf("first swap: %+v, created %q", iso.Isolation, e.fc.lastCreated())
+	}
+	if got := swaps(); !slices.Equal(got, []string{testCtr + " 8589934592"}) {
+		t.Fatalf("swaps: %v", got)
+	}
+
+	// Later ones are turned on in the running VM.
+	n := created()
+	if _, err := m.UpdateIsolation(ctx, "dev", api.UpdateIsolation{Swap: ptr("4G")}); err != nil {
+		t.Fatal(err)
+	}
+	if got := swaps(); created() != n || len(got) != 2 || got[1] != testCtr+" 4294967296" {
+		t.Fatalf("a new swap: swaps %v, %d containers created", got, created()-n)
+	}
+
+	// Once each time the container starts.
+	e.fc.reboot(testCtr, false)
+	st := m.isoLock(testIsoID)
+	st.mu.Lock()
+	st.healthy = time.Time{}
+	st.mu.Unlock()
+	if _, err := m.StartIsolation(ctx, "dev"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := m.StartIsolation(ctx, "dev"); err != nil {
+		t.Fatal(err)
+	}
+	if got := swaps(); len(got) != 3 || got[2] != testCtr+" 4294967296" {
+		t.Fatalf("after a restart: %v", got)
+	}
+
+	// 0 is none: turned off, and kept as "".
+	if iso, err = m.UpdateIsolation(ctx, "dev", api.UpdateIsolation{Swap: ptr("0")}); err != nil || iso.Swap != "" {
+		t.Fatalf("no swap: %+v, %v", iso.Isolation, err)
+	}
+	if got := swaps(); created() != n || len(got) != 4 || got[3] != testCtr+" 0" {
+		t.Fatalf("swap off: %v", got)
+	}
+	for _, bad := range []string{"8", "lots", "512K", "-1G"} {
+		if _, err := m.UpdateIsolation(ctx, "dev", api.UpdateIsolation{Swap: &bad}); err == nil {
+			t.Fatalf("swap %q was taken", bad)
+		}
+	}
+	if _, err := m.CreateIsolation(ctx, api.CreateIsolation{Name: "big", Swap: "nope"}, nil); err == nil {
+		t.Fatal("a new isolation with swap nope")
+	}
+}
 
 func TestARenameDoesNotInterruptATurn(t *testing.T) {
 	e := newTestEnv(t)
