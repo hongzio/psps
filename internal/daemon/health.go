@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/hongzio/gero/internal/api"
+	"github.com/hongzio/gero/internal/store"
 )
 
 // A container can run and still do nothing: its memory full, every
@@ -22,7 +23,7 @@ const (
 	healthTTL     = 10 * time.Second
 	healthTimeout = 5 * time.Second
 	// memoryFullPct: an isolation with less of its memory free than this
-	// has no room left to work in (it has no swap).
+	// has no room left to work in, or is working out of its swap.
 	memoryFullPct = 5
 )
 
@@ -138,4 +139,32 @@ func bytesShort(n int64) string {
 		return fmt.Sprintf("%dM", n>>20)
 	}
 	return fmt.Sprintf("%dK", n>>10)
+}
+
+// forgetHealth drops what was seen inside an isolation whose VM is gone.
+func (m *Manager) forgetHealth(id string) {
+	m.mu.Lock()
+	delete(m.health, id)
+	m.mu.Unlock()
+}
+
+// killIfStuck kills a running VM that does not finish a command, as gero
+// iso kill does, before its container is replaced or removed: container's
+// rm waits on such a VM for good. Its agents end either way; what its
+// disks had not written is lost, as it could not be written.
+func (m *Manager) killIfStuck(ctx context.Context, iso store.Isolation) {
+	if state, err := m.cli.State(ctx, iso.Container); err != nil || state != "running" {
+		return
+	}
+	h := m.probeHealth(ctx, iso.Container)
+	if h.label != api.HealthStuck {
+		return
+	}
+	pids, err := m.cli.Kill(ctx, iso.Container)
+	if err != nil {
+		m.log.Printf("isolation %s: %s (%s); killing it before its container is replaced: %v", iso.Name, h.label, h.about, err)
+		return
+	}
+	m.forgetHealth(iso.ID)
+	m.log.Printf("isolation %s: %s (%s), so killed before its container is replaced (processes %v)", iso.Name, h.label, h.about, pids)
 }

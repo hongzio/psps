@@ -159,6 +159,24 @@ type fenceState struct {
 type isoState struct {
 	mu      sync.Mutex
 	healthy time.Time
+	// waiting is set while one caller waits for the container's shim to
+	// answer, without mu: the others wait for it, not in turn.
+	waiting *shimWait
+	// gen counts the containers the isolation has been given, so a wait
+	// for one replaced meanwhile does not answer for the new one.
+	gen int
+}
+
+// replaced marks the isolation's container as a new one. Callers hold mu.
+func (st *isoState) replaced() {
+	st.healthy = time.Time{}
+	st.gen++
+}
+
+// shimWait is one wait for a container's shim; err is how it ended.
+type shimWait struct {
+	done chan struct{}
+	err  error
 }
 
 type agentView = api.Agent
@@ -332,18 +350,46 @@ func (m *Manager) launchEnv(id string) ([]string, []proxy.MCPServer) {
 // ensureIsolation brings an isolation's container up and waits for its shim.
 // A container that is gone is recreated from its volumes, so sessions and
 // workspaces outlive it.
+//
+// Waiting for the shim, one caller waits and the rest share its answer;
+// none holds the isolation's lock meanwhile, so what replaces or kills a
+// container that does not answer is not kept waiting behind them.
 func (m *Manager) ensureIsolation(ctx context.Context, id string) (*shim.Client, error) {
 	st := m.isoLock(id)
 	st.mu.Lock()
+	for st.waiting != nil {
+		w := st.waiting
+		st.mu.Unlock()
+		select {
+		case <-w.done:
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		}
+		if w.err != nil {
+			return nil, w.err
+		}
+		st.mu.Lock()
+	}
 	defer st.mu.Unlock()
 	rec, err := m.store.Isolation(id)
 	if err != nil {
 		return nil, fmt.Errorf("isolation %s: %w", id, err)
 	}
 	client := &shim.Client{Dial: m.cli.ShimDialer(rec.Container)}
+	// What is done in a container that answers is done under the lock, so
+	// it is given a minute: a VM that stops answering mid-way does not
+	// keep the lock, and with it what would replace or kill the VM.
+	tend := func(swap bool) {
+		tctx, cancel := context.WithTimeout(ctx, time.Minute)
+		defer cancel()
+		m.checkFence(tctx, rec)
+		m.syncLocked(tctx, rec)
+		if swap {
+			m.swapLocked(tctx, rec)
+		}
+	}
 	if time.Since(st.healthy) < 5*time.Second {
-		m.checkFence(ctx, rec)
-		m.syncLocked(ctx, rec)
+		tend(false)
 		m.ensureTunnel(id)
 		return client, nil
 	}
@@ -363,11 +409,17 @@ func (m *Manager) ensureIsolation(ctx context.Context, id string) (*shim.Client,
 	// their tunnel is kept open.
 	up := func() (*shim.Client, error) {
 		st.healthy = time.Now()
-		m.checkFence(ctx, rec)
-		m.syncLocked(ctx, rec)
-		m.swapLocked(ctx, rec)
+		tend(true)
 		m.ensureTunnel(id)
 		return client, nil
+	}
+	// A VM just seen not to finish a command will not answer in time
+	// either; it is said now rather than in a minute.
+	m.mu.Lock()
+	h := m.health[id]
+	m.mu.Unlock()
+	if h.label == api.HealthStuck && time.Since(h.at) < healthTTL {
+		return nil, fmt.Errorf("isolation %s is %s (%s); gero iso kill %s ends it", rec.Name, h.label, h.about, rec.Name)
 	}
 	if ping() {
 		return up()
@@ -413,18 +465,36 @@ func (m *Manager) ensureIsolation(ctx context.Context, id string) (*shim.Client,
 		return nil, fmt.Errorf("isolation %s is %s", rec.Name, state)
 	}
 
+	w := &shimWait{done: make(chan struct{})}
+	st.waiting = w
+	gen := st.gen
+	st.mu.Unlock()
+	answered := false
 	deadline := time.Now().Add(60 * time.Second)
-	for time.Now().Before(deadline) {
-		if ping() {
-			return up()
-		}
-		select {
-		case <-ctx.Done():
-			return nil, ctx.Err()
-		case <-time.After(500 * time.Millisecond):
+	for !answered && time.Now().Before(deadline) && ctx.Err() == nil {
+		if answered = ping(); !answered {
+			select {
+			case <-ctx.Done():
+			case <-time.After(500 * time.Millisecond):
+			}
 		}
 	}
-	return nil, fmt.Errorf("isolation %s: shim did not answer within 60s", rec.Name)
+	st.mu.Lock()
+	err = ctx.Err()
+	if !answered && err == nil {
+		err = fmt.Errorf("isolation %s: shim did not answer within 60s", rec.Name)
+		// Unless the container it waited for is gone: the others then
+		// wait for the new one themselves.
+		if st.gen == gen {
+			w.err = err
+		}
+	}
+	st.waiting = nil
+	close(w.done)
+	if answered {
+		return up()
+	}
+	return nil, err
 }
 
 func (m *Manager) Isolations(ctx context.Context) ([]api.Isolation, error) {
@@ -560,6 +630,7 @@ func (m *Manager) UpgradeIsolation(ctx context.Context, name string, progress io
 	}
 	st := m.isoLock(iso.ID)
 	st.mu.Lock()
+	m.killIfStuck(ctx, iso)
 	err = m.cli.Remove(ctx, iso.Container)
 	if err == nil {
 		iso.Image = image
@@ -575,7 +646,7 @@ func (m *Manager) UpgradeIsolation(ctx context.Context, name string, progress io
 		m.logMissing(iso.Name, missing)
 		err = m.cli.Create(ctx, iso.ID, image, iso.CPUs, iso.Memory, iso.Swap != "", iso.Network, mounts)
 	}
-	st.healthy = time.Time{}
+	st.replaced()
 	st.mu.Unlock()
 	m.markFenceStale(iso.ID)
 	if err != nil {
@@ -614,6 +685,7 @@ func (m *Manager) KillIsolation(ctx context.Context, name string) (api.Killed, e
 	pids, err := m.cli.Kill(ctx, iso.Container)
 	if len(pids) > 0 {
 		m.markFenceStale(iso.ID)
+		m.forgetHealth(iso.ID)
 		m.log.Printf("isolation %s: killed (processes %v)", iso.Name, pids)
 	}
 	return api.Killed{Processes: append([]int{}, pids...)}, err
@@ -707,6 +779,7 @@ func (m *Manager) resizeIsolation(ctx context.Context, id string, cpus int, memo
 	was := iso
 	iso.CPUs, iso.Memory, iso.Swap = cpus, memory, swap
 	mounts, _ := m.cli.Mounts(ctx, iso.Container)
+	m.killIfStuck(ctx, iso)
 	err = m.cli.Remove(ctx, iso.Container)
 	if err == nil {
 		if err = m.cli.Create(ctx, id, iso.Image, cpus, memory, swap != "", iso.Network, mounts); err == nil {
@@ -721,7 +794,7 @@ func (m *Manager) resizeIsolation(ctx context.Context, id string, cpus int, memo
 			}
 		}
 	}
-	st.healthy = time.Time{}
+	st.replaced()
 	st.mu.Unlock()
 	m.markFenceStale(id)
 	if err != nil {
@@ -743,6 +816,7 @@ func (m *Manager) DeleteIsolation(ctx context.Context, name string, purge bool) 
 	if err := m.store.DeleteIsolation(iso.ID); err != nil {
 		return fmt.Errorf("isolation %s: %w; archive and delete them first (`gero agent rm`)", name, err)
 	}
+	m.killIfStuck(ctx, iso)
 	if err := m.cli.Remove(ctx, iso.Container); err != nil {
 		return err
 	}
