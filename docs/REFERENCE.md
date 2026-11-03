@@ -1017,6 +1017,13 @@ it starts again when something next needs it: within a minute when it has
 live agents, as they reconnect; otherwise at the next agent made in it, or
 `gero iso start sim` (the web's Start).
 
+A resize, an upgrade, a change of shared folders or `gero iso rm` replaces or
+removes the container, which ends its agents anyway: on a VM that does not
+finish a command in 5 s, gero kills it this way first, as `container rm`
+would wait on it for good. While a VM does not answer, its agents wait for
+it together, for at most a minute, and none holds the isolation up
+meanwhile; one just seen not to finish a command is reported at once.
+
 ## Verify
 
 ```sh

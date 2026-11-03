@@ -182,6 +182,9 @@ type fakeContainers struct {
 	evalResets []string
 	// killed are the containers Kill ended.
 	killed []string
+	// stuck containers run and answer nothing, as a VM out of memory: not
+	// their shim, a command or container's rm, until Kill.
+	stuck map[string]bool
 	// dial is what the tunnel connects the daemon to inside: the isolation's
 	// loopback, as the shim allows; nil is a shim from before forwards.
 	dial tunnel.Allow
@@ -363,7 +366,10 @@ func (f *fakeFence) applies() int { f.mu.Lock(); defer f.mu.Unlock(); return len
 
 func (f *fakeFence) set(installed bool) { f.mu.Lock(); f.installed = installed; f.mu.Unlock() }
 
-func (f *fakeContainers) Remove(_ context.Context, name string) error {
+func (f *fakeContainers) Remove(ctx context.Context, name string) error {
+	if f.isStuck(name) {
+		return hang(ctx)
+	}
 	f.reboot(name, false)
 	return nil
 }
@@ -371,6 +377,9 @@ func (f *fakeContainers) Remove(_ context.Context, name string) error {
 // RunAsAgent runs argv on this Mac, which stands in for the isolation:
 // curl to 127.0.0.1 reaches the test tunnel's isolation end.
 func (f *fakeContainers) RunAsAgent(ctx context.Context, name string, argv ...string) (string, error) {
+	if f.isStuck(name) {
+		return "", hang(ctx)
+	}
 	if len(argv) == 2 && argv[0] == "cat" && argv[1] == "/proc/mounts" {
 		f.mu.Lock()
 		defer f.mu.Unlock()
@@ -428,9 +437,27 @@ func (f *fakeContainers) evalRoot(name string) string { return filepath.Join(f.b
 
 func (f *fakeContainers) Kill(_ context.Context, name string) ([]int, error) {
 	f.mu.Lock()
-	defer f.mu.Unlock()
 	f.killed = append(f.killed, name)
+	stuck := f.stuck[name]
+	delete(f.stuck, name)
+	f.mu.Unlock()
+	if stuck {
+		f.reboot(name, false)
+	}
 	return []int{4242}, nil
+}
+
+func (f *fakeContainers) isStuck(name string) bool {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.stuck[name]
+}
+
+// hang is what a stuck container does with a request: nothing, until the
+// caller gives up.
+func hang(ctx context.Context) error {
+	<-ctx.Done()
+	return ctx.Err()
 }
 
 func (f *fakeContainers) EvalReset(_ context.Context, name string, wipe bool) error {
@@ -470,7 +497,13 @@ func (f *fakeContainers) RunEval(ctx context.Context, name string, argv ...strin
 }
 
 func (f *fakeContainers) ShimDialer(name string) shim.Dialer {
-	return shim.UnixDialer(filepath.Join(f.base, name, "shim.sock"))
+	dial := shim.UnixDialer(filepath.Join(f.base, name, "shim.sock"))
+	return func(ctx context.Context) (io.ReadWriteCloser, error) {
+		if f.isStuck(name) {
+			return nil, hang(ctx)
+		}
+		return dial(ctx)
+	}
 }
 
 // DialTunnel runs the isolation end of the tunnel in this process, over a
@@ -1344,6 +1377,72 @@ func TestResizingAnIsolationReplacesItsContainer(t *testing.T) {
 }
 
 func ptr[T any](v T) *T { return &v }
+
+// A VM that stops answering holds up every command in it, container's rm
+// included. Agents waiting for it wait together, without the isolation's
+// lock, and a resize kills it before replacing its container.
+func TestAResizeIsNotKeptBehindAgentsWaitingForAStuckVM(t *testing.T) {
+	e := newTestEnv(t)
+	ctx := context.Background()
+	m, stop := e.daemon()
+	defer stop()
+	if _, err := m.StartIsolation(ctx, "dev"); err != nil {
+		t.Fatal(err)
+	}
+	e.fc.mu.Lock()
+	e.fc.stuck = map[string]bool{testCtr: true}
+	e.fc.mu.Unlock()
+	st := m.isoLock(testIsoID)
+	st.mu.Lock()
+	st.healthy = time.Time{}
+	st.mu.Unlock()
+
+	waits := make(chan error, 5)
+	for range 5 {
+		go func() {
+			_, err := m.ensureIsolation(ctx, testIsoID)
+			waits <- err
+		}()
+	}
+	time.Sleep(300 * time.Millisecond)
+	began := time.Now()
+	iso, err := m.UpdateIsolation(ctx, "dev", api.UpdateIsolation{Memory: ptr("8G")})
+	if err != nil {
+		t.Fatal(err)
+	}
+	// A ping under the lock, then the health probe: seconds, not a minute
+	// for each agent waiting.
+	if took := time.Since(began); took > 20*time.Second || iso.Memory != "8G" || iso.State != "running" {
+		t.Fatalf("resize took %s: %+v", took, iso.Isolation)
+	}
+	e.fc.mu.Lock()
+	killed := slices.Clone(e.fc.killed)
+	e.fc.mu.Unlock()
+	if !slices.Equal(killed, []string{testCtr}) {
+		t.Fatalf("killed %v", killed)
+	}
+	for range 5 {
+		select {
+		case err := <-waits:
+			if err != nil {
+				t.Fatalf("a wait for the new container: %v", err)
+			}
+		case <-time.After(10 * time.Second):
+			t.Fatal("a wait did not end once the new container answered")
+		}
+	}
+
+	// One just seen not to finish a command is said to be so, at once.
+	m.mu.Lock()
+	m.health[testIsoID] = isoHealth{at: time.Now(), label: api.HealthStuck, about: "a command there did not finish in 5s"}
+	m.mu.Unlock()
+	st.mu.Lock()
+	st.healthy = time.Time{}
+	st.mu.Unlock()
+	if _, err := m.ensureIsolation(ctx, testIsoID); err == nil || !strings.Contains(err.Error(), "gero iso kill dev") {
+		t.Fatalf("a stuck VM: %v", err)
+	}
+}
 
 // container has no option for swap: root turns a swap file on, in a
 // container that may, each time it starts and when the swap changes.

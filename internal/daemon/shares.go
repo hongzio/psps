@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"sort"
 	"strings"
-	"time"
 
 	"github.com/hongzio/gero/internal/isolation"
 	"github.com/hongzio/gero/internal/proxy"
@@ -116,6 +115,7 @@ func (m *Manager) remount(ctx context.Context, id string) error {
 		iso.Image = image
 		m.store.PutIsolation(iso)
 	}
+	m.killIfStuck(ctx, iso)
 	err = m.cli.Remove(ctx, iso.Container)
 	if err == nil {
 		if err = m.cli.Create(ctx, id, iso.Image, iso.CPUs, iso.Memory, iso.Swap != "", iso.Network, want); err != nil {
@@ -127,7 +127,7 @@ func (m *Manager) remount(ctx context.Context, id string) error {
 			}
 		}
 	}
-	st.healthy = time.Time{}
+	st.replaced()
 	st.mu.Unlock()
 	m.markFenceStale(id)
 	if err == nil {
