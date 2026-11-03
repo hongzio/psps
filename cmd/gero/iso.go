@@ -36,13 +36,14 @@ func isoCmd(p paths.Paths, args []string) error {
 	case "create":
 		cpus := fs.Int("cpus", 0, "CPUs for the container (default: container's)")
 		memory := fs.String("memory", "4G", "memory for the container")
+		swap := fs.String("swap", "", "a swap file for the VM, like 8G (empty or 0: none)")
 		fence := fs.String("fence", "on", "on: agents start only behind a verified network fence; off: let it reach the Mac and LAN")
 		pos := parse(fs, args[1:])
 		if len(pos) != 1 {
-			return errors.New("usage: gero iso create NAME [--cpus N] [--memory 4G] [--fence off]")
+			return errors.New("usage: gero iso create NAME [--cpus N] [--memory 4G] [--swap 8G] [--fence off]")
 		}
 		fmt.Println("creating isolation", pos[0], "(the first one builds the base image; that takes a few minutes)")
-		iso, err := c.CreateIsolation(ctx, api.CreateIsolation{Name: pos[0], CPUs: *cpus, Memory: *memory, Fence: *fence})
+		iso, err := c.CreateIsolation(ctx, api.CreateIsolation{Name: pos[0], CPUs: *cpus, Memory: *memory, Swap: *swap, Fence: *fence})
 		if err != nil {
 			return err
 		}
@@ -71,7 +72,7 @@ func isoCmd(p paths.Paths, args []string) error {
 			if iso.Health != "" {
 				state = iso.Health + " (" + iso.HealthDetail + ")"
 			}
-			fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n", iso.Name, state, short(iso.FenceState), short(iso.Proxies), size(iso.CPUs, iso.Memory), iso.Container, iso.Image, strings.Join(iso.EnvKeys, ","))
+			fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n", iso.Name, state, short(iso.FenceState), short(iso.Proxies), size(iso.CPUs, iso.Memory, iso.Swap), iso.Container, iso.Image, strings.Join(iso.EnvKeys, ","))
 		}
 		return tw.Flush()
 
@@ -90,6 +91,7 @@ func isoCmd(p paths.Paths, args []string) error {
 	case "set":
 		cpus := fs.Int("cpus", 0, "CPUs for the VM (0: container's default)")
 		memory := fs.String("memory", "", "memory for the VM, like 8G (empty: container's default)")
+		swap := fs.String("swap", "", "a swap file for the VM, like 8G (empty or 0: none)")
 		pos := parse(fs, args[1:])
 		var req api.UpdateIsolation
 		fs.Visit(func(f *flag.Flag) {
@@ -98,16 +100,26 @@ func isoCmd(p paths.Paths, args []string) error {
 				req.CPUs = cpus
 			case "memory":
 				req.Memory = memory
+			case "swap":
+				req.Swap = swap
 			}
 		})
-		if len(pos) != 1 || (req.CPUs == nil && req.Memory == nil) {
-			return errors.New("usage: gero iso set NAME [--cpus N] [--memory 8G]   (replaces the container: running agents restart; sessions and workspaces are kept)")
+		if len(pos) != 1 || (req.CPUs == nil && req.Memory == nil && req.Swap == nil) {
+			return errors.New("usage: gero iso set NAME [--cpus N] [--memory 8G] [--swap 8G]   (a new size, or the first swap, replaces the container: running agents restart; sessions and workspaces are kept. A later swap is turned on in the running VM)")
+		}
+		was, err := c.Isolation(ctx, pos[0])
+		if err != nil {
+			return err
 		}
 		iso, err := c.UpdateIsolation(ctx, pos[0], req)
 		if err != nil {
 			return err
 		}
-		fmt.Printf("isolation %s now has %s; sessions and workspaces were kept, running agents start again on their next message\n", iso.Name, size(iso.CPUs, iso.Memory))
+		if iso.CPUs != was.CPUs || iso.Memory != was.Memory || (was.Swap == "" && iso.Swap != "") {
+			fmt.Printf("isolation %s now has %s; sessions and workspaces were kept, running agents start again on their next message\n", iso.Name, size(iso.CPUs, iso.Memory, iso.Swap))
+		} else {
+			fmt.Printf("isolation %s now has %s; the running VM has it already, and its agents carry on\n", iso.Name, size(iso.CPUs, iso.Memory, iso.Swap))
+		}
 		return nil
 
 	case "upgrade":
@@ -432,14 +444,18 @@ func isoCmd(p paths.Paths, args []string) error {
 	return fmt.Errorf("unknown iso command %q", args[0])
 }
 
-// size is a VM's CPUs and memory; 0 and "" are container's defaults.
-func size(cpus int, memory string) string {
+// size is a VM's CPUs, memory and swap; 0 and "" are container's defaults,
+// and no swap.
+func size(cpus int, memory, swap string) string {
 	c, m := "default CPUs", "default memory"
 	if cpus > 0 {
 		c = strconv.Itoa(cpus) + " CPUs"
 	}
 	if memory != "" {
 		m = memory + " memory"
+	}
+	if swap != "" {
+		m += ", " + swap + " swap"
 	}
 	return c + ", " + m
 }

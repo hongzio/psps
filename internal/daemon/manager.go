@@ -49,9 +49,10 @@ type Containers interface {
 	VolumeRemove(ctx context.Context, name string) error
 	ImageExists(ctx context.Context, ref string) bool
 	EnsureImage(ctx context.Context, progress io.Writer) (string, error)
-	Create(ctx context.Context, iso, image string, cpus int, memory, network string, mounts []isolation.Mount) error
+	Create(ctx context.Context, iso, image string, cpus int, memory string, swap bool, network string, mounts []isolation.Mount) error
 	Mounts(ctx context.Context, container string) ([]isolation.Mount, error)
 	RunAsAgent(ctx context.Context, container string, argv ...string) (string, error)
+	RunAsRoot(ctx context.Context, container string, argv ...string) (string, error)
 	ShimDialer(container string) shim.Dialer
 	NetworkInspect(ctx context.Context, name string) (isolation.NetworkInfo, error)
 	NetworkRemove(ctx context.Context, name string) error
@@ -114,9 +115,10 @@ type Manager struct {
 	instances map[string]map[string]proxy.Instance
 	tunnels   map[string]*tunnelState
 	synced    map[string]string
+	swapped   map[string]string // the swap last turned on since the container started (swap.go)
 	versions  map[string]string
 	lastEnv   map[string]string
-	health    map[string]isoHealth // what was last seen inside, by isolation (health.go)
+	health    map[string]isoHealth    // what was last seen inside, by isolation (health.go)
 	logins    map[string]pendingLogin // browser logins in progress, by id
 	cliLogins map[string]*cliLogin    // agent CLI logins, by isolation/tool
 	// mailBuckets are each isolation's budget for sending mail.
@@ -166,7 +168,7 @@ func NewManager(ctx context.Context, st *store.Store, cli Containers, fence Fenc
 		log: logger, hub: newHub(), workRoot: isolation.WorkRoot, home: isolation.AgentHome,
 		runtimes: map[string]*runtime{}, isos: map[string]*isoState{}, fences: map[string]*fenceState{},
 		tunnelPort: func(p int) int { return p }, instances: map[string]map[string]proxy.Instance{},
-		tunnels: map[string]*tunnelState{}, synced: map[string]string{}, versions: map[string]string{}, lastEnv: map[string]string{}, health: map[string]isoHealth{},
+		tunnels: map[string]*tunnelState{}, synced: map[string]string{}, swapped: map[string]string{}, versions: map[string]string{}, lastEnv: map[string]string{}, health: map[string]isoHealth{},
 		mailBuckets: map[string]*proxy.TokenBucket{}, cronWake: make(chan struct{}, 1),
 		teamsDue: map[string]bool{}, teamWake: make(chan struct{}, 1), evaluating: map[string]bool{}, busy: map[string]map[string]bool{}}
 	m.loops.Add(1)
@@ -357,11 +359,13 @@ func (m *Manager) ensureIsolation(ctx context.Context, id string) (*shim.Client,
 		return err == nil
 	}
 	// up is the container answering: the fence is measured if due, the
-	// proxies' files are brought up to date and their tunnel is kept open.
+	// proxies' files are brought up to date, the swap is turned on and
+	// their tunnel is kept open.
 	up := func() (*shim.Client, error) {
 		st.healthy = time.Now()
 		m.checkFence(ctx, rec)
 		m.syncLocked(ctx, rec)
+		m.swapLocked(ctx, rec)
 		m.ensureTunnel(id)
 		return client, nil
 	}
@@ -394,13 +398,13 @@ func (m *Manager) ensureIsolation(ctx context.Context, id string) (*shim.Client,
 		}
 		mounts, missing := m.mountsFor(rec.ID)
 		m.logMissing(rec.Name, missing)
-		err := m.cli.Create(ctx, rec.ID, rec.Image, rec.CPUs, rec.Memory, rec.Network, mounts)
+		err := m.cli.Create(ctx, rec.ID, rec.Image, rec.CPUs, rec.Memory, rec.Swap != "", rec.Network, mounts)
 		if err != nil && len(mounts) > 0 {
 			// One that cannot start with its shares starts without them
 			// rather than not at all; its skill says they are not there.
 			m.log.Printf("isolation %s: does not start with its shared folders (%v); starting it without them", rec.Name, err)
 			m.cli.Remove(ctx, rec.Container)
-			err = m.cli.Create(ctx, rec.ID, rec.Image, rec.CPUs, rec.Memory, rec.Network, nil)
+			err = m.cli.Create(ctx, rec.ID, rec.Image, rec.CPUs, rec.Memory, rec.Swap != "", rec.Network, nil)
 		}
 		if err != nil {
 			return nil, err
@@ -488,6 +492,10 @@ func (m *Manager) CreateIsolation(ctx context.Context, req api.CreateIsolation, 
 	if err := checkSize(req.CPUs, req.Memory); err != nil {
 		return store.Isolation{}, err
 	}
+	swap, err := swapSize(req.Swap)
+	if err != nil {
+		return store.Isolation{}, err
+	}
 	fence := req.Fence
 	switch fence {
 	case "":
@@ -523,9 +531,9 @@ func (m *Manager) CreateIsolation(ctx context.Context, req api.CreateIsolation, 
 		return store.Isolation{}, err
 	}
 	iso = store.Isolation{ID: id, Name: req.Name, Container: isolation.ContainerName(id), Image: image, CPUs: req.CPUs,
-		Memory: req.Memory, Network: isolation.NetworkName(id), Fence: fence, Env: map[string]string{}, CreatedAt: time.Now().UTC()}
+		Memory: req.Memory, Swap: swap, Network: isolation.NetworkName(id), Fence: fence, Env: map[string]string{}, CreatedAt: time.Now().UTC()}
 	// A new isolation has no shares yet.
-	if err := m.cli.Create(ctx, id, image, req.CPUs, req.Memory, iso.Network, nil); err != nil {
+	if err := m.cli.Create(ctx, id, image, req.CPUs, req.Memory, iso.Swap != "", iso.Network, nil); err != nil {
 		return store.Isolation{}, err
 	}
 	if err := m.store.PutIsolation(iso); err != nil {
@@ -565,7 +573,7 @@ func (m *Manager) UpgradeIsolation(ctx context.Context, name string, progress io
 	if err == nil {
 		mounts, missing := m.mountsFor(iso.ID)
 		m.logMissing(iso.Name, missing)
-		err = m.cli.Create(ctx, iso.ID, image, iso.CPUs, iso.Memory, iso.Network, mounts)
+		err = m.cli.Create(ctx, iso.ID, image, iso.CPUs, iso.Memory, iso.Swap != "", iso.Network, mounts)
 	}
 	st.healthy = time.Time{}
 	st.mu.Unlock()
@@ -629,16 +637,16 @@ func checkSize(cpus int, memory string) error {
 	return nil
 }
 
-// UpdateIsolation renames an isolation and resizes its VM, as req asks (see
-// api.UpdateIsolation). Everything is checked before anything changes. A
-// rename is the name alone: nothing else knows an isolation by it, so its
-// agents, proxies and container carry on as they were.
+// UpdateIsolation renames an isolation, resizes its VM and sets its swap, as
+// req asks (see api.UpdateIsolation). Everything is checked before anything
+// changes. A rename is the name alone: nothing else knows an isolation by
+// it, so its agents, proxies and container carry on as they were.
 func (m *Manager) UpdateIsolation(ctx context.Context, name string, req api.UpdateIsolation) (api.Isolation, error) {
 	iso, err := m.isolationNamed(name)
 	if err != nil {
 		return api.Isolation{}, err
 	}
-	cpus, memory := iso.CPUs, iso.Memory
+	cpus, memory, swap := iso.CPUs, iso.Memory, iso.Swap
 	if req.CPUs != nil {
 		cpus = *req.CPUs
 	}
@@ -647,6 +655,11 @@ func (m *Manager) UpdateIsolation(ctx context.Context, name string, req api.Upda
 	}
 	if err := checkSize(cpus, memory); err != nil {
 		return api.Isolation{}, err
+	}
+	if req.Swap != nil {
+		if swap, err = swapSize(*req.Swap); err != nil {
+			return api.Isolation{}, err
+		}
 	}
 	if to := strings.TrimSpace(req.Name); to != "" && to != iso.Name {
 		if !validIsolationName.MatchString(to) {
@@ -658,20 +671,25 @@ func (m *Manager) UpdateIsolation(ctx context.Context, name string, req api.Upda
 		m.log.Printf("isolation %s: renamed %s", iso.Name, to)
 		name = to
 	}
-	if cpus != iso.CPUs || memory != iso.Memory {
-		if err := m.resizeIsolation(ctx, iso.ID, cpus, memory); err != nil {
+	// The first swap needs a container that may turn it on.
+	if cpus != iso.CPUs || memory != iso.Memory || (iso.Swap == "" && swap != "") {
+		if err := m.resizeIsolation(ctx, iso.ID, cpus, memory, swap); err != nil {
+			return api.Isolation{}, err
+		}
+	} else if swap != iso.Swap {
+		if err := m.setSwap(ctx, iso.ID, swap); err != nil {
 			return api.Isolation{}, err
 		}
 	}
 	return m.Isolation(ctx, name)
 }
 
-// resizeIsolation gives an isolation's VM new CPUs and memory. container
+// resizeIsolation gives an isolation's VM new CPUs, memory and swap. container
 // cannot resize a VM, so the container is replaced on the same image, the
 // way an upgrade replaces it: the volumes, and every session and workspace,
 // are kept; running agents end and start again on their next message. A
 // container that will not start at the new size is put back at the old.
-func (m *Manager) resizeIsolation(ctx context.Context, id string, cpus int, memory string) error {
+func (m *Manager) resizeIsolation(ctx context.Context, id string, cpus int, memory, swap string) error {
 	iso, err := m.store.Isolation(id)
 	if err != nil {
 		return err
@@ -687,15 +705,15 @@ func (m *Manager) resizeIsolation(ctx context.Context, id string, cpus int, memo
 		iso.Image = image
 	}
 	was := iso
-	iso.CPUs, iso.Memory = cpus, memory
+	iso.CPUs, iso.Memory, iso.Swap = cpus, memory, swap
 	mounts, _ := m.cli.Mounts(ctx, iso.Container)
 	err = m.cli.Remove(ctx, iso.Container)
 	if err == nil {
-		if err = m.cli.Create(ctx, id, iso.Image, cpus, memory, iso.Network, mounts); err == nil {
+		if err = m.cli.Create(ctx, id, iso.Image, cpus, memory, swap != "", iso.Network, mounts); err == nil {
 			err = m.store.PutIsolation(iso)
 		} else {
 			m.cli.Remove(ctx, iso.Container)
-			if berr := m.cli.Create(ctx, id, was.Image, was.CPUs, was.Memory, was.Network, mounts); berr != nil {
+			if berr := m.cli.Create(ctx, id, was.Image, was.CPUs, was.Memory, was.Swap != "", was.Network, mounts); berr != nil {
 				err = fmt.Errorf("%w; putting it back at its old size failed too: %v", err, berr)
 			} else {
 				m.store.PutIsolation(was)
@@ -709,7 +727,7 @@ func (m *Manager) resizeIsolation(ctx context.Context, id string, cpus int, memo
 	if err != nil {
 		return err
 	}
-	m.log.Printf("isolation %s: resized (cpus %d, memory %q; 0 and \"\" are container's defaults)", iso.Name, cpus, memory)
+	m.log.Printf("isolation %s: resized (cpus %d, memory %q, swap %q; 0 and \"\" are container's defaults)", iso.Name, cpus, memory, swap)
 	_, err = m.ensureIsolation(ctx, id)
 	return err
 }
@@ -738,6 +756,7 @@ func (m *Manager) DeleteIsolation(ctx context.Context, name string, purge bool) 
 	m.mu.Lock()
 	delete(m.fences, iso.ID)
 	delete(m.synced, iso.ID)
+	delete(m.swapped, iso.ID)
 	delete(m.versions, iso.ID)
 	delete(m.lastEnv, iso.ID)
 	m.mu.Unlock()

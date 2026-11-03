@@ -85,8 +85,9 @@ func (m *Manager) markFenceStale(iso string) {
 	fs := m.fenceStateLocked(iso)
 	fs.ok, fs.stale, fs.why = false, true, "the container restarted; measuring again"
 	// A recreated container has a fresh root filesystem: write the
-	// proxies' files again.
+	// proxies' files again, and turn the swap on again.
 	delete(m.synced, iso)
+	delete(m.swapped, iso)
 }
 
 // checkFence measures the fence when it is due: never measured, stale, a

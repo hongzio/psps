@@ -113,7 +113,9 @@ func (m *Model) handleIsoKey(msg tea.KeyMsg) tea.Cmd {
 		}
 		mem := textField("Memory", "e.g. 8G; empty: container's default", "")
 		mem.text.SetValue(iso.Memory)
-		p.mode, p.form = isoSettings, &form{fields: []*field{name, cpus, mem}}
+		swap := textField("Swap", "e.g. 8G; empty: none", "a later swap goes on without a restart")
+		swap.text.SetValue(iso.Swap)
+		p.mode, p.form = isoSettings, &form{fields: []*field{name, cpus, mem, swap}}
 		name.focus(true)
 	case ok && k.Is(msg, "iso_login"):
 		return m.openCLIs(iso.Name)
@@ -231,10 +233,19 @@ func (m *Model) saveIsoSettings(iso api.Isolation) tea.Cmd {
 	if mem := f[2].value(); mem != iso.Memory {
 		req.Memory = &mem
 	}
-	if req.Name == "" && req.CPUs == nil && req.Memory == nil {
+	swap := f[3].value()
+	if swap == "0" {
+		swap = ""
+	}
+	if swap != iso.Swap {
+		req.Swap = &swap
+	}
+	if req.Name == "" && req.CPUs == nil && req.Memory == nil && req.Swap == nil {
 		p.mode, p.form = isoList, nil
 		return nil
 	}
+	// A new size, or the first swap, replaces the container.
+	replace := req.CPUs != nil || req.Memory != nil || (iso.Swap == "" && swap != "")
 	name, to := iso.Name, iso.Name
 	if req.Name != "" {
 		to = req.Name
@@ -242,7 +253,10 @@ func (m *Model) saveIsoSettings(iso api.Isolation) tea.Cmd {
 	run := func() tea.Cmd {
 		p.mode, p.form, p.follow = isoList, nil, to
 		done := "renamed " + name + " to " + to + "; its agents kept running"
-		if req.CPUs != nil || req.Memory != nil {
+		if req.Name == "" {
+			done = to + " has " + isoSize(cpus, f[2].value(), swap) + "; its agents kept running"
+		}
+		if replace {
 			p.busy = "resizing " + to + "…"
 			done = to + " resized; sessions and workspaces were kept"
 		}
@@ -251,24 +265,28 @@ func (m *Model) saveIsoSettings(iso api.Isolation) tea.Cmd {
 			return err
 		})
 	}
-	if req.CPUs == nil && req.Memory == nil {
+	if !replace {
 		return run()
 	}
 	m.confirm = &confirmation{
-		prompt: fmt.Sprintf("resize %s to %s? the container is replaced: running agents restart; sessions are kept (y/n)", name, isoSize(cpus, f[2].value())),
+		prompt: fmt.Sprintf("resize %s to %s? the container is replaced: running agents restart; sessions are kept (y/n)", name, isoSize(cpus, f[2].value(), swap)),
 		onYes:  run,
 	}
 	return nil
 }
 
-// isoSize is a VM's CPUs and memory; 0 and "" are container's defaults.
-func isoSize(cpus int, memory string) string {
+// isoSize is a VM's CPUs, memory and swap; 0 and "" are container's
+// defaults, and no swap.
+func isoSize(cpus int, memory, swap string) string {
 	c, mem := "default CPUs", "default memory"
 	if cpus > 0 {
 		c = strconv.Itoa(cpus) + " CPUs"
 	}
 	if memory != "" {
 		mem = memory
+	}
+	if swap != "" {
+		mem += ", " + swap + " swap"
 	}
 	return c + ", " + mem
 }
@@ -302,7 +320,7 @@ func (m *Model) renderIsolations(width int) string {
 		default:
 			fence = th.err.Render("fence ✗")
 		}
-		line := fmt.Sprintf("%-14s %s %s  %-24s %-22s env: %s", iso.Name, state, fence, iso.Image, isoSize(iso.CPUs, iso.Memory), env)
+		line := fmt.Sprintf("%-14s %s %s  %-24s %-22s env: %s", iso.Name, state, fence, iso.Image, isoSize(iso.CPUs, iso.Memory, iso.Swap), env)
 		if i == p.sel {
 			b.WriteString(th.user.Render("› ") + th.title.Render(line) + "\n")
 		} else {

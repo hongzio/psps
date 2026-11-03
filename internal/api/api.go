@@ -55,6 +55,8 @@ type CreateIsolation struct {
 	Name   string `json:"name"`
 	CPUs   int    `json:"cpus,omitempty"`
 	Memory string `json:"memory,omitempty"`
+	// Swap is a swap file for the VM, like 8G; "" or "0" is none.
+	Swap string `json:"swap,omitempty"`
 	// Fence is "on" (default) or "off".
 	Fence string `json:"fence,omitempty"`
 }
@@ -64,10 +66,14 @@ type CreateIsolation struct {
 // knows the isolation by its ID, and agents keep running. A new size
 // replaces the container (container cannot resize one): running agents end
 // and start again on their next message; sessions and workspaces are kept.
+// A new swap is turned on in the running VM, but the first one an
+// isolation gets replaces the container too: swapon needs a capability
+// gero gives only a container with swap.
 type UpdateIsolation struct {
 	Name   string  `json:"name,omitempty"`
 	CPUs   *int    `json:"cpus,omitempty"`
 	Memory *string `json:"memory,omitempty"`
+	Swap   *string `json:"swap,omitempty"`
 }
 
 // SetEnv sets (non-nil) or removes (nil) isolation environment entries.

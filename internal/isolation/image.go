@@ -104,7 +104,9 @@ func StateVolume(id string) string   { return "gero-" + id + "-state" }
 // Create starts a fresh container for the isolation with that ID. Its
 // volumes are created if missing and reused if present, which is how a
 // container is recreated without losing agents' sessions and workspaces.
-func (c CLI) Create(ctx context.Context, id, image string, cpus int, memory, network string, mounts []Mount) error {
+// A container that may have swap gets CAP_SYS_ADMIN, which swapon needs:
+// container has no option for swap, so root makes a swap file.
+func (c CLI) Create(ctx context.Context, id, image string, cpus int, memory string, swap bool, network string, mounts []Mount) error {
 	for _, v := range []string{HomeVolume(id), StateVolume(id)} {
 		if err := c.VolumeEnsure(ctx, v); err != nil {
 			return err
@@ -115,11 +117,16 @@ func (c CLI) Create(ctx context.Context, id, image string, cpus int, memory, net
 			return err
 		}
 	}
+	var caps []string
+	if swap {
+		caps = []string{"CAP_SYS_ADMIN"}
+	}
 	return c.Run(ctx, RunSpec{
 		Name:    ContainerName(id),
 		Image:   image,
 		CPUs:    cpus,
 		Memory:  memory,
+		Caps:    caps,
 		Network: network,
 		Volumes: [][2]string{
 			{HomeVolume(id), AgentHome},

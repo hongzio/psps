@@ -241,11 +241,31 @@ func MemoryBytes(s string) (uint64, error) {
 	return b, nil
 }
 
+// SwapBytes is the size a swap names, like MemoryBytes; "" and "0" are
+// none, and 0.
+func SwapBytes(s string) (uint64, error) {
+	if s == "" || s == "0" {
+		return 0, nil
+	}
+	m := memorySize.FindStringSubmatch(s)
+	if m == nil {
+		return 0, fmt.Errorf("swap %q: give a size with its unit, like 8G or 512M", s)
+	}
+	n, _ := strconv.ParseFloat(m[1], 64)
+	shift := strings.Index("KMGTP", strings.ToUpper(m[2]))*10 + 10
+	b := uint64(n * float64(uint64(1)<<shift))
+	if b < 1<<20 {
+		return 0, fmt.Errorf("swap %s: give 1M or more, or 0 for none", s)
+	}
+	return b &^ (4<<10 - 1), nil // whole pages, as mkswap uses them
+}
+
 type RunSpec struct {
 	Name    string
 	Image   string
 	CPUs    int
 	Memory  string
+	Caps    []string // Linux capabilities added to root's
 	Network string
 	Volumes [][2]string // volume name, mount path
 	Mounts  []Mount
@@ -326,6 +346,9 @@ func (c CLI) Run(ctx context.Context, s RunSpec) error {
 	if s.Memory != "" {
 		args = append(args, "--memory", s.Memory)
 	}
+	for _, cp := range s.Caps {
+		args = append(args, "--cap-add", cp)
+	}
 	if s.Network != "" {
 		args = append(args, "--network", s.Network)
 	}
@@ -381,6 +404,19 @@ func (c CLI) Exec(ctx context.Context, name string, o ExecOpts, argv ...string) 
 // RunAsAgent runs argv to completion as the agent user and returns its output.
 func (c CLI) RunAsAgent(ctx context.Context, name string, argv ...string) (string, error) {
 	cmd := c.Exec(ctx, name, ExecOpts{User: AgentUser, Workdir: AgentHome, Env: []string{"HOME=" + AgentHome}}, argv...)
+	var out bytes.Buffer
+	cmd.Stdout, cmd.Stderr = &out, &out
+	err := cmd.Run()
+	s := strings.TrimSpace(out.String())
+	if err != nil {
+		return s, fmt.Errorf("%s: %w: %s", strings.Join(argv, " "), err, s)
+	}
+	return s, nil
+}
+
+// RunAsRoot runs argv to completion as root and returns its output.
+func (c CLI) RunAsRoot(ctx context.Context, name string, argv ...string) (string, error) {
+	cmd := c.Exec(ctx, name, ExecOpts{User: "root"}, argv...)
 	var out bytes.Buffer
 	cmd.Stdout, cmd.Stderr = &out, &out
 	err := cmd.Run()

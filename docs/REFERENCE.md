@@ -73,6 +73,7 @@ bin/gero iso create dev                   # first run builds the base image
 bin/gero iso login dev codex              # or claude; or from the web / TUI (see below)
 bin/gero iso upgrade dev                  # after a gero upgrade: new image, same volumes
 bin/gero iso set dev --memory 8G --cpus 6  # resize: a new container, same volumes
+bin/gero iso set dev --swap 8G            # a swap file in the VM (0: none)
 bin/gero iso rename dev work              # agents keep running
 bin/gero iso verify dev                   # measure the fence, the proxies, the mounts
 bin/gero agent new --iso dev --kind codex "fix the flaky test"
@@ -291,7 +292,12 @@ one to ask, so it does not.
   IDs kept their name as their ID. `container` cannot resize a VM, so
   `gero iso set` replaces the container on the same volumes, as an upgrade
   does: running agents end, sessions and workspaces stay, and a size the new
-  container will not start with is put back.
+  container will not start with is put back. `container` has no option for
+  swap either: with `--swap`, root makes `/swapfile` in the VM and turns it
+  on, each time the container starts and when the swap changes. `swapon`
+  needs CAP_SYS_ADMIN, which gero gives only the container of an isolation
+  with swap, so its first swap replaces the container; a later one, or none,
+  is set in the running VM.
 - An agent likewise has a key gero gives it (`77b17c2c`), which its
   workspace, log and history are named after, and an ID it goes by: yours
   (`--id`, `gero agent id`, the TUI's `i`, the web's Name & ID), or else an

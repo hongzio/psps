@@ -33,6 +33,8 @@ type Isolation struct {
 	Image     string `json:"image"`
 	CPUs      int    `json:"cpus,omitempty"`
 	Memory    string `json:"memory,omitempty"`
+	// Swap is the size of the swap file the VM gets, like 8G; "" is none.
+	Swap string `json:"swap,omitempty"`
 	// Network is the isolation's own container network; "" is the shared
 	// default network an isolation created before the fence existed is on.
 	Network string `json:"network,omitempty"`
@@ -207,6 +209,7 @@ var added = []struct{ table, column, def string }{
 	{"agents", "made_via", "TEXT NOT NULL DEFAULT ''"},
 	{"crons", "set_by", "TEXT NOT NULL DEFAULT ''"},
 	{"team_evals", "not_run", "INTEGER NOT NULL DEFAULT 0"},
+	{"isolations", "swap", "TEXT NOT NULL DEFAULT ''"},
 }
 
 func hasColumn(db interface {
@@ -363,19 +366,19 @@ func (s *Store) PutIsolation(iso Isolation) error {
 	if iso.Fence == "" {
 		iso.Fence = "on"
 	}
-	_, err := s.db.Exec(`INSERT INTO isolations (id, name, container, image, cpus, memory, env, created_at, network, fence)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+	_, err := s.db.Exec(`INSERT INTO isolations (id, name, container, image, cpus, memory, env, created_at, network, fence, swap)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 		ON CONFLICT(id) DO UPDATE SET name=excluded.name, container=excluded.container, image=excluded.image,
 			cpus=excluded.cpus, memory=excluded.memory, env=excluded.env,
-			network=excluded.network, fence=excluded.fence`,
-		iso.ID, iso.Name, iso.Container, iso.Image, iso.CPUs, iso.Memory, string(env), ts(iso.CreatedAt), iso.Network, iso.Fence)
+			network=excluded.network, fence=excluded.fence, swap=excluded.swap`,
+		iso.ID, iso.Name, iso.Container, iso.Image, iso.CPUs, iso.Memory, string(env), ts(iso.CreatedAt), iso.Network, iso.Fence, iso.Swap)
 	return err
 }
 
 func scanIsolation(row interface{ Scan(...any) error }) (Isolation, error) {
 	var iso Isolation
 	var env, created string
-	err := row.Scan(&iso.ID, &iso.Name, &iso.Container, &iso.Image, &iso.CPUs, &iso.Memory, &env, &created, &iso.Network, &iso.Fence)
+	err := row.Scan(&iso.ID, &iso.Name, &iso.Container, &iso.Image, &iso.CPUs, &iso.Memory, &env, &created, &iso.Network, &iso.Fence, &iso.Swap)
 	if errors.Is(err, sql.ErrNoRows) {
 		return iso, ErrNotFound
 	}
@@ -384,7 +387,7 @@ func scanIsolation(row interface{ Scan(...any) error }) (Isolation, error) {
 	return iso, err
 }
 
-const isolationCols = `id, name, container, image, cpus, memory, env, created_at, network, fence`
+const isolationCols = `id, name, container, image, cpus, memory, env, created_at, network, fence, swap`
 
 // Isolation is the isolation with that ID.
 func (s *Store) Isolation(id string) (Isolation, error) {
