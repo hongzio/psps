@@ -413,7 +413,8 @@ INI of `[service env]` sections, 0600, read per request:
 from stdin). Each value is written encrypted (`enc:v1:...`, AES-256-GCM)
 with a key kept apart from it, in `~/.local/state/psps/credentials.key`
 (0600, made on the first write), so a stray `cat` or a commit of
-`~/.config` shows the sections but no secret. It keeps nothing from a
+`~/.config` shows the sections but no secret. The key is 32 raw bytes, not
+text, so opening it by mistake shows noise that cannot be copied as it. It keeps nothing from a
 process running as you, which can read the key as the daemon does. A value
 added by hand in plain text is still read; `psps env ls` and verify warn of
 it, and `psps env encrypt` (or any write to the file) encrypts it. git's is a GitHub token; an env may instead name a
