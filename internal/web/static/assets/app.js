@@ -2212,9 +2212,13 @@ function entryView(en, a, frozen) {
     case 'tool': {
       const mark = icon(toolMarks[en.state])
       const out = (en.output || '').trim()
+      // The summary line is cut to the width; opened, the call's input is
+      // shown whole above its output, set apart from it (see .tool .tin).
+      const shell = en.name === 'Bash' || en.name === 'shell'
       return h('details', { class: 'tool' },
         h('summary', null, h('span', { class: 'mark ' + en.state }, mark), h('span', { class: 'tname' }, en.name), h('span', { class: 'tsum' }, en.summary)),
-        out ? h('pre', null, clip(out, 40)) : null)
+        en.summary ? h('pre', { class: 'tin' + (shell ? ' shell' : '') }, en.summary) : null,
+        out ? h('pre', { class: 'tout' }, clip(out, 40)) : null)
     }
     case 'tools': {
       const first = en.runs[0]

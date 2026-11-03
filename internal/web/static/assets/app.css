@@ -447,6 +447,11 @@ a.btn { display: inline-flex; align-items: center; color: var(--text); text-deco
 .tool .tcount { margin-left: auto; flex: none; color: var(--faint); }
 .tools-body { display: flex; flex-direction: column; gap: 6px; padding: 8px; border-top: 1px solid var(--border); }
 .tool pre { margin: 0; padding: 8px 10px 10px; border-top: 1px solid var(--border); max-height: 320px; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; color: var(--muted); }
+/* The call's input, whole: on the code tint in full-strength text, so it
+   never reads as part of the muted output below it. */
+.tool pre.tin { background: var(--code); color: var(--text); padding-bottom: 8px; }
+.tool pre.tin.shell::before { content: "$ "; color: var(--faint); user-select: none; }
+.tool > pre:last-child { border-radius: 0 0 8px 8px; }
 .approval { border: 1px solid var(--warn); background: var(--warn-soft); border-radius: 10px; padding: 10px 12px; }
 .approval .head { font-weight: 600; color: var(--warn); }
 .approval .what { font-family: var(--mono); font-size: 13px; margin: 4px 0; overflow-wrap: anywhere; }
