@@ -25,7 +25,7 @@ const (
 	Port = 3022
 	// PassFile holds the workspace token as libpq's password, agent-owned
 	// and 0600 because libpq ignores a pgpass anyone else can read.
-	PassFile = "/etc/gero/pgpass"
+	PassFile = "/etc/psps/pgpass"
 
 	handshakeTimeout = 30 * time.Second
 	shutdownGrace    = 10 * time.Second

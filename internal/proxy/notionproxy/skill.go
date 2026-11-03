@@ -23,7 +23,7 @@ outside the isolation. There is no Notion credential here, and there is not
 meant to be one — the proxy holds a Notion login on the Mac and attaches it on
 the way out. NOTION_TOKEN is only a workspace token that opens the proxy;
 NOTION_MCP_URL is its address, for any other MCP client (a ` + "`claude`" + ` you start
-by hand: ` + "`claude --mcp-config /etc/gero/mcp.json`" + `).
+by hand: ` + "`claude --mcp-config /etc/psps/mcp.json`" + `).
 
 The login acts as a Notion user, so the tools see what that user sees — there
 is no sharing screen narrowing it. What narrows it is each environment's

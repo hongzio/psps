@@ -43,7 +43,7 @@ func (m *Manager) cronEnv(a store.Agent) []string {
 		m.log.Printf("agent %s: cron token: %v", a.ID, err)
 		return nil
 	}
-	return proxy.AgentEnv("CRON_URL", cronproxy.URL(tok))
+	return proxy.AgentEnv("CRON_URL", cronproxy.URL(tok), m.fromGero(a.IsolationID))
 }
 
 // cronRoutes adds the agents' crons to isolation iso's mail port. Nothing

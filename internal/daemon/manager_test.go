@@ -247,9 +247,11 @@ func (f *fakeContainers) boot(name string) error {
 }
 
 func (f *fakeContainers) Start(_ context.Context, name string) error { return f.boot(name) }
-func (f *fakeContainers) Create(_ context.Context, base, _ string, cpus int, memory string, swap bool, _ string, mounts []isolation.Mount) error {
+func (f *fakeContainers) Create(_ context.Context, name, _ string, cpus int, memory string, swap bool, _ string, mounts []isolation.Mount) error {
 	f.mu.Lock()
-	c := fmt.Sprintf("%s %d %s", base, cpus, memory)
+	// Recorded by the isolation's ID, the container's name past its prefix.
+	_, id, _ := strings.Cut(name, "-")
+	c := fmt.Sprintf("%s %d %s", id, cpus, memory)
 	if swap {
 		c += " swap"
 	}
@@ -268,13 +270,13 @@ func (f *fakeContainers) Create(_ context.Context, base, _ string, cpus int, mem
 		if f.shares == nil {
 			f.shares = map[string][]isolation.Mount{}
 		}
-		f.shares["gero-"+base] = append([]isolation.Mount(nil), mounts...)
+		f.shares[name] = append([]isolation.Mount(nil), mounts...)
 	}
 	f.mu.Unlock()
 	if refused {
 		return fmt.Errorf("container: cannot give a VM %s", memory)
 	}
-	return f.boot("gero-" + base)
+	return f.boot(name)
 }
 
 func (f *fakeContainers) Mounts(_ context.Context, name string) ([]isolation.Mount, error) {
@@ -638,7 +640,7 @@ func (f *fakeContainers) Sync(_ context.Context, name string, req shimproto.Sync
 	f.syncs = append(f.syncs, req)
 	var res shimproto.SyncResult
 	for _, p := range req.Remove {
-		if rel, ok := strings.CutPrefix(p, isolation.StateRoot+"/"); ok {
+		if rel, ok := strings.CutPrefix(p, isolation.StateRoot(name)+"/"); ok {
 			os.RemoveAll(filepath.Join(f.base, name, rel))
 			res.Removed = append(res.Removed, p)
 		}
@@ -1369,7 +1371,7 @@ func TestRenamingAnIsolationKeepsItsAgentsRunning(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if nd.ID == testIsoID || nd.Container != "gero-"+nd.ID || nd.Network != "gero-"+nd.ID+"-net" || e.fc.lastCreated() != nd.ID+" 0 " {
+	if nd.ID == testIsoID || nd.Container != "psps-"+nd.ID || nd.Network != "psps-"+nd.ID+"-net" || e.fc.lastCreated() != nd.ID+" 0 " {
 		t.Fatalf("new dev: %+v, created %q", nd, e.fc.lastCreated())
 	}
 	if _, err := m.CreateIsolation(ctx, api.CreateIsolation{Name: "work"}, nil); !errors.Is(err, store.ErrExists) {

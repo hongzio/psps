@@ -49,7 +49,7 @@ type Containers interface {
 	VolumeRemove(ctx context.Context, name string) error
 	ImageExists(ctx context.Context, ref string) bool
 	EnsureImage(ctx context.Context, progress io.Writer) (string, error)
-	Create(ctx context.Context, iso, image string, cpus int, memory string, swap bool, network string, mounts []isolation.Mount) error
+	Create(ctx context.Context, container, image string, cpus int, memory string, swap bool, network string, mounts []isolation.Mount) error
 	Mounts(ctx context.Context, container string) ([]isolation.Mount, error)
 	RunAsAgent(ctx context.Context, container string, argv ...string) (string, error)
 	RunAsRoot(ctx context.Context, container string, argv ...string) (string, error)
@@ -455,13 +455,13 @@ func (m *Manager) ensureIsolation(ctx context.Context, id string) (*shim.Client,
 		}
 		mounts, missing := m.mountsFor(rec.ID)
 		m.logMissing(rec.Name, missing)
-		err := m.cli.Create(ctx, rec.ID, rec.Image, rec.CPUs, rec.Memory, rec.Swap != "", rec.Network, mounts)
+		err := m.cli.Create(ctx, rec.Container, rec.Image, rec.CPUs, rec.Memory, rec.Swap != "", rec.Network, mounts)
 		if err != nil && len(mounts) > 0 {
 			// One that cannot start with its shares starts without them
 			// rather than not at all; its skill says they are not there.
 			m.log.Printf("isolation %s: does not start with its shared folders (%v); starting it without them", rec.Name, err)
 			m.cli.Remove(ctx, rec.Container)
-			err = m.cli.Create(ctx, rec.ID, rec.Image, rec.CPUs, rec.Memory, rec.Swap != "", rec.Network, nil)
+			err = m.cli.Create(ctx, rec.Container, rec.Image, rec.CPUs, rec.Memory, rec.Swap != "", rec.Network, nil)
 		}
 		if err != nil {
 			return nil, err
@@ -606,9 +606,9 @@ func (m *Manager) CreateIsolation(ctx context.Context, req api.CreateIsolation, 
 		return store.Isolation{}, err
 	}
 	iso = store.Isolation{ID: id, Name: req.Name, Container: isolation.ContainerName(id), Image: image, CPUs: req.CPUs,
-		Memory: req.Memory, Swap: swap, Network: isolation.NetworkName(id), Fence: fence, Env: map[string]string{}, CreatedAt: time.Now().UTC()}
+		Memory: req.Memory, Swap: swap, Network: isolation.NetworkName(isolation.ContainerName(id)), Fence: fence, Env: map[string]string{}, CreatedAt: time.Now().UTC()}
 	// A new isolation has no shares yet.
-	if err := m.cli.Create(ctx, id, image, req.CPUs, req.Memory, iso.Swap != "", iso.Network, nil); err != nil {
+	if err := m.cli.Create(ctx, iso.Container, image, req.CPUs, req.Memory, iso.Swap != "", iso.Network, nil); err != nil {
 		return store.Isolation{}, err
 	}
 	if err := m.store.PutIsolation(iso); err != nil {
@@ -642,14 +642,14 @@ func (m *Manager) UpgradeIsolation(ctx context.Context, name string, progress io
 		// An isolation from before the fence leaves the shared default
 		// network for one of its own.
 		if iso.Network == "" {
-			iso.Network = isolation.NetworkName(iso.ID)
+			iso.Network = isolation.NetworkName(iso.Container)
 		}
 		err = m.store.PutIsolation(iso)
 	}
 	if err == nil {
 		mounts, missing := m.mountsFor(iso.ID)
 		m.logMissing(iso.Name, missing)
-		err = m.cli.Create(ctx, iso.ID, image, iso.CPUs, iso.Memory, iso.Swap != "", iso.Network, mounts)
+		err = m.cli.Create(ctx, iso.Container, image, iso.CPUs, iso.Memory, iso.Swap != "", iso.Network, mounts)
 	}
 	st.replaced()
 	st.mu.Unlock()
@@ -787,11 +787,11 @@ func (m *Manager) resizeIsolation(ctx context.Context, id string, cpus int, memo
 	m.killIfStuck(ctx, iso)
 	err = m.cli.Remove(ctx, iso.Container)
 	if err == nil {
-		if err = m.cli.Create(ctx, id, iso.Image, cpus, memory, swap != "", iso.Network, mounts); err == nil {
+		if err = m.cli.Create(ctx, iso.Container, iso.Image, cpus, memory, swap != "", iso.Network, mounts); err == nil {
 			err = m.store.PutIsolation(iso)
 		} else {
 			m.cli.Remove(ctx, iso.Container)
-			if berr := m.cli.Create(ctx, id, was.Image, was.CPUs, was.Memory, was.Swap != "", was.Network, mounts); berr != nil {
+			if berr := m.cli.Create(ctx, was.Container, was.Image, was.CPUs, was.Memory, was.Swap != "", was.Network, mounts); berr != nil {
 				err = fmt.Errorf("%w; putting it back at its old size failed too: %v", err, berr)
 			} else {
 				m.store.PutIsolation(was)
@@ -843,7 +843,7 @@ func (m *Manager) DeleteIsolation(ctx context.Context, name string, purge bool) 
 		m.fence.Apply(ctx, nets)
 	}
 	if purge {
-		for _, v := range []string{isolation.HomeVolume(iso.ID), isolation.StateVolume(iso.ID)} {
+		for _, v := range []string{isolation.HomeVolume(iso.Container), isolation.StateVolume(iso.Container)} {
 			if err := m.cli.VolumeRemove(ctx, v); err != nil {
 				return err
 			}
@@ -1491,7 +1491,7 @@ func (m *Manager) DeleteAgent(ctx context.Context, idOrPrefix string, purge bool
 			return err
 		}
 	}
-	if _, err := m.cli.Sync(ctx, iso.Container, shimproto.SyncRequest{Remove: []string{isolation.AgentStateDir(a.ID)}}); err != nil {
+	if _, err := m.cli.Sync(ctx, iso.Container, shimproto.SyncRequest{Remove: []string{isolation.AgentStateDir(iso.Container, a.ID)}}); err != nil {
 		return err
 	}
 	if err := m.store.DeleteAgent(a.ID); err != nil {

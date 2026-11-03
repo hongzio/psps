@@ -39,15 +39,15 @@ RUN case "$(dpkg --print-architecture)" in arm64) sub=ubuntu_arm64 ;; amd64) sub
 RUN npm install -g @anthropic-ai/claude-code@` + claudeCodeVersion + ` @openai/codex@` + codexVersion + ` \
  && npm cache clean --force
 RUN usermod -l agent -d ` + AgentHome + ` -m node && groupmod -n agent node
-# The credential proxies' side of the isolation lives in /etc/gero, written by
+# The credential proxies' side of the isolation lives in /etc/psps, written by
 # ` + "`psps-shim sync`" + `: git's URL rewrite (included; git ignores it while absent)
 # and the proxies' environment, for login and interactive shells alike.
-RUN mkdir -p /etc/gero \
- && printf '[include]\n\tpath = /etc/gero/gitconfig\n' >> /etc/gitconfig \
- && printf '[ -r /etc/gero/env.sh ] && . /etc/gero/env.sh\n' > /etc/profile.d/gero.sh \
- && printf '[ -r /etc/gero/env.sh ] && . /etc/gero/env.sh\n' >> /etc/bash.bashrc
-COPY psps-shim ` + shimPath + `
-ENTRYPOINT ["` + shimPath + `", "serve", "--uid", "1000", "--gid", "1000", "--user", "agent", "--home", "` + AgentHome + `"]
+RUN mkdir -p /etc/psps \
+ && printf '[include]\n\tpath = /etc/psps/gitconfig\n' >> /etc/gitconfig \
+ && printf '[ -r /etc/psps/env.sh ] && . /etc/psps/env.sh\n' > /etc/profile.d/psps.sh \
+ && printf '[ -r /etc/psps/env.sh ] && . /etc/psps/env.sh\n' >> /etc/bash.bashrc
+COPY psps-shim /usr/local/bin/psps-shim
+ENTRYPOINT ["/usr/local/bin/psps-shim", "serve", "--uid", "1000", "--gid", "1000", "--user", "agent", "--home", "` + AgentHome + `"]
 `
 
 func shimBinary() ([]byte, error) {
@@ -96,18 +96,20 @@ func (c CLI) EnsureImage(ctx context.Context, progress io.Writer) (string, error
 }
 
 // Names of what one isolation owns, from its ID.
-func ContainerName(id string) string { return "gero-" + id }
-func NetworkName(id string) string   { return "gero-" + id + "-net" }
-func HomeVolume(id string) string    { return "gero-" + id + "-home" }
-func StateVolume(id string) string   { return "gero-" + id + "-state" }
+// ContainerName is a new isolation's container; its network and volumes
+// are named after the container, an isolation's from gero's time too.
+func ContainerName(id string) string      { return "psps-" + id }
+func NetworkName(container string) string { return container + "-net" }
+func HomeVolume(container string) string  { return container + "-home" }
+func StateVolume(container string) string { return container + "-state" }
 
-// Create starts a fresh container for the isolation with that ID. Its
+// Create starts container afresh for its isolation. Its
 // volumes are created if missing and reused if present, which is how a
 // container is recreated without losing agents' sessions and workspaces.
 // A container that may have swap gets CAP_SYS_ADMIN, which swapon needs:
 // container has no option for swap, so root makes a swap file.
-func (c CLI) Create(ctx context.Context, id, image string, cpus int, memory string, swap bool, network string, mounts []Mount) error {
-	for _, v := range []string{HomeVolume(id), StateVolume(id)} {
+func (c CLI) Create(ctx context.Context, container, image string, cpus int, memory string, swap bool, network string, mounts []Mount) error {
+	for _, v := range []string{HomeVolume(container), StateVolume(container)} {
 		if err := c.VolumeEnsure(ctx, v); err != nil {
 			return err
 		}
@@ -122,17 +124,24 @@ func (c CLI) Create(ctx context.Context, id, image string, cpus int, memory stri
 		caps = []string{"CAP_SYS_ADMIN"}
 	}
 	return c.Run(ctx, RunSpec{
-		Name:    ContainerName(id),
+		Name:    container,
 		Image:   image,
 		CPUs:    cpus,
 		Memory:  memory,
 		Caps:    caps,
 		Network: network,
 		Volumes: [][2]string{
-			{HomeVolume(id), AgentHome},
-			{StateVolume(id), StateRoot},
+			{HomeVolume(container), AgentHome},
+			{StateVolume(container), StateRoot(container)},
 		},
 		Mounts: mounts,
-		Labels: map[string]string{"dev.gero.isolation": id},
+		Labels: map[string]string{label(container): container},
 	})
+}
+
+func label(container string) string {
+	if Gero(container) {
+		return "dev.gero.isolation"
+	}
+	return "dev.psps.isolation"
 }

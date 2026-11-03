@@ -31,16 +31,41 @@ const (
 	AgentUID  = "1000"
 	AgentHome = "/home/agent"
 	WorkRoot  = AgentHome + "/work"
-	shimPath  = "/usr/local/bin/gero-shim"
-	// StateRoot is the shim's durable state, on the state volume.
-	StateRoot = "/var/lib/gero"
 	// SharedRoot holds the folders of the Mac's shared with the isolation,
 	// one directory each, named after its share env.
 	SharedRoot = "/shared"
 )
 
-// AgentStateDir is where the shim keeps one agent's log.
-func AgentStateDir(id string) string { return StateRoot + "/agents/" + id }
+// Gero is whether container is an isolation's made while psps was called
+// gero. One keeps gero's names, so nothing of it moves: its container
+// (gero-ID), network and volumes, the shim's state (/var/lib/gero) and its
+// evals' (/var/lib/gero-eval); and while its image is from then, its shim
+// at /usr/local/bin/gero-shim and its files in /etc/gero (shimCmd,
+// EtcLink).
+func Gero(container string) bool { return strings.HasPrefix(container, "gero-") }
+
+// StateRoot is where container has the shim's durable state, on its state
+// volume.
+func StateRoot(container string) string {
+	if Gero(container) {
+		return "/var/lib/gero"
+	}
+	return "/var/lib/psps"
+}
+
+// AgentStateDir is where the shim in container keeps one agent's log.
+func AgentStateDir(container, id string) string { return StateRoot(container) + "/agents/" + id }
+
+// shimCmd runs the shim in a container whatever its image: one from before
+// the rename has it as gero-shim.
+func shimCmd(args ...string) []string {
+	return append([]string{"sh", "-c", `s=/usr/local/bin/psps-shim; [ -x $s ] || s=/usr/local/bin/gero-shim; exec $s "$@"`, "psps-shim"}, args...)
+}
+
+// EtcLink makes /etc/psps, where psps writes its files in an isolation,
+// lead to /etc/gero in a container whose image is from before the rename,
+// which reads them there. Run as root; it changes nothing in any other.
+const EtcLink = `[ -e /etc/psps ] || [ ! -d /etc/gero ] || ln -s gero /etc/psps`
 
 type CLI struct {
 	Bin string
@@ -332,7 +357,7 @@ type ProbeResult struct {
 // Probe connects from inside the container to each target and resolves a
 // name through the container's resolver.
 func (c CLI) Probe(ctx context.Context, name string, targets []string) (ProbeResult, error) {
-	args := append([]string{"exec", name, shimPath, "probe", "--timeout", "2s", "--resolve", "example.com"}, targets...)
+	args := append([]string{"exec", name}, shimCmd(append([]string{"probe", "--timeout", "2s", "--resolve", "example.com"}, targets...)...)...)
 	out, err := c.run(ctx, args...)
 	var r ProbeResult
 	if err != nil {
@@ -489,7 +514,7 @@ func (c CLI) ShimDialer(name string) shim.Dialer {
 	return func(ctx context.Context) (io.ReadWriteCloser, error) {
 		// Not CommandContext: an attachment outlives the dial, and the shim
 		// client closes the connection itself when its own context ends.
-		cmd := exec.Command(c.Bin, "exec", "-i", name, shimPath, "client")
+		cmd := exec.Command(c.Bin, append([]string{"exec", "-i", name}, shimCmd("client")...)...)
 		stdin, err := cmd.StdinPipe()
 		if err != nil {
 			return nil, err
@@ -552,7 +577,7 @@ type TunnelConn interface {
 // DialTunnel starts the isolation end of the proxy tunnel, as root, so an
 // agent can neither end it nor take its ports.
 func (c CLI) DialTunnel(ctx context.Context, name string) (TunnelConn, error) {
-	cmd := exec.Command(c.Bin, "exec", "-i", name, shimPath, "tunnel")
+	cmd := exec.Command(c.Bin, append([]string{"exec", "-i", name}, shimCmd("tunnel")...)...)
 	stdin, err := cmd.StdinPipe()
 	if err != nil {
 		return nil, err
@@ -601,7 +626,7 @@ func (b *tailBuffer) String() string {
 // Sync writes the files psps manages in the isolation (see shimproto).
 func (c CLI) Sync(ctx context.Context, name string, req shimproto.SyncRequest) (shimproto.SyncResult, error) {
 	in, _ := json.Marshal(req)
-	cmd := exec.CommandContext(ctx, c.Bin, "exec", "-i", name, shimPath, "sync")
+	cmd := exec.CommandContext(ctx, c.Bin, append([]string{"exec", "-i", name}, shimCmd("sync")...)...)
 	cmd.Stdin = bytes.NewReader(in)
 	var out, errb bytes.Buffer
 	cmd.Stdout, cmd.Stderr = &out, &errb

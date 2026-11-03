@@ -124,14 +124,18 @@ func sshOpts(tailcat, addr string) []string {
 	// A failure here is ssh's to tell, about the file itself.
 	_ = os.MkdirAll(filepath.Dir(knownHosts()), 0o700)
 	sum := sha256.Sum256([]byte(addr))
+	alias := "psps-bastion-" + hex.EncodeToString(sum[:6])
+	// One whose host key was recorded while psps was called gero keeps
+	// that name, so the key still holds.
+	if b, err := os.ReadFile(knownHosts()); err == nil && bytes.Contains(b, []byte("gero-bastion-"+hex.EncodeToString(sum[:6]))) {
+		alias = "gero-bastion-" + hex.EncodeToString(sum[:6])
+	}
 	return []string{"-T",
 		"-o", "BatchMode=yes",
 		"-o", "ConnectTimeout=20",
 		"-o", "LogLevel=ERROR",
 		"-o", "ProxyCommand=" + shellQuote(tailcat) + " " + shellQuote(addr) + " 22",
-		// Named as when psps was gero, so a bastion's host key recorded
-		// then still holds.
-		"-o", "HostKeyAlias=gero-bastion-" + hex.EncodeToString(sum[:6]),
+		"-o", "HostKeyAlias=" + alias,
 		"-o", "UserKnownHostsFile=" + knownHosts(),
 		"-o", "StrictHostKeyChecking=accept-new",
 		"-o", "ControlPath=" + controlPath()}

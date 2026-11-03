@@ -150,7 +150,7 @@ func (m *Manager) awsEnv(a store.Agent) []string {
 		m.log.Printf("agent %s: aws token: %v", a.ID, err)
 		return nil
 	}
-	return proxy.AgentEnv("AWS_URL", mailproxy.URL(tok)+"/aws")
+	return proxy.AgentEnv("AWS_URL", mailproxy.URL(tok)+"/aws", m.fromGero(a.IsolationID))
 }
 
 func (m *Manager) awsRoutes(mux *http.ServeMux, iso string) {

@@ -46,7 +46,7 @@ func (m *Manager) teamEnv(a store.Agent) []string {
 		m.log.Printf("agent %s: team token: %v", a.ID, err)
 		return nil
 	}
-	return proxy.AgentEnv("TEAM_URL", teamproxy.URL(tok))
+	return proxy.AgentEnv("TEAM_URL", teamproxy.URL(tok), m.fromGero(a.IsolationID))
 }
 
 // teamRoutes adds the leads' teams to isolation iso's mail port. Nothing

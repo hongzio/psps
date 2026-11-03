@@ -81,7 +81,7 @@ func restoreCmd(p paths.Paths, args []string) error {
 		ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
 		defer cancel()
 		for _, iso := range isos {
-			for _, v := range []string{isolation.HomeVolume(iso.ID), isolation.StateVolume(iso.ID)} {
+			for _, v := range []string{isolation.HomeVolume(iso.Container), isolation.StateVolume(iso.Container)} {
 				if !cli.VolumeExists(ctx, v) {
 					fmt.Printf("  isolation %s: volume %s is missing; it starts empty\n", iso.Name, v)
 				}

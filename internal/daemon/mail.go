@@ -64,7 +64,7 @@ func (m *Manager) mailEnv(a store.Agent) []string {
 		m.log.Printf("agent %s: mail token: %v", a.ID, err)
 		return nil
 	}
-	return proxy.AgentEnv("MAIL_URL", mailproxy.URL(tok))
+	return proxy.AgentEnv("MAIL_URL", mailproxy.URL(tok), m.fromGero(a.IsolationID))
 }
 
 // letter is mail as its recipient reads it, naming the sender as it is

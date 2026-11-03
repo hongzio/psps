@@ -24,7 +24,7 @@ outside the isolation. There is no Linear credential here, and there is not
 meant to be one — the proxy holds a Linear login on the Mac and attaches it on
 the way out. LINEAR_TOKEN is only a workspace token that opens the proxy;
 LINEAR_MCP_URL is its address, for any other MCP client (a ` + "`claude`" + ` you start
-by hand: ` + "`claude --mcp-config /etc/gero/mcp.json`" + `).
+by hand: ` + "`claude --mcp-config /etc/psps/mcp.json`" + `).
 
 The login acts as a Linear user, so the tools see what that user sees. What
 narrows it is each environment's *boundary* — a set of tool families, decided

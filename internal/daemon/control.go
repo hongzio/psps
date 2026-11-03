@@ -93,7 +93,7 @@ func (m *Manager) controlEnv(a store.Agent) []string {
 		m.log.Printf("agent %s: control token: %v", a.ID, err)
 		return nil
 	}
-	return proxy.AgentEnv("CONTROL_URL", controlproxy.URL(tok))
+	return proxy.AgentEnv("CONTROL_URL", controlproxy.URL(tok), m.fromGero(a.IsolationID))
 }
 
 // controlCall is one request: the agent that makes it, and its scope.

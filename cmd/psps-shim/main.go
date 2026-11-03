@@ -32,7 +32,14 @@ import (
 	"github.com/hongzio/psps/internal/tunnel"
 )
 
-const defaultRoot = "/var/lib/gero"
+// defaultRoot is the shim's durable state, where its container has the
+// state volume: an isolation from gero's time has it at /var/lib/gero.
+var defaultRoot = func() string {
+	if st, err := os.Stat("/var/lib/gero"); err == nil && st.IsDir() {
+		return "/var/lib/gero"
+	}
+	return "/var/lib/psps"
+}()
 
 func main() {
 	if len(os.Args) < 2 {
@@ -230,7 +237,7 @@ func (stdio) Close() error {
 // ports.
 func tunnelCmd(args []string) error {
 	fs := flag.NewFlagSet("tunnel", flag.ExitOnError)
-	pidfile := fs.String("pidfile", "/run/gero-tunnel.pid", "where the running tunnel's pid is kept")
+	pidfile := fs.String("pidfile", "/run/psps-tunnel.pid", "where the running tunnel's pid is kept")
 	fs.Parse(args)
 	if err := shim.TakeOver(*pidfile, "tunnel"); err != nil {
 		return err
