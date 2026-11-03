@@ -36,22 +36,35 @@ func newFakeBastion(t *testing.T) *fakeBastion {
 d=%q
 : > "$d/sshargv"
 for a in "$@"; do printf '%%s\n' "$a" >> "$d/sshargv"; done
+for a in "$@"; do
+  case "$a" in
+  -O) [ -f "$d/master" ] && exit 0; exit 255 ;;
+  -N) [ -f "$d/sshcode" ] && exit 255; echo x >> "$d/master"; exit 0 ;;
+  esac
+done
 if [ -f "$d/sshcode" ]; then echo "ssh: connect to host bastion: Connection timed out" >&2; exit $(cat "$d/sshcode"); fi
 for last; do :; done
 exec sh -c "$last"
 `, b.dir)), 0o755)
 	t.Setenv("PATH", b.fakeAWS.dir+":"+b.dir+":/usr/bin:/bin")
-	old, oldKH := sshBin, knownHosts
+	old, oldKH, oldCP := sshBin, knownHosts, controlPath
 	sshBin = ssh
 	kh := filepath.Join(t.TempDir(), "known_hosts")
 	knownHosts = func() string { return kh }
-	t.Cleanup(func() { sshBin, knownHosts = old, oldKH })
+	controlPath = func() string { return filepath.Join(b.dir, "cm-%C") }
+	t.Cleanup(func() { sshBin, knownHosts, controlPath = old, oldKH, oldCP })
 	return b
 }
 
 func (b *fakeBastion) sshArgv() []string {
 	out, _ := os.ReadFile(filepath.Join(b.dir, "sshargv"))
 	return strings.Split(strings.TrimSuffix(string(out), "\n"), "\n")
+}
+
+// masters is how many ssh masters were started.
+func (b *fakeBastion) masters() int {
+	out, _ := os.ReadFile(filepath.Join(b.dir, "master"))
+	return strings.Count(string(out), "x")
 }
 
 func (b *fakeBastion) unreachable() {
@@ -77,7 +90,7 @@ func TestThroughABastionTheRoleIsAssumedThereWithThePolicyIntact(t *testing.T) {
 	}
 	ssh := strings.Join(b.sshArgv(), "\n")
 	for _, want := range []string{"BatchMode=yes", "StrictHostKeyChecking=accept-new",
-		"ProxyCommand='" + b.tailcat + "' '" + tcAddr + "' 22", "UserKnownHostsFile="} {
+		"ProxyCommand='" + b.tailcat + "' '" + tcAddr + "' 22", "UserKnownHostsFile=", "ControlMaster=no", "ControlPath="} {
 		if !strings.Contains(ssh, want) {
 			t.Errorf("ssh argv lacks %q:\n%s", want, ssh)
 		}
@@ -166,5 +179,27 @@ func TestLookupsGoThroughTheBastionWithNoProfile(t *testing.T) {
 	}
 	if a := b.argv(); a[0] != "iam" || slices.Contains(a, "--profile") {
 		t.Fatalf("aws argv = %q", a)
+	}
+}
+
+func TestCommandsToABastionShareOneMaster(t *testing.T) {
+	b := newFakeBastion(t)
+	ctx := context.Background()
+	done := make(chan error)
+	for range 8 {
+		go func() {
+			_, err := CLI{Bastion: tcAddr}.Identity(ctx)
+			done <- err
+		}()
+	}
+	for range 8 {
+		if err := <-done; err != nil {
+			t.Fatal(err)
+		}
+	}
+	// One tailcat for the eight: two clients with the Mac's key at once
+	// push each other off.
+	if b.masters() != 1 {
+		t.Fatalf("%d masters started", b.masters())
 	}
 }

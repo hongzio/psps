@@ -12,6 +12,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/hongzio/gero/internal/paths"
@@ -30,6 +31,11 @@ import (
 // ssh options, so the system ssh is run with tailcat as its ProxyCommand:
 // BatchMode and a known_hosts of gero's own keep a prompt from ever
 // hanging the daemon.
+//
+// Each tailcat client is a WireGuard peer, and two at once with the Mac's
+// one key push each other off: two connections take seconds, eight never
+// finish, and the instances lookup runs eight. So a bastion has one ssh
+// master, one tailcat, and every command is a channel in it.
 
 // CLI is where an aws command runs: the Mac's aws binary with a profile,
 // or a bastion's aws with its instance role.
@@ -46,7 +52,17 @@ var (
 	tailcatDirs = []string{"/opt/homebrew/bin", "/usr/local/bin"}
 	// knownHosts is gero's own known_hosts for bastions.
 	knownHosts = func() string { return filepath.Join(paths.Default().State, "bastion_known_hosts") }
+	// controlPath is the masters' sockets; %C is a hash of the destination,
+	// which HostKeyAlias makes one per bastion.
+	controlPath = func() string { return filepath.Join(paths.Default().State, "bastion-%C") }
+
+	mastersMu sync.Mutex
+	masters   = map[string]*sync.Mutex{} // by address: one master started at a time
 )
+
+// masterPersist is how long an idle master stays: past the broker's
+// hourly refresh would keep a tunnel up for nothing.
+const masterPersist = "10m"
 
 // TailcatPath finds the Mac's tailcat.
 func TailcatPath() (string, error) {
@@ -74,10 +90,37 @@ func (c CLI) Command(ctx context.Context, args ...string) (*exec.Cmd, error) {
 	if err != nil {
 		return nil, err
 	}
-	return exec.CommandContext(ctx, sshBin, sshArgs(tc, c.Bastion, append([]string{"aws"}, args...))...), nil
+	ensureMaster(ctx, tc, c.Bastion)
+	argv := append(sshOpts(tc, c.Bastion), "-o", "ControlMaster=no", "gero@bastion", shellJoin(append([]string{"aws"}, args...)))
+	return exec.CommandContext(ctx, sshBin, argv...), nil
 }
 
-func sshArgs(tailcat, addr string, remote []string) []string {
+// ensureMaster starts the bastion's ssh master unless one runs. Whether
+// it starts is not reported: a command with no master to use connects by
+// itself, and says why if it cannot.
+func ensureMaster(ctx context.Context, tc, addr string) {
+	mastersMu.Lock()
+	mu, ok := masters[addr]
+	if !ok {
+		mu = &sync.Mutex{}
+		masters[addr] = mu
+	}
+	mastersMu.Unlock()
+	mu.Lock()
+	defer mu.Unlock()
+	opts := sshOpts(tc, addr)
+	if exec.CommandContext(ctx, sshBin, append(opts, "-O", "check", "gero@bastion")...).Run() == nil {
+		return
+	}
+	// -f: ssh returns once connected and the master stays behind it. No
+	// output is read, as the master would hold the pipe open for good.
+	exec.CommandContext(ctx, sshBin, append(opts, "-f", "-N",
+		"-o", "ControlMaster=yes", "-o", "ControlPersist="+masterPersist,
+		"-o", "ServerAliveInterval=15", "-o", "ServerAliveCountMax=2",
+		"gero@bastion")...).Run()
+}
+
+func sshOpts(tailcat, addr string) []string {
 	// A failure here is ssh's to tell, about the file itself.
 	_ = os.MkdirAll(filepath.Dir(knownHosts()), 0o700)
 	sum := sha256.Sum256([]byte(addr))
@@ -89,7 +132,7 @@ func sshArgs(tailcat, addr string, remote []string) []string {
 		"-o", "HostKeyAlias=gero-bastion-" + hex.EncodeToString(sum[:6]),
 		"-o", "UserKnownHostsFile=" + knownHosts(),
 		"-o", "StrictHostKeyChecking=accept-new",
-		"gero@bastion", shellJoin(remote)}
+		"-o", "ControlPath=" + controlPath()}
 }
 
 // shellJoin is argv as one sh command line: ssh hands the remote side a
