@@ -118,9 +118,9 @@ func (m *Manager) remount(ctx context.Context, id string) error {
 	m.killIfStuck(ctx, iso)
 	err = m.cli.Remove(ctx, iso.Container)
 	if err == nil {
-		if err = m.cli.Create(ctx, id, iso.Image, iso.CPUs, iso.Memory, iso.Swap != "", iso.Network, want); err != nil {
+		if err = m.cli.Create(ctx, iso.Container, iso.Image, iso.CPUs, iso.Memory, iso.Swap != "", iso.Network, want); err != nil {
 			m.cli.Remove(ctx, iso.Container)
-			if berr := m.cli.Create(ctx, id, iso.Image, iso.CPUs, iso.Memory, iso.Swap != "", iso.Network, have); berr != nil {
+			if berr := m.cli.Create(ctx, iso.Container, iso.Image, iso.CPUs, iso.Memory, iso.Swap != "", iso.Network, have); berr != nil {
 				err = fmt.Errorf("%w; starting it again with its old folders failed too: %v", err, berr)
 			} else {
 				err = fmt.Errorf("%w; it is back with the folders it had", err)

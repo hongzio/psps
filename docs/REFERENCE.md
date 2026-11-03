@@ -297,14 +297,8 @@ one to ask, so it does not.
 - An isolation is an ID to psps (`7f3a9c1b`); its name is what people call
   it. Everything that belongs to it names it by ID: its agents, exposures,
   tokens and accounts in the store, and its container, network and volumes
-  (`gero-7f3a9c1b`, `-net`, `-home`, `-state`; `psps iso ls` shows the
-  container). Inside the isolation too, what psps made while it was called
-  gero keeps that name, so containers from then carry on as they are:
-  `/etc/gero`, `/var/lib/gero`, `/usr/local/bin/gero-shim`. What agents
-  read is psps's: their `PSPS_*` variables (with `GERO_*` beside them for
-  agents that still know those) and `psps-*` skills; an isolation whose
-  shim predates the rename keeps its skills under `gero-*` until
-  `psps iso upgrade`, and a newer one removes those. So `psps iso rename` changes the name and nothing else, and a
+  (`psps-7f3a9c1b`, `-net`, `-home`, `-state`; `psps iso ls` shows the
+  container). So `psps iso rename` changes the name and nothing else, and a
   new isolation never picks up an old one's volumes. Isolations from before
   IDs kept their name as their ID. `container` cannot resize a VM, so
   `psps iso set` replaces the container on the same volumes, as an upgrade
@@ -408,8 +402,8 @@ no credential and refuses the rest. Inside, `GET $GITHUB_API_URL/user/repos`
 (or `/orgs/OWNER/repos`) lists the repositories the exposed envs allow,
 answered by the proxy from the allowlist, so an agent told only "trevia"
 finds the owner instead of guessing it. What a service puts in the isolation — its
-variables in `/etc/gero/env.sh` (and in every agent's environment), git's URL
-rewrite in `/etc/gero/gitconfig`, a skill under `~/.claude/skills/psps-*` and
+variables in `/etc/psps/env.sh` (and in every agent's environment), git's URL
+rewrite in `/etc/psps/gitconfig`, a skill under `~/.claude/skills/psps-*` and
 `~/.codex/skills/psps-*` explaining that a refusal is a decision — is written
 by `psps-shim sync` and removed when the service is turned off.
 
@@ -572,7 +566,7 @@ psps iso expose dev linear work
 
 Port 3030 came after the others: an isolation made before it serves Linear
 after `psps iso upgrade NAME`. Services that are MCP servers reach agents at launch
-— Claude Code through `--mcp-config /etc/gero/mcp.json`, Codex through `-c
+— Claude Code through `--mcp-config /etc/psps/mcp.json`, Codex through `-c
 mcp_servers.…` — so neither tool's own configuration is touched.
 
 Isolations created before the proxies need `psps iso upgrade NAME` once;
@@ -788,7 +782,7 @@ at most (20), in one of two places:
 
 Either way the eval runs apart from the daemon, in a session of its own,
 with its output and exit status kept by root in the isolation
-(`/var/lib/gero-eval`, out of the eval user's reach). A daemon that stops
+(`/var/lib/psps-eval`, out of the eval user's reach). A daemon that stops
 meanwhile, for an upgrade say, ends nothing of it: the next one follows it
 on and scores it, also when it ended while no daemon was up. One whose
 isolation started again meanwhile (its VM killed or replaced) left nothing
@@ -1132,3 +1126,17 @@ the agent, with curl or psql, and that each env still answers from the Mac
 internet is still reachable. FAIL lines are broken guarantees, WARN lines
 setup; a leak found here stops agents like any other measurement. The TUI
 has it on `v` in the isolations page, the web as Verify on an isolation's page.
+
+## Coming from gero
+
+psps was called gero. `psps restore` takes a `gero backup` as it is, and an
+isolation made then keeps gero's names, so nothing of it moves: its
+container, network and volumes (`gero-7f3a9c1b`...), and inside it
+`/var/lib/gero` and `/var/lib/gero-eval`. Its agents get each `PSPS_*`
+variable as `GERO_*` too, for what they kept from then. While its image is
+from then (until `psps iso upgrade`), its shim is
+`/usr/local/bin/gero-shim`, its files are in `/etc/gero` (with `/etc/psps`
+leading there) and its skills are `gero-*`; after, they are psps's, and the
+`gero-*` skills are removed. Moving over: `gero backup FILE`,
+`gero daemon uninstall`, `sudo gero pf uninstall`, then `psps restore FILE`,
+`sudo psps pf install` and `psps`.

@@ -100,16 +100,21 @@ type EvalRun struct {
 	Argv []string
 }
 
-// EvalRuns is where root keeps each eval's output, exit status, process
-// and the boot it ran in, by run, out of the eval user's reach.
-const EvalRuns = "/var/lib/gero-eval"
+// evalRun is where root keeps run's output, exit status, process and the
+// boot it ran in, out of the eval user's reach.
+func evalRun(container, run string) string {
+	if Gero(container) {
+		return "/var/lib/gero-eval/" + run
+	}
+	return "/var/lib/psps-eval/" + run
+}
 
 // evalStart starts the eval apart from `container exec`, in a session of
 // its own: it runs on when the daemon that started it stops, and its
 // output and exit status wait in its run's directory for one to read them.
-const evalStart = `d=` + EvalRuns + `/$1 uid=$2 dir=$3 home=$4
+const evalStart = `d=$1 uid=$2 dir=$3 home=$4
 shift 4
-mkdir -p -m 700 ` + EvalRuns + ` && rm -rf "$d" && mkdir -m 700 "$d" || exit 1
+mkdir -p -m 700 "${d%/*}" && rm -rf "$d" && mkdir -m 700 "$d" || exit 1
 cat /proc/sys/kernel/random/boot_id > "$d/boot"
 setsid sh -c '
 d=$1 uid=$2 dir=$3 home=$4
@@ -121,7 +126,7 @@ echo $? > "$d/exit.new" && mv "$d/exit.new" "$d/exit"' psps-eval "$d" "$uid" "$d
 // evalPoll says how a run is: "done CODE" and then the end of its output,
 // "running", or "lost": its directory gone with the container, or its
 // process gone (with the VM it ran in, or killed) without an exit status.
-const evalPoll = `d=` + EvalRuns + `/$1
+const evalPoll = `d=$1
 [ -d "$d" ] || { echo lost; exit 0; }
 if [ -f "$d/exit" ]; then echo "done $(cat "$d/exit")"; tail -c $2 "$d/out"; exit 0; fi
 p=$(cat "$d/pid" 2>/dev/null)
@@ -136,7 +141,7 @@ type EvalState struct {
 
 // EvalStart starts r as run, apart from the daemon (evalStart).
 func (c CLI) EvalStart(ctx context.Context, name, run string, r EvalRun) error {
-	argv := append([]string{"sh", "-c", evalStart, "psps-eval-start", run, r.UID, r.Dir, r.Home}, r.Argv...)
+	argv := append([]string{"sh", "-c", evalStart, "psps-eval-start", evalRun(name, run), r.UID, r.Dir, r.Home}, r.Argv...)
 	out, err := c.Exec(ctx, name, ExecOpts{User: "0:0"}, argv...).CombinedOutput()
 	if err != nil {
 		return fmt.Errorf("starting the eval: %w: %s", err, strings.TrimSpace(string(out)))
@@ -147,7 +152,7 @@ func (c CLI) EvalStart(ctx context.Context, name, run string, r EvalRun) error {
 // EvalPoll says how run is, with the last max bytes of its output once it
 // is done.
 func (c CLI) EvalPoll(ctx context.Context, name, run string, max int) (EvalState, error) {
-	out, err := c.Exec(ctx, name, ExecOpts{User: "0:0"}, "sh", "-c", evalPoll, "psps-eval-poll", run, strconv.Itoa(max)).Output()
+	out, err := c.Exec(ctx, name, ExecOpts{User: "0:0"}, "sh", "-c", evalPoll, "psps-eval-poll", evalRun(name, run), strconv.Itoa(max)).Output()
 	if err != nil {
 		return EvalState{}, fmt.Errorf("looking at the eval: %w", err)
 	}
@@ -170,12 +175,12 @@ func (c CLI) EvalPoll(ctx context.Context, name, run string, max int) (EvalState
 // EvalStop ends run's processes, all of its session, as its time is up
 // and its timeout(1) has not ended it.
 func (c CLI) EvalStop(ctx context.Context, name, run string) error {
-	_, err := c.Exec(ctx, name, ExecOpts{User: "0:0"}, "sh", "-c", `p=$(cat `+EvalRuns+`/$1/pid 2>/dev/null) && pkill -KILL -s "$p"; true`, "psps-eval-stop", run).Output()
+	_, err := c.Exec(ctx, name, ExecOpts{User: "0:0"}, "sh", "-c", `p=$(cat "$1/pid" 2>/dev/null) && pkill -KILL -s "$p"; true`, "psps-eval-stop", evalRun(name, run)).Output()
 	return err
 }
 
-// EvalForget removes what run left in EvalRuns.
+// EvalForget removes what run left (evalRun).
 func (c CLI) EvalForget(ctx context.Context, name, run string) error {
-	_, err := c.Exec(ctx, name, ExecOpts{User: "0:0"}, "rm", "-rf", "--", EvalRuns+"/"+run).Output()
+	_, err := c.Exec(ctx, name, ExecOpts{User: "0:0"}, "rm", "-rf", "--", evalRun(name, run)).Output()
 	return err
 }

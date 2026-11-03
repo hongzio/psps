@@ -150,7 +150,7 @@ func isoCmd(p paths.Paths, args []string) error {
 		if !*purge {
 			// Nothing will use them again: a new isolation gets volumes
 			// named after its own ID.
-			home, state := isolation.HomeVolume(iso.ID), isolation.StateVolume(iso.ID)
+			home, state := isolation.HomeVolume(iso.Container), isolation.StateVolume(iso.Container)
 			fmt.Printf("deleted %s; its volumes are kept: %s, %s\nremove them with  container volume rm %s %s\n", iso.Name, home, state, home, state)
 		}
 		return nil

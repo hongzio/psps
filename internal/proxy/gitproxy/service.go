@@ -25,7 +25,7 @@ const (
 	APIPort = 3026
 	// GitConfig holds the URL rewrite; the image's /etc/gitconfig includes
 	// it, and git ignores the include while it does not exist.
-	GitConfig = "/etc/gero/gitconfig"
+	GitConfig = "/etc/psps/gitconfig"
 )
 
 // Env is one git environment: repositories bundled with their credential,

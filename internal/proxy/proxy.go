@@ -455,21 +455,28 @@ func SkillDirs(name string) []string {
 	}
 }
 
-// GeroSkills are where the skills were while psps was called gero, as
+// GeroSkills are where an isolation from gero's time had its skills, as
 // prune prefixes: nothing is written there any more.
 var GeroSkills = []string{"/home/agent/.claude/skills/gero-", "/home/agent/.codex/skills/gero-"}
 
-// AsGero moves a skill's path back to where a shim from before the rename
-// (shimproto.RenameVersion) keeps it, as gero-*: it writes nothing named
-// psps. Other paths are as they were.
+// AsGero is path where a shim from before the rename
+// (shimproto.RenameVersion), which writes nothing named psps, keeps it:
+// /etc/gero for /etc/psps, and gero-* for a psps-* skill. Other paths are
+// as they were.
 func AsGero(path string) string {
+	if rest, ok := strings.CutPrefix(path, "/etc/psps/"); ok {
+		return "/etc/gero/" + rest
+	}
 	return strings.Replace(path, "/skills/psps-", "/skills/gero-", 1)
 }
 
-// AgentEnv is an agent's variable NAME=value as PSPS_NAME and, for agents
-// that still know psps's name before, as GERO_NAME too.
-func AgentEnv(name, value string) []string {
-	return []string{"PSPS_" + name + "=" + value, "GERO_" + name + "=" + value}
+// AgentEnv is an agent's variable NAME=value, as PSPS_NAME and, in an
+// isolation from gero's time, whose agents may know it so, as GERO_NAME too.
+func AgentEnv(name, value string, gero bool) []string {
+	if gero {
+		return []string{"PSPS_" + name + "=" + value, "GERO_" + name + "=" + value}
+	}
+	return []string{"PSPS_" + name + "=" + value}
 }
 
 // Strings reads a list setting from a patched definition, whatever JSON

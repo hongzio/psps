@@ -41,7 +41,7 @@ import (
 // EnvFile carries the proxies' environment to shells; agents get the same
 // variables directly when their process starts. The image sources it from
 // /etc/profile.d and /etc/bash.bashrc.
-const EnvFile = "/etc/gero/env.sh"
+const EnvFile = "/etc/psps/env.sh"
 
 type tunnelState struct {
 	kick    chan struct{}
@@ -396,7 +396,7 @@ func (m *Manager) workspace(iso string) (isoWorkspace, error) {
 
 // MCPFile is Claude Code's --mcp-config for the proxies' MCP servers. It
 // carries workspace tokens, so it is the agent's alone.
-const MCPFile = "/etc/gero/mcp.json"
+const MCPFile = "/etc/psps/mcp.json"
 
 func mcpConfig(servers []proxy.MCPServer, env []string) string {
 	vals := map[string]string{}
@@ -483,9 +483,11 @@ func (m *Manager) syncLocked(ctx context.Context, iso store.Isolation) {
 		req.Files = slices.DeleteFunc(slices.Clone(req.Files), func(f shimproto.SyncFile) bool { return f.Base64 })
 		req.Prune = nil
 	}
+	old := false
 	if v := m.shimVersion(iso.ID); v != "" && v < shimproto.RenameVersion {
+		old = true
 		req = asGero(req)
-	} else {
+	} else if isolation.Gero(iso.Container) {
 		// The skills written while psps was gero go.
 		req.Prune = append(slices.Clone(req.Prune), proxy.GeroSkills...)
 	}
@@ -495,6 +497,13 @@ func (m *Manager) syncLocked(ctx context.Context, iso store.Isolation) {
 	m.mu.Unlock()
 	if same {
 		return
+	}
+	if old {
+		// What psps names /etc/psps in its files' contents, and agents'
+		// environment, is /etc/gero there.
+		if _, err := m.cli.RunAsRoot(ctx, iso.Container, "sh", "-c", isolation.EtcLink); err != nil {
+			m.log.Printf("isolation %s: linking /etc/psps: %v", iso.Name, err)
+		}
 	}
 	res, err := m.cli.Sync(ctx, iso.Container, req)
 	if err != nil {
@@ -1063,7 +1072,7 @@ func (m *Manager) FinishLogin(ctx context.Context, service, name, id, pasted str
 }
 
 // asGero is req for a shim from before the rename, which manages nothing
-// named psps: its skills stay where it has them, under gero-*.
+// named psps: its files stay where it has them (proxy.AsGero).
 func asGero(req shimproto.SyncRequest) shimproto.SyncRequest {
 	files := make([]shimproto.SyncFile, len(req.Files))
 	for i, f := range req.Files {
@@ -1079,4 +1088,10 @@ func asGero(req shimproto.SyncRequest) shimproto.SyncRequest {
 		*l = out
 	}
 	return req
+}
+
+// fromGero is whether the isolation is from gero's time (isolation.Gero).
+func (m *Manager) fromGero(iso string) bool {
+	rec, err := m.store.Isolation(iso)
+	return err == nil && isolation.Gero(rec.Container)
 }
