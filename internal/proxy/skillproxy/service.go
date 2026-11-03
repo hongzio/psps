@@ -1,11 +1,11 @@
 // Package skillproxy is skill: the operator's own skills, put where Claude
 // Code and Codex find them in an isolation. It is not a proxy either; there
 // is no port and nothing held back. Each env is one skill, kept on the Mac
-// in ~/.config/gero/skills/<env>, copied there from the folder it is added
+// in ~/.config/psps/skills/<env>, copied there from the folder it is added
 // from, after it is checked (format.go). An isolation that has it exposed
-// gets each skill at ~/.claude/skills/gero-skill-<env> and
-// ~/.codex/skills/gero-skill-<env>, written by `gero-shim sync` like every
-// file gero manages there; both CLIs know a skill by the name in its
+// gets each skill at ~/.claude/skills/psps-skill-<env> and
+// ~/.codex/skills/psps-skill-<env>, written by `psps-shim sync` like every
+// file psps manages there; both CLIs know a skill by the name in its
 // frontmatter, so it is still <env> to the agent.
 //
 // A skill is handed to agents as it is, scripts included, so it is only as
@@ -26,11 +26,11 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/hongzio/gero/internal/creds"
-	"github.com/hongzio/gero/internal/paths"
-	"github.com/hongzio/gero/internal/proxy"
-	"github.com/hongzio/gero/internal/shimproto"
-	"github.com/hongzio/gero/internal/store"
+	"github.com/hongzio/psps/internal/creds"
+	"github.com/hongzio/psps/internal/paths"
+	"github.com/hongzio/psps/internal/proxy"
+	"github.com/hongzio/psps/internal/shimproto"
+	"github.com/hongzio/psps/internal/store"
 )
 
 const Name = "skill"
@@ -39,10 +39,10 @@ const Name = "skill"
 // prefix what each of these skills' folders there starts with.
 var roots = []string{"/home/agent/.claude/skills", "/home/agent/.codex/skills"}
 
-const prefix = "gero-skill-"
+const prefix = "psps-skill-"
 
 // Service is skill. Dir is where the skills are kept and Protected what a
-// skill is never copied from; empty, they are gero's own.
+// skill is never copied from; empty, they are psps's own.
 type Service struct {
 	Dir       string
 	Protected []string
@@ -51,13 +51,13 @@ type Service struct {
 func (Service) Name() string { return Name }
 func (Service) Ports() []int { return nil }
 func (Service) Summary() string {
-	return "a skill of your own (a folder with SKILL.md), checked and kept in ~/.config/gero/skills, for Claude Code and Codex in the isolation"
+	return "a skill of your own (a folder with SKILL.md), checked and kept in ~/.config/psps/skills, for Claude Code and Codex in the isolation"
 }
 
 func (Service) Fields() []proxy.Field {
 	return []proxy.Field{
 		{Key: "path", Kind: proxy.String, Flag: "path", Metavar: "DIR", Path: true,
-			Help: "the skill's folder, SKILL.md at its top, to copy in (replacing what is kept); left out, the one already in ~/.config/gero/skills/NAME is checked"},
+			Help: "the skill's folder, SKILL.md at its top, to copy in (replacing what is kept); left out, the one already in ~/.config/psps/skills/NAME is checked"},
 	}
 }
 
@@ -170,7 +170,7 @@ func (f File) mode() fs.FileMode {
 }
 
 // resolve is the folder src names, links followed, or why a skill is not
-// taken from it: gero's own directories hold its credentials and state.
+// taken from it: psps's own directories hold its credentials and state.
 func (s Service) resolve(src string) (string, error) {
 	if src == "~" || strings.HasPrefix(src, "~/") {
 		home, _ := os.UserHomeDir()
@@ -196,7 +196,7 @@ func (s Service) resolve(src string) (string, error) {
 	for _, p := range s.protected() {
 		lp, lr := strings.ToLower(real(p)), strings.ToLower(r)
 		if inside(lr, lp) || inside(lp, lr) {
-			return "", proxy.Deny("%s holds or is in gero's own %s, with its credentials and state; a skill is not taken from there", r, p)
+			return "", proxy.Deny("%s holds or is in psps's own %s, with its credentials and state; a skill is not taken from there", r, p)
 		}
 	}
 	return r, nil

@@ -17,9 +17,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/hongzio/gero/internal/creds"
-	"github.com/hongzio/gero/internal/proxy"
-	"github.com/hongzio/gero/internal/store"
+	"github.com/hongzio/psps/internal/creds"
+	"github.com/hongzio/psps/internal/proxy"
+	"github.com/hongzio/psps/internal/store"
 )
 
 // notionproxy's tests over Linear's table (the table, the refresh and the
@@ -133,7 +133,7 @@ func TestTheDefaultEnvReadsIssuesButDoesNotComment(t *testing.T) {
 
 func TestAWriteFamilyIsRefusedUntilNamed(t *testing.T) {
 	_, err := Allowed(Env{}, "main", "save_issue")
-	if err == nil || !strings.Contains(err.Error(), "'issue-edits' write family") || !strings.Contains(err.Error(), "gero env edit linear main --allow-api issue-edits") {
+	if err == nil || !strings.Contains(err.Error(), "'issue-edits' write family") || !strings.Contains(err.Error(), "psps env edit linear main --allow-api issue-edits") {
 		t.Fatalf("%v", err)
 	}
 	if f, err := Allowed(fams("issues", "issue-edits"), "main", "save_issue"); err != nil || f != "issue-edits" {
@@ -415,7 +415,7 @@ func TestARevokedLoginNamesTheFix(t *testing.T) {
 	n, o, c := refreshSetup(t, nil)
 	n.token(400, `{"error": "invalid_grant"}`)
 	_, err := o.accessToken(t.Context(), c, "main", "")
-	if status(err) != 503 || !strings.Contains(err.Error(), "gero env secret linear main") {
+	if status(err) != 503 || !strings.Contains(err.Error(), "psps env secret linear main") {
 		t.Fatalf("%v", err)
 	}
 }
@@ -424,7 +424,7 @@ func TestNoLoginAtAllNamesTheFix(t *testing.T) {
 	n := newLinear(t)
 	o := oauth{issuer: n.srv.URL, transport: http.DefaultTransport, now: clock(1000)}
 	_, err := o.accessToken(t.Context(), &creds.Store{Path: filepath.Join(t.TempDir(), "credentials")}, "main", "")
-	if status(err) != 503 || !strings.Contains(err.Error(), "gero env secret linear main") {
+	if status(err) != 503 || !strings.Contains(err.Error(), "psps env secret linear main") {
 		t.Fatalf("%v", err)
 	}
 }
@@ -798,7 +798,7 @@ func TestALoginLinearKeepsRefusingIsA502NotA401(t *testing.T) {
 	h.n.answer(jsonAnswer(401, ``))
 	h.n.token(200, `{"access_token": "new-access"}`)
 	code, m, hdr := h.rpc(call("list_issues"), nil)
-	if code != 502 || !strings.Contains(errMessage(m), "gero env secret linear main") || hdr.Get("WWW-Authenticate") != "" {
+	if code != 502 || !strings.Contains(errMessage(m), "psps env secret linear main") || hdr.Get("WWW-Authenticate") != "" {
 		t.Fatalf("%d %v %v", code, m, hdr)
 	}
 }
@@ -807,7 +807,7 @@ func TestAMissingLoginIsA503ThatNamesTheFix(t *testing.T) {
 	h := newHarness(t)
 	h.c.Write("linear", "main", map[string]string{})
 	code, m, _ := h.rpc(call("list_issues"), nil)
-	if code != 503 || !strings.Contains(errMessage(m), "gero env secret linear main") || len(h.n.seen()) != 0 {
+	if code != 503 || !strings.Contains(errMessage(m), "psps env secret linear main") || len(h.n.seen()) != 0 {
 		t.Fatalf("%d %v", code, m)
 	}
 }
@@ -860,7 +860,7 @@ func TestAnIsolationWithoutTheServiceIsToldHowToGetIt(t *testing.T) {
 	h.view.Enabled = false
 	h.mu.Unlock()
 	code, m, _ := h.rpc(msg("ping", nil), nil)
-	if code != 503 || !strings.Contains(errMessage(m), "gero iso expose work linear") {
+	if code != 503 || !strings.Contains(errMessage(m), "psps iso expose work linear") {
 		t.Fatalf("%d %v", code, m)
 	}
 }

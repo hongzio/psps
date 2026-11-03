@@ -13,23 +13,27 @@ import (
 	"strings"
 	"syscall"
 
-	"github.com/hongzio/gero/internal/shimproto"
+	"github.com/hongzio/psps/internal/shimproto"
 )
 
-// Managed says whether gero may write or remove path. Everything gero puts
-// in an isolation has a path element starting with "gero" (/etc/gero/...,
-// ~/.claude/skills/gero-git/...), so a mistake in the daemon cannot reach a
-// file the user or an agent made.
+// Managed says whether psps may write or remove path. Everything psps puts
+// in an isolation has a path element starting with "psps" or "gero", its
+// name before (/etc/gero/..., ~/.claude/skills/psps-git/...), so a mistake
+// in the daemon cannot reach a file the user or an agent made.
 func Managed(path string) bool {
 	if !filepath.IsAbs(path) || filepath.Clean(path) != path {
 		return false
 	}
 	for _, el := range strings.Split(path, "/") {
-		if strings.HasPrefix(el, "gero") {
+		if ours(el) {
 			return true
 		}
 	}
 	return false
+}
+
+func ours(name string) bool {
+	return strings.HasPrefix(name, "psps") || strings.HasPrefix(name, "gero")
 }
 
 // Sync makes req true: each file written (only if it differs) and each
@@ -39,17 +43,17 @@ func Sync(req shimproto.SyncRequest, uid, gid int) (shimproto.SyncResult, error)
 	var res shimproto.SyncResult
 	for _, f := range req.Files {
 		if !Managed(f.Path) {
-			return res, fmt.Errorf("sync: %q is not a path gero manages", f.Path)
+			return res, fmt.Errorf("sync: %q is not a path psps manages", f.Path)
 		}
 	}
 	for _, p := range append(slices.Clone(req.Remove), req.Prune...) {
 		if !Managed(p) {
-			return res, fmt.Errorf("sync: %q is not a path gero manages", p)
+			return res, fmt.Errorf("sync: %q is not a path psps manages", p)
 		}
 	}
 	for _, p := range req.Prune {
-		if !strings.HasPrefix(filepath.Base(p), "gero") {
-			return res, fmt.Errorf("sync: %q prunes names that do not start with gero", p)
+		if !ours(filepath.Base(p)) {
+			return res, fmt.Errorf("sync: %q prunes names that do not start with psps", p)
 		}
 	}
 	var errs []error
@@ -149,7 +153,7 @@ func writeFile(f shimproto.SyncFile, owner [2]int) (bool, error) {
 	if err := mkdirs(filepath.Dir(f.Path), owner); err != nil {
 		return false, err
 	}
-	tmp := filepath.Join(filepath.Dir(f.Path), ".gero-sync-"+strconv.Itoa(os.Getpid())+"-"+filepath.Base(f.Path))
+	tmp := filepath.Join(filepath.Dir(f.Path), ".psps-sync-"+strconv.Itoa(os.Getpid())+"-"+filepath.Base(f.Path))
 	if err := os.WriteFile(tmp, content, mode); err != nil {
 		return false, err
 	}

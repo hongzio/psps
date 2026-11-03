@@ -250,7 +250,7 @@ func (s *session) startErr() error {
 	return nil
 }
 
-// CheckResult is what `gero env check pg` reports.
+// CheckResult is what `psps env check pg` reports.
 type CheckResult struct {
 	Database      string
 	ServerVersion string
@@ -261,7 +261,7 @@ type CheckResult struct {
 // the terminal, not by the agent as an opaque ErrorResponse.
 func CheckEnv(ctx context.Context, name string, e Env, password string) (CheckResult, error) {
 	if len(e.Databases) == 0 {
-		return CheckResult{}, deny("no databases allowed yet; add one with `gero env edit pg %s --allow-db <name>` first", name)
+		return CheckResult{}, deny("no databases allowed yet; add one with `psps env edit pg %s --allow-db <name>` first", name)
 	}
 	dbs := append([]string(nil), e.Databases...)
 	sort.Strings(dbs)

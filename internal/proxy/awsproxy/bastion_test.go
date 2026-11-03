@@ -13,7 +13,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/hongzio/gero/internal/creds"
+	"github.com/hongzio/psps/internal/creds"
 )
 
 const tcAddr = "tc1.example-bastion-address"
@@ -74,7 +74,7 @@ func (b *fakeBastion) unreachable() {
 func TestThroughABastionTheRoleIsAssumedThereWithThePolicyIntact(t *testing.T) {
 	b := newFakeBastion(t)
 	p, _ := SessionPolicy([]string{jp}, []string{bucket})
-	src := &Source{Bastion: tcAddr, Profile: "ignored", RoleARN: role, SessionName: "gero-it's", Policy: p.JSON()}
+	src := &Source{Bastion: tcAddr, Profile: "ignored", RoleARN: role, SessionName: "psps-it's", Policy: p.JSON()}
 	c, err := src.Get(context.Background(), epoch)
 	if err != nil {
 		t.Fatal(err)
@@ -85,7 +85,7 @@ func TestThroughABastionTheRoleIsAssumedThereWithThePolicyIntact(t *testing.T) {
 	// The bastion's aws got the argv as the Mac's would have, policy JSON
 	// and quote included, and no profile: its instance role is the login.
 	if !reflect.DeepEqual(b.argv()[:2], []string{"sts", "assume-role"}) || b.flag("--policy") != p.JSON() ||
-		b.flag("--role-session-name") != "gero-it's" || slices.Contains(b.argv(), "--profile") {
+		b.flag("--role-session-name") != "psps-it's" || slices.Contains(b.argv(), "--profile") {
 		t.Fatalf("aws argv = %q", b.argv())
 	}
 	ssh := strings.Join(b.sshArgv(), "\n")
@@ -164,7 +164,7 @@ func TestCheckThroughABastionNamesTheBastionAndTheAssumedRole(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(out, "bastion    arn:aws:sts::") || !strings.Contains(out, "identity   arn:aws:sts::050017197842:assumed-role/axis-tre-workspace/gero-dev") {
+	if !strings.Contains(out, "bastion    arn:aws:sts::") || !strings.Contains(out, "identity   arn:aws:sts::050017197842:assumed-role/axis-tre-workspace/psps-dev") {
 		t.Fatalf("out = %s", out)
 	}
 }

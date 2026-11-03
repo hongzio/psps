@@ -4,12 +4,12 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/hongzio/gero/internal/proxy"
+	"github.com/hongzio/psps/internal/proxy"
 )
 
 const skillHead = `---
-name: gero-port
-description: Which ports of this gero isolation the operator's Mac reaches, and
+name: psps-port
+description: Which ports of this psps isolation the operator's Mac reaches, and
   at what address there. Use when running a dev server, a web app or any server
   the operator wants to open, or when asked for a URL "on the Mac", "in my
   browser" or "localhost".
@@ -25,7 +25,7 @@ The operator's Mac connects to these ports of this isolation, on its own
 const skillTail = `
 - Listen on the port as it is listed here, on localhost or on every address;
   both are reached. Another port is not reached from the Mac: ask the operator
-  to forward it (gero's port service) rather than looking for a way around.
+  to forward it (psps's port service) rather than looking for a way around.
 - Give the operator the Mac's address, not this isolation's: the URL to open is
   the one listed above, under its own .localhost name, where the operator's
   browser keeps its cookies apart from everything else on the Mac. A server

@@ -13,12 +13,12 @@ import (
 	"time"
 	"unicode/utf8"
 
-	"github.com/hongzio/gero/internal/api"
-	"github.com/hongzio/gero/internal/driver"
-	"github.com/hongzio/gero/internal/event"
-	"github.com/hongzio/gero/internal/proxy"
-	"github.com/hongzio/gero/internal/proxy/mailproxy"
-	"github.com/hongzio/gero/internal/store"
+	"github.com/hongzio/psps/internal/api"
+	"github.com/hongzio/psps/internal/driver"
+	"github.com/hongzio/psps/internal/event"
+	"github.com/hongzio/psps/internal/proxy"
+	"github.com/hongzio/psps/internal/proxy/mailproxy"
+	"github.com/hongzio/psps/internal/store"
 )
 
 // Mail between agents (internal/proxy/mailproxy). The daemon answers each
@@ -64,7 +64,7 @@ func (m *Manager) mailEnv(a store.Agent) []string {
 		m.log.Printf("agent %s: mail token: %v", a.ID, err)
 		return nil
 	}
-	return []string{"GERO_MAIL_URL=" + mailproxy.URL(tok)}
+	return proxy.AgentEnv("MAIL_URL", mailproxy.URL(tok))
 }
 
 // letter is mail as its recipient reads it, naming the sender as it is
@@ -189,7 +189,7 @@ func (m *Manager) mailHandler(iso string) http.Handler {
 	m.controlRoutes(mux, iso)
 	m.awsRoutes(mux, iso)
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
-		reply(w, nil, httpError{http.StatusNotFound, errors.New(`mail: there is GET "$GERO_MAIL_URL/agents" and POST "$GERO_MAIL_URL/send?to=AGENT" (the gero-mail skill), "$GERO_CRON_URL" (the gero-cron skill), "$GERO_TEAM_URL" (the gero-team skill), and "$GERO_CONTROL_URL" (the gero-control skill)`)})
+		reply(w, nil, httpError{http.StatusNotFound, errors.New(`mail: there is GET "$PSPS_MAIL_URL/agents" and POST "$PSPS_MAIL_URL/send?to=AGENT" (the psps-mail skill), "$PSPS_CRON_URL" (the psps-cron skill), "$PSPS_TEAM_URL" (the psps-team skill), and "$PSPS_CONTROL_URL" (the psps-control skill)`)})
 	})
 	return mux
 }
@@ -201,11 +201,11 @@ func (m *Manager) mailSender(iso, tok string) (mailSender, error) {
 	}
 	name := m.isoName(iso)
 	if !on {
-		return mailSender{}, httpError{http.StatusForbidden, fmt.Errorf("mail: isolation %s takes no mail; the operator turns it on with `gero iso expose %s mail`", name, name)}
+		return mailSender{}, httpError{http.StatusForbidden, fmt.Errorf("mail: isolation %s takes no mail; the operator turns it on with `psps iso expose %s mail`", name, name)}
 	}
 	a, err := m.store.AgentByMailToken(tok)
 	if err != nil || a.IsolationID != iso || a.ArchivedAt != nil {
-		return mailSender{}, httpError{http.StatusForbidden, fmt.Errorf("mail: this is not the address of an agent in isolation %s; use $GERO_MAIL_URL as your process was started with it", name)}
+		return mailSender{}, httpError{http.StatusForbidden, fmt.Errorf("mail: this is not the address of an agent in isolation %s; use $PSPS_MAIL_URL as your process was started with it", name)}
 	}
 	return mailSender{agent: a, reach: reach}, nil
 }
@@ -266,14 +266,14 @@ func (m *Manager) mailDirectory(from mailSender) (mailDirectory, error) {
 func (m *Manager) postMail(iso string, from mailSender, to, body string) (mailReceipt, error) {
 	to = strings.TrimSpace(to)
 	if to == "" {
-		return mailReceipt{}, badRequest(errors.New(`mail: say who it is for: "$GERO_MAIL_URL/send?to=AGENT"; "$GERO_MAIL_URL/agents" lists who you can write to`))
+		return mailReceipt{}, badRequest(errors.New(`mail: say who it is for: "$PSPS_MAIL_URL/send?to=AGENT"; "$PSPS_MAIL_URL/agents" lists who you can write to`))
 	}
 	rec, err := m.store.AgentByHandle(to)
 	if errors.Is(err, store.ErrNotFound) {
 		rec, err = m.store.Agent(to)
 	}
 	if errors.Is(err, store.ErrNotFound) {
-		return mailReceipt{}, httpError{http.StatusNotFound, fmt.Errorf(`mail: there is no agent %q; "$GERO_MAIL_URL/agents" lists who you can write to`, to)}
+		return mailReceipt{}, httpError{http.StatusNotFound, fmt.Errorf(`mail: there is no agent %q; "$PSPS_MAIL_URL/agents" lists who you can write to`, to)}
 	}
 	if err != nil {
 		return mailReceipt{}, err
@@ -291,13 +291,13 @@ func (m *Manager) postMail(iso string, from mailSender, to, body string) (mailRe
 		for _, n := range append(m.isoNames(from.reach), recIso) {
 			flags += " --to " + n
 		}
-		return mailReceipt{}, httpError{http.StatusForbidden, fmt.Errorf("mail: agent %s is in isolation %s, which isolation %s's agents may not write to; the operator decides that (`gero iso expose %s mail%s`)",
+		return mailReceipt{}, httpError{http.StatusForbidden, fmt.Errorf("mail: agent %s is in isolation %s, which isolation %s's agents may not write to; the operator decides that (`psps iso expose %s mail%s`)",
 			to, recIso, ours, ours, flags)}
 	}
 	if on, _, err := m.mailReach(rec.IsolationID); err != nil {
 		return mailReceipt{}, err
 	} else if !on {
-		return mailReceipt{}, httpError{http.StatusForbidden, fmt.Errorf("mail: agent %s's isolation %s takes no mail; the operator turns it on with `gero iso expose %s mail`", to, recIso, recIso)}
+		return mailReceipt{}, httpError{http.StatusForbidden, fmt.Errorf("mail: agent %s's isolation %s takes no mail; the operator turns it on with `psps iso expose %s mail`", to, recIso, recIso)}
 	}
 	// Spent only on mail that would be delivered: a refusal costs none.
 	if ok, retry := m.mailBucket(iso).Allow(); !ok {

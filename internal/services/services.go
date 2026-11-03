@@ -1,27 +1,27 @@
-// Package services lists the credential proxies gero runs, and what is
+// Package services lists the credential proxies psps runs, and what is
 // turned on per isolation the way they are: shared folders, the operator's
 // skills, forwarded ports, mail between agents, the crons they set, and
 // the teams their leads run.
 package services
 
 import (
-	"github.com/hongzio/gero/internal/proxy"
-	"github.com/hongzio/gero/internal/proxy/awsproxy"
-	"github.com/hongzio/gero/internal/proxy/chproxy"
-	"github.com/hongzio/gero/internal/proxy/controlproxy"
-	"github.com/hongzio/gero/internal/proxy/cronproxy"
-	"github.com/hongzio/gero/internal/proxy/ddproxy"
-	"github.com/hongzio/gero/internal/proxy/gitproxy"
-	"github.com/hongzio/gero/internal/proxy/grafanaproxy"
-	"github.com/hongzio/gero/internal/proxy/linearproxy"
-	"github.com/hongzio/gero/internal/proxy/mailproxy"
-	"github.com/hongzio/gero/internal/proxy/notionproxy"
-	"github.com/hongzio/gero/internal/proxy/pgproxy"
-	"github.com/hongzio/gero/internal/proxy/portproxy"
-	"github.com/hongzio/gero/internal/proxy/shareproxy"
-	"github.com/hongzio/gero/internal/proxy/skillproxy"
-	"github.com/hongzio/gero/internal/proxy/slackproxy"
-	"github.com/hongzio/gero/internal/proxy/teamproxy"
+	"github.com/hongzio/psps/internal/proxy"
+	"github.com/hongzio/psps/internal/proxy/awsproxy"
+	"github.com/hongzio/psps/internal/proxy/chproxy"
+	"github.com/hongzio/psps/internal/proxy/controlproxy"
+	"github.com/hongzio/psps/internal/proxy/cronproxy"
+	"github.com/hongzio/psps/internal/proxy/ddproxy"
+	"github.com/hongzio/psps/internal/proxy/gitproxy"
+	"github.com/hongzio/psps/internal/proxy/grafanaproxy"
+	"github.com/hongzio/psps/internal/proxy/linearproxy"
+	"github.com/hongzio/psps/internal/proxy/mailproxy"
+	"github.com/hongzio/psps/internal/proxy/notionproxy"
+	"github.com/hongzio/psps/internal/proxy/pgproxy"
+	"github.com/hongzio/psps/internal/proxy/portproxy"
+	"github.com/hongzio/psps/internal/proxy/shareproxy"
+	"github.com/hongzio/psps/internal/proxy/skillproxy"
+	"github.com/hongzio/psps/internal/proxy/slackproxy"
+	"github.com/hongzio/psps/internal/proxy/teamproxy"
 )
 
 // Registry is every credential proxy, in the order they are listed.

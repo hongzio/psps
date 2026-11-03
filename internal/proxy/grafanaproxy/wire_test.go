@@ -13,9 +13,9 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/hongzio/gero/internal/creds"
-	"github.com/hongzio/gero/internal/proxy"
-	"github.com/hongzio/gero/internal/store"
+	"github.com/hongzio/psps/internal/creds"
+	"github.com/hongzio/psps/internal/proxy"
+	"github.com/hongzio/psps/internal/store"
 )
 
 // Ported from isolate's test_grafanaproxy_wire.py: what actually leaves the
@@ -227,7 +227,7 @@ func TestHealthNeedsTheTokenButNoFamily(t *testing.T) {
 func TestAFamilyOffTheAllowlistNamesTheOperatorCommand(t *testing.T) {
 	h := newHarness(t)
 	code, body, _ := h.do("GET", "/api/folders", bearer(prodToken), "")
-	if code != 403 || !strings.Contains(errorOf(t, body), "gero env edit grafana prod --allow-api folders") || len(h.tap.all()) != 0 {
+	if code != 403 || !strings.Contains(errorOf(t, body), "psps env edit grafana prod --allow-api folders") || len(h.tap.all()) != 0 {
 		t.Fatalf("%d %q", code, body)
 	}
 }
@@ -374,13 +374,13 @@ func TestTheRateBudgetRefusesWithRetryAfter(t *testing.T) {
 	}
 }
 
-// --- gero's own ---
+// --- psps's own ---
 
 func TestAnIsolationWithoutTheServiceIsToldHowToGetIt(t *testing.T) {
 	h := newHarness(t)
 	h.edit(func(v *proxy.View) { v.Enabled = false })
 	code, body, _ := h.do("GET", "/api/health", bearer(prodToken), "")
-	if code != 503 || !strings.Contains(errorOf(t, body), "gero iso expose work grafana") || len(h.tap.all()) != 0 {
+	if code != 503 || !strings.Contains(errorOf(t, body), "psps iso expose work grafana") || len(h.tap.all()) != 0 {
 		t.Fatalf("%d %q", code, body)
 	}
 }

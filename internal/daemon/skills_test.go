@@ -8,12 +8,12 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/hongzio/gero/internal/api"
-	"github.com/hongzio/gero/internal/creds"
-	"github.com/hongzio/gero/internal/driver"
-	"github.com/hongzio/gero/internal/proxy"
-	"github.com/hongzio/gero/internal/proxy/skillproxy"
-	"github.com/hongzio/gero/internal/shimproto"
+	"github.com/hongzio/psps/internal/api"
+	"github.com/hongzio/psps/internal/creds"
+	"github.com/hongzio/psps/internal/driver"
+	"github.com/hongzio/psps/internal/proxy"
+	"github.com/hongzio/psps/internal/proxy/skillproxy"
+	"github.com/hongzio/psps/internal/shimproto"
 )
 
 func TestASkillIsKeptOnTheMacAndWrittenWhereTheCLIsLook(t *testing.T) {
@@ -68,12 +68,12 @@ func TestASkillIsKeptOnTheMacAndWrittenWhereTheCLIsLook(t *testing.T) {
 	for _, f := range req.Files {
 		written = append(written, f.Path)
 	}
-	for _, want := range []string{"/home/agent/.claude/skills/gero-skill-pdf/SKILL.md", "/home/agent/.codex/skills/gero-skill-pdf/logo.png"} {
+	for _, want := range []string{"/home/agent/.claude/skills/psps-skill-pdf/SKILL.md", "/home/agent/.codex/skills/psps-skill-pdf/logo.png"} {
 		if !slices.Contains(written, want) {
 			t.Errorf("%s not written: %v", want, written)
 		}
 	}
-	if !slices.Contains(req.Prune, "/home/agent/.claude/skills/gero-skill-") {
+	if !slices.Contains(req.Prune, "/home/agent/.claude/skills/psps-skill-") {
 		t.Errorf("prune %v", req.Prune)
 	}
 
@@ -100,7 +100,7 @@ func TestASkillIsKeptOnTheMacAndWrittenWhereTheCLIsLook(t *testing.T) {
 		t.Fatal("the kept skill survived its env")
 	}
 	req, _ = e.fc.lastSync()
-	if slices.ContainsFunc(req.Files, func(f shimproto.SyncFile) bool { return strings.Contains(f.Path, "gero-skill-") }) || len(req.Prune) != 2 {
+	if slices.ContainsFunc(req.Files, func(f shimproto.SyncFile) bool { return strings.Contains(f.Path, "psps-skill-") }) || !slices.Equal(req.Prune, append([]string{"/home/agent/.claude/skills/psps-skill-", "/home/agent/.codex/skills/psps-skill-"}, proxy.GeroSkills...)) {
 		t.Fatalf("after removal: prune %v", req.Prune)
 	}
 }

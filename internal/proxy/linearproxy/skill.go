@@ -5,12 +5,12 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/hongzio/gero/internal/proxy"
+	"github.com/hongzio/psps/internal/proxy"
 )
 
 const skillTemplate = `---
-name: gero-linear
-description: How Linear access works inside this gero isolation. Use when a
+name: psps-linear
+description: How Linear access works inside this psps isolation. Use when a
   Linear issue, project, document or team needs reading (or, where the
   environment allows it, an issue created or changed, or a comment posted),
   or when a Linear MCP tool call is refused.
@@ -19,7 +19,7 @@ description: How Linear access works inside this gero isolation. Use when a
 # Linear in this isolation
 
 Linear arrives as MCP tools: the ` + "`linear`" + ` server (and ` + "`linear-<env>`" + ` for any
-other environment) is handed to every agent gero starts, pointing at a proxy
+other environment) is handed to every agent psps starts, pointing at a proxy
 outside the isolation. There is no Linear credential here, and there is not
 meant to be one — the proxy holds a Linear login on the Mac and attaches it on
 the way out. LINEAR_TOKEN is only a workspace token that opens the proxy;
@@ -55,14 +55,14 @@ The default environment is ` + "`%[2]s`" + `, served as ` + "`linear`" + `.
 
 - A tool result naming a family — outside this env's boundary. That is the
   operator's decision, not a fault to retry or route around; the refusal names
-  the exact ` + "`gero env edit linear ...`" + ` command that would open it, so report that
+  the exact ` + "`psps env edit linear ...`" + ` command that would open it, so report that
   instead of looking for another path.
 - A tool result saying a tool is not modeled — tools the proxy does not know do
   not exist from here, for any environment.
 - A 429 with Retry-After is the proxy's own rate budget protecting the login's
   Linear rate limit. Wait it out; do not tighten the loop.
 - An error saying the login expired — the operator has to log in again on the
-  Mac (` + "`gero env secret linear <env>`" + `); nothing in the isolation can fix it.
+  Mac (` + "`psps env secret linear <env>`" + `); nothing in the isolation can fix it.
 
 There is no other route to Linear's authenticated APIs from this isolation: the
 proxy is the only thing the token in LINEAR_TOKEN opens.

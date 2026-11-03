@@ -13,9 +13,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/hongzio/gero/internal/creds"
-	"github.com/hongzio/gero/internal/proxy"
-	"github.com/hongzio/gero/internal/store"
+	"github.com/hongzio/psps/internal/creds"
+	"github.com/hongzio/psps/internal/proxy"
+	"github.com/hongzio/psps/internal/store"
 )
 
 const (
@@ -79,7 +79,7 @@ func (Service) Normalize(name string, env map[string]any) ([]string, error) {
 	if _, set := env["families"]; set {
 		env["families"] = proxy.SortedSet(proxy.Strings(env, "families"))
 	} else {
-		// Explicit on every add and edit, so `gero env ls` shows what opens.
+		// Explicit on every add and edit, so `psps env ls` shows what opens.
 		env["families"] = append([]string(nil), DefaultFamilies...)
 	}
 	var writes []string
@@ -221,7 +221,7 @@ func (in *instance) admit(w http.ResponseWriter, r *http.Request) (admitted, boo
 		return admitted{}, false
 	}
 	if !v.Enabled {
-		in.refuse(w, r, 503, fmt.Sprintf("linear: the proxy is off for isolation %s; the operator turns it on with `gero iso expose %s linear <env>`", in.h.Name(), in.h.Name()), nil, true)
+		in.refuse(w, r, 503, fmt.Sprintf("linear: the proxy is off for isolation %s; the operator turns it on with `psps iso expose %s linear <env>`", in.h.Name(), in.h.Name()), nil, true)
 		return admitted{}, false
 	}
 	presented := ""
@@ -260,7 +260,7 @@ func (in *instance) admit(w http.ResponseWriter, r *http.Request) (admitted, boo
 	}
 	e, ok := envs[name]
 	if !ok {
-		in.refuse(w, r, 503, fmt.Sprintf("linear: environment %q was removed from gero's registry but is still exposed here; the operator re-exposes with `gero iso expose %s linear ...`", name, in.h.Name()), nil, true)
+		in.refuse(w, r, 503, fmt.Sprintf("linear: environment %q was removed from psps's registry but is still exposed here; the operator re-exposes with `psps iso expose %s linear ...`", name, in.h.Name()), nil, true)
 		return admitted{}, false
 	}
 	return admitted{v, name, e}, true
@@ -383,7 +383,7 @@ func (in *instance) forward(w http.ResponseWriter, r *http.Request, a admitted, 
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode == 401 {
-		in.refuse(w, r, 502, fmt.Sprintf("linear: Linear refused the Mac's login for [linear %s] even after a refresh; the operator can log in again with `gero env secret linear %s`", a.name, a.name), id, false)
+		in.refuse(w, r, 502, fmt.Sprintf("linear: Linear refused the Mac's login for [linear %s] even after a refresh; the operator can log in again with `psps env secret linear %s`", a.name, a.name), id, false)
 		return
 	}
 	in.logf("%s [env=%s] -> %d", label, a.name, resp.StatusCode)
@@ -453,7 +453,7 @@ func (s Service) Check(ctx context.Context, name string, cfg json.RawMessage, c 
 			return "", err
 		}
 		if me, tools, err = probe(ctx, o, token); err == errUnauthorized {
-			return "", fmt.Errorf("the login in [linear %s] is not accepted by Linear; run `gero env secret linear %s`", name, name)
+			return "", fmt.Errorf("the login in [linear %s] is not accepted by Linear; run `psps env secret linear %s`", name, name)
 		}
 	}
 	if err != nil {

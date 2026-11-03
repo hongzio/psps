@@ -19,7 +19,7 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/hongzio/gero/internal/shimproto"
+	"github.com/hongzio/psps/internal/shimproto"
 )
 
 var validID = regexp.MustCompile(`^[a-z0-9][a-z0-9-]{0,63}$`)
@@ -227,7 +227,7 @@ func (s *Server) attach(a *agent, after int64, r *bufio.Reader, w *bufio.Writer,
 			line, err := r.ReadBytes('\n')
 			if line = trimNewline(line); len(line) > 0 {
 				if werr := a.write(line); werr != nil {
-					fmt.Fprintf(os.Stderr, "gero-shim: %s: dropped stdin line: %v\n", a.id, werr)
+					fmt.Fprintf(os.Stderr, "psps-shim: %s: dropped stdin line: %v\n", a.id, werr)
 				}
 			}
 			if err != nil {

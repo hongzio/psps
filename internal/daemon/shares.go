@@ -6,8 +6,8 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/hongzio/gero/internal/isolation"
-	"github.com/hongzio/gero/internal/proxy"
+	"github.com/hongzio/psps/internal/isolation"
+	"github.com/hongzio/psps/internal/proxy"
 )
 
 // mountsFor is the Mac's folders an isolation's container is to have: what

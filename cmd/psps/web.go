@@ -10,9 +10,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/hongzio/gero/internal/client"
-	"github.com/hongzio/gero/internal/paths"
-	"github.com/hongzio/gero/internal/web"
+	"github.com/hongzio/psps/internal/client"
+	"github.com/hongzio/psps/internal/paths"
+	"github.com/hongzio/psps/internal/web"
 )
 
 // webCmd opens the web UI signed in, and says how to reach it from a phone.

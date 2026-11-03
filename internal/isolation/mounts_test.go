@@ -8,11 +8,11 @@ import (
 // As container 1.6 reports a container started with two volumes, a
 // read-only share and a writable one.
 const inspectWithShares = `[{"configuration": {"mounts": [
- {"destination": "/home/agent", "options": [], "source": "/Users/x/Library/Application Support/com.apple.container/volumes/gero-dev-home/volume.img",
+ {"destination": "/home/agent", "options": [], "source": "/Users/x/Library/Application Support/com.apple.container/volumes/psps-dev-home/volume.img",
   "type": {"volume": {"name": "gero-dev-home", "format": "ext4"}}},
  {"destination": "/shared/b", "options": [], "source": "/Users/x/notes", "type": {"virtiofs": {}}},
  {"destination": "/shared/a", "options": ["ro"], "source": "/Users/x/docs", "type": {"virtiofs": {}}}
-]}, "id": "gero-dev", "status": {"state": "running"}}]`
+]}, "id": "psps-dev", "status": {"state": "running"}}]`
 
 func TestMountsAreTheSharesNotTheVolumes(t *testing.T) {
 	got, err := parseMounts(inspectWithShares)

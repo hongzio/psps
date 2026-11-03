@@ -1,4 +1,4 @@
-// Package daemon is gero's long-running host process: it owns the store,
+// Package daemon is psps's long-running host process: it owns the store,
 // reconciles isolations and agents toward it, and serves the API.
 package daemon
 
@@ -13,16 +13,16 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/hongzio/gero/internal/creds"
-	"github.com/hongzio/gero/internal/isolation"
-	"github.com/hongzio/gero/internal/paths"
-	"github.com/hongzio/gero/internal/pf"
-	"github.com/hongzio/gero/internal/services"
-	"github.com/hongzio/gero/internal/store"
-	"github.com/hongzio/gero/internal/web"
+	"github.com/hongzio/psps/internal/creds"
+	"github.com/hongzio/psps/internal/isolation"
+	"github.com/hongzio/psps/internal/paths"
+	"github.com/hongzio/psps/internal/pf"
+	"github.com/hongzio/psps/internal/services"
+	"github.com/hongzio/psps/internal/store"
+	"github.com/hongzio/psps/internal/web"
 )
 
-var ErrAlreadyRunning = errors.New("another gero daemon is already running")
+var ErrAlreadyRunning = errors.New("another psps daemon is already running")
 
 // Run serves until ctx ends. A second daemon finds the lock held and returns
 // ErrAlreadyRunning without touching the first one's socket.
@@ -103,7 +103,7 @@ func Run(ctx context.Context, p paths.Paths, logger *log.Logger) error {
 			webSrv.Shutdown(sctx)
 		}
 	}()
-	logger.Printf("gero daemon %d serving %s", os.Getpid(), p.Socket())
+	logger.Printf("psps daemon %d serving %s", os.Getpid(), p.Socket())
 	err = srv.Serve(l)
 	cancel()
 	m.Wait()
@@ -113,15 +113,15 @@ func Run(ctx context.Context, p paths.Paths, logger *log.Logger) error {
 	return nil
 }
 
-// WebAddr is where the web UI listens: loopback only. GERO_WEB_ADDR moves it
+// WebAddr is where the web UI listens: loopback only. PSPS_WEB_ADDR moves it
 // (still meant to be loopback) or, set to "off", turns it off. A development
-// daemon (GERO_HOME) defaults to another port, so it never takes the real
+// daemon (PSPS_HOME) defaults to another port, so it never takes the real
 // daemon's.
 func WebAddr() string {
-	if a := os.Getenv("GERO_WEB_ADDR"); a != "" {
+	if a := os.Getenv("PSPS_WEB_ADDR"); a != "" {
 		return a
 	}
-	if os.Getenv("GERO_HOME") != "" {
+	if os.Getenv("PSPS_HOME") != "" {
 		return "127.0.0.1:4377"
 	}
 	return "127.0.0.1:4376"
@@ -130,7 +130,7 @@ func WebAddr() string {
 func startWeb(p paths.Paths, m *Manager, logger *log.Logger) (*http.Server, error) {
 	addr := WebAddr()
 	if addr == "off" {
-		m.webErr = "turned off (GERO_WEB_ADDR=off)"
+		m.webErr = "turned off (PSPS_WEB_ADDR=off)"
 		return nil, nil
 	}
 	if _, err := web.EnsureToken(p.WebToken()); err != nil {

@@ -9,8 +9,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/hongzio/gero/internal/shim"
-	"github.com/hongzio/gero/internal/shimproto"
+	"github.com/hongzio/psps/internal/shim"
+	"github.com/hongzio/psps/internal/shimproto"
 )
 
 // A SIGTERM — what `container stop` sends — must let agents exit and log it.

@@ -5,15 +5,15 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/hongzio/gero/internal/proxy"
+	"github.com/hongzio/psps/internal/proxy"
 )
 
 // Config cannot express why a refusal happened, or that it is final; the
 // skill does.
 
 const skillTemplate = `---
-name: gero-pg
-description: How PostgreSQL access works inside this gero isolation. Use when a
+name: psps-pg
+description: How PostgreSQL access works inside this psps isolation. Use when a
   psql or database connection fails, when a query is refused with permission
   denied, or when deciding whether a database is reachable from here.
 ---
@@ -45,13 +45,13 @@ that can add access, and all of it disconnects the working chain.
 - An error naming this proxy (unknown environment, database not allowed) — the
   database is outside the operator's allowlist. That is a decision, not a fault
   to retry or route around. If access is genuinely needed, ask the operator to
-  run ` + "`gero env edit pg <env> --allow-db <name>`" + `.
+  run ` + "`psps env edit pg <env> --allow-db <name>`" + `.
 - ` + "`permission denied for table ...`" + ` — the environment's role does not carry
   that grant. Postgres itself is enforcing this; only the operator can widen
   the role.
 - ` + "`password authentication failed`" + ` for the real server — the stored password
   is stale. Report it; only the operator can update it
-  (` + "`gero env secret pg <env>`" + `).
+  (` + "`psps env secret pg <env>`" + `).
 
 There is no other route to these databases from this isolation: the proxy is
 the only thing the token in PGPASSFILE opens.

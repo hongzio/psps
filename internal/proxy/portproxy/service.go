@@ -15,9 +15,9 @@
 //   - nothing changes for the isolation's side: it still cannot connect to
 //     the Mac (the fence measures that); a connection only ever starts on
 //     the Mac.
-//   - a browser sends the cookies of 127.0.0.1 to every port of it, gero's
+//   - a browser sends the cookies of 127.0.0.1 to every port of it, psps's
 //     own web session among them, whose value is the web token. In http
-//     mode (the default) the daemon is an HTTP proxy that keeps gero's
+//     mode (the default) the daemon is an HTTP proxy that keeps psps's
 //     cookies out of every request and out of every answer, so the
 //     isolation never sees them and cannot replace them. tcp mode passes
 //     bytes unchanged, for what is not HTTP; a browser pointed at a tcp
@@ -26,10 +26,10 @@
 //     a browser keeps its cookies apart from every other program's on the
 //     Mac, both ways; a cookie it sets loses any Domain, so it stays there.
 //     127.0.0.1 and localhost still work (a login whose callback is
-//     registered there), with only gero's cookies kept from it.
+//     registered there), with only psps's cookies kept from it.
 //   - what an agent serves runs in the Mac's browser, as a page from
 //     127.0.0.1, which browsers trust more than one from the internet. The
-//     skill tells agents so; gero's own API refuses such a page (it needs a
+//     skill tells agents so; psps's own API refuses such a page (it needs a
 //     header a cross-origin page cannot send).
 //   - an http port answers only to a loopback name (127.0.0.1, localhost,
 //     *.localhost): a page on the internet that points a name of its own at
@@ -47,10 +47,10 @@ import (
 	"net"
 	"strings"
 
-	"github.com/hongzio/gero/internal/creds"
-	"github.com/hongzio/gero/internal/proxy"
-	"github.com/hongzio/gero/internal/shimproto"
-	"github.com/hongzio/gero/internal/store"
+	"github.com/hongzio/psps/internal/creds"
+	"github.com/hongzio/psps/internal/proxy"
+	"github.com/hongzio/psps/internal/shimproto"
+	"github.com/hongzio/psps/internal/store"
 )
 
 const Name = "port"
@@ -75,7 +75,7 @@ type Service struct{}
 func (Service) Name() string { return Name }
 func (Service) Ports() []int { return nil }
 func (Service) Summary() string {
-	return "a port of the isolation's (a dev server, a WAS) on the Mac's 127.0.0.1, never the LAN; http keeps your gero session from it"
+	return "a port of the isolation's (a dev server, a WAS) on the Mac's 127.0.0.1, never the LAN; http keeps your psps session from it"
 }
 
 func (Service) Fields() []proxy.Field {
@@ -83,7 +83,7 @@ func (Service) Fields() []proxy.Field {
 		{Key: "port", Kind: proxy.Int, Flag: "port", Metavar: "PORT", Help: "the port a server listens on in the isolation (required)"},
 		{Key: "host_port", Kind: proxy.Int, Flag: "host-port", Metavar: "PORT", Help: "the port on the Mac's 127.0.0.1 (default, or 0: the same)"},
 		{Key: "mode", Kind: proxy.String, Flag: "mode", Choices: []string{"http", "tcp"},
-			Help: "http (default) keeps the browser's gero session from the isolation; tcp passes bytes unchanged, for what is not HTTP"},
+			Help: "http (default) keeps the browser's psps session from the isolation; tcp passes bytes unchanged, for what is not HTTP"},
 	}
 }
 
@@ -98,7 +98,7 @@ func (Service) Normalize(name string, env map[string]any) ([]string, error) {
 	case port < 0 || port > 65535:
 		return nil, proxy.Deny("--port %d is not a port", port)
 	case port >= shimproto.TunnelPortLo && port <= shimproto.TunnelPortHi:
-		return nil, proxy.Deny("--port %d is gero's own in the isolation (%d-%d are the credential proxies')", port, shimproto.TunnelPortLo, shimproto.TunnelPortHi)
+		return nil, proxy.Deny("--port %d is psps's own in the isolation (%d-%d are the credential proxies')", port, shimproto.TunnelPortLo, shimproto.TunnelPortHi)
 	}
 	host := proxy.IntOr(env, "host_port", 0)
 	if host < 0 || host > 65535 {
@@ -116,7 +116,7 @@ func (Service) Normalize(name string, env map[string]any) ([]string, error) {
 		if host == 0 {
 			host = port
 		}
-		return []string{fmt.Sprintf("%s passes bytes unchanged: a browser that opens 127.0.0.1:%d sends it your gero web session "+
+		return []string{fmt.Sprintf("%s passes bytes unchanged: a browser that opens 127.0.0.1:%d sends it your psps web session "+
 			"(a browser's cookies are not per port), which the isolation's agents can then read; use --mode http for anything a browser opens",
 			name, host)}, nil
 	}
@@ -183,7 +183,7 @@ func Describe(f proxy.Forward) string {
 // Hostname is an http forward's own name on the Mac. A browser keeps
 // cookies by name, not port: under a name of its own, what the isolation
 // serves gets none of 127.0.0.1's or localhost's (other programs' on the
-// Mac, gero's, other forwards'), and what it sets reaches none of them.
+// Mac, psps's, other forwards'), and what it sets reaches none of them.
 // Browsers and macOS resolve every name under localhost to the loopback.
 func Hostname(env string) string {
 	l := strings.Trim(strings.ReplaceAll(strings.ToLower(env), "_", "-"), "-")
@@ -202,7 +202,7 @@ func URL(f proxy.Forward) string {
 	return fmt.Sprintf("127.0.0.1:%d", f.HostPort)
 }
 
-// Refusals: none it makes itself; `gero iso verify` measures the listeners.
+// Refusals: none it makes itself; `psps iso verify` measures the listeners.
 func (Service) Refusals(proxy.View) []proxy.Refusal { return nil }
 
 func (Service) New(proxy.Host) proxy.Instance { return noInstance{} }

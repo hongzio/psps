@@ -5,7 +5,7 @@ import (
 	"errors"
 	"time"
 
-	"github.com/hongzio/gero/internal/driver"
+	"github.com/hongzio/psps/internal/driver"
 )
 
 // An Account is an agent CLI credential defined once and used by any

@@ -92,7 +92,7 @@ func TestHostCheckAndHeaders(t *testing.T) {
 		t.Fatalf("foreign Host: %d", w.Code)
 	}
 	w := do(h, "GET", "/", func(r *http.Request) { r.Host = "mini.example.ts.net" })
-	if w.Code != http.StatusOK || !strings.Contains(w.Body.String(), "<title>gero</title>") {
+	if w.Code != http.StatusOK || !strings.Contains(w.Body.String(), "<title>psps</title>") {
 		t.Fatalf("index via ts.net: %d", w.Code)
 	}
 	if csp := w.Header().Get("Content-Security-Policy"); !strings.Contains(csp, "script-src 'self'") {

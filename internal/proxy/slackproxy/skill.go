@@ -5,15 +5,15 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/hongzio/gero/internal/proxy"
+	"github.com/hongzio/psps/internal/proxy"
 )
 
 // Config cannot express why a refusal happened, or that it is final; the
 // skill does.
 
 const skillTemplate = `---
-name: gero-slack
-description: How Slack access works inside this gero isolation. Use when a Slack
+name: psps-slack
+description: How Slack access works inside this psps isolation. Use when a Slack
   List (slackLists.items.*), a channel message or a file attached to one needs
   reading, or when a call to the local Slack proxy is refused.
 ---
@@ -69,7 +69,7 @@ another env for one command is a key swap:
 
 - A refusal naming a family or a channel — outside this env's boundary. That is
   the operator's decision, not a fault to retry or route around; the refusal
-  names the exact ` + "`gero env edit slack ...`" + ` command that would open it, so report
+  names the exact ` + "`psps env edit slack ...`" + ` command that would open it, so report
   that instead of looking for another path.
 - A refusal naming a method — writes and everything else in the Web API do not
   exist from here, for any environment.

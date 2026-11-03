@@ -5,8 +5,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/hongzio/gero/internal/proxy"
-	"github.com/hongzio/gero/internal/store"
+	"github.com/hongzio/psps/internal/proxy"
+	"github.com/hongzio/psps/internal/store"
 )
 
 // Past ten names the skill says how many and where they are listed, while

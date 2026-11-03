@@ -14,11 +14,11 @@ import (
 	"net/url"
 	"strings"
 
-	"github.com/hongzio/gero/internal/api"
-	"github.com/hongzio/gero/internal/driver"
-	"github.com/hongzio/gero/internal/event"
-	"github.com/hongzio/gero/internal/proxy"
-	"github.com/hongzio/gero/internal/store"
+	"github.com/hongzio/psps/internal/api"
+	"github.com/hongzio/psps/internal/driver"
+	"github.com/hongzio/psps/internal/event"
+	"github.com/hongzio/psps/internal/proxy"
+	"github.com/hongzio/psps/internal/store"
 )
 
 type Client struct {
@@ -42,7 +42,7 @@ func (c *Client) do(ctx context.Context, method, path string, in, out any) error
 		}
 		body = bytes.NewReader(b)
 	}
-	req, err := http.NewRequestWithContext(ctx, method, "http://gero"+path, body)
+	req, err := http.NewRequestWithContext(ctx, method, "http://psps"+path, body)
 	if err != nil {
 		return err
 	}
@@ -200,8 +200,8 @@ func (c *Client) CreateAgent(ctx context.Context, req api.CreateAgent) (api.Agen
 	return v, c.do(ctx, "POST", "/v1/agents", req, &v)
 }
 
-// Send sends text to the agent, or, when it is one of gero's commands, has
-// gero do it: Done says what it did.
+// Send sends text to the agent, or, when it is one of psps's commands, has
+// psps do it: Done says what it did.
 func (c *Client) Send(ctx context.Context, id, text string) (api.Sent, error) {
 	var v api.Sent
 	return v, c.do(ctx, "POST", "/v1/agents/"+url.PathEscape(id)+"/messages", api.Message{Text: text}, &v)
@@ -376,7 +376,7 @@ func (c *Client) Follow(ctx context.Context, id string, after int64, fn func(eve
 	if id != "" {
 		path = fmt.Sprintf("/v1/agents/%s/events?follow=1&after=%d", url.PathEscape(id), after)
 	}
-	req, err := http.NewRequestWithContext(ctx, "GET", "http://gero"+path, nil)
+	req, err := http.NewRequestWithContext(ctx, "GET", "http://psps"+path, nil)
 	if err != nil {
 		return err
 	}

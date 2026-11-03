@@ -13,8 +13,8 @@
 //     on the Mac everything is the user's. What runs from that folder on
 //     the Mac (hooks, scripts, a Makefile) is then the agents' to write.
 //   - only a folder inside the home folder, and never the home folder, a
-//     dot folder of it (ssh, aws and gero's own keys live there), Library,
-//     or gero's own directories. Desktop, Documents and Downloads are
+//     dot folder of it (ssh, aws and psps's own keys live there), Library,
+//     or psps's own directories. Desktop, Documents and Downloads are
 //     refused too: macOS keeps the container runtime out of them, and the
 //     VM would not start (measured: "Operation not permitted").
 //
@@ -37,11 +37,11 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/hongzio/gero/internal/creds"
-	"github.com/hongzio/gero/internal/isolation"
-	"github.com/hongzio/gero/internal/paths"
-	"github.com/hongzio/gero/internal/proxy"
-	"github.com/hongzio/gero/internal/store"
+	"github.com/hongzio/psps/internal/creds"
+	"github.com/hongzio/psps/internal/isolation"
+	"github.com/hongzio/psps/internal/paths"
+	"github.com/hongzio/psps/internal/proxy"
+	"github.com/hongzio/psps/internal/store"
 )
 
 const Name = "share"
@@ -53,7 +53,7 @@ type Env struct {
 }
 
 // Service is share. Home and Protected are what a folder is checked
-// against; empty, they are the user's home folder and gero's own
+// against; empty, they are the user's home folder and psps's own
 // directories.
 type Service struct {
 	Home      string
@@ -164,7 +164,7 @@ func (s Service) allowed(r string) error {
 	first := strings.Split(rel, "/")[0]
 	switch {
 	case strings.HasPrefix(first, "."):
-		return proxy.Deny("%s is in ~/%s: the dot folders of your home hold configuration and credentials (ssh, aws, gero's own), and are never shared", r, first)
+		return proxy.Deny("%s is in ~/%s: the dot folders of your home hold configuration and credentials (ssh, aws, psps's own), and are never shared", r, first)
 	case first == "library":
 		return proxy.Deny("%s is in ~/Library, which holds apps' data, keychains and iCloud Drive, and is never shared", r)
 	case first == "desktop", first == "documents", first == "downloads":
@@ -174,7 +174,7 @@ func (s Service) allowed(r string) error {
 	for _, p := range s.protected() {
 		lp := strings.ToLower(p)
 		if inside(low, lp) || inside(lp, low) {
-			return proxy.Deny("%s holds or is in gero's own %s, with its credentials and the daemon's state, and is never shared", r, p)
+			return proxy.Deny("%s holds or is in psps's own %s, with its credentials and the daemon's state, and is never shared", r, p)
 		}
 	}
 	return nil
@@ -244,7 +244,7 @@ func (s Service) Check(_ context.Context, name string, cfg json.RawMessage, _ *c
 	return fmt.Sprintf("%s: a folder of %d entr%s, shared %s at %s/%s", r, len(entries), map[bool]string{true: "y", false: "ies"}[len(entries) == 1], mode, isolation.SharedRoot, name), nil
 }
 
-// Refusals: none it makes itself; `gero iso verify` measures the mounts.
+// Refusals: none it makes itself; `psps iso verify` measures the mounts.
 func (Service) Refusals(proxy.View) []proxy.Refusal { return nil }
 
 func (Service) New(proxy.Host) proxy.Instance { return noInstance{} }

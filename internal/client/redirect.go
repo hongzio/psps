@@ -24,7 +24,7 @@ func CatchRedirect() (redirect string, got <-chan string, stop func(), err error
 			return
 		}
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
-		fmt.Fprint(w, "<!doctype html><meta charset=utf-8><title>gero</title><p>gero received the login; gero says whether it worked. This tab can close.</p>")
+		fmt.Fprint(w, "<!doctype html><meta charset=utf-8><title>psps</title><p>psps received the login; psps says whether it worked. This tab can close.</p>")
 		select {
 		case ch <- "?" + r.URL.RawQuery:
 		default:

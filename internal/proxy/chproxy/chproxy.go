@@ -52,9 +52,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/hongzio/gero/internal/creds"
-	"github.com/hongzio/gero/internal/proxy"
-	"github.com/hongzio/gero/internal/store"
+	"github.com/hongzio/psps/internal/creds"
+	"github.com/hongzio/psps/internal/proxy"
+	"github.com/hongzio/psps/internal/store"
 )
 
 const (
@@ -341,7 +341,7 @@ func (in *instance) refuse(w http.ResponseWriter, r *http.Request, status int, r
 	w.Header().Set("Connection", "close")
 	// Plain text, the shape ClickHouse's own errors take: drivers surface
 	// the body as the exception message.
-	proxy.Refuse(w, status, "gero clickhouse proxy: "+reason)
+	proxy.Refuse(w, status, "psps clickhouse proxy: "+reason)
 	in.logf("DENY %s %s: %s", r.Method, r.RequestURI, reason)
 }
 
@@ -358,7 +358,7 @@ func (in *instance) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if !v.Enabled {
-		in.refuse(w, r, 503, fmt.Sprintf("the clickhouse proxy is off for isolation %s; the operator turns it on with `gero iso expose %s clickhouse <env>`", in.h.Name(), in.h.Name()), 0)
+		in.refuse(w, r, 503, fmt.Sprintf("the clickhouse proxy is off for isolation %s; the operator turns it on with `psps iso expose %s clickhouse <env>`", in.h.Name(), in.h.Name()), 0)
 		return
 	}
 	presented := r.Header.Get("X-ClickHouse-Key")
@@ -389,7 +389,7 @@ func (in *instance) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	e, ok := envs[name]
 	if !ok {
-		in.refuse(w, r, 503, fmt.Sprintf("environment %q was removed from gero's registry but is still exposed here; the operator re-exposes with `gero iso expose %s clickhouse ...`", name, in.h.Name()), 0)
+		in.refuse(w, r, 503, fmt.Sprintf("environment %q was removed from psps's registry but is still exposed here; the operator re-exposes with `psps iso expose %s clickhouse ...`", name, in.h.Name()), 0)
 		return
 	}
 	login, err := in.h.Creds.Read("clickhouse", name)
@@ -449,7 +449,7 @@ func (s Service) Check(ctx context.Context, name string, cfg json.RawMessage, c 
 		return "", err
 	}
 	if e.Host == "" {
-		return "", fmt.Errorf("environment %q has no host; run `gero env edit clickhouse %s --host ...`", name, name)
+		return "", fmt.Errorf("environment %q has no host; run `psps env edit clickhouse %s --host ...`", name, name)
 	}
 	login, err := c.Read("clickhouse", name)
 	if err != nil {

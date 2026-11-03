@@ -6,8 +6,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/hongzio/gero/internal/event"
-	"github.com/hongzio/gero/internal/shimproto"
+	"github.com/hongzio/psps/internal/event"
+	"github.com/hongzio/psps/internal/shimproto"
 )
 
 // startedAs is a started record for the command the driver asked for, as

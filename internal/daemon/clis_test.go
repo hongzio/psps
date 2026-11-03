@@ -10,10 +10,10 @@ import (
 	"testing"
 	"time"
 
-	"github.com/hongzio/gero/internal/api"
-	"github.com/hongzio/gero/internal/driver"
-	"github.com/hongzio/gero/internal/event"
-	"github.com/hongzio/gero/internal/isolation"
+	"github.com/hongzio/psps/internal/api"
+	"github.com/hongzio/psps/internal/driver"
+	"github.com/hongzio/psps/internal/event"
+	"github.com/hongzio/psps/internal/isolation"
 )
 
 // The agent CLIs as their login commands behave with no terminal, as seen
@@ -51,7 +51,7 @@ case "$1 $2" in
   while [ ! -f "$HOME/approved" ]; do sleep 0.05; done
   echo "Logged in using ChatGPT" > "$c/auth.json"; echo "Successfully logged in" ;;
 "logout ") rm -f "$c/auth.json"; echo "Successfully logged out" ;;
-*) GERO_FAKE_CODEX=1 exec "$GERO_TEST_EXE" "$@" ;;
+*) PSPS_FAKE_CODEX=1 exec "$PSPS_TEST_EXE" "$@" ;;
 esac
 `
 
@@ -62,7 +62,7 @@ func cliEnv(t *testing.T) (*testEnv, *Manager, string) {
 	e := newTestEnv(t)
 	bin := t.TempDir()
 	exe, _ := os.Executable()
-	t.Setenv("GERO_TEST_EXE", exe)
+	t.Setenv("PSPS_TEST_EXE", exe)
 	for name, script := range map[string]string{"claude": fakeClaudeCLI, "codex": fakeCodexCLI, "timeout": "#!/bin/sh\nshift\nexec \"$@\"\n"} {
 		if err := os.WriteFile(filepath.Join(bin, name), []byte(script), 0o755); err != nil {
 			t.Fatal(err)

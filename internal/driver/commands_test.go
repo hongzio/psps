@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/hongzio/gero/internal/event"
+	"github.com/hongzio/psps/internal/event"
 )
 
 func names(cs []Command) []string {
@@ -36,13 +36,13 @@ func TestClaudeIsAskedForItsCommands(t *testing.T) {
 		t.Fatalf("asked again: %s", again)
 	}
 	d.Observe(tp.out(`{"type":"system","subtype":"init","session_id":"s1","terminal_slash_commands":["doctor"]}`))
-	d.Observe(tp.out(`{"type":"control_response","response":{"subtype":"success","request_id":"gero-init-1","response":{` +
+	d.Observe(tp.out(`{"type":"control_response","response":{"subtype":"success","request_id":"psps-init-1","response":{` +
 		`"commands":[{"name":"compact","description":"Free up context","argumentHint":"<instructions>"},` +
 		`{"name":"model","description":"Set the model"},{"name":"clear"},{"name":"doctor"},{"name":"__internal"},` +
 		`{"name":"grill-me","description":"Interview me (user)","argumentHint":""}],` +
 		`"models":[{"value":"opus","displayName":"Opus","description":"Opus 5.5"},{"value":"haiku","displayName":"Haiku"}]}}}`))
-	// The answer to anything else gero asked is not one.
-	d.Observe(tp.out(`{"type":"control_response","response":{"subtype":"success","request_id":"gero-1-1","response":{"commands":[]}}}`))
+	// The answer to anything else psps asked is not one.
+	d.Observe(tp.out(`{"type":"control_response","response":{"subtype":"success","request_id":"psps-1-1","response":{"commands":[]}}}`))
 
 	want := []Command{
 		{Prefix: "/", Name: "compact", Description: "Free up context", Hint: "<instructions>"},
@@ -68,7 +68,7 @@ func TestClaudeIsAskedForItsCommands(t *testing.T) {
 	// A new process is asked afresh, and keeps the last answer meanwhile.
 	d.Observe(tp.exited(0))
 	d.Observe(tp.started())
-	if lines := d.Next(); len(lines) != 1 || !strings.Contains(string(lines[0]), `"gero-init-2"`) {
+	if lines := d.Next(); len(lines) != 1 || !strings.Contains(string(lines[0]), `"psps-init-2"`) {
 		t.Fatalf("Next = %s", lines)
 	}
 	if len(d.Commands()) != 2 {

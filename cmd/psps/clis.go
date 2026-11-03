@@ -9,8 +9,8 @@ import (
 	"text/tabwriter"
 	"time"
 
-	"github.com/hongzio/gero/internal/api"
-	"github.com/hongzio/gero/internal/client"
+	"github.com/hongzio/psps/internal/api"
+	"github.com/hongzio/psps/internal/client"
 )
 
 // printCLIs is each agent CLI's login in the isolation, as its agents find

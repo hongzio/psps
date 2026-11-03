@@ -5,8 +5,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/hongzio/gero/internal/proxy"
-	"github.com/hongzio/gero/internal/store"
+	"github.com/hongzio/psps/internal/proxy"
+	"github.com/hongzio/psps/internal/store"
 )
 
 // Ported from isolate's test_datadog_skill.py. The skill is the agent's
@@ -66,7 +66,7 @@ func TestTheOldBlanketRefusalIsGone(t *testing.T) {
 
 func TestTheRefusalSectionNamesTheWideningFlags(t *testing.T) {
 	b := body(t)
-	if !strings.Contains(b, "gero env edit datadog <env> --allow-write <family>") || !strings.Contains(b, "gero env edit datadog <env> --allow-api <family>") {
+	if !strings.Contains(b, "psps env edit datadog <env> --allow-write <family>") || !strings.Contains(b, "psps env edit datadog <env> --allow-api <family>") {
 		t.Fatal(b)
 	}
 }

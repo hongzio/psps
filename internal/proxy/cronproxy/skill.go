@@ -4,34 +4,34 @@ package cronproxy
 // what its message should hold; the skill does.
 
 const skill = `---
-name: gero-cron
-description: How to schedule a message to yourself with gero (a cron), and
-  what a message that starts with "[gero cron" is. Use when asked to do
+name: psps-cron
+description: How to schedule a message to yourself with psps (a cron), and
+  what a message that starts with "[psps cron" is. Use when asked to do
   something on a schedule, every so often, later at a set time, or to keep
   checking on something (CI, a deploy, a long job), or to see, change or stop
   such a schedule. Claude Code's own CronCreate, ScheduleWakeup and /loop live
-  in this process, which gero may replace; this does not.
+  in this process, which psps may replace; this does not.
 ---
 
 # Crons of your own
 
-A cron is a message gero sends you on a schedule, as a turn of its own, when
+A cron is a message psps sends you on a schedule, as a turn of its own, when
 you are idle. Your operator can set them too; you can set your own through
-GERO_CRON_URL, your own address at gero. It carries a token that names you:
+PSPS_CRON_URL, your own address at psps. It carries a token that names you:
 use it as it is, and do not pass it on.
 
 Why not Claude Code's own CronCreate, ScheduleWakeup or /loop: they live in
-this process. gero keeps the process from turn to turn, but replaces it (the
+this process. psps keeps the process from turn to turn, but replaces it (the
 conversation resumed, nothing of it lost) when the operator changes its
 settings or the isolation's services, when the conversation is rewound, and
 when the isolation restarts; what was scheduled inside it ends then, at a time
-nobody can tell in advance. A gero cron is kept by gero, outside the process.
-For a change of services gero waits until nothing you started runs in the
+nobody can tell in advance. A psps cron is kept by psps, outside the process.
+For a change of services psps waits until nothing you started runs in the
 background; for the rest it does not, so a background task can end with it too.
 
 A cron's message starts with a line like
 
-    [gero cron #3, on schedule "@every 1h". You set this message ...]
+    [psps cron #3, on schedule "@every 1h". You set this message ...]
 
 and the rest is what was written when it was set. Whoever reads it then is
 you, without this conversation's context, so write the message the way you
@@ -40,11 +40,11 @@ would brief a colleague: what to do, where, and when to stop.
 Your crons (JSON: the Mac's time zone, and each cron's id, schedule, prompt,
 if_busy, once, enabled, next_at, last_result, and self, true for those you set):
 
-    curl -sS "$GERO_CRON_URL"
+    curl -sS "$PSPS_CRON_URL"
 
 Set one:
 
-    curl -sS "$GERO_CRON_URL" --data-binary @- <<'JSON'
+    curl -sS "$PSPS_CRON_URL" --data-binary @- <<'JSON'
     {"schedule": "*/30 9-18 * * 1-5",
      "prompt": "Check CI on main in ~/work/app (gh run list -b main -L 3). If it is red, find out why and fix it. When it has been green three times in a row, stop this cron.",
      "if_busy": "skip"}
@@ -63,12 +63,12 @@ Set one:
 
 Once, at 14:30 on November 3:
 
-    curl -sS "$GERO_CRON_URL" --data-binary '{"schedule": "30 14 3 11 *", "once": true, "prompt": "..."}'
+    curl -sS "$PSPS_CRON_URL" --data-binary '{"schedule": "30 14 3 11 *", "once": true, "prompt": "..."}'
 
 Change one you set (any of schedule, prompt, if_busy, once, enabled), or remove it:
 
-    curl -sS -X PATCH "$GERO_CRON_URL/3" --data-binary '{"enabled": false}'
-    curl -sS -X DELETE "$GERO_CRON_URL/3"
+    curl -sS -X PATCH "$PSPS_CRON_URL/3" --data-binary '{"enabled": false}'
+    curl -sS -X DELETE "$PSPS_CRON_URL/3"
 
 - Set a cron only when you were asked to, or the work plainly needs coming
   back to. Every run costs a turn, and runs go on while nobody watches.
@@ -77,14 +77,14 @@ Change one you set (any of schedule, prompt, if_busy, once, enabled), or remove 
   come again a year on.
 - The crons your operator set are theirs: you see them, and only they change
   or remove them.
-- These are crons on yourself. To set one on another agent, use gero's control
-  service (the gero-control skill), if this isolation has it.
+- These are crons on yourself. To set one on another agent, use psps's control
+  service (the psps-control skill), if this isolation has it.
 
 ## When it is refused
 
-The refusal says why, in a sentence: a schedule gero does not read or that
+The refusal says why, in a sentence: a schedule psps does not read or that
 comes more often than every five minutes, twenty crons of your own already,
 a cron of your operator's, or an isolation whose operator has not turned crons
-on (` + "`gero iso expose <isolation> cron`" + `). Report the last rather than
+on (` + "`psps iso expose <isolation> cron`" + `). Report the last rather than
 looking for another way.
 `

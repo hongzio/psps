@@ -11,10 +11,11 @@ import (
 	"strings"
 	"unicode/utf8"
 
-	"github.com/hongzio/gero/internal/api"
-	"github.com/hongzio/gero/internal/driver"
-	"github.com/hongzio/gero/internal/proxy/teamproxy"
-	"github.com/hongzio/gero/internal/store"
+	"github.com/hongzio/psps/internal/api"
+	"github.com/hongzio/psps/internal/driver"
+	"github.com/hongzio/psps/internal/proxy"
+	"github.com/hongzio/psps/internal/proxy/teamproxy"
+	"github.com/hongzio/psps/internal/store"
 )
 
 // The team service (internal/proxy/teamproxy): a lead's own address for
@@ -45,7 +46,7 @@ func (m *Manager) teamEnv(a store.Agent) []string {
 		m.log.Printf("agent %s: team token: %v", a.ID, err)
 		return nil
 	}
-	return []string{"GERO_TEAM_URL=" + teamproxy.URL(tok)}
+	return proxy.AgentEnv("TEAM_URL", teamproxy.URL(tok))
 }
 
 // teamRoutes adds the leads' teams to isolation iso's mail port. Nothing
@@ -175,15 +176,15 @@ func (m *Manager) teamLead(iso, tok string) (store.Agent, store.Lead, error) {
 	}
 	name := m.isoName(iso)
 	if !on {
-		return store.Agent{}, store.Lead{}, httpError{http.StatusForbidden, fmt.Errorf("team: isolation %s has no teams; the operator turns them on with `gero iso expose %s team`", name, name)}
+		return store.Agent{}, store.Lead{}, httpError{http.StatusForbidden, fmt.Errorf("team: isolation %s has no teams; the operator turns them on with `psps iso expose %s team`", name, name)}
 	}
 	a, err := m.store.AgentByMailToken(tok)
 	if err != nil || a.IsolationID != iso || a.ArchivedAt != nil {
-		return store.Agent{}, store.Lead{}, httpError{http.StatusForbidden, fmt.Errorf("team: this is not the address of an agent in isolation %s; use $GERO_TEAM_URL as your process was started with it", name)}
+		return store.Agent{}, store.Lead{}, httpError{http.StatusForbidden, fmt.Errorf("team: this is not the address of an agent in isolation %s; use $PSPS_TEAM_URL as your process was started with it", name)}
 	}
 	l, err := m.store.LeadOfLine(cmp.Or(a.Line, a.ID))
 	if errors.Is(err, store.ErrNotFound) {
-		return a, l, httpError{http.StatusForbidden, errors.New("team: you lead no team; the operator makes an agent a team's lead with `gero team lead TEAM AGENT`")}
+		return a, l, httpError{http.StatusForbidden, errors.New("team: you lead no team; the operator makes an agent a team's lead with `psps team lead TEAM AGENT`")}
 	}
 	return a, l, err
 }
@@ -192,7 +193,7 @@ func (m *Manager) teamLead(iso, tok string) (store.Agent, store.Lead, error) {
 func (m *Manager) leadsAgent(l store.Lead, id string, live bool) (store.Agent, error) {
 	a, err := m.storedAgent(id)
 	if err != nil || a.MadeBy != l.Line {
-		return store.Agent{}, fmt.Errorf("team: no agent of yours is %s (GET $GERO_TEAM_URL lists them): %w", id, store.ErrNotFound)
+		return store.Agent{}, fmt.Errorf("team: no agent of yours is %s (GET $PSPS_TEAM_URL lists them): %w", id, store.ErrNotFound)
 	}
 	if live && a.ArchivedAt != nil {
 		return a, httpError{http.StatusConflict, fmt.Errorf("team: %s is archived", shownID(a))}
@@ -235,7 +236,7 @@ func (m *Manager) leadMake(ctx context.Context, lead store.Agent, l store.Lead, 
 		return api.TeamAgent{}, badRequest(fmt.Errorf("team: a turn's limit is 1 to %d minutes, not %d", 24*60, turn))
 	}
 	if l.Stopped != "" {
-		return api.TeamAgent{}, httpError{http.StatusConflict, fmt.Errorf("team: gero stopped the run (%s); only your operator resumes it", l.Stopped)}
+		return api.TeamAgent{}, httpError{http.StatusConflict, fmt.Errorf("team: psps stopped the run (%s); only your operator resumes it", l.Stopped)}
 	}
 	agents, spent, err := m.spentNow()
 	if err != nil {
@@ -263,7 +264,7 @@ func (m *Manager) leadMake(ctx context.Context, lead store.Agent, l store.Lead, 
 	if err != nil {
 		return api.TeamAgent{}, err
 	}
-	header := fmt.Sprintf("[gero team: you are %q in team %q, an agent its lead %s made. Your operator may not be watching. When a turn of yours ends, gero gives your lead your last answer, so end each turn with what it needs: what you did, what you measured and how, what is unfinished, and where your notes are. A turn of yours may run %d minutes.]\n\n",
+	header := fmt.Sprintf("[psps team: you are %q in team %q, an agent its lead %s made. Your operator may not be watching. When a turn of yours ends, psps gives your lead your last answer, so end each turn with what it needs: what you did, what you measured and how, what is unfinished, and where your notes are. A turn of yours may run %d minutes.]\n\n",
 		role, t.Name, shownID(lead), turn)
 	opts := driver.Options{Model: strings.TrimSpace(req.Model), Effort: strings.TrimSpace(req.Effort), Approvals: lead.Options.Approvals}
 	base := roleSlug(role)
@@ -290,7 +291,7 @@ func (m *Manager) leadSend(lead store.Agent, l store.Lead, id, text string) erro
 		return err
 	}
 	if l.Stopped != "" {
-		return httpError{http.StatusConflict, fmt.Errorf("team: gero stopped the run (%s); only your operator resumes it", l.Stopped)}
+		return httpError{http.StatusConflict, fmt.Errorf("team: psps stopped the run (%s); only your operator resumes it", l.Stopped)}
 	}
 	agents, spent, err := m.spentNow()
 	if err != nil {
@@ -299,7 +300,7 @@ func (m *Manager) leadSend(lead store.Agent, l store.Lead, id, text string) erro
 	if used := teamSpent(l, agents, spent).New(); overBudget(l, used) {
 		return httpError{http.StatusTooManyRequests, fmt.Errorf("team: the team has used its budget, %s of %s tokens", tokens(used), tokens(l.Settings.Budget))}
 	}
-	return m.Send(a.ID, fmt.Sprintf("[gero team: from your lead %s]\n\n%s", shownID(lead), text))
+	return m.Send(a.ID, fmt.Sprintf("[psps team: from your lead %s]\n\n%s", shownID(lead), text))
 }
 
 // roleSlug is a role as the start of an agent's ID.

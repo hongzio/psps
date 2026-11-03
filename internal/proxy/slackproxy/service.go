@@ -15,9 +15,9 @@ import (
 	"sync"
 	"time"
 
-	"github.com/hongzio/gero/internal/creds"
-	"github.com/hongzio/gero/internal/proxy"
-	"github.com/hongzio/gero/internal/store"
+	"github.com/hongzio/psps/internal/creds"
+	"github.com/hongzio/psps/internal/proxy"
+	"github.com/hongzio/psps/internal/store"
 )
 
 const (
@@ -60,7 +60,7 @@ func (Service) NormalizeSettings(map[string]any) error { return nil }
 
 func (Service) Normalize(name string, env map[string]any) ([]string, error) {
 	delete(env, "channels") // isolate's short-lived allowlist shape
-	// Made explicit on every add and edit, so `gero env ls` shows the
+	// Made explicit on every add and edit, so `psps env ls` shows the
 	// boundary rather than a default the reader must know.
 	families := DefaultFamilies
 	if _, ok := env["families"]; ok {
@@ -90,7 +90,7 @@ func (Service) Normalize(name string, env map[string]any) ([]string, error) {
 		}
 	}
 	if len(wide) > 0 && len(denied) == 0 {
-		return []string{fmt.Sprintf("env %q opens %s across every channel the token can see; carve exceptions with `gero env edit slack %s --deny-channel <id>`",
+		return []string{fmt.Sprintf("env %q opens %s across every channel the token can see; carve exceptions with `psps env edit slack %s --deny-channel <id>`",
 			name, strings.Join(wide, " and "), name)}, nil
 	}
 	return nil, nil
@@ -228,7 +228,7 @@ func (in *instance) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if !v.Enabled {
-		in.refuse(w, r, 503, fmt.Sprintf("slack: the slack proxy is off for isolation %s; the operator turns it on with `gero iso expose %s slack <env>`", in.h.Name(), in.h.Name()), 0)
+		in.refuse(w, r, 503, fmt.Sprintf("slack: the slack proxy is off for isolation %s; the operator turns it on with `psps iso expose %s slack <env>`", in.h.Name(), in.h.Name()), 0)
 		return
 	}
 	name := ResolveEnv(v.Tokens, v.Exposure.Envs, bearer(r.Header.Get("Authorization")))
@@ -253,7 +253,7 @@ func (in *instance) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	e, ok := envs[name]
 	if !ok {
-		in.refuse(w, r, 503, fmt.Sprintf("slack: environment %q was removed from gero's registry but is still exposed here; the operator re-exposes with `gero iso expose %s slack ...`", name, in.h.Name()), 0)
+		in.refuse(w, r, 503, fmt.Sprintf("slack: environment %q was removed from psps's registry but is still exposed here; the operator re-exposes with `psps iso expose %s slack ...`", name, in.h.Name()), 0)
 		return
 	}
 	if d := Allowed(e, name, method); d != nil {

@@ -14,13 +14,13 @@ import (
 	"testing"
 	"time"
 
-	"github.com/hongzio/gero/internal/api"
-	"github.com/hongzio/gero/internal/creds"
-	"github.com/hongzio/gero/internal/driver"
-	"github.com/hongzio/gero/internal/event"
-	"github.com/hongzio/gero/internal/proxy"
-	"github.com/hongzio/gero/internal/proxy/mailproxy"
-	"github.com/hongzio/gero/internal/store"
+	"github.com/hongzio/psps/internal/api"
+	"github.com/hongzio/psps/internal/creds"
+	"github.com/hongzio/psps/internal/driver"
+	"github.com/hongzio/psps/internal/event"
+	"github.com/hongzio/psps/internal/proxy"
+	"github.com/hongzio/psps/internal/proxy/mailproxy"
+	"github.com/hongzio/psps/internal/store"
 )
 
 // withMail gives the manager the mail service, turns it on for dev, and
@@ -99,7 +99,7 @@ func TestMailArrivesOnePerTurnWhenTheAgentIsIdle(t *testing.T) {
 	if len(got) != 1 || inbox(m, b.ID) != 2 {
 		t.Fatalf("delivered %q, %d waiting", got, inbox(m, b.ID))
 	}
-	want := "[gero mail #1 from agent alice in isolation dev. "
+	want := "[psps mail #1 from agent alice in isolation dev. "
 	if !strings.HasPrefix(got[0], want) || !strings.HasSuffix(got[0], "\n\nhang") {
 		t.Fatalf("the mail reads %q", got[0])
 	}
@@ -233,7 +233,7 @@ func TestAnAgentsOwnAddressReachesTheDaemonThroughTheTunnel(t *testing.T) {
 	req, _ := e.fc.lastSync()
 	var skill bool
 	for _, f := range req.Files {
-		skill = skill || strings.HasSuffix(f.Path, "gero-mail/SKILL.md")
+		skill = skill || strings.HasSuffix(f.Path, "psps-mail/SKILL.md")
 		if f.Path == EnvFile && strings.Contains(f.Content, tok) {
 			t.Fatal("an agent's address is in the file every shell reads")
 		}
@@ -285,7 +285,7 @@ func TestMailCrossesIsolationsOnlyWhereTheOperatorSaid(t *testing.T) {
 	}
 
 	code, out := send(t, m, a, "pat", "deploy it")
-	if code != http.StatusForbidden || !strings.Contains(out, "`gero iso expose dev mail --to prod`") {
+	if code != http.StatusForbidden || !strings.Contains(out, "`psps iso expose dev mail --to prod`") {
 		t.Fatalf("out of reach: %d %s", code, out)
 	}
 	x, err := m.Expose(ctx, "dev", "mail", api.Expose{Settings: proxy.Patch{Set: map[string]any{"to": []string{"prod"}}}})
@@ -371,12 +371,12 @@ func TestMailRefusesWhatItCannotDeliver(t *testing.T) {
 	a, _ := m.CreateAgent(ctx, api.CreateAgent{Isolation: "dev", Kind: driver.Codex, Handle: "alice"})
 	b, _ := m.CreateAgent(ctx, api.CreateAgent{Isolation: "dev", Kind: driver.Codex, Handle: "bob"})
 
-	if code, out := send(t, m, a, "bob", "hi"); code != http.StatusForbidden || !strings.Contains(out, "gero iso expose dev mail") {
+	if code, out := send(t, m, a, "bob", "hi"); code != http.StatusForbidden || !strings.Contains(out, "psps iso expose dev mail") {
 		t.Fatalf("mail off: %d %s", code, out)
 	}
 	m.Expose(ctx, "dev", "mail", api.Expose{})
 
-	// What `gero iso verify` tries.
+	// What `psps iso verify` tries.
 	for _, r := range (mailproxy.Service{}).Refusals(proxy.View{}) {
 		if code, out := mailAt(m, testIsoID, r.Method, r.Path, ""); code != r.Status || !strings.Contains(out, r.Want) {
 			t.Fatalf("%s: %d %s", r.What, code, out)

@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/hongzio/gero/internal/api"
+	"github.com/hongzio/psps/internal/api"
 )
 
 func TestVerifyExitsOnTheWorstIsolation(t *testing.T) {

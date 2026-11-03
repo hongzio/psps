@@ -8,11 +8,11 @@ import (
 	"testing"
 	"time"
 
-	"github.com/hongzio/gero/internal/api"
-	"github.com/hongzio/gero/internal/creds"
-	"github.com/hongzio/gero/internal/isolation"
-	"github.com/hongzio/gero/internal/proxy"
-	"github.com/hongzio/gero/internal/proxy/shareproxy"
+	"github.com/hongzio/psps/internal/api"
+	"github.com/hongzio/psps/internal/creds"
+	"github.com/hongzio/psps/internal/isolation"
+	"github.com/hongzio/psps/internal/proxy"
+	"github.com/hongzio/psps/internal/proxy/shareproxy"
 )
 
 // shareEnv is the test isolation with share as its one service, over a
@@ -76,7 +76,7 @@ func TestAShareIsMountedByReplacingTheContainer(t *testing.T) {
 	req, _ := e.fc.lastSync()
 	var skill string
 	for _, f := range req.Files {
-		if strings.HasSuffix(f.Path, "gero-share/SKILL.md") {
+		if strings.HasSuffix(f.Path, "psps-share/SKILL.md") {
 			skill = f.Content
 		}
 	}

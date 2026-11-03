@@ -16,7 +16,7 @@ import (
 
 	"gopkg.in/yaml.v3"
 
-	"github.com/hongzio/gero/internal/proxy"
+	"github.com/hongzio/psps/internal/proxy"
 )
 
 // A skill is a folder with SKILL.md at its top: YAML frontmatter between
@@ -66,15 +66,15 @@ func (s Skill) Size() int {
 var nameRE = regexp.MustCompile(`^[a-z0-9]+(-[a-z0-9]+)*$`)
 
 // CheckName is the Agent Skills rule for a name, which is also the folder's
-// name: lowercase letters, digits and single hyphens, up to 64. gero keeps
-// names starting with gero for its own skills, and Claude Code keeps
+// name: lowercase letters, digits and single hyphens, up to 64. psps keeps
+// names starting with psps for its own skills, and Claude Code keeps
 // anthropic-skills and synced.
 func CheckName(name string) error {
 	switch {
 	case len(name) > 64 || !nameRE.MatchString(name):
 		return proxy.Deny("%q is not a skill name: lowercase letters, digits and single hyphens, not at either end, up to 64", name)
-	case strings.HasPrefix(name, "gero"):
-		return proxy.Deny("%q: names starting with gero are kept for gero's own skills", name)
+	case strings.HasPrefix(name, "psps"):
+		return proxy.Deny("%q: names starting with psps are kept for psps's own skills", name)
 	case name == "synced", strings.HasPrefix(name, "anthropic-skills"):
 		return proxy.Deny("%q is a name Claude Code keeps for its own", name)
 	}

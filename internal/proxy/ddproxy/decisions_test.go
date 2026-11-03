@@ -10,8 +10,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/hongzio/gero/internal/creds"
-	"github.com/hongzio/gero/internal/proxy"
+	"github.com/hongzio/psps/internal/creds"
+	"github.com/hongzio/psps/internal/proxy"
 )
 
 // Ported from isolate's test_ddproxy.py: the boundaries the isolation
@@ -84,7 +84,7 @@ func TestAWrongOrEmptyTokenResolvesToNone(t *testing.T) {
 	if got := ResolveEnv(nil, nil, "tok-dev"); got != "" {
 		t.Fatalf("no envs resolved to %q", got)
 	}
-	// gero: an exposed env whose token was never minted must not match an
+	// psps: an exposed env whose token was never minted must not match an
 	// empty presented one.
 	if got := ResolveEnv(map[string]string{}, []string{"dev"}, ""); got != "" {
 		t.Fatalf("an unminted token matched: %q", got)
@@ -385,7 +385,7 @@ func TestTimeRefillsTheBucket(t *testing.T) {
 	}
 }
 
-// --- gero: an env as the CLI stores it ---
+// --- psps: an env as the CLI stores it ---
 
 func normalize(t *testing.T, env map[string]any) ([]string, error) {
 	t.Helper()

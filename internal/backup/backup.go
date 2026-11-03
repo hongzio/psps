@@ -1,12 +1,12 @@
-// Package backup saves what gero keeps on the Mac to one file and puts it
+// Package backup saves what psps keeps on the Mac to one file and puts it
 // back: the store, the settings, the credentials and skills, and the state
 // worth keeping (the web UI's token, a bastion's known hosts). It leaves out
 // what a daemon makes again (its socket, locks and log), and the
-// isolations' volumes, which live with container, not with gero.
+// isolations' volumes, which live with container, not with psps.
 //
 // The archive names nothing after where it came from: the store is
 // store.db and everything else is under config/, data/ or state/, relative
-// to those directories. A gero at other paths, or under another name,
+// to those directories. A psps at other paths, or under another name,
 // restores it into its own.
 package backup
 
@@ -24,8 +24,8 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/hongzio/gero/internal/paths"
-	"github.com/hongzio/gero/internal/store"
+	"github.com/hongzio/psps/internal/paths"
+	"github.com/hongzio/psps/internal/store"
 )
 
 // storeName is the store's name in an archive.
@@ -59,7 +59,7 @@ func kept(p paths.Paths, file string) bool {
 // may keep running meanwhile.
 func Write(w io.Writer, p paths.Paths) (Summary, error) {
 	var sum Summary
-	tmp, err := os.MkdirTemp("", "gero-backup")
+	tmp, err := os.MkdirTemp("", "psps-backup")
 	if err != nil {
 		return sum, err
 	}
@@ -134,7 +134,7 @@ func addFile(tw *tar.Writer, file, name string, sum *Summary) error {
 }
 
 // ErrRunning is a restore refused because a daemon holds p's lock.
-var ErrRunning = errors.New("a gero daemon is running; stop it first (gero daemon stop)")
+var ErrRunning = errors.New("a psps daemon is running; stop it first (psps daemon stop)")
 
 // ErrExists is a restore refused because p already has a store.
 var ErrExists = errors.New("there is a store here already; restoring over it replaces it")
@@ -175,7 +175,7 @@ func Restore(file string, p paths.Paths, force bool) (Summary, error) {
 		return sum, err
 	}
 	if _, ok := dests[storeName]; !ok {
-		return sum, fmt.Errorf("%s holds no %s: not a gero backup", file, storeName)
+		return sum, fmt.Errorf("%s holds no %s: not a psps backup", file, storeName)
 	}
 
 	err = entries(file, func(h *tar.Header, r io.Reader) error {

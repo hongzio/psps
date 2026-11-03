@@ -17,9 +17,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/hongzio/gero/internal/creds"
-	"github.com/hongzio/gero/internal/proxy"
-	"github.com/hongzio/gero/internal/store"
+	"github.com/hongzio/psps/internal/creds"
+	"github.com/hongzio/psps/internal/proxy"
+	"github.com/hongzio/psps/internal/store"
 )
 
 // Ported from isolate's test_notionproxy.py (the table, the refresh and the
@@ -132,7 +132,7 @@ func TestTheDefaultEnvReadsContentButNotUsers(t *testing.T) {
 
 func TestAWriteFamilyIsRefusedUntilNamed(t *testing.T) {
 	_, err := Allowed(Env{}, "main", "notion-create-pages")
-	if err == nil || !strings.Contains(err.Error(), "'pages' write family") || !strings.Contains(err.Error(), "gero env edit notion main --allow-api pages") {
+	if err == nil || !strings.Contains(err.Error(), "'pages' write family") || !strings.Contains(err.Error(), "psps env edit notion main --allow-api pages") {
 		t.Fatalf("%v", err)
 	}
 	if f, err := Allowed(fams("content", "pages"), "main", "notion-create-pages"); err != nil || f != "pages" {
@@ -410,7 +410,7 @@ func TestARevokedLoginNamesTheFix(t *testing.T) {
 	n, o, c := refreshSetup(t, nil)
 	n.token(400, `{"error": "invalid_grant"}`)
 	_, err := o.accessToken(t.Context(), c, "main", "")
-	if status(err) != 503 || !strings.Contains(err.Error(), "gero env secret notion main") {
+	if status(err) != 503 || !strings.Contains(err.Error(), "psps env secret notion main") {
 		t.Fatalf("%v", err)
 	}
 }
@@ -419,7 +419,7 @@ func TestNoLoginAtAllNamesTheFix(t *testing.T) {
 	n := newNotion(t)
 	o := oauth{issuer: n.srv.URL, transport: http.DefaultTransport, now: clock(1000)}
 	_, err := o.accessToken(t.Context(), &creds.Store{Path: filepath.Join(t.TempDir(), "credentials")}, "main", "")
-	if status(err) != 503 || !strings.Contains(err.Error(), "gero env secret notion main") {
+	if status(err) != 503 || !strings.Contains(err.Error(), "psps env secret notion main") {
 		t.Fatalf("%v", err)
 	}
 }
@@ -793,7 +793,7 @@ func TestALoginNotionKeepsRefusingIsA502NotA401(t *testing.T) {
 	h.n.answer(jsonAnswer(401, ``))
 	h.n.token(200, `{"access_token": "new-access"}`)
 	code, m, hdr := h.rpc(call("notion-search"), nil)
-	if code != 502 || !strings.Contains(errMessage(m), "gero env secret notion main") || hdr.Get("WWW-Authenticate") != "" {
+	if code != 502 || !strings.Contains(errMessage(m), "psps env secret notion main") || hdr.Get("WWW-Authenticate") != "" {
 		t.Fatalf("%d %v %v", code, m, hdr)
 	}
 }
@@ -802,7 +802,7 @@ func TestAMissingLoginIsA503ThatNamesTheFix(t *testing.T) {
 	h := newHarness(t)
 	h.c.Write("notion", "main", map[string]string{})
 	code, m, _ := h.rpc(call("notion-search"), nil)
-	if code != 503 || !strings.Contains(errMessage(m), "gero env secret notion main") || len(h.n.seen()) != 0 {
+	if code != 503 || !strings.Contains(errMessage(m), "psps env secret notion main") || len(h.n.seen()) != 0 {
 		t.Fatalf("%d %v", code, m)
 	}
 }
@@ -855,7 +855,7 @@ func TestAnIsolationWithoutTheServiceIsToldHowToGetIt(t *testing.T) {
 	h.view.Enabled = false
 	h.mu.Unlock()
 	code, m, _ := h.rpc(msg("ping", nil), nil)
-	if code != 503 || !strings.Contains(errMessage(m), "gero iso expose work notion") {
+	if code != 503 || !strings.Contains(errMessage(m), "psps iso expose work notion") {
 		t.Fatalf("%d %v", code, m)
 	}
 }

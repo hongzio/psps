@@ -6,8 +6,8 @@ import (
 
 	"github.com/charmbracelet/lipgloss"
 
-	"github.com/hongzio/gero/internal/event"
-	"github.com/hongzio/gero/internal/proxy/mailproxy"
+	"github.com/hongzio/psps/internal/event"
+	"github.com/hongzio/psps/internal/proxy/mailproxy"
 )
 
 // A conversation is the agent's events folded into what a person reads:
@@ -213,7 +213,7 @@ func (c *convo) pending() []*event.Approval {
 }
 
 // voidApprovals clears approvals a dead process can no longer receive.
-// gero's own (ssm) are the daemon's to hold, not the process's.
+// psps's own (ssm) are the daemon's to hold, not the process's.
 func (c *convo) voidApprovals() {
 	for _, a := range c.pending() {
 		if a.Kind != "ssm" {

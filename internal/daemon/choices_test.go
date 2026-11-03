@@ -9,10 +9,10 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/hongzio/gero/internal/api"
-	"github.com/hongzio/gero/internal/creds"
-	"github.com/hongzio/gero/internal/proxy"
-	"github.com/hongzio/gero/internal/proxy/gitproxy"
+	"github.com/hongzio/psps/internal/api"
+	"github.com/hongzio/psps/internal/creds"
+	"github.com/hongzio/psps/internal/proxy"
+	"github.com/hongzio/psps/internal/proxy/gitproxy"
 )
 
 func TestChoicesAreLookedUpWithTheTypedOrStoredCredential(t *testing.T) {

@@ -4,7 +4,7 @@ import (
 	"reflect"
 	"testing"
 
-	"github.com/hongzio/gero/internal/proxy/gitproxy"
+	"github.com/hongzio/psps/internal/proxy/gitproxy"
 )
 
 func TestFlagsBecomeAPatchOfOnlyWhatWasGiven(t *testing.T) {

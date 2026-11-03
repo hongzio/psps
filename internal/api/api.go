@@ -5,14 +5,14 @@ package api
 import (
 	"time"
 
-	"github.com/hongzio/gero/internal/driver"
-	"github.com/hongzio/gero/internal/event"
-	"github.com/hongzio/gero/internal/proxy"
-	"github.com/hongzio/gero/internal/store"
+	"github.com/hongzio/psps/internal/driver"
+	"github.com/hongzio/psps/internal/event"
+	"github.com/hongzio/psps/internal/proxy"
+	"github.com/hongzio/psps/internal/store"
 )
 
-// Version is the release this gero was built as, set by the build with
-// -ldflags "-X github.com/hongzio/gero/internal/api.Version=0.1.0" (the
+// Version is the release this psps was built as, set by the build with
+// -ldflags "-X github.com/hongzio/psps/internal/api.Version=0.1.0" (the
 // Homebrew formula does); any other build is "dev".
 var Version = "dev"
 
@@ -68,7 +68,7 @@ type CreateIsolation struct {
 // and start again on their next message; sessions and workspaces are kept.
 // A new swap is turned on in the running VM, but the first one an
 // isolation gets replaces the container too: swapon needs a capability
-// gero gives only a container with swap.
+// psps gives only a container with swap.
 type UpdateIsolation struct {
 	Name   string  `json:"name,omitempty"`
 	CPUs   *int    `json:"cpus,omitempty"`
@@ -142,7 +142,7 @@ type PutTeam struct {
 
 // PutLead makes an agent its team's lead, or sets its terms; a term left
 // out keeps what it was, or its default. Setting it again resumes a run
-// gero stopped.
+// psps stopped.
 type PutLead struct {
 	Agent       string  `json:"agent"`
 	Budget      *int64  `json:"budget,omitempty"`
@@ -262,7 +262,7 @@ type Cleared struct {
 type UpdateAgent struct {
 	Name *string `json:"name,omitempty"`
 	// Handle is the agent's own ID, unique among all agents; "" takes it
-	// away, leaving the key gero gave it.
+	// away, leaving the key psps gave it.
 	Handle *string `json:"handle,omitempty"`
 	// Parked parks an idle agent: it needs no look until it does something
 	// again, which takes it out of being parked.
@@ -303,7 +303,7 @@ type Message struct {
 }
 
 // Sent is what came of a message. Done, for a message that was one of
-// gero's commands, is what gero did instead of sending it; Agent, after
+// psps's commands, is what psps did instead of sending it; Agent, after
 // /new, is the key of the agent that took its place.
 type Sent struct {
 	Done  string `json:"done,omitempty"`
@@ -311,15 +311,15 @@ type Sent struct {
 }
 
 // Commands are what may be typed in a message to an agent, for a message
-// box to offer: gero's own first, then its CLI's.
+// box to offer: psps's own first, then its CLI's.
 type Commands struct {
 	Commands []Command `json:"commands"`
 }
 
 type Command struct {
 	driver.Command
-	// Gero: gero does it itself, and the agent is not sent it.
-	Gero bool `json:"gero,omitempty"`
+	// Psps: psps does it itself, and the agent is not sent it.
+	Psps bool `json:"psps,omitempty"`
 }
 
 // Files are the files in an agent's workspace, by their paths in it, for
@@ -421,7 +421,7 @@ type Service struct {
 	Ports    []int         `json:"ports"`
 	Fields   []proxy.Field `json:"fields"`
 	Settings []proxy.Field `json:"settings"`
-	// Secrets are the credential fields `gero env secret` asks for; Login
+	// Secrets are the credential fields `psps env secret` asks for; Login
 	// means a browser login writes them instead.
 	Secrets []string `json:"secrets,omitempty"`
 	Login   bool     `json:"login,omitempty"`
@@ -513,19 +513,19 @@ type VerifyCheck struct {
 	Detail   string `json:"detail,omitempty"`
 }
 
-// Killed is `gero iso kill`: the Mac's processes that ended an isolation's
+// Killed is `psps iso kill`: the Mac's processes that ended an isolation's
 // container, its runtime helper and its VM; none when it was not running.
 type Killed struct {
 	Processes []int `json:"processes"`
 }
 
-// Verify is `gero iso verify`: an isolation's guarantees, measured now.
+// Verify is `psps iso verify`: an isolation's guarantees, measured now.
 type Verify struct {
 	Isolation string        `json:"isolation"`
 	Checks    []VerifyCheck `json:"checks"`
 }
 
-// Exit codes of `gero iso verify`, as isolate's.
+// Exit codes of `psps iso verify`, as isolate's.
 const (
 	VerifyOK        = 0
 	VerifyIsolation = 1

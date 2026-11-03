@@ -14,9 +14,9 @@ import (
 	"sync"
 	"time"
 
-	"github.com/hongzio/gero/internal/creds"
-	"github.com/hongzio/gero/internal/proxy"
-	"github.com/hongzio/gero/internal/store"
+	"github.com/hongzio/psps/internal/creds"
+	"github.com/hongzio/psps/internal/proxy"
+	"github.com/hongzio/psps/internal/store"
 )
 
 const (
@@ -101,7 +101,7 @@ func (Service) Fields() []proxy.Field {
 func (Service) Settings() []proxy.Field {
 	return []proxy.Field{
 		{Key: "ssm", Kind: proxy.String, Flag: "ssm", Metavar: "MODE", Choices: []string{SSMDirect, SSMStrict},
-			Help: "direct (default): the isolation's credentials open SSM sessions and commands on the allowlisted instances; strict: they open no SSM at all, and its agents ask gero to run each command, which you accept or decline in their conversation"},
+			Help: "direct (default): the isolation's credentials open SSM sessions and commands on the allowlisted instances; strict: they open no SSM at all, and its agents ask psps to run each command, which you accept or decline in their conversation"},
 	}
 }
 
@@ -281,7 +281,7 @@ func (in *instance) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if !v.Enabled {
-		msg := fmt.Sprintf("the AWS broker is off for isolation %s; the operator turns it on with `gero iso expose %s aws <env>`", in.h.Name(), in.h.Name())
+		msg := fmt.Sprintf("the AWS broker is off for isolation %s; the operator turns it on with `psps iso expose %s aws <env>`", in.h.Name(), in.h.Name())
 		send(w, 503, reason(msg))
 		in.logf("DENY %s: off", r.URL.Path)
 		return
@@ -311,7 +311,7 @@ func (in *instance) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	// An empty allowlist still answers, because "connection refused" teaches
 	// nothing while a 503 names the fix.
 	if len(e.Instances) == 0 && len(e.Buckets) == 0 {
-		msg := fmt.Sprintf("environment %q has an empty allowlist; the operator adds to it with `gero env edit aws %s --allow-instance i-...` or `--allow-bucket name`", name, name)
+		msg := fmt.Sprintf("environment %q has an empty allowlist; the operator adds to it with `psps env edit aws %s --allow-instance i-...` or `--allow-bucket name`", name, name)
 		send(w, 503, reason(msg))
 		in.logf("FAIL %s: %s", r.URL.Path, msg)
 		return
@@ -337,7 +337,7 @@ func (in *instance) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 func unknownEnv(name string, v proxy.View) string {
 	for _, m := range v.Missing {
 		if m == name {
-			return fmt.Sprintf("environment %q was removed from gero's registry but is still exposed here; the operator re-exposes with `gero iso expose %s aws ...`", name, v.Isolation)
+			return fmt.Sprintf("environment %q was removed from psps's registry but is still exposed here; the operator re-exposes with `psps iso expose %s aws ...`", name, v.Isolation)
 		}
 	}
 	have := make([]string, 0, len(v.Envs))
@@ -373,7 +373,7 @@ func (Service) Check(ctx context.Context, name string, cfg json.RawMessage, _ *c
 		return "", err
 	}
 	src := &Source{AWS: e.cli(), RoleARN: e.RoleARN, Profile: e.Profile, Bastion: e.Bastion,
-		SessionName: "gero-envcheck-" + name, Policy: policy.JSON()}
+		SessionName: "psps-envcheck-" + name, Policy: policy.JSON()}
 	if e.Bastion != "" {
 		// The bastion first, so a bastion that does not answer is told as
 		// that rather than as a role it could not assume.

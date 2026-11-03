@@ -13,10 +13,10 @@ import (
 	"sync"
 	"time"
 
-	"github.com/hongzio/gero/internal/api"
-	"github.com/hongzio/gero/internal/isolation"
-	"github.com/hongzio/gero/internal/proxy"
-	"github.com/hongzio/gero/internal/store"
+	"github.com/hongzio/psps/internal/api"
+	"github.com/hongzio/psps/internal/isolation"
+	"github.com/hongzio/psps/internal/proxy"
+	"github.com/hongzio/psps/internal/store"
 )
 
 // Verify measures an isolation's guarantees now, from inside it where they
@@ -151,7 +151,7 @@ func (m *Manager) verifyMounts(ctx context.Context, iso store.Isolation) []api.V
 	}
 	if len(bad) > 0 {
 		return []api.VerifyCheck{fail(check, api.SevIsolation, orNone(describeMounts(want)), strings.Join(bad, ", "),
-			"the isolation sees the Mac's files there, around every proxy; gero mounts only its shares, as shared, so something else created this container")}
+			"the isolation sees the Mac's files there, around every proxy; psps mounts only its shares, as shared, so something else created this container")}
 	}
 	got := "none"
 	if len(shown) > 0 {
@@ -247,18 +247,18 @@ func (m *Manager) verifyServices(ctx context.Context, iso store.Isolation) []api
 				switch got := reach.TCP[addr]; {
 				case !m.shimOpens(iso.ID, p):
 					cs = append(cs, fail(check, api.SevConfig, "open", "not offered",
-						fmt.Sprintf("the isolation's image predates this port; `gero iso upgrade %s` opens it", iso.Name)))
+						fmt.Sprintf("the isolation's image predates this port; `psps iso upgrade %s` opens it", iso.Name)))
 				case err != nil:
 					cs = append(cs, fail(check, api.SevConfig, "open", "not measured", err.Error()))
 				case got == "open":
 					cs = append(cs, pass(check, api.SevConfig, "open"))
 				default:
-					cs = append(cs, fail(check, api.SevConfig, "open", got, "the tunnel is not carrying this port; `gero iso ls` shows why"))
+					cs = append(cs, fail(check, api.SevConfig, "open", got, "the tunnel is not carrying this port; `psps iso ls` shows why"))
 				}
 			}
 			for _, n := range x.view.Missing {
 				cs = append(cs, fail(fmt.Sprintf("%s env %s defined", name, n), api.SevConfig, "defined", "gone",
-					fmt.Sprintf("exposed to %s but no longer defined: re-create it with `gero env add %s %s ...`, or expose the envs that remain with `gero iso expose %s %s ENV,...`",
+					fmt.Sprintf("exposed to %s but no longer defined: re-create it with `psps env add %s %s ...`, or expose the envs that remain with `psps iso expose %s %s ENV,...`",
 						iso.Name, name, n, iso.Name, name)))
 			}
 			return cs

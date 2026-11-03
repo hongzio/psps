@@ -253,7 +253,7 @@ func (s *server) keepalive() {
 	for range t.C {
 		res := make(chan error, 1)
 		go func() {
-			_, _, err := s.conn.SendRequest("keepalive@gero", true, nil)
+			_, _, err := s.conn.SendRequest("keepalive@psps", true, nil)
 			res <- err
 		}()
 		select {

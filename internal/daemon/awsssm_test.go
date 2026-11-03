@@ -8,16 +8,16 @@ import (
 	"testing"
 	"time"
 
-	"github.com/hongzio/gero/internal/api"
-	"github.com/hongzio/gero/internal/creds"
-	"github.com/hongzio/gero/internal/driver"
-	"github.com/hongzio/gero/internal/event"
-	"github.com/hongzio/gero/internal/proxy"
-	"github.com/hongzio/gero/internal/proxy/awsproxy"
-	"github.com/hongzio/gero/internal/proxy/mailproxy"
+	"github.com/hongzio/psps/internal/api"
+	"github.com/hongzio/psps/internal/creds"
+	"github.com/hongzio/psps/internal/driver"
+	"github.com/hongzio/psps/internal/event"
+	"github.com/hongzio/psps/internal/proxy"
+	"github.com/hongzio/psps/internal/proxy/awsproxy"
+	"github.com/hongzio/psps/internal/proxy/mailproxy"
 )
 
-// In strict SSM mode an agent asks gero for a command on an instance; the
+// In strict SSM mode an agent asks psps for a command on an instance; the
 // request is an approval in its conversation, and the agent's request
 // answers with the person's decision and, accepted, the run's outcome.
 func TestStrictSSMAsksThePersonInTheAgentsConversation(t *testing.T) {
@@ -54,7 +54,7 @@ func TestStrictSSMAsksThePersonInTheAgentsConversation(t *testing.T) {
 	if _, err := m.Expose(ctx, "dev", "aws", api.Expose{Settings: proxy.Patch{Set: map[string]any{"ssm": "strict"}}}); err != nil {
 		t.Fatal(err)
 	}
-	if env := m.awsEnv(a); len(env) != 1 || !strings.HasPrefix(env[0], "GERO_AWS_URL=http://127.0.0.1:") || !strings.HasSuffix(env[0], "/aws") {
+	if env := m.awsEnv(a); len(env) != 2 || !strings.HasPrefix(env[1], "GERO_AWS_URL=") || !strings.HasPrefix(env[0], "PSPS_AWS_URL=http://127.0.0.1:") || !strings.HasSuffix(env[0], "/aws") {
 		t.Fatalf("%q", env)
 	}
 	if code, body := ask(`{"instance":"i-0fffffffffffffff0","command":"uptime"}`); code != 400 || !strings.Contains(body, "not on this environment's allowlist") {

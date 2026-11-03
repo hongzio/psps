@@ -13,7 +13,7 @@
 // package on both ends, so the image needs no sshd and there are no keys to
 // manage.
 //
-//	isolation  gero-shim tunnel   SSH server on its stdio; listens on
+//	isolation  psps-shim tunnel   SSH server on its stdio; listens on
 //	           127.0.0.1:<port> when the daemon asks, and hands every
 //	           accepted connection back as a forwarded-tcpip channel;
 //	           connects a direct-tcpip channel to its own loopback, never

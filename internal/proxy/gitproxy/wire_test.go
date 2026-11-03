@@ -15,9 +15,9 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/hongzio/gero/internal/creds"
-	"github.com/hongzio/gero/internal/proxy"
-	"github.com/hongzio/gero/internal/store"
+	"github.com/hongzio/psps/internal/creds"
+	"github.com/hongzio/psps/internal/proxy"
+	"github.com/hongzio/psps/internal/store"
 )
 
 // Ported from isolate's test_gitproxy_wire.py and test_ghapi_wire.py. The
@@ -225,7 +225,7 @@ func TestAnIsolationWithoutTheServiceIsToldHowToGetIt(t *testing.T) {
 	h := newHarness(t, nil)
 	h.in.h.View = func() (proxy.View, error) { return proxy.View{Isolation: "dev"}, nil }
 	code, body := h.fetch("pub/repo", nil)
-	if code != 503 || !strings.Contains(body, "gero iso expose dev git") {
+	if code != 503 || !strings.Contains(body, "psps iso expose dev git") {
 		t.Fatal(code, body)
 	}
 }
@@ -259,7 +259,7 @@ func TestTheHostsCredentialGoesOutAndTheCallersNeverDoes(t *testing.T) {
 func TestAnUnlistedRepoIsRefusedBeforeUpstream(t *testing.T) {
 	h := apiHarness(t)
 	code, body, _ := h.do("GET", h.api+"/repos/axis-to/secret/pulls", nil, nil)
-	if code != 404 || !strings.Contains(body, "gero github api proxy:") || !strings.Contains(body, "--allow-repo axis-to/secret") {
+	if code != 404 || !strings.Contains(body, "psps github api proxy:") || !strings.Contains(body, "--allow-repo axis-to/secret") {
 		t.Fatal(code, body)
 	}
 	if len(h.tap.all()) != 0 {

@@ -11,18 +11,18 @@ import (
 	"strings"
 	"text/tabwriter"
 
-	"github.com/hongzio/gero/internal/api"
-	"github.com/hongzio/gero/internal/driver"
-	"github.com/hongzio/gero/internal/isolation"
-	"github.com/hongzio/gero/internal/paths"
-	"github.com/hongzio/gero/internal/proxy"
-	"github.com/hongzio/gero/internal/proxy/portproxy"
-	"github.com/hongzio/gero/internal/services"
+	"github.com/hongzio/psps/internal/api"
+	"github.com/hongzio/psps/internal/driver"
+	"github.com/hongzio/psps/internal/isolation"
+	"github.com/hongzio/psps/internal/paths"
+	"github.com/hongzio/psps/internal/proxy"
+	"github.com/hongzio/psps/internal/proxy/portproxy"
+	"github.com/hongzio/psps/internal/services"
 )
 
 func isoCmd(p paths.Paths, args []string) error {
 	if len(args) == 0 {
-		return errors.New("usage: gero iso create|ls|rename|set|upgrade|rm|env|login|logout|account|shell|verify|start|kill|services|expose|unexpose")
+		return errors.New("usage: psps iso create|ls|rename|set|upgrade|rm|env|login|logout|account|shell|verify|start|kill|services|expose|unexpose")
 	}
 	c, err := connect(p)
 	if err != nil {
@@ -40,7 +40,7 @@ func isoCmd(p paths.Paths, args []string) error {
 		fence := fs.String("fence", "on", "on: agents start only behind a verified network fence; off: let it reach the Mac and LAN")
 		pos := parse(fs, args[1:])
 		if len(pos) != 1 {
-			return errors.New("usage: gero iso create NAME [--cpus N] [--memory 4G] [--swap 8G] [--fence off]")
+			return errors.New("usage: psps iso create NAME [--cpus N] [--memory 4G] [--swap 8G] [--fence off]")
 		}
 		fmt.Println("creating isolation", pos[0], "(the first one builds the base image; that takes a few minutes)")
 		iso, err := c.CreateIsolation(ctx, api.CreateIsolation{Name: pos[0], CPUs: *cpus, Memory: *memory, Swap: *swap, Fence: *fence})
@@ -48,7 +48,7 @@ func isoCmd(p paths.Paths, args []string) error {
 			return err
 		}
 		fmt.Printf("isolation %s is up (container %s, network %s, image %s)\n", iso.Name, iso.Container, iso.Network, iso.Image)
-		fmt.Printf("log the agents in:  gero iso login %s claude   /   gero iso login %s codex\n", iso.Name, iso.Name)
+		fmt.Printf("log the agents in:  psps iso login %s claude   /   psps iso login %s codex\n", iso.Name, iso.Name)
 		if v, err := c.Isolation(ctx, iso.Name); err == nil && v.FenceState != "verified" && v.FenceState != "off" {
 			fmt.Println("network fence:", v.FenceState)
 		}
@@ -79,7 +79,7 @@ func isoCmd(p paths.Paths, args []string) error {
 	case "rename":
 		pos := parse(fs, args[1:])
 		if len(pos) != 2 {
-			return errors.New("usage: gero iso rename NAME NEW-NAME")
+			return errors.New("usage: psps iso rename NAME NEW-NAME")
 		}
 		iso, err := c.UpdateIsolation(ctx, pos[0], api.UpdateIsolation{Name: pos[1]})
 		if err != nil {
@@ -105,7 +105,7 @@ func isoCmd(p paths.Paths, args []string) error {
 			}
 		})
 		if len(pos) != 1 || (req.CPUs == nil && req.Memory == nil && req.Swap == nil) {
-			return errors.New("usage: gero iso set NAME [--cpus N] [--memory 8G] [--swap 8G]   (a new size, or the first swap, replaces the container: running agents restart; sessions and workspaces are kept. A later swap is turned on in the running VM)")
+			return errors.New("usage: psps iso set NAME [--cpus N] [--memory 8G] [--swap 8G]   (a new size, or the first swap, replaces the container: running agents restart; sessions and workspaces are kept. A later swap is turned on in the running VM)")
 		}
 		was, err := c.Isolation(ctx, pos[0])
 		if err != nil {
@@ -125,7 +125,7 @@ func isoCmd(p paths.Paths, args []string) error {
 	case "upgrade":
 		pos := parse(fs, args[1:])
 		if len(pos) != 1 {
-			return errors.New("usage: gero iso upgrade NAME")
+			return errors.New("usage: psps iso upgrade NAME")
 		}
 		iso, err := c.UpgradeIsolation(ctx, pos[0])
 		if err != nil {
@@ -138,7 +138,7 @@ func isoCmd(p paths.Paths, args []string) error {
 		purge := fs.Bool("purge", false, "also delete the volumes: every session and workspace in it")
 		pos := parse(fs, args[1:])
 		if len(pos) != 1 {
-			return errors.New("usage: gero iso rm NAME [--purge]")
+			return errors.New("usage: psps iso rm NAME [--purge]")
 		}
 		iso, err := c.Isolation(ctx, pos[0])
 		if err != nil {
@@ -158,7 +158,7 @@ func isoCmd(p paths.Paths, args []string) error {
 	case "env":
 		pos := parse(fs, args[1:])
 		if len(pos) < 2 {
-			return errors.New("usage: gero iso env NAME KEY=VALUE... (KEY= removes)")
+			return errors.New("usage: psps iso env NAME KEY=VALUE... (KEY= removes)")
 		}
 		set := api.SetEnv{}
 		for _, kv := range pos[1:] {
@@ -191,7 +191,7 @@ func isoCmd(p paths.Paths, args []string) error {
 				names = append(names, iso.Name)
 			}
 			if len(names) == 0 {
-				return errors.New("no isolations to verify; create one with `gero iso create NAME`")
+				return errors.New("no isolations to verify; create one with `psps iso create NAME`")
 			}
 		}
 		var reports []api.Verify
@@ -214,7 +214,7 @@ func isoCmd(p paths.Paths, args []string) error {
 	case "start":
 		pos := parse(fs, args[1:])
 		if len(pos) != 1 {
-			return errors.New("usage: gero iso start NAME")
+			return errors.New("usage: psps iso start NAME")
 		}
 		if err := c.StartIsolation(ctx, pos[0]); err != nil {
 			return err
@@ -225,7 +225,7 @@ func isoCmd(p paths.Paths, args []string) error {
 	case "kill":
 		pos := parse(fs, args[1:])
 		if len(pos) != 1 {
-			return errors.New("usage: gero iso kill NAME")
+			return errors.New("usage: psps iso kill NAME")
 		}
 		v, err := c.KillIsolation(ctx, pos[0])
 		if err != nil {
@@ -241,7 +241,7 @@ func isoCmd(p paths.Paths, args []string) error {
 	case "services":
 		pos := parse(fs, args[1:])
 		if len(pos) != 1 {
-			return errors.New("usage: gero iso services NAME")
+			return errors.New("usage: psps iso services NAME")
 		}
 		xs, err := c.Exposures(ctx, pos[0])
 		if err != nil {
@@ -294,7 +294,7 @@ func isoCmd(p paths.Paths, args []string) error {
 
 	case "expose":
 		if len(args) < 3 {
-			return errors.New("usage: gero iso expose NAME SERVICE [ENV,...] [--default-env ENV] [flags]  (gero env help SERVICE)")
+			return errors.New("usage: psps iso expose NAME SERVICE [ENV,...] [--default-env ENV] [flags]  (psps env help SERVICE)")
 		}
 		svc, err := services.Registry().Get(args[2])
 		if err != nil {
@@ -308,7 +308,7 @@ func isoCmd(p paths.Paths, args []string) error {
 			return err
 		}
 		if len(pos) < 1 || len(pos) > 2 {
-			return errors.New("usage: gero iso expose NAME SERVICE [ENV,...] [--default-env ENV]")
+			return errors.New("usage: psps iso expose NAME SERVICE [ENV,...] [--default-env ENV]")
 		}
 		req := api.Expose{Default: def, Settings: patch}
 		if len(pos) == 2 {
@@ -355,7 +355,7 @@ func isoCmd(p paths.Paths, args []string) error {
 	case "unexpose":
 		pos := parse(fs, args[1:])
 		if len(pos) != 2 {
-			return errors.New("usage: gero iso unexpose NAME SERVICE")
+			return errors.New("usage: psps iso unexpose NAME SERVICE")
 		}
 		if err := c.Unexpose(ctx, pos[0], pos[1]); err != nil {
 			return err
@@ -381,17 +381,17 @@ func isoCmd(p paths.Paths, args []string) error {
 		case 2:
 			return loginCLI(ctx, c, pos[0], pos[1], os.Stdin, os.Stdout)
 		}
-		return errors.New("usage: gero iso login NAME [claude|codex]  (no CLI: show both logins)")
+		return errors.New("usage: psps iso login NAME [claude|codex]  (no CLI: show both logins)")
 
 	case "logout":
 		pos := parse(fs, args[1:])
 		if len(pos) != 2 {
-			return errors.New("usage: gero iso logout NAME claude|codex")
+			return errors.New("usage: psps iso logout NAME claude|codex")
 		}
 		if err := c.CLILogout(ctx, pos[0], pos[1]); err != nil {
 			return err
 		}
-		fmt.Printf("%s is logged out in %s; a token set with `gero iso env` stays\n", pos[1], pos[0])
+		fmt.Printf("%s is logged out in %s; a token set with `psps iso env` stays\n", pos[1], pos[0])
 		return nil
 
 	case "account":
@@ -405,7 +405,7 @@ func isoCmd(p paths.Paths, args []string) error {
 			if a := iso.Accounts[driver.Kind(pos[1])]; a != "" {
 				fmt.Printf("%s in %s uses account %s\n", pos[1], pos[0], a)
 			} else {
-				fmt.Printf("%s in %s uses a login inside it (gero iso login %s)\n", pos[1], pos[0], pos[0])
+				fmt.Printf("%s in %s uses a login inside it (psps iso login %s)\n", pos[1], pos[0], pos[0])
 			}
 			return nil
 		case 3:
@@ -423,12 +423,12 @@ func isoCmd(p paths.Paths, args []string) error {
 			}
 			return nil
 		}
-		return errors.New("usage: gero iso account NAME claude|codex [ACCOUNT|-]")
+		return errors.New("usage: psps iso account NAME claude|codex [ACCOUNT|-]")
 
 	case "shell":
 		pos := parse(fs, args[1:])
 		if len(pos) != 1 {
-			return errors.New("usage: gero iso shell NAME")
+			return errors.New("usage: psps iso shell NAME")
 		}
 		iso, err := c.Isolation(ctx, pos[0])
 		if err != nil {

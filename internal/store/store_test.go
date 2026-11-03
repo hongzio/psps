@@ -12,13 +12,13 @@ import (
 	"testing"
 	"time"
 
-	"github.com/hongzio/gero/internal/driver"
-	"github.com/hongzio/gero/internal/event"
+	"github.com/hongzio/psps/internal/driver"
+	"github.com/hongzio/psps/internal/event"
 )
 
 func open(t *testing.T) *Store {
 	t.Helper()
-	s, err := Open(filepath.Join(t.TempDir(), "gero.db"))
+	s, err := Open(filepath.Join(t.TempDir(), "psps.db"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -110,7 +110,7 @@ func TestMigrationAddsColumnsToAnOldDatabase(t *testing.T) {
 	}
 }
 
-func TestMigrationMarksTheEvalsGeroCouldNotRun(t *testing.T) {
+func TestMigrationMarksTheEvalsPspsCouldNotRun(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "old.db")
 	db, err := sql.Open("sqlite", "file:"+path)
 	if err != nil {
@@ -142,7 +142,7 @@ func TestMigrationMarksTheEvalsGeroCouldNotRun(t *testing.T) {
 	for _, e := range evals {
 		got = append(got, e.NotRun)
 	}
-	// Only gero's refusal, all of the output, marks one: not a grader's
+	// Only psps's refusal, all of the output, marks one: not a grader's
 	// words like it, nor an eval with a score.
 	if fmt.Sprint(got) != "[true true false false]" {
 		t.Fatalf("not run: %v", got)
@@ -233,7 +233,7 @@ func TestAccountUsesGoWithTheirIsolation(t *testing.T) {
 }
 
 func TestTheStoreIsTheOwnersAlone(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "gero.db")
+	path := filepath.Join(t.TempDir(), "psps.db")
 	s, err := Open(path)
 	if err != nil {
 		t.Fatal(err)
@@ -597,7 +597,7 @@ func TestAnAgentsMailTokenIsItsAloneAndShownNowhere(t *testing.T) {
 
 // Mail from before the history keeps waiting where it waited.
 func TestMailFromBeforeTheHistoryStillWaits(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "gero.db")
+	path := filepath.Join(t.TempDir(), "psps.db")
 	s, err := Open(path)
 	if err != nil {
 		t.Fatal(err)

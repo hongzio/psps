@@ -6,8 +6,8 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/hongzio/gero/internal/isolation"
-	"github.com/hongzio/gero/internal/store"
+	"github.com/hongzio/psps/internal/isolation"
+	"github.com/hongzio/psps/internal/store"
 )
 
 // swapScript makes /swapfile $1 bytes and turns it on, or for 0 turns it
@@ -46,7 +46,7 @@ func (m *Manager) swapLocked(ctx context.Context, iso store.Isolation) error {
 		return nil
 	}
 	b, _ := isolation.SwapBytes(iso.Swap)
-	_, err := m.cli.RunAsRoot(ctx, iso.Container, "sh", "-c", swapScript, "gero-swap", strconv.FormatUint(b, 10))
+	_, err := m.cli.RunAsRoot(ctx, iso.Container, "sh", "-c", swapScript, "psps-swap", strconv.FormatUint(b, 10))
 	// Not tried again until it changes or the container starts again: a
 	// swap that cannot be had is not asked for every few seconds.
 	m.mu.Lock()

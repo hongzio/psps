@@ -13,8 +13,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/hongzio/gero/internal/api"
-	"github.com/hongzio/gero/internal/client"
+	"github.com/hongzio/psps/internal/api"
+	"github.com/hongzio/psps/internal/client"
 )
 
 // fakeLoginDaemon answers the two login calls the way the daemon does and

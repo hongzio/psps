@@ -15,9 +15,9 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/hongzio/gero/internal/creds"
-	"github.com/hongzio/gero/internal/proxy"
-	"github.com/hongzio/gero/internal/store"
+	"github.com/hongzio/psps/internal/creds"
+	"github.com/hongzio/psps/internal/proxy"
+	"github.com/hongzio/psps/internal/store"
 )
 
 // Ported from isolate's test_chproxy.py (the decisions) and
@@ -395,7 +395,7 @@ func TestAnIsolationWithoutTheServiceIsToldHowToGetIt(t *testing.T) {
 	h.mu.Lock()
 	h.view.Enabled = false
 	h.mu.Unlock()
-	if code, body, _ := h.do("GET", "/?query=SELECT+1", key(token), ""); code != 503 || !strings.Contains(body, "gero iso expose work clickhouse") {
+	if code, body, _ := h.do("GET", "/?query=SELECT+1", key(token), ""); code != 503 || !strings.Contains(body, "psps iso expose work clickhouse") {
 		t.Fatalf("%d %q", code, body)
 	}
 }
@@ -421,7 +421,7 @@ func TestTheProbeCarriesTheRealLoginAndTheClamp(t *testing.T) {
 
 func TestAHostlessEnvNamesTheEdit(t *testing.T) {
 	_, err := Service{}.Check(t.Context(), "main", json.RawMessage(`{}`), nil)
-	if err == nil || !strings.Contains(err.Error(), "gero env edit clickhouse main") {
+	if err == nil || !strings.Contains(err.Error(), "psps env edit clickhouse main") {
 		t.Fatalf("%v", err)
 	}
 }

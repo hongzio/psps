@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/hongzio/gero/internal/shimproto"
+	"github.com/hongzio/psps/internal/shimproto"
 )
 
 // echoAgent answers every stdin line and exits 3 on "exit".

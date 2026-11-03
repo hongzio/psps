@@ -12,7 +12,7 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/hongzio/gero/internal/proxy"
+	"github.com/hongzio/psps/internal/proxy"
 )
 
 // The GitHub API side. The pack protocol ends at the push; opening the pull
@@ -150,11 +150,11 @@ func ResolveRepo(envs map[string]Env, owner, repo string) (string, error) {
 	}
 	sort.Strings(holders)
 	if len(holders) > 1 {
-		return "", apiDeny(403, "%s is listed by environments %s at once; remove it from all but one (`gero env edit git <env> ...`)",
+		return "", apiDeny(403, "%s is listed by environments %s at once; remove it from all but one (`psps env edit git <env> ...`)",
 			full, strings.Join(holders, ", "))
 	}
 	if len(holders) == 0 {
-		return "", apiDeny(404, "%s is not in any exposed git environment; GET /user/repos lists those that are. If it is none of them, ask the operator to run `gero env edit git <env> --allow-repo %s`. A public repository's reads need no proxy: api.github.com answers the isolation's own egress anonymously.", full, full)
+		return "", apiDeny(404, "%s is not in any exposed git environment; GET /user/repos lists those that are. If it is none of them, ask the operator to run `psps env edit git <env> --allow-repo %s`. A public repository's reads need no proxy: api.github.com answers the isolation's own egress anonymously.", full, full)
 	}
 	return holders[0], nil
 }
@@ -180,7 +180,7 @@ func Allowed(env Env, envName, method, tail string) error {
 						return nil
 					}
 				}
-				return apiDeny(403, "%s %s is the %q write family, which environment %q does not allow; the operator can open it with `gero env edit git %s --api-write %s`",
+				return apiDeny(403, "%s %s is the %q write family, which environment %q does not allow; the operator can open it with `psps env edit git %s --api-write %s`",
 					method, tail, family, envName, envName, family)
 			}
 		}
@@ -224,7 +224,7 @@ func listingOwner(rawPath string) (owner string, ok bool) {
 }
 
 // ListedRepo is one repository of a listing, in GitHub's shape as far as
-// gero knows it: the name, the owner, and whether its env takes a push.
+// psps knows it: the name, the owner, and whether its env takes a push.
 type ListedRepo struct {
 	Name        string `json:"name"`
 	FullName    string `json:"full_name"`
@@ -233,7 +233,7 @@ type ListedRepo struct {
 		Pull bool `json:"pull"`
 		Push bool `json:"push"`
 	} `json:"permissions"`
-	Env string `json:"gero_env"`
+	Env string `json:"psps_env"`
 }
 
 type Login struct {
@@ -266,7 +266,7 @@ func ListRepos(envs map[string]Env, owner string) []ListedRepo {
 // by: the first exposed env, sorted, speaks for the account.
 func DefaultEnvName(envs map[string]Env) (string, error) {
 	if len(envs) == 0 {
-		return "", apiDeny(503, "no git environment is exposed to this isolation; `gero iso expose <isolation> git <env>` first")
+		return "", apiDeny(503, "no git environment is exposed to this isolation; `psps iso expose <isolation> git <env>` first")
 	}
 	names := make([]string, 0, len(envs))
 	for n := range envs {
@@ -292,7 +292,7 @@ func (a apiHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		if status == 429 {
 			w.Header().Set("Retry-After", "2")
 		}
-		proxy.Refuse(w, status, "gero github api proxy: "+reason)
+		proxy.Refuse(w, status, "psps github api proxy: "+reason)
 		in.logf("DENY %s %s: %s", r.Method, rawPath, reason)
 	}
 	cfg, err := in.config()
@@ -394,7 +394,7 @@ func (a apiHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	proxy.CopyHeaders(up.Header, r.Header, "host", "authorization", "content-length", "expect")
 	up.Header.Set("Authorization", "Bearer "+token)
 	if up.Header.Get("User-Agent") == "" {
-		up.Header.Set("User-Agent", "gero-ghapi")
+		up.Header.Set("User-Agent", "psps-ghapi")
 	}
 	if up.Header.Get("Accept") == "" {
 		up.Header.Set("Accept", "application/vnd.github+json")
@@ -406,7 +406,7 @@ func (a apiHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	resp, err := in.transport.RoundTrip(up)
 	if err != nil {
 		in.logf("UPSTREAM-ERROR %s %s: %v", r.Method, target.Path, err)
-		proxy.Refuse(w, 502, "gero github api proxy: upstream unavailable")
+		proxy.Refuse(w, 502, "psps github api proxy: upstream unavailable")
 		return
 	}
 	defer resp.Body.Close()

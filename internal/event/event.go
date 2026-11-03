@@ -1,4 +1,4 @@
-// Package event is gero's own vocabulary for what an agent did. Drivers
+// Package event is psps's own vocabulary for what an agent did. Drivers
 // translate Claude Code and Codex output into it; the store, the TUI and the
 // web UI only ever see these.
 package event

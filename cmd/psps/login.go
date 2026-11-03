@@ -8,7 +8,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/hongzio/gero/internal/client"
+	"github.com/hongzio/psps/internal/client"
 )
 
 // browserLogin runs a service's browser login. The daemon holds the
@@ -51,7 +51,7 @@ func browserLogin(ctx context.Context, c *client.Client, service, name string, i
 	case <-ctx.Done():
 		return ctx.Err()
 	case <-time.After(time.Until(login.Expires)):
-		return fmt.Errorf("no login came back before it expired; run `gero env secret %s %s` again", service, name)
+		return fmt.Errorf("no login came back before it expired; run `psps env secret %s %s` again", service, name)
 	}
 	if err := c.FinishLogin(ctx, service, name, login.ID, callback); err != nil {
 		return err

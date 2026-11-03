@@ -83,7 +83,7 @@ func cliPayload(keyID, expiration string) string {
 		"Credentials": map[string]string{
 			"AccessKeyId": keyID, "SecretAccessKey": "secret", "SessionToken": "token", "Expiration": expiration,
 		},
-		"AssumedRoleUser": map[string]string{"Arn": "arn:aws:sts::050017197842:assumed-role/axis-tre-workspace/gero-dev"},
+		"AssumedRoleUser": map[string]string{"Arn": "arn:aws:sts::050017197842:assumed-role/axis-tre-workspace/psps-dev"},
 	})
 	return string(b)
 }

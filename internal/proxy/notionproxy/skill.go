@@ -5,12 +5,12 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/hongzio/gero/internal/proxy"
+	"github.com/hongzio/psps/internal/proxy"
 )
 
 const skillTemplate = `---
-name: gero-notion
-description: How Notion access works inside this gero isolation. Use when a
+name: psps-notion
+description: How Notion access works inside this psps isolation. Use when a
   Notion page, database or search needs reading (or, where the environment
   allows it, writing), or when a Notion MCP tool call is refused.
 ---
@@ -18,7 +18,7 @@ description: How Notion access works inside this gero isolation. Use when a
 # Notion in this isolation
 
 Notion arrives as MCP tools: the ` + "`notion`" + ` server (and ` + "`notion-<env>`" + ` for any
-other environment) is handed to every agent gero starts, pointing at a proxy
+other environment) is handed to every agent psps starts, pointing at a proxy
 outside the isolation. There is no Notion credential here, and there is not
 meant to be one — the proxy holds a Notion login on the Mac and attaches it on
 the way out. NOTION_TOKEN is only a workspace token that opens the proxy;
@@ -60,14 +60,14 @@ The default environment is ` + "`%[2]s`" + `, served as ` + "`notion`" + `.
 
 - A tool result naming a family — outside this env's boundary. That is the
   operator's decision, not a fault to retry or route around; the refusal names
-  the exact ` + "`gero env edit notion ...`" + ` command that would open it, so report that
+  the exact ` + "`psps env edit notion ...`" + ` command that would open it, so report that
   instead of looking for another path.
 - A tool result saying a tool is not modeled — tools the proxy does not know do
   not exist from here, for any environment.
 - A 429 with Retry-After is the proxy's own rate budget protecting the login's
   Notion rate limit. Wait it out; do not tighten the loop.
 - An error saying the login expired — the operator has to log in again on the
-  Mac (` + "`gero env secret notion <env>`" + `); nothing in the isolation can fix it.
+  Mac (` + "`psps env secret notion <env>`" + `); nothing in the isolation can fix it.
 
 There is no other route to Notion's authenticated APIs from this isolation: the
 proxy is the only thing the token in NOTION_TOKEN opens.

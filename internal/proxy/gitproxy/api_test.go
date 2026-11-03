@@ -111,7 +111,7 @@ func TestTheDefaultFamiliesCoverThePRWorkflow(t *testing.T) {
 
 func TestADisabledFamilyNamesItselfAndTheFix(t *testing.T) {
 	_, r := apiStatus(t, Allowed(Env{}, "work", "PUT", "pulls/12/merge"))
-	if !strings.Contains(r, `"merge"`) || !strings.Contains(r, "gero env edit git work --api-write merge") {
+	if !strings.Contains(r, `"merge"`) || !strings.Contains(r, "psps env edit git work --api-write merge") {
 		t.Fatal(r)
 	}
 	merge := []string{"merge"}
@@ -160,7 +160,7 @@ func TestGlobalReadsRouteToTheFirstEnv(t *testing.T) {
 		t.Fatal(env)
 	}
 	_, err := DefaultEnvName(nil)
-	if code, r := apiStatus(t, err); code != 503 || !strings.Contains(r, "gero iso expose") {
+	if code, r := apiStatus(t, err); code != 503 || !strings.Contains(r, "psps iso expose") {
 		t.Fatal(code, r)
 	}
 }

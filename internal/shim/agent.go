@@ -15,7 +15,7 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/hongzio/gero/internal/shimproto"
+	"github.com/hongzio/psps/internal/shimproto"
 )
 
 var (
@@ -183,7 +183,7 @@ func (a *agent) appendLocked(rec shimproto.Record) shimproto.Record {
 	b, _ := json.Marshal(rec)
 	b = append(b, '\n')
 	if _, err := a.log.Write(b); err != nil {
-		fmt.Fprintf(os.Stderr, "gero-shim: %s: log write: %v\n", a.id, err)
+		fmt.Fprintf(os.Stderr, "psps-shim: %s: log write: %v\n", a.id, err)
 	}
 	if rec.Dir == shimproto.DirSys {
 		a.log.Sync()

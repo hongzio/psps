@@ -5,7 +5,7 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/hongzio/gero/internal/proxy"
+	"github.com/hongzio/psps/internal/proxy"
 )
 
 // The skill is the agent's operational truth, and the only Grafana document
@@ -14,8 +14,8 @@ import (
 // operator can open saves.
 
 const skillTemplate = `---
-name: gero-grafana
-description: How Grafana access works inside this gero isolation. Use when a
+name: psps-grafana
+description: How Grafana access works inside this psps isolation. Use when a
   Grafana API call fails or is refused, when triage needs a dashboard, an alert
   rule or a data source query, or when deciding whether Grafana is reachable
   from here.
@@ -78,20 +78,20 @@ is swapping the token value for one command:
 - A refusal naming an endpoint family — that family is outside the operator's
   allowlist. That is a decision, not a fault to retry or route around. If
   access is genuinely needed, ask the operator to run
-  ` + "`gero env edit grafana <env> --allow-api <family>`" + `.
+  ` + "`psps env edit grafana <env> --allow-api <family>`" + `.
 - A refusal naming a data source UID — ` + "`/api/ds/query`" + ` only runs against data
   sources the operator allowlisted, and every query entry must name one by UID
   (` + "`datasource: {\"uid\": ...}`" + `; the legacy name and numeric-id forms are
   refused). Ask the operator to run
-  ` + "`gero env edit grafana <env> --allow-datasource <uid>`" + `.
+  ` + "`psps env edit grafana <env> --allow-datasource <uid>`" + `.
 - A refusal naming a write to the "dashboards" family — this environment reads
   dashboards but does not save them. Ask the operator for
-  ` + "`gero env edit grafana <env> --allow-write dashboards --allow-folder <uid>`" + `,
+  ` + "`psps env edit grafana <env> --allow-write dashboards --allow-folder <uid>`" + `,
   and say what you intend to build and why.
 - A refusal naming a folder — the save lands in, or would overwrite a dashboard
   in, a folder outside the allowlist. Save into an allowlisted folder under a
   fresh UID instead, or ask the operator for
-  ` + "`gero env edit grafana <env> --allow-folder <uid>`" + `.
+  ` + "`psps env edit grafana <env> --allow-folder <uid>`" + `.
 - A refusal naming read-only — that write (deleting a dashboard, editing a data
   source, silencing an alert) is refused for every environment. This cannot be
   widened from here.

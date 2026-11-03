@@ -1,29 +1,29 @@
 package teamproxy
 
 // The address and the terms cannot say how to lead a team, or what a
-// message from gero about it is; the skill does.
+// message from psps about it is; the skill does.
 
 const skill = `---
-name: gero-team
-description: How to lead a gero team when your operator made you its lead, and
-  what a message that starts with "[gero team" is. Use to make agents of your
+name: psps-team
+description: How to lead a psps team when your operator made you its lead, and
+  what a message that starts with "[psps team" is. Use to make agents of your
   own for the roles the work needs, follow and steer them, have the team's eval
   run, or when news of your team arrives. Claude Code's own Agent, TeamCreate and
-  SendMessage make no gero agents.
+  SendMessage make no psps agents.
 ---
 
-# Leading a gero team
+# Leading a psps team
 
 Your operator can make an agent the lead of a team. A lead makes agents of its
 own in the team, in this isolation: each a Claude Code or Codex session of its
-own, with a context of its own, working in the isolation's files. gero tells the
+own, with a context of its own, working in the isolation's files. psps tells the
 lead when a turn of one of them ends, runs the team's eval, and keeps the team
 within the operator's terms: a budget of tokens if they set one, how many agents
 may be live at once, how long a turn may run, and how full a plan window may get.
 Without a budget, the plan windows, which your operator's own work shares, are
 all that holds the team back.
 
-GERO_TEAM_URL is your own address for it. It carries a token that names you:
+PSPS_TEAM_URL is your own address for it. It carries a token that names you:
 use it as it is, and do not pass it on. If you lead no team, it answers 403 and
 this skill is not for you.
 
@@ -33,11 +33,11 @@ Where your team stands (JSON): the terms, what the team has spent (of its budget
 0 when there is none), the plan windows, the eval's scores, and each agent of yours with its role,
 status, how long its turn has run and what it waits for:
 
-    curl -sS "$GERO_TEAM_URL"
+    curl -sS "$PSPS_TEAM_URL"
 
 Make an agent; it starts on its prompt at once (201, the agent):
 
-    curl -sS "$GERO_TEAM_URL/agents" --json @- <<'AGENT'
+    curl -sS "$PSPS_TEAM_URL/agents" --json @- <<'AGENT'
     {"role": "profiler", "kind": "claude", "prompt": "...", "turn_minutes": 60}
     AGENT
 
@@ -46,7 +46,7 @@ Make an agent; it starts on its prompt at once (201, the agent):
   its default.
 - workdir: where in the isolation it works. Left out, it is your own working
   directory, so the team shares one set of files.
-- turn_minutes: how long one turn of it may run before gero stops it and asks it
+- turn_minutes: how long one turn of it may run before psps stops it and asks it
   for a final report; the operator's default when left out.
 - Its prompt is all it knows of the work: write it as a brief for a colleague
   who has not seen this conversation. Its approvals are yours, and it makes no
@@ -54,36 +54,36 @@ Make an agent; it starts on its prompt at once (201, the agent):
 
 One agent of yours, with its last answer in full:
 
-    curl -sS "$GERO_TEAM_URL/agents/ID"
+    curl -sS "$PSPS_TEAM_URL/agents/ID"
 
 Write to it. It reads it as your message: at once if it is idle, otherwise
 within or after the turn it is in.
 
-    curl -sS "$GERO_TEAM_URL/agents/ID/send" --data-binary @- <<'MSG'
+    curl -sS "$PSPS_TEAM_URL/agents/ID/send" --data-binary @- <<'MSG'
     The profile is in work_profiler/notes.md; start from its third finding.
     MSG
 
 Stop its turn, or archive it (its process ends and its history stays; an
 archived agent no longer counts as live):
 
-    curl -sS -X POST "$GERO_TEAM_URL/agents/ID/interrupt"
-    curl -sS -X POST "$GERO_TEAM_URL/agents/ID/archive"
+    curl -sS -X POST "$PSPS_TEAM_URL/agents/ID/interrupt"
+    curl -sS -X POST "$PSPS_TEAM_URL/agents/ID/archive"
 
 Have the team's eval run now, if your operator set one, on what is in its
 directory then; its result comes to you as news. A change you made yourself,
 with none of your agents at work, is scored this way and no other:
 
-    curl -sS -X POST "$GERO_TEAM_URL/eval"
+    curl -sS -X POST "$PSPS_TEAM_URL/eval"
 
 ## News
 
-gero tells you of your team in a message that starts with a line like
+psps tells you of your team in a message that starts with a line like
 
-    [gero team news for you as lead of team "lab": 2 items. ...]
+    [psps team news for you as lead of team "lab": 2 items. ...]
 
 when an agent of yours ends a turn (with its last answer), waits for your
 operator to approve something, or is stopped at its turn limit; when the eval
-has run; when nothing of your team runs any more; when gero stops the run;
+has run; when nothing of your team runs any more; when psps stops the run;
 and when your operator resumes it.
 The news of your agents' turns waits while others of them still work, so you
 hear of a round's turns together; news that comes while you work waits too,
@@ -92,7 +92,7 @@ and arrives together once you are idle.
 A round is over when you have heard of it and started nothing more. If your
 turn on that news makes an agent or writes to one (the next step, which needs
 the last one's work), the round goes on. If it ends with none of your agents
-at work, gero runs the eval, on what is in its directory then, your own
+at work, psps runs the eval, on what is in its directory then, your own
 changes included, and tells you the score. So a team that works in steps is
 scored once, after the last. A round is of your agents' turns: a turn of yours
 that starts none of them (on the eval's news, or your operator's message) ends
@@ -149,7 +149,7 @@ a team works rather than the work itself.
 - Spend with care. Every agent spends the team's budget, if it has one, and
   your operator's plan. Make few agents with clear roles, and archive those you
   no longer need.
-- Make and steer your team's agents here, not through gero's control service
+- Make and steer your team's agents here, not through psps's control service
   or mail, even where this isolation has them: only the agents made here count
   toward your team, report to you and stay within your operator's terms.
 
@@ -157,7 +157,7 @@ a team works rather than the work itself.
 
 The refusal says why, in a sentence: too many agents of yours live (archive
 one), the budget used, a plan window too full, a CLI billed per use where the
-team has no budget, the run stopped by gero (a target
+team has no budget, the run stopped by psps (a target
 reached, or no new best for a while), or teams turned off in this isolation
 (the run is paused; news of your team waits for them to be on). Tell your
 operator rather than working around it; only they change the terms or

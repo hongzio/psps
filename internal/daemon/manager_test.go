@@ -25,21 +25,21 @@ import (
 	"testing"
 	"time"
 
-	"github.com/hongzio/gero/internal/api"
-	"github.com/hongzio/gero/internal/client"
-	"github.com/hongzio/gero/internal/driver"
-	"github.com/hongzio/gero/internal/event"
-	"github.com/hongzio/gero/internal/isolation"
-	"github.com/hongzio/gero/internal/pf"
-	"github.com/hongzio/gero/internal/shim"
-	"github.com/hongzio/gero/internal/shimproto"
-	"github.com/hongzio/gero/internal/store"
-	"github.com/hongzio/gero/internal/tunnel"
+	"github.com/hongzio/psps/internal/api"
+	"github.com/hongzio/psps/internal/client"
+	"github.com/hongzio/psps/internal/driver"
+	"github.com/hongzio/psps/internal/event"
+	"github.com/hongzio/psps/internal/isolation"
+	"github.com/hongzio/psps/internal/pf"
+	"github.com/hongzio/psps/internal/shim"
+	"github.com/hongzio/psps/internal/shimproto"
+	"github.com/hongzio/psps/internal/store"
+	"github.com/hongzio/psps/internal/tunnel"
 )
 
 // The test binary doubles as a fake `codex app-server`.
 func TestMain(m *testing.M) {
-	if os.Getenv("GERO_FAKE_CODEX") == "1" {
+	if os.Getenv("PSPS_FAKE_CODEX") == "1" {
 		fakeCodex()
 		os.Exit(0)
 	}
@@ -130,9 +130,9 @@ func fakeCodex() {
 			}
 			switch text {
 			case "env":
-				text = "env=" + os.Getenv("GERO_TEST_VAR")
+				text = "env=" + os.Getenv("PSPS_TEST_VAR")
 			case "mail address":
-				text = "mail=" + os.Getenv("GERO_MAIL_URL")
+				text = "mail=" + os.Getenv("PSPS_MAIL_URL")
 			case "recall":
 				text = "recall=" + strings.Join(earlier, ",")
 			}
@@ -354,7 +354,7 @@ func (f *fakeFence) Apply(_ context.Context, nets []pf.Network) (pf.Status, erro
 	}
 	f.applied = append(f.applied, nets)
 	st := pf.Status{OK: true, Version: f.version, Enabled: true, Networks: nets,
-		Loaded: []string{"block drop quick inet from 192.168.99.0/24 to <gero_private4>"}}
+		Loaded: []string{"block drop quick inet from 192.168.99.0/24 to <psps_private4>"}}
 	if f.lag > 0 {
 		f.lag--
 		return st, nil
@@ -748,7 +748,7 @@ func newTestEnv(t *testing.T) *testEnv {
 		t.Fatal(err)
 	}
 	bin := t.TempDir()
-	script := "#!/bin/sh\nGERO_FAKE_CODEX=1 exec " + exe + " \"$@\"\n"
+	script := "#!/bin/sh\nPSPS_FAKE_CODEX=1 exec " + exe + " \"$@\"\n"
 	os.WriteFile(filepath.Join(bin, "codex"), []byte(script), 0o755)
 	t.Setenv("PATH", bin+":"+os.Getenv("PATH"))
 
@@ -758,7 +758,7 @@ func newTestEnv(t *testing.T) *testEnv {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { os.RemoveAll(base) })
-	st, err := store.Open(filepath.Join(base, "gero.db"))
+	st, err := store.Open(filepath.Join(base, "psps.db"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1001,7 +1001,7 @@ func TestEnvChangeReplacesIdleProcess(t *testing.T) {
 	e.waitFor("first answer", func() bool { return e.hasAssistant(a.ID, "echo: one") && status(m, a.ID) == event.StatusIdle })
 
 	v := "v1"
-	if err := m.SetEnv("dev", api.SetEnv{"GERO_TEST_VAR": &v}); err != nil {
+	if err := m.SetEnv("dev", api.SetEnv{"PSPS_TEST_VAR": &v}); err != nil {
 		t.Fatal(err)
 	}
 	e.waitFor("old process replaced", func() bool {
@@ -1027,7 +1027,7 @@ func TestAMessageSentAsTheProcessIsReplacedGoesToTheNextOne(t *testing.T) {
 	}
 	e.waitFor("first answer", func() bool { return e.hasAssistant(a.ID, "echo: one") && status(m, a.ID) == event.StatusIdle })
 	v := "v1"
-	if err := m.SetEnv("dev", api.SetEnv{"GERO_TEST_VAR": &v}); err != nil {
+	if err := m.SetEnv("dev", api.SetEnv{"PSPS_TEST_VAR": &v}); err != nil {
 		t.Fatal(err)
 	}
 	if err := m.Send(a.ID, "env"); err != nil {
@@ -1102,7 +1102,7 @@ func TestAnOlderFenceHelperNamesTheReinstall(t *testing.T) {
 	prev := helperVersion
 	helperVersion = 2
 	defer func() { helperVersion = prev }()
-	if r := m.verifyFence(context.Background(), iso); r.ok || !strings.Contains(r.why, "version 1, it needs 2") || !strings.Contains(r.why, "sudo gero pf install") {
+	if r := m.verifyFence(context.Background(), iso); r.ok || !strings.Contains(r.why, "version 1, it needs 2") || !strings.Contains(r.why, "sudo psps pf install") {
 		t.Fatalf("%v %s", r.ok, r.why)
 	}
 	e.fence.mu.Lock()
@@ -1121,7 +1121,7 @@ func TestLegacyIsolationMustMoveOffTheDefaultNetwork(t *testing.T) {
 	m, stop := e.daemon()
 	defer stop()
 	_, err := m.CreateAgent(context.Background(), api.CreateAgent{Isolation: "dev", Kind: driver.Codex, Prompt: "x"})
-	if err == nil || !strings.Contains(err.Error(), "gero iso upgrade dev") {
+	if err == nil || !strings.Contains(err.Error(), "psps iso upgrade dev") {
 		t.Fatalf("err = %v", err)
 	}
 }
@@ -1325,7 +1325,7 @@ func TestRenamingAnIsolationKeepsItsAgentsRunning(t *testing.T) {
 	m, stop := e.daemon()
 	defer stop()
 	v1 := "v1"
-	if err := m.SetEnv("dev", api.SetEnv{"GERO_TEST_VAR": &v1}); err != nil {
+	if err := m.SetEnv("dev", api.SetEnv{"PSPS_TEST_VAR": &v1}); err != nil {
 		t.Fatal(err)
 	}
 	a, err := m.CreateAgent(ctx, api.CreateAgent{Isolation: "dev", Kind: driver.Codex, Prompt: "one"})
@@ -1536,7 +1536,7 @@ func TestAResizeIsNotKeptBehindAgentsWaitingForAStuckVM(t *testing.T) {
 	st.mu.Lock()
 	st.healthy = time.Time{}
 	st.mu.Unlock()
-	if _, err := m.ensureIsolation(ctx, testIsoID); err == nil || !strings.Contains(err.Error(), "gero iso kill dev") {
+	if _, err := m.ensureIsolation(ctx, testIsoID); err == nil || !strings.Contains(err.Error(), "psps iso kill dev") {
 		t.Fatalf("a stuck VM: %v", err)
 	}
 }
@@ -1656,7 +1656,7 @@ func touch(t *testing.T, path string) {
 	}
 }
 
-// Deleting forgets an archived agent everywhere gero keeps it; what it left
+// Deleting forgets an archived agent everywhere psps keeps it; what it left
 // in the isolation goes only when asked to.
 func TestDeletingAnAgent(t *testing.T) {
 	e := newTestEnv(t)
@@ -1749,7 +1749,7 @@ func TestPurgingAClaudeAgentTouchesOnlyItsOwnPaths(t *testing.T) {
 		}
 	}
 
-	// A workspace gero did not make is not gero's to remove.
+	// A workspace psps did not make is not psps's to remove.
 	odd := a
 	odd.Workdir = theirs[0][:len(theirs[0])-len("/main.go")]
 	if err := m.purgeAgent(ctx, iso, odd); err == nil || !exists(theirs[0]) {
@@ -1782,7 +1782,7 @@ func TestAnAmbiguousPrefixDeletesNothing(t *testing.T) {
 func serveAPI(t *testing.T, m *Manager) (*client.Client, string) {
 	t.Helper()
 	// A unix socket's path has to be short; a test's temp dir is not.
-	dir, err := os.MkdirTemp("", "gero")
+	dir, err := os.MkdirTemp("", "psps")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1814,7 +1814,7 @@ func TestFollowingSaysWhenTheHistoryIsAllThere(t *testing.T) {
 		var d net.Dialer
 		return d.DialContext(ctx, "unix", sock)
 	}}}
-	req, _ := http.NewRequestWithContext(ctx, "GET", "http://gero/v1/agents/"+a.ID+"/events?follow=1", nil)
+	req, _ := http.NewRequestWithContext(ctx, "GET", "http://psps/v1/agents/"+a.ID+"/events?follow=1", nil)
 	resp, err := hc.Do(req)
 	if err != nil {
 		t.Fatal(err)

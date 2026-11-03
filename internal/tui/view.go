@@ -11,9 +11,9 @@ import (
 	"github.com/charmbracelet/lipgloss"
 	"github.com/charmbracelet/x/ansi"
 
-	"github.com/hongzio/gero/internal/api"
-	"github.com/hongzio/gero/internal/driver"
-	"github.com/hongzio/gero/internal/event"
+	"github.com/hongzio/psps/internal/api"
+	"github.com/hongzio/psps/internal/driver"
+	"github.com/hongzio/psps/internal/event"
 )
 
 func (m *Model) View() string {
@@ -40,7 +40,7 @@ func truncate(s string, w int) string { return ansi.Truncate(s, max(w, 1), "…"
 func (m *Model) renderSidebar(w int) string {
 	th := m.th
 	var b strings.Builder
-	b.WriteString(" " + th.title.Render("gero") + "\n\n")
+	b.WriteString(" " + th.title.Render("psps") + "\n\n")
 	// row writes one sidebar entry; the selected one is a solid bar, so its
 	// own colors are dropped.
 	row := func(sel string, lines ...string) {
@@ -394,7 +394,7 @@ func (m *Model) renderStatus() string {
 func (m *Model) renderHelp(w int) string {
 	th := m.th
 	var b strings.Builder
-	b.WriteString(th.title.Render("Keys") + th.dim.Render("   (any key closes; rebind them in ~/.config/gero/keys.toml)") + "\n")
+	b.WriteString(th.title.Render("Keys") + th.dim.Render("   (any key closes; rebind them in ~/.config/psps/keys.toml)") + "\n")
 	ctx := ""
 	for _, bd := range defaultBindings {
 		if bd.context != ctx {

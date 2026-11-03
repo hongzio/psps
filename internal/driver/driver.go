@@ -1,4 +1,4 @@
-// Package driver translates between an agent CLI's own protocol and gero's
+// Package driver translates between an agent CLI's own protocol and psps's
 // event vocabulary.
 //
 // A driver never touches a process or a socket. It is a deterministic fold
@@ -14,8 +14,8 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/hongzio/gero/internal/event"
-	"github.com/hongzio/gero/internal/shimproto"
+	"github.com/hongzio/psps/internal/event"
+	"github.com/hongzio/psps/internal/shimproto"
 )
 
 type Kind string
@@ -43,12 +43,12 @@ const (
 	// isolation: Claude's ~/.claude/settings.json (permissions.defaultMode,
 	// manual when it has none), Codex's ~/.codex/config.toml (approval and
 	// sandbox settings, Codex's own defaults when it has none). Whatever that
-	// would ask a person comes to gero as an approval.
+	// would ask a person comes to psps as an approval.
 	ApprovalsDefault Approvals = "default"
 )
 
 // ApprovalModes are the modes in the order forms offer them. An agent
-// created with none chosen (the API, `gero agent new` without --approvals)
+// created with none chosen (the API, `psps agent new` without --approvals)
 // runs as never; the new-agent forms start on default.
 var ApprovalModes = []Approvals{ApprovalsNever, ApprovalsAuto, ApprovalsAsk, ApprovalsDefault}
 
@@ -370,7 +370,7 @@ func (b *base) processEnded(rec shimproto.Record, name string) []event.Event {
 	return evs
 }
 
-// cleanExit covers success and the signals gero itself sends to stop or
+// cleanExit covers success and the signals psps itself sends to stop or
 // restart an agent.
 func cleanExit(code int) bool { return code == 0 || code == 128+2 || code == 128+15 }
 

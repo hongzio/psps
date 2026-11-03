@@ -9,7 +9,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/hongzio/gero/internal/proxy"
+	"github.com/hongzio/psps/internal/proxy"
 )
 
 // inventoryAWS is an aws CLI that answers each subcommand from its own
@@ -94,7 +94,7 @@ func TestTheProfilesAreTheMacsOwn(t *testing.T) {
 func TestTheRolesAreTheOnesAPrincipalMayAssume(t *testing.T) {
 	f := newInventoryAWS(t)
 	f.answer("iam_list-roles", `{"Roles": [
-	  {"Arn": "arn:aws:iam::111122223333:role/workspace", "Description": "for gero",
+	  {"Arn": "arn:aws:iam::111122223333:role/workspace", "Description": "for psps",
 	   "AssumeRolePolicyDocument": {"Statement": [{"Effect": "Allow", "Action": "sts:AssumeRole",
 	     "Principal": {"AWS": "arn:aws:iam::111122223333:root"}}]}},
 	  {"Arn": "arn:aws:iam::111122223333:role/ci",
@@ -119,7 +119,7 @@ func TestTheRolesAreTheOnesAPrincipalMayAssume(t *testing.T) {
 	want := strings.Join([]string{
 		"arn:aws:iam::111122223333:role/ci (trusts 444455556666:role/deployer, account 777788889999)",
 		"arn:aws:iam::111122223333:role/encoded (trusts role/admin)",
-		"arn:aws:iam::111122223333:role/workspace (trusts account 111122223333 · for gero)",
+		"arn:aws:iam::111122223333:role/workspace (trusts account 111122223333 · for psps)",
 	}, "\n")
 	if got := spelled(cs); got != want {
 		t.Fatalf("roles:\n%s", got)

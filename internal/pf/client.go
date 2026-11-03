@@ -17,7 +17,7 @@ type Client struct {
 	Owner string
 }
 
-var ErrNotInstalled = errors.New("the network fence helper is not installed; run `sudo gero pf install`")
+var ErrNotInstalled = errors.New("the network fence helper is not installed; run `sudo psps pf install`")
 
 func (c Client) Installed() bool {
 	_, err := os.Stat(c.Socket)

@@ -5,15 +5,15 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/hongzio/gero/internal/proxy"
+	"github.com/hongzio/psps/internal/proxy"
 )
 
 // Config cannot express why an AccessDenied happened, or that it is final;
 // the skill does.
 
 const skillTemplate = `---
-name: gero-aws
-description: How AWS access works inside this gero isolation. Use when an AWS
+name: psps-aws
+description: How AWS access works inside this psps isolation. Use when an AWS
   call fails with AccessDeniedException or NoCredentialsError, when an SSM
   session or an ansible aws_ssm task is refused, or when deciding whether an
   AWS resource is reachable from here.
@@ -67,11 +67,11 @@ below, not at the broker.
   resource or capability is outside this environment's allowlist. That is the
   operator's decision, not a fault to retry or route around. If access is
   genuinely needed, ask the operator to run
-  ` + "`gero env edit aws <env> --allow-instance i-...`" + ` (or ` + "`--allow-bucket name`" + `).
+  ` + "`psps env edit aws <env> --allow-instance i-...`" + ` (or ` + "`--allow-bucket name`" + `).
 - ` + "`... because no identity-based policy allows <action>`" + ` — the allowlist
   already permits it, but the IAM role the broker assumes does not. AWS grants
   only what both the role's own policy and the session policy allow, so no
-  ` + "`gero env edit`" + ` can fix this one. Tell the operator the role ARN from the
+  ` + "`psps env edit`" + ` can fix this one. Tell the operator the role ARN from the
   message and the action and resource it was refused; widening the role's
   policy in that account is theirs to do. Do not retry.
 - The credential endpoint answers 503 — read the reason directly:
@@ -92,16 +92,16 @@ issues, and the broker is the only thing the token in this environment opens.
 
 // strictSection is the skill's word on strict SSM, there only while the
 // isolation is in it.
-const strictSection = `## SSM goes through gero here (strict mode)
+const strictSection = `## SSM goes through psps here (strict mode)
 
 This isolation is in strict SSM mode. The credentials here open no SSM at all:
 ` + "`aws ssm start-session`" + `, ` + "`aws ssm send-command`" + `, boto3's ssm client and ansible's
 aws_ssm connection are all refused by AWS, by design, and no other route exists.
-Do not look for one. To run a command on an instance, ask gero, which shows the
+Do not look for one. To run a command on an instance, ask psps, which shows the
 command to your operator in this conversation; they accept or decline it, and
-gero runs it and hands back what it printed:
+psps runs it and hands back what it printed:
 
-    curl -sS "$GERO_AWS_URL/ssm" --json @- <<'REQ'
+    curl -sS "$PSPS_AWS_URL/ssm" --json @- <<'REQ'
     {"env": "prod", "instance": "i-0123456789abcdef0",
      "command": "tail -n 200 /var/log/app/app.log", "timeout": 120}
     REQ
@@ -114,7 +114,7 @@ for a person: up to about nine minutes). The answer is JSON:
 - ` + "`\"state\": \"declined\"`" + ` — the operator said no. That is a decision, not a fault:
   do not send the same command again; say in your reply what you needed it for.
 - ` + "`\"state\": \"pending\"`" + ` with an ` + "`id`" + ` — no decision yet; fetch the outcome later with
-  ` + "`curl -sS \"$GERO_AWS_URL/ssm/<id>\"`" + `, which waits again.
+  ` + "`curl -sS \"$PSPS_AWS_URL/ssm/<id>\"`" + `, which waits again.
 
 What it is like: AWS-RunShellScript, one non-interactive bash script per
 request, as ssm-user (root only where the instance has never had a session),

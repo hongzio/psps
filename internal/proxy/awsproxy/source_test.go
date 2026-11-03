@@ -15,7 +15,7 @@ func newSource(t *testing.T, f *fakeAWS) *Source {
 	if err != nil {
 		t.Fatal(err)
 	}
-	return &Source{AWS: f.path, RoleARN: role, Profile: "dev", SessionName: "gero-axis", Policy: p.JSON()}
+	return &Source{AWS: f.path, RoleARN: role, Profile: "dev", SessionName: "psps-axis", Policy: p.JSON()}
 }
 
 var epoch = time.Unix(0, 0)
@@ -28,7 +28,7 @@ func TestAssumeRoleIsInvokedWithTheScopingPolicy(t *testing.T) {
 	if a := f.argv(); !reflect.DeepEqual(a[:2], []string{"sts", "assume-role"}) {
 		t.Fatalf("argv = %v", a)
 	}
-	if f.flag("--profile") != "dev" || f.flag("--role-arn") != role || f.flag("--role-session-name") != "gero-axis" {
+	if f.flag("--profile") != "dev" || f.flag("--role-arn") != role || f.flag("--role-session-name") != "psps-axis" {
 		t.Fatalf("argv = %v", f.argv())
 	}
 	var sent Policy

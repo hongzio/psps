@@ -9,8 +9,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/hongzio/gero/internal/api"
-	"github.com/hongzio/gero/internal/store"
+	"github.com/hongzio/psps/internal/api"
+	"github.com/hongzio/psps/internal/store"
 )
 
 // A container can run and still do nothing: its memory full, every
@@ -148,7 +148,7 @@ func (m *Manager) forgetHealth(id string) {
 	m.mu.Unlock()
 }
 
-// killIfStuck kills a running VM that does not finish a command, as gero
+// killIfStuck kills a running VM that does not finish a command, as psps
 // iso kill does, before its container is replaced or removed: container's
 // rm waits on such a VM for good. Its agents end either way; what its
 // disks had not written is lost, as it could not be written.

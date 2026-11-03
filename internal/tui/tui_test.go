@@ -18,12 +18,12 @@ import (
 	"github.com/charmbracelet/lipgloss"
 	"github.com/charmbracelet/x/ansi"
 
-	"github.com/hongzio/gero/internal/api"
-	"github.com/hongzio/gero/internal/driver"
-	"github.com/hongzio/gero/internal/event"
-	"github.com/hongzio/gero/internal/proxy"
-	"github.com/hongzio/gero/internal/proxy/mailproxy"
-	"github.com/hongzio/gero/internal/store"
+	"github.com/hongzio/psps/internal/api"
+	"github.com/hongzio/psps/internal/driver"
+	"github.com/hongzio/psps/internal/event"
+	"github.com/hongzio/psps/internal/proxy"
+	"github.com/hongzio/psps/internal/proxy/mailproxy"
+	"github.com/hongzio/psps/internal/store"
 )
 
 type fakeBackend struct {
@@ -407,7 +407,7 @@ func (f *fakeBackend) Choices(_ context.Context, svc, field string, req api.Choi
 	if req.Secret["token"] == "" && req.Set["token_command"] == nil && req.Env == "" {
 		return nil, fmt.Errorf("enter a token first: the repositories listed are the ones it opens")
 	}
-	return []proxy.Choice{{Value: "hongzio/gero", Note: "private"}, {Value: "hongzio/isolate"}}, nil
+	return []proxy.Choice{{Value: "hongzio/psps", Note: "private"}, {Value: "hongzio/isolate"}}, nil
 }
 func (f *fakeBackend) Accounts(context.Context) ([]api.Account, error) {
 	f.mu.Lock()
@@ -909,7 +909,7 @@ func TestMailShowsAsMailAndWhatWaitsIsCounted(t *testing.T) {
 	c.apply(event.Event{ID: 2, Kind: event.KindUser, Text: "thanks"})
 	out := c.render(80, "Codex", newTheme())
 	if !strings.Contains(out, "✉ Mail #7 from brave-otter · dev") || !strings.Contains(out, "the build is green") ||
-		strings.Contains(out, "gero mail #") || strings.Count(out, "You") != 1 {
+		strings.Contains(out, "psps mail #") || strings.Count(out, "You") != 1 {
 		t.Fatalf("%s", out)
 	}
 

@@ -7,8 +7,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/hongzio/gero/internal/proxy"
-	"github.com/hongzio/gero/internal/store"
+	"github.com/hongzio/psps/internal/proxy"
+	"github.com/hongzio/psps/internal/store"
 )
 
 const good = `---
@@ -82,7 +82,7 @@ func TestASkillIsCheckedThenKept(t *testing.T) {
 		t.Fatal("a failed add changed the kept skill")
 	}
 
-	// In the isolation: both CLIs, under gero-skill-, binary files intact.
+	// In the isolation: both CLIs, under psps-skill-, binary files intact.
 	raw, _ := json.Marshal(map[string]any{})
 	ws, err := s.Workspace(proxy.View{Enabled: true, Exposure: store.Exposure{Envs: []string{"pdf", "gone"}}, Envs: map[string]json.RawMessage{"pdf": raw}})
 	if err != nil {
@@ -95,7 +95,7 @@ func TestASkillIsCheckedThenKept(t *testing.T) {
 			t.Errorf("%s: base64 %v", f.Path, f.Base64)
 		}
 	}
-	for _, p := range []string{"/home/agent/.claude/skills/gero-skill-pdf/SKILL.md", "/home/agent/.codex/skills/gero-skill-pdf/scripts/fill.py"} {
+	for _, p := range []string{"/home/agent/.claude/skills/psps-skill-pdf/SKILL.md", "/home/agent/.codex/skills/psps-skill-pdf/scripts/fill.py"} {
 		if !paths[p] {
 			t.Errorf("%s is not written; have %v", p, paths)
 		}
@@ -158,7 +158,7 @@ func TestALinkInASkillIsRefused(t *testing.T) {
 func TestSkillNames(t *testing.T) {
 	for name, ok := range map[string]bool{
 		"pdf": true, "pdf-forms-2": true, "PDF": false, "pdf_forms": false, "-pdf": false, "pdf-": false,
-		"pdf--x": false, "gero-git": false, "geronimo": false, "synced": false, "anthropic-skills": false,
+		"pdf--x": false, "psps-git": false, "pspsx": false, "gero-git": true, "synced": false, "anthropic-skills": false,
 		strings.Repeat("a", 64): true, strings.Repeat("a", 65): false,
 	} {
 		if err := CheckName(name); (err == nil) != ok {
@@ -184,14 +184,14 @@ func TestWhatACLIIgnoresIsAWarning(t *testing.T) {
 	}
 }
 
-func TestASkillIsNotTakenFromGerosOwnDirectories(t *testing.T) {
+func TestASkillIsNotTakenFromPspsOwnDirectories(t *testing.T) {
 	s := service(t)
 	config := filepath.Join(t.TempDir(), "config")
 	s.Protected = []string{config}
 	os.MkdirAll(config, 0o700)
 	os.WriteFile(filepath.Join(config, "SKILL.md"), []byte("---\nname: pdf\ndescription: x\n---\n"), 0o644)
 	if _, err := s.Normalize("pdf", map[string]any{"path": config}); err == nil {
-		t.Fatal("gero's config folder was taken as a skill")
+		t.Fatal("psps's config folder was taken as a skill")
 	}
 	if _, err := s.Normalize("pdf", map[string]any{}); err == nil || !strings.Contains(err.Error(), "--path") {
 		t.Fatalf("a skill not kept yet was added without a path: %v", err)

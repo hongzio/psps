@@ -6,7 +6,7 @@ import (
 	"math/rand/v2"
 	"strconv"
 
-	"github.com/hongzio/gero/internal/store"
+	"github.com/hongzio/psps/internal/store"
 )
 
 // adjectives and nouns make what an agent given no ID of its own goes by,

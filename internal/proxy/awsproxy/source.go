@@ -8,7 +8,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/hongzio/gero/internal/proxy"
+	"github.com/hongzio/psps/internal/proxy"
 )
 
 // RefreshMargin is how long before expiry the broker assumes the role again.

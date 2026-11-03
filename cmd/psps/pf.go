@@ -10,14 +10,14 @@ import (
 	"strings"
 	"time"
 
-	"github.com/hongzio/gero/internal/pf"
+	"github.com/hongzio/psps/internal/pf"
 )
 
 // pfCmd manages the network fence's root helper. install and uninstall run
 // under sudo; status needs nothing.
 func pfCmd(args []string) error {
 	if len(args) == 0 {
-		return errors.New("usage: sudo gero pf install | sudo gero pf uninstall | gero pf status")
+		return errors.New("usage: sudo psps pf install | sudo psps pf uninstall | psps pf status")
 	}
 	switch args[0] {
 	case "install":
@@ -30,8 +30,8 @@ func pfCmd(args []string) error {
 			return err
 		}
 		fmt.Printf("network fence helper installed (%s) for uid %d\n", pf.HelperLabel, uid)
-		fmt.Println("it keeps pf on and loads the rules into the com.apple/gero anchor; /etc/pf.conf is not modified")
-		fmt.Println("remove it with: sudo gero pf uninstall")
+		fmt.Println("it keeps pf on and loads the rules into the com.apple/psps anchor; /etc/pf.conf is not modified")
+		fmt.Println("remove it with: sudo psps pf uninstall")
 		return nil
 	case "uninstall":
 		if err := pf.Uninstall(); err != nil {
@@ -48,7 +48,7 @@ func pfCmd(args []string) error {
 		}
 		fmt.Printf("helper:     version %d", st.Running())
 		if st.Running() < pf.HelperVersion {
-			fmt.Printf(" (this gero needs %d: run `sudo gero pf install`)", pf.HelperVersion)
+			fmt.Printf(" (this psps needs %d: run `sudo psps pf install`)", pf.HelperVersion)
 		}
 		fmt.Printf("\npf enabled: %v\nnetworks:   %d\n", st.Enabled, len(st.Networks))
 		for _, n := range st.Networks {
@@ -73,7 +73,7 @@ func pfCmd(args []string) error {
 // pfdCmd is what the LaunchDaemon runs, as root.
 func pfdCmd(args []string) error {
 	if len(args) != 3 || args[0] != "serve" || args[1] != "--uid" {
-		return errors.New("usage: gero pfd serve --uid N (run by launchd)")
+		return errors.New("usage: psps pfd serve --uid N (run by launchd)")
 	}
 	uid, err := strconv.Atoi(args[2])
 	if err != nil || uid <= 0 {

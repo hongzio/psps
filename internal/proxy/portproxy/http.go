@@ -9,7 +9,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/hongzio/gero/internal/proxy"
+	"github.com/hongzio/psps/internal/proxy"
 )
 
 // Handler is an http forward: what a browser on the Mac asks goes to the
@@ -49,12 +49,12 @@ func Handler(dial func(context.Context) (net.Conn, error), withheld []string) ht
 			if errors.As(err, &d) {
 				msg = d.Reason
 			}
-			http.Error(w, "gero: "+msg, http.StatusBadGateway)
+			http.Error(w, "psps: "+msg, http.StatusBadGateway)
 		},
 	}
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if !loopbackName(r.Host) {
-			http.Error(w, "gero: a forwarded port answers to 127.0.0.1 or localhost, not "+r.Host, http.StatusMisdirectedRequest)
+			http.Error(w, "psps: a forwarded port answers to 127.0.0.1 or localhost, not "+r.Host, http.StatusMisdirectedRequest)
 			return
 		}
 		rp.ServeHTTP(w, r)
@@ -96,8 +96,8 @@ func withholdCookies(h http.Header, held map[string]bool) {
 }
 
 // withholdSetCookies drops an answer's attempts to set a held cookie (a
-// server in the isolation that replaced gero's session would sign the
-// browser out of gero), and keeps every other cookie host-only: one with a
+// server in the isolation that replaced psps's session would sign the
+// browser out of psps), and keeps every other cookie host-only: one with a
 // Domain would reach other names under it, other programs' on the Mac.
 func withholdSetCookies(h http.Header, held map[string]bool) {
 	lines := h.Values("Set-Cookie")

@@ -13,14 +13,14 @@ import (
 	"testing"
 	"time"
 
-	"github.com/hongzio/gero/internal/api"
-	"github.com/hongzio/gero/internal/creds"
-	"github.com/hongzio/gero/internal/driver"
-	"github.com/hongzio/gero/internal/isolation"
-	"github.com/hongzio/gero/internal/proxy"
-	"github.com/hongzio/gero/internal/proxy/awsproxy"
-	"github.com/hongzio/gero/internal/shimproto"
-	"github.com/hongzio/gero/internal/store"
+	"github.com/hongzio/psps/internal/api"
+	"github.com/hongzio/psps/internal/creds"
+	"github.com/hongzio/psps/internal/driver"
+	"github.com/hongzio/psps/internal/isolation"
+	"github.com/hongzio/psps/internal/proxy"
+	"github.com/hongzio/psps/internal/proxy/awsproxy"
+	"github.com/hongzio/psps/internal/shimproto"
+	"github.com/hongzio/psps/internal/store"
 )
 
 // echoService is a proxy that answers each line with who asked and what the
@@ -141,7 +141,7 @@ func TestProxiesReachTheIsolationAndFollowItsConfiguration(t *testing.T) {
 		switch {
 		case f.Path == EnvFile:
 			envFile = f.Content
-		case strings.HasSuffix(f.Path, "gero-echo/SKILL.md"):
+		case strings.HasSuffix(f.Path, "psps-echo/SKILL.md"):
 			skill = f.Content
 		}
 	}
@@ -158,7 +158,7 @@ func TestProxiesReachTheIsolationAndFollowItsConfiguration(t *testing.T) {
 		t.Fatal(err)
 	}
 	req, _ = e.fc.lastSync()
-	if !containsString(req.Remove, "/home/agent/.claude/skills/gero-echo") {
+	if !containsString(req.Remove, "/home/agent/.claude/skills/psps-echo") {
 		t.Fatalf("the skill was not removed: %+v", req.Remove)
 	}
 	for _, f := range req.Files {
@@ -270,7 +270,7 @@ printf '{"Credentials": {"AccessKeyId": "ASIAFAKE", "SecretAccessKey": "s", "Ses
 	if code := get(token); code != 200 {
 		t.Fatalf("the isolation's token got %d", code)
 	}
-	if argv, _ := os.ReadFile(filepath.Join(dir, "argv")); !strings.Contains(string(argv), "--role-session-name gero-dev") {
+	if argv, _ := os.ReadFile(filepath.Join(dir, "argv")); !strings.Contains(string(argv), "--role-session-name psps-dev") {
 		t.Fatalf("argv = %s", argv)
 	}
 }

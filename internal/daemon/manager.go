@@ -20,16 +20,16 @@ import (
 	"time"
 	"unicode"
 
-	"github.com/hongzio/gero/internal/api"
-	"github.com/hongzio/gero/internal/creds"
-	"github.com/hongzio/gero/internal/driver"
-	"github.com/hongzio/gero/internal/event"
-	"github.com/hongzio/gero/internal/isolation"
-	"github.com/hongzio/gero/internal/pf"
-	"github.com/hongzio/gero/internal/proxy"
-	"github.com/hongzio/gero/internal/shim"
-	"github.com/hongzio/gero/internal/shimproto"
-	"github.com/hongzio/gero/internal/store"
+	"github.com/hongzio/psps/internal/api"
+	"github.com/hongzio/psps/internal/creds"
+	"github.com/hongzio/psps/internal/driver"
+	"github.com/hongzio/psps/internal/event"
+	"github.com/hongzio/psps/internal/isolation"
+	"github.com/hongzio/psps/internal/pf"
+	"github.com/hongzio/psps/internal/proxy"
+	"github.com/hongzio/psps/internal/shim"
+	"github.com/hongzio/psps/internal/shimproto"
+	"github.com/hongzio/psps/internal/store"
 	"golang.org/x/sys/unix"
 )
 
@@ -424,7 +424,7 @@ func (m *Manager) ensureIsolation(ctx context.Context, id string) (*shim.Client,
 	h := m.health[id]
 	m.mu.Unlock()
 	if h.label == api.HealthStuck && time.Since(h.at) < healthTTL {
-		return nil, fmt.Errorf("isolation %s is %s (%s); gero iso kill %s ends it", rec.Name, h.label, h.about, rec.Name)
+		return nil, fmt.Errorf("isolation %s is %s (%s); psps iso kill %s ends it", rec.Name, h.label, h.about, rec.Name)
 	}
 	if ping() {
 		return up()
@@ -819,7 +819,7 @@ func (m *Manager) DeleteIsolation(ctx context.Context, name string, purge bool) 
 		return err
 	}
 	if err := m.store.DeleteIsolation(iso.ID); err != nil {
-		return fmt.Errorf("isolation %s: %w; archive and delete them first (`gero agent rm`)", name, err)
+		return fmt.Errorf("isolation %s: %w; archive and delete them first (`psps agent rm`)", name, err)
 	}
 	m.killIfStuck(ctx, iso)
 	if err := m.cli.Remove(ctx, iso.Container); err != nil {
@@ -949,7 +949,7 @@ func (m *Manager) CreateAgent(ctx context.Context, req api.CreateAgent) (store.A
 	return m.createAgent(ctx, req, store.Agent{})
 }
 
-// createAgent is CreateAgent with what gero alone sets of an agent, from
+// createAgent is CreateAgent with what psps alone sets of an agent, from
 // own: the lead that makes it, its turn limit, and the agent that makes it
 // through the control service.
 func (m *Manager) createAgent(ctx context.Context, req api.CreateAgent, own store.Agent) (store.Agent, error) {
@@ -1466,7 +1466,7 @@ func (m *Manager) DeleteAgent(ctx context.Context, idOrPrefix string, purge bool
 	_, live := m.runtimes[a.ID]
 	m.mu.Unlock()
 	if a.ArchivedAt == nil || live {
-		return httpError{http.StatusConflict, fmt.Errorf("agent %s is live; archive it first (`gero agent archive %s`)", a.ID, a.ID)}
+		return httpError{http.StatusConflict, fmt.Errorf("agent %s is live; archive it first (`psps agent archive %s`)", a.ID, a.ID)}
 	}
 	iso, err := m.store.Isolation(a.IsolationID)
 	if err != nil {
@@ -1550,7 +1550,7 @@ func (m *Manager) purgeAgent(ctx context.Context, iso store.Isolation, a store.A
 	if err != nil {
 		return err
 	}
-	// One gero made: the agent's, or the one it shares with the agents it
+	// One psps made: the agent's, or the one it shares with the agents it
 	// took over from or, a fork, was forked from.
 	made := false
 	for b, seen := a, map[string]bool{}; !seen[b.ID]; {
@@ -1563,7 +1563,7 @@ func (m *Manager) purgeAgent(ctx context.Context, iso store.Isolation, a store.A
 		b = all[i]
 	}
 	if !made {
-		return badRequest(fmt.Errorf("agent %s's workspace %s is not where gero makes one; delete it without purge and remove that yourself", a.ID, a.Workdir))
+		return badRequest(fmt.Errorf("agent %s's workspace %s is not where psps makes one; delete it without purge and remove that yourself", a.ID, a.Workdir))
 	}
 	shared := slices.ContainsFunc(all, func(b store.Agent) bool {
 		return b.ID != a.ID && b.IsolationID == a.IsolationID && b.Workdir == a.Workdir

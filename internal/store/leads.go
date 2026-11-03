@@ -8,13 +8,13 @@ import (
 	"strings"
 	"time"
 
-	"github.com/hongzio/gero/internal/driver"
+	"github.com/hongzio/psps/internal/driver"
 )
 
 // A team may have a lead: one of its lines, which makes agents of its own
-// in the team (their MadeBy is its line), hears from gero when a turn of
+// in the team (their MadeBy is its line), hears from psps when a turn of
 // theirs ends, and works toward the team's goal within its budget. What
-// gero tells it waits as the team's news until the lead's live session is
+// psps tells it waits as the team's news until the lead's live session is
 // free, then goes to it in one message.
 const leadSchema = `
 CREATE TABLE IF NOT EXISTS team_leads (
@@ -80,7 +80,7 @@ type LeadSettings struct {
 	PlanCeiling int `json:"plan_ceiling"`
 	// TurnMinutes is the turn limit of an agent it makes that sets none.
 	TurnMinutes int `json:"turn_minutes"`
-	// Eval is the shell command gero runs in the isolation, in EvalDir, to
+	// Eval is the shell command psps runs in the isolation, in EvalDir, to
 	// score the team's work: its last line starting "SCORE:" is the score,
 	// higher better. EvalMinutes is how long it may run.
 	Eval        string `json:"eval,omitempty"`
@@ -105,7 +105,7 @@ type Lead struct {
 	Since    time.Time    `json:"since"`
 	// Base is what the lead's line had spent when it became the lead.
 	Base driver.Tokens `json:"base"`
-	// Stopped says why gero stopped the run, "" while it runs: the lead
+	// Stopped says why psps stopped the run, "" while it runs: the lead
 	// makes no agent until the operator resumes it.
 	Stopped string `json:"stopped,omitempty"`
 	// StaleFrom: evals up to it do not count toward Patience. Nudged is
@@ -234,7 +234,7 @@ func (s *Store) SetLeadDirty(team string, dirty bool) error {
 	return err
 }
 
-// AddTeamNews puts something gero tells team's lead in its waiting news.
+// AddTeamNews puts something psps tells team's lead in its waiting news.
 func (s *Store) AddTeamNews(team, body string) error {
 	_, err := s.db.Exec(`INSERT INTO team_news (team, body, created_at) VALUES (?, ?, ?)`, team, body, ts(time.Now()))
 	return err
@@ -307,7 +307,7 @@ type Eval struct {
 	// Private says the output is the operator's alone: the eval ran in an
 	// eval isolation, and what is scored there could write anything in it.
 	Private bool `json:"private,omitempty"`
-	// NotRun says gero could not run it (its isolation unfit, no fence,
+	// NotRun says psps could not run it (its isolation unfit, no fence,
 	// the work not copied): the work was not scored, so it counts for no
 	// patience.
 	NotRun bool `json:"not_run,omitempty"`

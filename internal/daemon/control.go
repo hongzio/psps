@@ -14,18 +14,19 @@ import (
 	"time"
 	"unicode/utf8"
 
-	"github.com/hongzio/gero/internal/api"
-	"github.com/hongzio/gero/internal/cron"
-	"github.com/hongzio/gero/internal/driver"
-	"github.com/hongzio/gero/internal/event"
-	"github.com/hongzio/gero/internal/proxy/controlproxy"
-	"github.com/hongzio/gero/internal/proxy/cronproxy"
-	"github.com/hongzio/gero/internal/proxy/mailproxy"
-	"github.com/hongzio/gero/internal/store"
+	"github.com/hongzio/psps/internal/api"
+	"github.com/hongzio/psps/internal/cron"
+	"github.com/hongzio/psps/internal/driver"
+	"github.com/hongzio/psps/internal/event"
+	"github.com/hongzio/psps/internal/proxy"
+	"github.com/hongzio/psps/internal/proxy/controlproxy"
+	"github.com/hongzio/psps/internal/proxy/cronproxy"
+	"github.com/hongzio/psps/internal/proxy/mailproxy"
+	"github.com/hongzio/psps/internal/store"
 )
 
 // The control service (internal/proxy/controlproxy): some of what the
-// operator does with the gero command, opened to an isolation's agents by
+// operator does with the psps command, opened to an isolation's agents by
 // its env, on the agents of the isolations it reaches. The daemon answers
 // it on mail's port, at each agent's own address, so what is done is done
 // as that agent: what it makes, writes to or sets a cron on reads so, and
@@ -92,7 +93,7 @@ func (m *Manager) controlEnv(a store.Agent) []string {
 		m.log.Printf("agent %s: control token: %v", a.ID, err)
 		return nil
 	}
-	return []string{"GERO_CONTROL_URL=" + controlproxy.URL(tok)}
+	return proxy.AgentEnv("CONTROL_URL", controlproxy.URL(tok))
 }
 
 // controlCall is one request: the agent that makes it, and its scope.
@@ -129,11 +130,11 @@ func (m *Manager) controlCaller(iso, tok string) (controlCall, error) {
 	}
 	name := m.isoName(iso)
 	if !on {
-		return controlCall{}, httpError{http.StatusForbidden, fmt.Errorf("control: isolation %s has no control; the operator turns it on with `gero iso expose %s control ENV`", name, name)}
+		return controlCall{}, httpError{http.StatusForbidden, fmt.Errorf("control: isolation %s has no control; the operator turns it on with `psps iso expose %s control ENV`", name, name)}
 	}
 	a, err := m.store.AgentByMailToken(tok)
 	if err != nil || a.IsolationID != iso || a.ArchivedAt != nil {
-		return controlCall{}, httpError{http.StatusForbidden, fmt.Errorf("control: this is not the address of an agent in isolation %s; use $GERO_CONTROL_URL as your process was started with it", name)}
+		return controlCall{}, httpError{http.StatusForbidden, fmt.Errorf("control: this is not the address of an agent in isolation %s; use $PSPS_CONTROL_URL as your process was started with it", name)}
 	}
 	return controlCall{me: a, s: s}, nil
 }
@@ -161,7 +162,7 @@ func (m *Manager) reachAgent(c controlCall, ref string) (store.Agent, error) {
 	case 1:
 		return found[0], nil
 	case 0:
-		return store.Agent{}, httpError{http.StatusNotFound, fmt.Errorf("control: no agent you reach is %s (GET $GERO_CONTROL_URL/agents lists them)", ref)}
+		return store.Agent{}, httpError{http.StatusNotFound, fmt.Errorf("control: no agent you reach is %s (GET $PSPS_CONTROL_URL/agents lists them)", ref)}
 	}
 	return store.Agent{}, badRequest(fmt.Errorf("control: %q is the start of more than one agent's ID; say more of it", ref))
 }
@@ -170,7 +171,7 @@ func (m *Manager) reachAgent(c controlCall, ref string) (store.Agent, error) {
 func (m *Manager) reachIsolation(c controlCall, name string) (store.Isolation, error) {
 	iso, err := m.store.IsolationNamed(name)
 	if err != nil || !c.s.reach[iso.ID] {
-		return store.Isolation{}, httpError{http.StatusNotFound, fmt.Errorf("control: no isolation you reach is named %q (GET $GERO_CONTROL_URL lists them)", name)}
+		return store.Isolation{}, httpError{http.StatusNotFound, fmt.Errorf("control: no isolation you reach is named %q (GET $PSPS_CONTROL_URL lists them)", name)}
 	}
 	return iso, nil
 }
@@ -315,7 +316,7 @@ func (m *Manager) controlExec(ctx context.Context, c controlCall, name string, r
 	// timeout(1) signals the command's whole process group; ending
 	// `container exec` would leave it running.
 	out, err := m.cli.RunAsAgent(ctx, iso.Container, "timeout", "--kill-after=10", fmt.Sprintf("%ds", secs),
-		"sh", "-c", `cd -- "$1" && exec sh -c "$2"`, "gero-exec", dir, cmd)
+		"sh", "-c", `cd -- "$1" && exec sh -c "$2"`, "psps-exec", dir, cmd)
 	v := api.ControlExec{Output: out}
 	if err != nil {
 		var exit *exec.ExitError
@@ -359,7 +360,7 @@ func (m *Manager) controlMake(ctx context.Context, c controlCall, req controlNew
 	if err := m.roomForOne(c); err != nil {
 		return api.Agent{}, err
 	}
-	header := fmt.Sprintf("[gero control: agent %s made you, through gero's control service. Your operator may not be watching.]\n\n", c.by())
+	header := fmt.Sprintf("[psps control: agent %s made you, through psps's control service. Your operator may not be watching.]\n\n", c.by())
 	a, err := m.createAgent(ctx, api.CreateAgent{Isolation: iso.Name, Kind: req.Kind, Prompt: header + prompt, Name: req.Name,
 		Workdir: req.Workdir, Repo: req.Repo, Team: req.Team,
 		Options: driver.Options{Model: strings.TrimSpace(req.Model), Effort: strings.TrimSpace(req.Effort), Approvals: approvals}},
@@ -462,7 +463,7 @@ type controlEval struct {
 // an agent c made would run under auto (iso.exec's rule): where c may
 // already run what it likes, and the eval's user changes nothing. In the
 // lead's own isolation an eval runs as the agents, so that is the
-// operator's to set, and so are the run's other terms; a run gero stopped
+// operator's to set, and so are the run's other terms; a run psps stopped
 // stays stopped.
 func (m *Manager) controlEvalSet(c controlCall, ref string, req controlEval) (api.TeamRun, error) {
 	t, _, reached, err := m.controlTeam(c, ref)
@@ -673,7 +674,7 @@ func (m *Manager) controlRoutes(mux *http.ServeMux, iso string) {
 				err = httpError{http.StatusTooManyRequests, fmt.Errorf("control: isolation %s's agents send at most %d messages a minute, mail included; wait and send again", c.s.name, mailproxy.PerMinute)}
 				break
 			}
-			err = m.Send(a.ID, fmt.Sprintf("[gero control: from agent %s, through gero's control service]\n\n%s", c.by(), body))
+			err = m.Send(a.ID, fmt.Sprintf("[psps control: from agent %s, through psps's control service]\n\n%s", c.by(), body))
 		}
 		if err != nil {
 			reply(w, nil, err)

@@ -4,14 +4,14 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/hongzio/gero/internal/isolation"
+	"github.com/hongzio/psps/internal/isolation"
 )
 
 // The mounts say where the folders are; the skill says whose they are.
 
 const skillHead = `---
-name: gero-share
-description: What the folders under /shared are, in this gero isolation - the
+name: psps-share
+description: What the folders under /shared are, in this psps isolation - the
   operator's Mac's own folders, mounted in - and how to treat them. Use before
   reading or writing anything under /shared, or when asked about files "on the
   Mac", the "shared folder" or "the host".

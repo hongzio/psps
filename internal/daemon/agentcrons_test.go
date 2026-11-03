@@ -10,15 +10,15 @@ import (
 	"testing"
 	"time"
 
-	"github.com/hongzio/gero/internal/api"
-	"github.com/hongzio/gero/internal/creds"
-	"github.com/hongzio/gero/internal/cron"
-	"github.com/hongzio/gero/internal/driver"
-	"github.com/hongzio/gero/internal/event"
-	"github.com/hongzio/gero/internal/proxy"
-	"github.com/hongzio/gero/internal/proxy/cronproxy"
-	"github.com/hongzio/gero/internal/proxy/mailproxy"
-	"github.com/hongzio/gero/internal/store"
+	"github.com/hongzio/psps/internal/api"
+	"github.com/hongzio/psps/internal/creds"
+	"github.com/hongzio/psps/internal/cron"
+	"github.com/hongzio/psps/internal/driver"
+	"github.com/hongzio/psps/internal/event"
+	"github.com/hongzio/psps/internal/proxy"
+	"github.com/hongzio/psps/internal/proxy/cronproxy"
+	"github.com/hongzio/psps/internal/proxy/mailproxy"
+	"github.com/hongzio/psps/internal/store"
 )
 
 // An agent sets, changes and removes crons of its own at its address; it
@@ -38,14 +38,14 @@ func TestAnAgentKeepsCronsOfItsOwn(t *testing.T) {
 	if env := m.cronEnv(stored); env != nil {
 		t.Fatalf("an address while off: %q", env)
 	}
-	if code, out := mailAs(t, m, testIsoID, a.ID, "GET", "/crons", ""); code != http.StatusForbidden || !strings.Contains(out, "gero iso expose dev cron") {
+	if code, out := mailAs(t, m, testIsoID, a.ID, "GET", "/crons", ""); code != http.StatusForbidden || !strings.Contains(out, "psps iso expose dev cron") {
 		t.Fatalf("off: %d %s", code, out)
 	}
 	if _, err := m.Expose(ctx, "dev", "cron", api.Expose{}); err != nil {
 		t.Fatal(err)
 	}
 	tok, _ := m.store.MailToken(a.ID)
-	if env := m.cronEnv(stored); len(env) != 1 || env[0] != "GERO_CRON_URL="+cronproxy.URL(tok) {
+	if env := m.cronEnv(stored); len(env) != 2 || env[0] != "PSPS_CRON_URL="+cronproxy.URL(tok) || env[1] != "GERO_CRON_URL="+cronproxy.URL(tok) {
 		t.Fatalf("env %q", env)
 	}
 	if code, out := mailAt(m, testIsoID, "GET", "/a/nope/crons", ""); code != http.StatusForbidden {
@@ -124,7 +124,7 @@ func TestACronOfItsOwnSaysTheAgentSetIt(t *testing.T) {
 	if !strings.Contains(ops, "Your operator set") || !strings.Contains(own, "You set this message yourself") {
 		t.Fatalf("%q\n%q", ops, own)
 	}
-	if !strings.HasPrefix(own, `[gero cron #2, on schedule "@daily". `) || !strings.HasSuffix(own, "]\n\np") {
+	if !strings.HasPrefix(own, `[psps cron #2, on schedule "@daily". `) || !strings.HasSuffix(own, "]\n\np") {
 		t.Fatalf("%q reads unlike a cron", own)
 	}
 }

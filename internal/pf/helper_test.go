@@ -146,7 +146,7 @@ func TestHelperAppliesAndKeepsTheFence(t *testing.T) {
 		t.Fatalf("restart took a new pf reference (%d -> %d)", enablesBefore, enables)
 	}
 	st, _ = c2.Status(context.Background())
-	if len(st.Networks) != 1 || st.Networks[0].Name != "gero-dev" {
+	if len(st.Networks) != 1 || st.Networks[0].Name != "psps-dev" {
 		t.Fatalf("networks after restart = %+v", st.Networks)
 	}
 }
@@ -163,7 +163,7 @@ func TestHelperRejectsBadNetworks(t *testing.T) {
 	}
 }
 
-func TestTeardownReleasesOnlyGerosReference(t *testing.T) {
+func TestTeardownReleasesOnlyPspsReference(t *testing.T) {
 	dir, _ := os.MkdirTemp("", "pfd")
 	defer os.RemoveAll(dir)
 	pfctl := &fakePfctl{tokens: []string{"999"}} // someone else's
@@ -202,7 +202,7 @@ func TestOwnersDoNotOverwriteEachOther(t *testing.T) {
 	}
 	// One owner leaving keeps the other fenced.
 	st, _ = b.Apply(context.Background(), nil)
-	if len(st.Networks) != 1 || st.Networks[0].Name != "gero-dev" {
+	if len(st.Networks) != 1 || st.Networks[0].Name != "psps-dev" {
 		t.Fatalf("after b left: %+v", st.Networks)
 	}
 }

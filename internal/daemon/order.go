@@ -8,8 +8,8 @@ import (
 	"sort"
 	"time"
 
-	"github.com/hongzio/gero/internal/api"
-	"github.com/hongzio/gero/internal/store"
+	"github.com/hongzio/psps/internal/api"
+	"github.com/hongzio/psps/internal/store"
 )
 
 // SetOrder is the operator's order of a sidebar list, live, archived or a

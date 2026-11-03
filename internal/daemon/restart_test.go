@@ -3,9 +3,9 @@ package daemon
 import (
 	"testing"
 
-	"github.com/hongzio/gero/internal/driver"
-	"github.com/hongzio/gero/internal/shimproto"
-	"github.com/hongzio/gero/internal/store"
+	"github.com/hongzio/psps/internal/driver"
+	"github.com/hongzio/psps/internal/shimproto"
+	"github.com/hongzio/psps/internal/store"
 )
 
 // A new environment waits for the tasks the process runs in the

@@ -1,4 +1,4 @@
-// Package web serves gero's browser UI and puts the daemon API behind a
+// Package web serves psps's browser UI and puts the daemon API behind a
 // token, for the daemon's TCP listener. The listener is loopback-only;
 // reaching it from a phone is `tailscale serve`'s job, which brings HTTPS and
 // the tailnet's own access control. The token is what stands between the
@@ -27,11 +27,11 @@ const (
 	// SessionCookie holds the web token. A browser sends it to every port
 	// of the host it was set for, so a forwarded port's HTTP proxy keeps
 	// it from the isolation.
-	SessionCookie = "gero_session"
+	SessionCookie = "psps_session"
 	// csrfHeader must accompany every request that changes something. A
 	// cross-site page cannot set a custom header without a CORS preflight,
 	// which this server never approves.
-	csrfHeader = "X-Gero-Request"
+	csrfHeader = "X-Psps-Request"
 )
 
 // Server is the browser-facing handler. TokenFile is read again when it
@@ -154,7 +154,7 @@ func (s *Server) requireAuth(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		ok, bearer := s.authorized(r)
 		if !ok {
-			jsonError(w, http.StatusUnauthorized, "sign in with the link from `gero web`")
+			jsonError(w, http.StatusUnauthorized, "sign in with the link from `psps web`")
 			return
 		}
 		// A bearer token is never sent by a browser on its own, so only
@@ -179,7 +179,7 @@ func (s *Server) setCookie(w http.ResponseWriter, r *http.Request, value string,
 // token out of the address bar.
 func (s *Server) login(w http.ResponseWriter, r *http.Request) {
 	if !s.valid(r.URL.Query().Get("token")) {
-		http.Error(w, "this sign-in link is not valid any more; run `gero web` for a new one", http.StatusUnauthorized)
+		http.Error(w, "this sign-in link is not valid any more; run `psps web` for a new one", http.StatusUnauthorized)
 		return
 	}
 	s.setCookie(w, r, s.currentToken(), 30*24*3600)

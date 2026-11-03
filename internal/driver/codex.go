@@ -9,8 +9,8 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/hongzio/gero/internal/event"
-	"github.com/hongzio/gero/internal/shimproto"
+	"github.com/hongzio/psps/internal/event"
+	"github.com/hongzio/psps/internal/shimproto"
 )
 
 // Codex speaks `codex app-server`: JSON-RPC 2.0 over stdio, one thread per
@@ -235,7 +235,7 @@ func codexBuiltin() cxApproval {
 
 // codexDefaults is config/read's answer in approval terms: config.toml's
 // settings, Codex's own where it has none. A project's trust level is not
-// read; gero's workspaces are not trusted projects unless made so.
+// read; psps's workspaces are not trusted projects unless made so.
 func codexDefaults(result json.RawMessage) *cxApproval {
 	var r struct {
 		Config struct {
@@ -290,7 +290,7 @@ func (c *codex) Next() [][]byte {
 	switch c.phase {
 	case cxStarted:
 		out = append(out, c.call("initialize", map[string]any{
-			"clientInfo": map[string]any{"name": "gero", "title": "gero", "version": "0.1.0"}}))
+			"clientInfo": map[string]any{"name": "psps", "title": "psps", "version": "0.1.0"}}))
 		c.phase = cxInitializing
 	case cxInitialized:
 		out = append(out, line(map[string]any{"jsonrpc": "2.0", "method": "initialized"}))
@@ -325,7 +325,7 @@ func (c *codex) Next() [][]byte {
 		switch {
 		case !p.approval:
 			out = append(out, line(map[string]any{"jsonrpc": "2.0", "id": json.RawMessage(p.rpcID),
-				"error": map[string]any{"code": -32601, "message": "gero does not support " + p.method}}))
+				"error": map[string]any{"code": -32601, "message": "psps does not support " + p.method}}))
 			p.sent = true
 		case p.decision != "":
 			out = append(out, line(map[string]any{"jsonrpc": "2.0", "id": json.RawMessage(p.rpcID),
@@ -585,7 +585,7 @@ func (c *codex) response(rec shimproto.Record, method string, m rpcMsg) []event.
 		json.Unmarshal(m.Result, &r)
 		if r.RequiresOpenaiAuth && (len(r.Account) == 0 || string(r.Account) == "null") {
 			c.phase, c.starting = cxNoAuth, false
-			c.errText = "codex is not logged in in this isolation; run `gero iso login <isolation> codex`"
+			c.errText = "codex is not logged in in this isolation; run `psps iso login <isolation> codex`"
 			return nil
 		}
 		c.phase = cxNeedThread

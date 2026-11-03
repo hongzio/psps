@@ -8,8 +8,8 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 
-	"github.com/hongzio/gero/internal/paths"
-	"github.com/hongzio/gero/internal/tui"
+	"github.com/hongzio/psps/internal/paths"
+	"github.com/hongzio/psps/internal/tui"
 )
 
 func tuiCmd(p paths.Paths, args []string) error {

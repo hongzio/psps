@@ -12,13 +12,13 @@ import (
 	"sync"
 	"time"
 
-	"github.com/hongzio/gero/internal/proxy"
+	"github.com/hongzio/psps/internal/proxy"
 )
 
 // Strict SSM: an exposure with ssm=strict gets credentials with no SSM in
 // them, so neither a session nor a command reaches an instance from the
-// isolation by any route. An agent asks gero instead, a person sees the
-// command in the agent's conversation and accepts or declines it, and gero
+// isolation by any route. An agent asks psps instead, a person sees the
+// command in the agent's conversation and accepts or declines it, and psps
 // runs it with credentials of its own, scoped to that one instance, and
 // hands back what it printed.
 //
@@ -37,7 +37,7 @@ type Settings struct {
 
 func (s Settings) Strict() bool { return s.SSM == SSMStrict }
 
-// Run limits: AWS-RunShellScript's own, and how long gero waits on one.
+// Run limits: AWS-RunShellScript's own, and how long psps waits on one.
 const (
 	MaxRunTimeout     = 3600
 	DefaultRunTimeout = 120
@@ -77,7 +77,7 @@ func (e Env) CanRun(instance string) error {
 			return nil
 		}
 	}
-	return proxy.Deny("instance %s is not on this environment's allowlist (%s); the operator adds it with `gero env edit aws ENV --allow-instance %s`",
+	return proxy.Deny("instance %s is not on this environment's allowlist (%s); the operator adds it with `psps env edit aws ENV --allow-instance %s`",
 		instance, describe(e.Instances), instance)
 }
 
@@ -103,7 +103,7 @@ func strictPolicy(instances, buckets []string) (Policy, error) {
 	return p, nil
 }
 
-// runPolicy is what gero runs one command with: that instance alone, the
+// runPolicy is what psps runs one command with: that instance alone, the
 // command's reads, and ending the isolation's own sessions.
 func runPolicy(instance, sessionName string) Policy {
 	return Policy{Version: "2012-10-17", Statement: []Statement{
@@ -117,11 +117,11 @@ func runPolicy(instance, sessionName string) Policy {
 
 // SessionName is what the broker names an isolation's role sessions, and
 // so what its SSM sessions are owned by.
-func SessionName(isolation string) string { return "gero-" + isolation }
+func SessionName(isolation string) string { return "psps-" + isolation }
 
-// runSessionName is gero's own, for the commands it runs for isolation:
+// runSessionName is psps's own, for the commands it runs for isolation:
 // told apart in CloudTrail, and not matched by the isolation's sessions.
-func runSessionName(isolation string) string { return "gero-run-" + isolation }
+func runSessionName(isolation string) string { return "psps-run-" + isolation }
 
 // runWith runs aws with the given credentials in place of whatever the
 // place would use: on the bastion they go in on stdin, so they are on no
@@ -150,7 +150,7 @@ func (c CLI) runWith(ctx context.Context, cr Credentials, what string, timeout t
 			`export AWS_ACCESS_KEY_ID="$a" AWS_SECRET_ACCESS_KEY="$b" AWS_SESSION_TOKEN="$c"; ` +
 			`unset AWS_PROFILE AWS_DEFAULT_PROFILE; exec aws "$@"`
 		remote := append([]string{"sh", "-c", script, "sh"}, args...)
-		cmd = exec.CommandContext(ctx, sshBin, append(sshOpts(tc, c.Bastion), "-o", "ControlMaster=no", "gero@bastion", shellJoin(remote))...)
+		cmd = exec.CommandContext(ctx, sshBin, append(sshOpts(tc, c.Bastion), "-o", "ControlMaster=no", "psps@bastion", shellJoin(remote))...)
 		cmd.Stdin = strings.NewReader(cr.AccessKeyId + "\n" + cr.SecretAccessKey + "\n" + cr.Token + "\n")
 	}
 	var stderr strings.Builder
@@ -220,10 +220,10 @@ func (e Env) Region(ctx context.Context, instance string) (string, error) {
 // the shell that unpacks it.
 func runScript(command string) string {
 	b64 := base64.StdEncoding.EncodeToString([]byte(command))
-	return `GERO_CMD="$(printf %s '` + b64 + `' | base64 -d)"
-if id -u ssm-user >/dev/null 2>&1; then echo "gero-user: ssm-user" >&2; exec runuser -u ssm-user -- bash -c "$GERO_CMD"; fi
-echo "gero-user: root (this instance has no ssm-user yet)" >&2
-exec bash -c "$GERO_CMD"`
+	return `PSPS_CMD="$(printf %s '` + b64 + `' | base64 -d)"
+if id -u ssm-user >/dev/null 2>&1; then echo "psps-user: ssm-user" >&2; exec runuser -u ssm-user -- bash -c "$PSPS_CMD"; fi
+echo "psps-user: root (this instance has no ssm-user yet)" >&2
+exec bash -c "$PSPS_CMD"`
 }
 
 // Run runs req's command on its instance for isolation, as the env's role
@@ -251,7 +251,7 @@ func Run(ctx context.Context, e Env, isolation string, req RunRequest) (RunResul
 	input, _ := json.Marshal(map[string]any{
 		"InstanceIds":    []string{req.Instance},
 		"DocumentName":   "AWS-RunShellScript",
-		"Comment":        "gero, for isolation " + isolation,
+		"Comment":        "psps, for isolation " + isolation,
 		"TimeoutSeconds": 60,
 		"Parameters": map[string][]string{
 			"commands":         {runScript(req.Command)},
@@ -302,7 +302,7 @@ func Run(ctx context.Context, e Env, isolation string, req RunRequest) (RunResul
 func splitUser(stderr string) (rest, user string) {
 	var kept []string
 	for _, l := range strings.Split(stderr, "\n") {
-		if u, ok := strings.CutPrefix(l, "gero-user: "); ok && user == "" {
+		if u, ok := strings.CutPrefix(l, "psps-user: "); ok && user == "" {
 			user = u
 			continue
 		}
@@ -325,7 +325,7 @@ func sleep(ctx context.Context, d time.Duration) error {
 // EndSessions ends the SSM sessions isolation's credentials opened that
 // are still open, in the regions of the env's instances, and says how
 // many. Finding them is the lookup identity's (ssm:DescribeSessions);
-// ending them, gero's run credentials'.
+// ending them, psps's run credentials'.
 func EndSessions(ctx context.Context, e Env, isolation string) (int, error) {
 	account, _, _ := strings.Cut(strings.TrimPrefix(e.RoleARN, "arn:aws:iam::"), ":")
 	role := e.RoleARN[strings.LastIndex(e.RoleARN, "/")+1:]
