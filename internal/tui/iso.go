@@ -286,8 +286,10 @@ func (m *Model) renderIsolations(width int) string {
 			env = "—"
 		}
 		// Pad before styling: escape codes would count toward the width.
-		state := fmt.Sprintf("%-10s", iso.State)
-		if iso.State == "running" {
+		state := fmt.Sprintf("%-13s", iso.State)
+		if iso.Health != "" {
+			state = th.err.Render(fmt.Sprintf("%-13s", iso.Health))
+		} else if iso.State == "running" {
 			state = th.ok.Render(state)
 		} else {
 			state = th.warn.Render(state)
@@ -306,6 +308,9 @@ func (m *Model) renderIsolations(width int) string {
 		} else {
 			b.WriteString("  " + line + "\n")
 		}
+	}
+	if iso, ok := p.current(m.isolations); ok && iso.Health != "" {
+		b.WriteString(th.err.Width(width-2).PaddingLeft(2).Render(iso.Health+": "+iso.HealthDetail) + "\n")
 	}
 	if iso, ok := p.current(m.isolations); ok && iso.FenceState != "verified" && iso.FenceState != "off" {
 		b.WriteString(th.err.Width(width-2).PaddingLeft(2).Render("network fence: "+iso.FenceState) + "\n")

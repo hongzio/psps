@@ -116,6 +116,7 @@ type Manager struct {
 	synced    map[string]string
 	versions  map[string]string
 	lastEnv   map[string]string
+	health    map[string]isoHealth // what was last seen inside, by isolation (health.go)
 	logins    map[string]pendingLogin // browser logins in progress, by id
 	cliLogins map[string]*cliLogin    // agent CLI logins, by isolation/tool
 	// mailBuckets are each isolation's budget for sending mail.
@@ -165,7 +166,7 @@ func NewManager(ctx context.Context, st *store.Store, cli Containers, fence Fenc
 		log: logger, hub: newHub(), workRoot: isolation.WorkRoot, home: isolation.AgentHome,
 		runtimes: map[string]*runtime{}, isos: map[string]*isoState{}, fences: map[string]*fenceState{},
 		tunnelPort: func(p int) int { return p }, instances: map[string]map[string]proxy.Instance{},
-		tunnels: map[string]*tunnelState{}, synced: map[string]string{}, versions: map[string]string{}, lastEnv: map[string]string{},
+		tunnels: map[string]*tunnelState{}, synced: map[string]string{}, versions: map[string]string{}, lastEnv: map[string]string{}, health: map[string]isoHealth{},
 		mailBuckets: map[string]*proxy.TokenBucket{}, cronWake: make(chan struct{}, 1),
 		teamsDue: map[string]bool{}, teamWake: make(chan struct{}, 1), evaluating: map[string]bool{}, busy: map[string]map[string]bool{}}
 	m.loops.Add(1)
@@ -443,6 +444,7 @@ func (m *Manager) Isolations(ctx context.Context) ([]api.Isolation, error) {
 		}
 		out = append(out, v)
 	}
+	m.checkHealth(ctx, out)
 	return out, nil
 }
 
