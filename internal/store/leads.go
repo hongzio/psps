@@ -55,7 +55,8 @@ CREATE TABLE IF NOT EXISTS team_eval_runs (
 	run        TEXT NOT NULL,
 	isolation  TEXT NOT NULL DEFAULT '',
 	private    INTEGER NOT NULL DEFAULT 0,
-	limit_s    INTEGER NOT NULL DEFAULT 0
+	limit_s    INTEGER NOT NULL DEFAULT 0,
+	job        TEXT NOT NULL DEFAULT ''
 );
 CREATE TABLE IF NOT EXISTS spent (
 	agent  TEXT PRIMARY KEY REFERENCES agents(id),
@@ -89,6 +90,10 @@ type LeadSettings struct {
 	// EvalIsolation is the isolation (by ID) the eval runs in instead, on
 	// a copy of EvalDir made for each eval; "" is the lead's own.
 	EvalIsolation string `json:"eval_isolation,omitempty"`
+	// EvalJob is the runner (a job env) the eval is a job of instead, on a
+	// copy of EvalDir from the lead's isolation: its result.json's "score"
+	// is the score, and the runner's terms are the eval's. Eval is "" then.
+	EvalJob string `json:"eval_job,omitempty"`
 	// EvalSetBy is the agent that set the eval through the control
 	// service, as it was shown then; "" while it is the operator's.
 	EvalSetBy string `json:"eval_set_by,omitempty"`
@@ -326,7 +331,7 @@ func (s *Store) AddEval(e Eval) (Eval, error) {
 // An EvalRun is a team's eval under way. The eval runs in its isolation
 // apart from the daemon, so one that outlives a daemon is followed by the
 // next. Isolation is "" until what is scored has started; Limit is how
-// long it may run.
+// long it may run. Job is the job an eval on a runner is, once asked for.
 type EvalRun struct {
 	Team      string        `json:"team"`
 	At        time.Time     `json:"at"`
@@ -335,20 +340,21 @@ type EvalRun struct {
 	Isolation string        `json:"isolation,omitempty"`
 	Private   bool          `json:"private,omitempty"`
 	Limit     time.Duration `json:"limit"`
+	Job       string        `json:"job,omitempty"`
 }
 
 // PutEvalRun keeps r as its team's eval under way.
 func (s *Store) PutEvalRun(r EvalRun) error {
-	_, err := s.db.Exec(`INSERT INTO team_eval_runs (team, at, why, run, isolation, private, limit_s) VALUES (?, ?, ?, ?, ?, ?, ?)
+	_, err := s.db.Exec(`INSERT INTO team_eval_runs (team, at, why, run, isolation, private, limit_s, job) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
 		ON CONFLICT(team) DO UPDATE SET at=excluded.at, why=excluded.why, run=excluded.run, isolation=excluded.isolation,
-			private=excluded.private, limit_s=excluded.limit_s`,
-		r.Team, ts(r.At), r.Why, r.Run, r.Isolation, r.Private, int64(r.Limit/time.Second))
+			private=excluded.private, limit_s=excluded.limit_s, job=excluded.job`,
+		r.Team, ts(r.At), r.Why, r.Run, r.Isolation, r.Private, int64(r.Limit/time.Second), r.Job)
 	return err
 }
 
 // EvalRuns are the evals under way.
 func (s *Store) EvalRuns() ([]EvalRun, error) {
-	rows, err := s.db.Query(`SELECT team, at, why, run, isolation, private, limit_s FROM team_eval_runs ORDER BY at`)
+	rows, err := s.db.Query(`SELECT team, at, why, run, isolation, private, limit_s, job FROM team_eval_runs ORDER BY at`)
 	if err != nil {
 		return nil, err
 	}
@@ -358,7 +364,7 @@ func (s *Store) EvalRuns() ([]EvalRun, error) {
 		var r EvalRun
 		var at string
 		var limit int64
-		if err := rows.Scan(&r.Team, &at, &r.Why, &r.Run, &r.Isolation, &r.Private, &limit); err != nil {
+		if err := rows.Scan(&r.Team, &at, &r.Why, &r.Run, &r.Isolation, &r.Private, &limit, &r.Job); err != nil {
 			return nil, err
 		}
 		r.At, r.Limit = parseTS(at), time.Duration(limit)*time.Second

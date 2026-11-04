@@ -3,6 +3,7 @@ package daemon
 import (
 	"cmp"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"math"
@@ -228,8 +229,23 @@ func (m *Manager) leadTerms(was store.LeadSettings, req api.PutLead, lead store.
 	setInt(&s.TurnMinutes, req.TurnMinutes)
 	setInt(&s.EvalMinutes, req.EvalMinutes)
 	setInt(&s.Patience, req.Patience)
+	// An eval is a command or a job of a runner's: one set is the other
+	// gone, and both at once is neither.
+	if req.Eval != nil && req.EvalJob != nil && strings.TrimSpace(*req.Eval) != "" && strings.TrimSpace(*req.EvalJob) != "" {
+		return s, badRequest(errors.New("an eval is a command (--eval) or a runner's job (--eval-job), not both"))
+	}
 	if req.Eval != nil {
-		s.Eval = strings.TrimSpace(*req.Eval)
+		if s.Eval = strings.TrimSpace(*req.Eval); s.Eval != "" {
+			s.EvalJob = ""
+		}
+	}
+	if req.EvalJob != nil {
+		if s.EvalJob = strings.TrimSpace(*req.EvalJob); s.EvalJob != "" {
+			if _, err := m.runner(s.EvalJob); err != nil {
+				return s, badRequest(fmt.Errorf("the eval's runner: %w", err))
+			}
+			s.Eval = ""
+		}
 	}
 	if req.EvalDir != nil {
 		s.EvalDir = *req.EvalDir
@@ -281,6 +297,9 @@ func (m *Manager) leadTerms(was store.LeadSettings, req api.PutLead, lead store.
 		return s, badRequest(fmt.Errorf("the eval's directory: %w", err))
 	}
 	s.EvalDir = dir
+	if s.EvalJob != "" && s.EvalIsolation != "" {
+		return s, badRequest(errors.New("an eval on a runner runs in the runner's isolation; leave --eval-iso out (- clears it)"))
+	}
 	if s.EvalIsolation != "" {
 		if why := m.evalIsoUnfit(s.EvalIsolation, lead.IsolationID); why != "" {
 			return s, badRequest(fmt.Errorf("isolation %s cannot run the eval: %s", m.isoName(s.EvalIsolation), why))
@@ -301,7 +320,7 @@ func (m *Manager) leadTerms(was store.LeadSettings, req api.PutLead, lead store.
 // forgets that a round ended, so its first eval comes after the next
 // round, or when asked.
 func evalChanged(a, b store.LeadSettings) bool {
-	return a.Eval != b.Eval || a.EvalDir != b.EvalDir || a.EvalIsolation != b.EvalIsolation || a.EvalMinutes != b.EvalMinutes
+	return a.Eval != b.Eval || a.EvalDir != b.EvalDir || a.EvalIsolation != b.EvalIsolation || a.EvalMinutes != b.EvalMinutes || a.EvalJob != b.EvalJob
 }
 
 // ClearLead leaves a team without a lead. The agents it made stay, the
@@ -903,8 +922,8 @@ func (m *Manager) evalRunning(team string) bool {
 
 // startEval runs l's eval, unless it runs already; its result is news.
 func (m *Manager) startEval(l store.Lead, why string) error {
-	if l.Settings.Eval == "" {
-		return httpError{http.StatusConflict, errors.New("the team has no eval; its operator sets one with `psps team lead TEAM AGENT --eval CMD`")}
+	if l.Settings.Eval == "" && l.Settings.EvalJob == "" {
+		return httpError{http.StatusConflict, errors.New("the team has no eval; its operator sets one with `psps team lead TEAM AGENT --eval CMD` or `--eval-job RUNNER`")}
 	}
 	m.mu.Lock()
 	if m.evaluating[l.Team] {
@@ -914,7 +933,7 @@ func (m *Manager) startEval(l store.Lead, why string) error {
 	m.evaluating[l.Team] = true
 	m.mu.Unlock()
 	m.store.SetLeadDirty(l.Team, false)
-	run := store.EvalRun{Team: l.Team, At: time.Now().UTC(), Why: why, Run: newID(), Private: l.Settings.EvalIsolation != ""}
+	run := store.EvalRun{Team: l.Team, At: time.Now().UTC(), Why: why, Run: newID(), Private: l.Settings.EvalIsolation != "" || l.Settings.EvalJob != ""}
 	if err := m.store.PutEvalRun(run); err != nil {
 		m.mu.Lock()
 		delete(m.evaluating, l.Team)
@@ -956,7 +975,7 @@ func (m *Manager) resumeEvals() {
 		m.mu.Lock()
 		m.evaluating[run.Team] = true
 		m.mu.Unlock()
-		if run.Isolation == "" {
+		if run.Isolation == "" && run.Job == "" {
 			m.log.Printf("team %s: the eval was stopped before it ran; running it again", run.Team)
 			run.At, run.Run = time.Now().UTC(), newID()
 			if err := m.store.PutEvalRun(run); err != nil {
@@ -985,18 +1004,23 @@ func (m *Manager) runEval(run store.EvalRun) {
 	// What is scored in an eval isolation could print the eval, or what it
 	// reads there, for the lead: its output is the operator's alone.
 	e := store.Eval{Team: l.Team, At: run.At, Why: why, Private: run.Private}
-	out, err := m.evalOutput(l, run)
+	var out string
+	if run.Job != "" || (l.Settings.EvalJob != "" && run.Isolation == "") {
+		out, e.Score, err = m.evalJob(l, run)
+	} else {
+		out, err = m.evalOutput(l, run)
+		if ms := scoreLineRe.FindAllStringSubmatch(out, -1); len(ms) > 0 {
+			if v, perr := strconv.ParseFloat(ms[len(ms)-1][1], 64); perr == nil && !math.IsNaN(v) && !math.IsInf(v, 0) {
+				e.Score = &v
+			}
+		}
+	}
 	if m.ctx.Err() != nil {
 		return
 	}
 	m.store.DeleteEvalRun(run.Team)
 	e.Took = time.Since(e.At).Round(time.Second)
 	e.Output = tail(out, evalOutput)
-	if ms := scoreLineRe.FindAllStringSubmatch(out, -1); len(ms) > 0 {
-		if v, perr := strconv.ParseFloat(ms[len(ms)-1][1], 64); perr == nil && !math.IsNaN(v) && !math.IsInf(v, 0) {
-			e.Score = &v
-		}
-	}
 	if err != nil && e.Score == nil {
 		e.Output = tail(strings.TrimSpace(e.Output+"\n"+err.Error()), evalOutput)
 	}
@@ -1092,6 +1116,62 @@ func nextTeam(l store.Lead) string {
 	}
 	return "Before you design the next team, write in EVOLUTION.md which signs of a stuck team yours shows (drifting to easy paths, findings lost between teams, stuck debugging, only tuning what is there), and give each role the problem and the measurements, not a list of ideas (the psps-team skill, Leading)." +
 		" Then design the next team, have the eval run on a change of your own (POST $PSPS_TEAM_URL/eval), or say why you stop."
+}
+
+// evalJob runs l's eval as a job of its runner, or follows run's job, and
+// says what it printed and its score: result.json's "score". A job psps
+// could not run, that was lost or cancelled is a notRun.
+func (m *Manager) evalJob(l store.Lead, run store.EvalRun) (string, *float64, error) {
+	if run.Job == "" {
+		var lead store.Agent
+		if r := m.lineRuntime(l.Line); r != nil {
+			lead, _, _ = r.view()
+		} else if a, err := m.storedAgent(l.Line); err == nil {
+			lead = a
+		} else {
+			return "", nil, notRun{err}
+		}
+		c := jobCaller{kind: store.CallerSystem, iso: lead.IsolationID, team: l.Team, why: "the team's eval: " + run.Why}
+		j, err := m.submitJob(c, l.Settings.EvalJob, l.Settings.EvalDir, nil)
+		if err != nil {
+			return "", nil, notRun{fmt.Errorf("asking runner %s for the eval: %w", l.Settings.EvalJob, err)}
+		}
+		run.Job = j.ID
+		if err := m.store.PutEvalRun(run); err != nil {
+			m.log.Printf("team %s: %v", run.Team, err)
+		}
+	}
+	var j store.Job
+	for {
+		var err error
+		j, err = m.waitJob(m.ctx, run.Job, jobWaitMax)
+		if m.ctx.Err() != nil {
+			return "", nil, m.ctx.Err()
+		}
+		if err != nil {
+			return "", nil, notRun{fmt.Errorf("the eval's job %s: %w", run.Job, err)}
+		}
+		if store.JobEnded(j.Status) {
+			break
+		}
+	}
+	var score *float64
+	var res struct {
+		Score *float64 `json:"score"`
+	}
+	if json.Unmarshal([]byte(j.Result), &res) == nil && res.Score != nil && !math.IsNaN(*res.Score) && !math.IsInf(*res.Score, 0) {
+		score = res.Score
+	}
+	what := fmt.Sprintf("the eval's job %s on runner %s", j.ID, j.Runner)
+	switch {
+	case j.Status == store.JobDone && score == nil:
+		return j.Output, nil, fmt.Errorf("%s left no score: its result.json has no \"score\" number", what)
+	case j.Status == store.JobDone:
+		return j.Output, score, nil
+	case j.Status == store.JobFailed && !strings.HasPrefix(j.Error, "psps could not"):
+		return j.Output, score, fmt.Errorf("%s: %s", what, j.Error)
+	}
+	return j.Output, nil, notRun{fmt.Errorf("%s %s: %s", what, j.Status, j.Error)}
 }
 
 // notRun is an error of psps's that kept an eval from running: what is

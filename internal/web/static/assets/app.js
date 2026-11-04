@@ -3232,7 +3232,7 @@ const SERVICE_GROUPS = [
   { name: 'Into the isolation', note: 'folders, skills and ports of the Mac’s' },
   { name: 'Between agents', note: 'psps’s own' },
 ]
-const serviceGroup = (s) => ['share', 'skill', 'port'].includes(s.name) ? 1 : ['mail', 'cron', 'team', 'control'].includes(s.name) ? 2 : 0
+const serviceGroup = (s) => ['share', 'skill', 'port'].includes(s.name) ? 1 : ['mail', 'cron', 'team', 'control', 'job'].includes(s.name) ? 2 : 0
 const grouped = (services) => SERVICE_GROUPS.map((g, n) => ({ ...g, services: services.filter((s) => serviceGroup(s) === n) })).filter((g) => g.services.length)
 
 function isoServices(i) {

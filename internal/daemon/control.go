@@ -493,6 +493,9 @@ func (m *Manager) controlEvalSet(c controlCall, ref string, req controlEval) (ap
 		return api.TeamRun{}, httpError{http.StatusNotFound, fmt.Errorf("control: team %q has no lead you reach", t.Name)}
 	}
 	s := l.Settings
+	if s.EvalJob != "" {
+		return api.TeamRun{}, httpError{http.StatusForbidden, fmt.Errorf("control: team %q's eval is a job of runner %s, its operator's; only they change it", t.Name, s.EvalJob)}
+	}
 	ev := store.Isolation{ID: c.s.iso, Name: c.s.name}
 	switch {
 	case req.EvalIsolation != nil && strings.TrimSpace(*req.EvalIsolation) != "":

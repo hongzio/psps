@@ -44,6 +44,7 @@ func TestMain(m *testing.M) {
 		os.Exit(0)
 	}
 	evalPoll = 20 * time.Millisecond
+	jobPoll = 20 * time.Millisecond
 	os.Exit(m.Run())
 }
 
@@ -190,6 +191,10 @@ type fakeContainers struct {
 	// runs are the evals started, by "container/run"; a reboot loses
 	// its container's.
 	runs map[string]*fakeRun
+	// jobPreps and jobArgvs are how each job was readied and started, by
+	// its ID (jobs_test.go).
+	jobPreps map[string]isolation.JobPrep
+	jobArgvs map[string][]string
 	// dial is what the tunnel connects the daemon to inside: the isolation's
 	// loopback, as the shim allows; nil is a shim from before forwards.
 	dial tunnel.Allow
@@ -798,6 +803,11 @@ func (e *testEnv) daemon() (m *Manager, stop func()) {
 	if err := m.Reconcile(); err != nil {
 		e.t.Fatal(err)
 	}
+	m.loops.Add(1)
+	go func() {
+		defer m.loops.Done()
+		m.RunJobs()
+	}()
 	return m, func() { cancel(); m.Wait() }
 }
 

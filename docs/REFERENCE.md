@@ -581,7 +581,7 @@ Isolations created before the proxies need `psps iso upgrade NAME` once;
 
 ## Agents in psps
 
-Four services give an isolation's agents a part in psps itself. Each is a
+Five services give an isolation's agents a part in psps itself. Each is a
 different kind of right, turned on apart:
 
 | For agents to… | Turn on | What it is |
@@ -590,6 +590,7 @@ different kind of right, turned on apart:
 | come back to something on a schedule | `cron` | crons an agent sets on itself |
 | work as a team toward an eval, within a budget | `team` | the agent you make a team's lead makes agents of its own, hears of their turns and has the eval run, within your terms |
 | do some of what you do with the psps command | `control` | the actions its env ticks, on the agents of the isolations it reaches, as itself |
+| have a command of yours run elsewhere on their work | `job` | a runner's command run in the runner's isolation on a copy of a directory of theirs; they get what it leaves them |
 
 Each puts a skill in the isolation, and each skill sends what is another's
 there: a question to a peer to mail, an instruction to control, a lead's own
@@ -787,6 +788,15 @@ at most (20), in one of two places:
   refused until it is off again; each refused one shows as `not run` and
   counts for no patience.
 
+Or the eval is a job of one of your runners (`--eval-job RUNNER` in place
+of `--eval`; see Jobs): psps copies `--eval-dir` from the lead's isolation to
+the runner's and runs the runner's command there, its `meta.json` saying the
+caller is `system` and naming the team. The runner's terms are the eval's
+(`--eval-minutes` and `--eval-iso` do not apply), the `score` number in its
+`result.json` is the score, and the lead hears that alone; the rest of the
+result and what it printed are yours. An agent with control cannot change
+such an eval.
+
 Either way the eval runs apart from the daemon, in a session of its own,
 with its output and exit status kept by root in the isolation
 (`/var/lib/psps-eval`, out of the eval user's reach). A daemon that stops
@@ -955,6 +965,76 @@ as that agent:
 Turning control off for an isolation, or editing its env, takes effect on the
 next request; its agents' processes start again when idle, with the address
 and the skill or without them.
+
+## Jobs
+
+A runner is a command of yours that runs in an isolation of its own. A job
+runs it there on a copy of a directory from another isolation, for a caller:
+an agent, through its job address; psps itself, for a team's eval on the
+runner (`--eval-job`); or you. psps says who asked in a file the command can
+trust, passes the caller's options on unread, and gives the caller what the
+command left for it, nothing more. What it is for is the command's: a
+simulation, a benchmark, a build in a clean room.
+
+```sh
+psps env add job sim --isolation sim --command '/home/agent/sim/run'
+psps env edit job sim --minutes 120 --memory 8G --max-live 3 --max-mb 1000
+psps iso expose dev job sim          # dev's agents may ask for jobs on sim
+psps job run sim --from dev --options '{"mode":"quick"}' --wait /home/agent/work/x
+psps job ls                          # every job, newest first, kept 14 days
+psps job show ID                     # all of it: result.json, what it printed
+psps job cancel ID
+psps job help                        # what the command gets and leaves
+```
+
+A runner's terms: `--isolation` (one), `--command` (a shell command),
+`--minutes` (60), `--memory` (4G, no swap) and `--pids` (512) for all the job
+starts, `--max-live` (2) jobs at once with `--max-queued` (20) more waiting,
+psps's own first and never refused, and the copy's limits, `--max-mb` (500)
+and `--max-files` (50000), and the names it leaves out wherever they are,
+`--exclude` (`.git`).
+
+For each job psps readies `/var/lib/psps-job/ID` in the runner's isolation,
+root's, which the agent user may pass through but not list or change, and a
+cgroup of the job's own with its memory and process limits; copies the
+directory there (`work/`), as the agent user reads it on one side and writes
+it on the other, through the daemon and nowhere else on the Mac; and runs the
+command there as the agent user, with the isolation's own environment (its
+services' addresses and `psps iso env`) and nothing of root's:
+
+| Variable | What it is |
+|---|---|
+| `PSPS_JOB_WORK` | the copy, the working directory: the job's alone |
+| `PSPS_JOB_META` | who asked, written by psps, root's and read-only: `v`, `job`, `runner`, `caller` (`agent`, `system` or `operator`), `agent` (`id`, `handle`, `name`) or null, `isolation` (where the directory is), `team` (`id`, `name`) or null, `dir`, `why`, `requested_at`, `started_at`, `deadline` |
+| `PSPS_JOB_OPTIONS` | the caller's options, a JSON object of at most 16 KiB that psps does not read |
+| `PSPS_JOB_OUT` | where the command leaves `result.json` |
+| `PSPS_JOB_ID`, `PSPS_JOB_RUNNER`, `PSPS_JOB_DEADLINE` | as named |
+
+The copy and the options are the caller's to write. What the command trusts
+of who asked is `meta.json`: check that it is root's, under
+`/var/lib/psps-job/`, and that its `job` is `PSPS_JOB_ID`, and decide from
+its `caller` what the job may do. A copy has files, directories and symbolic
+links, links as links and never followed; devices, FIFOs and sockets are
+left out, and one over the limits is refused before anything runs.
+`timeout(1)` sends SIGTERM at `--minutes` and SIGKILL two minutes later; a
+job cancelled is sent SIGTERM at once and ended two minutes later; whatever
+the command leaves running ends with it, and its directory is removed.
+
+`result.json`, a JSON object of at most 1 MiB, is kept whole for you, with
+the end of what the command printed. Its `caller` is all the agent that asked
+gets of it, and for a team's eval its `score` is all the lead hears. The job
+is `done` when the command exits 0, `failed` otherwise (or when psps could not
+run it: the error says which), `cancelled`, or `lost` when its isolation
+started again under it. A job runs apart from the daemon: one that stops
+meanwhile ends nothing, and the next follows it to its end.
+
+Inside an isolation with the service, `PSPS_JOB_URL` is each agent's own
+address for it, and the `psps-job` skill says how to use it: `GET` lists the
+runners open to it, `POST /jobs` asks for one
+(`{"runner", "dir", "options"}`, 202), `GET /jobs/ID?wait=120` follows one,
+and `DELETE /jobs/ID` cancels it. An agent sees the jobs asked for from its
+own isolation, never psps's or yours, and only the runners its exposure names
+(`psps iso expose dev job sim,quick --default-env quick`).
 
 ## Shared folders
 
