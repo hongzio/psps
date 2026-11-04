@@ -57,7 +57,11 @@ URI for just that command:
 
 An entry's ` + "`=`" + ` suffix narrows what it permits — instances: ` + "`session`" + ` (SSM
 sessions), ` + "`command`" + ` (SendCommand); buckets: ` + "`read`, `write`, `delete`" + `. A bare
-name permits its full set. The narrowing is inside the issued credentials
+name permits its full set. Batch queues and job definitions go together: a job
+is submitted to a named queue with a named definition (any revision), and
+cancelling, terminating, tagging and describing jobs are open for any job, as
+Batch cannot narrow those. A log group's streams may be read with
+GetLogEvents. The narrowing is inside the issued credentials
 themselves, so a refused action fails at AWS with the session-policy message
 below, not at the broker.
 
@@ -67,7 +71,8 @@ below, not at the broker.
   resource or capability is outside this environment's allowlist. That is the
   operator's decision, not a fault to retry or route around. If access is
   genuinely needed, ask the operator to run
-  ` + "`psps env edit aws <env> --allow-instance i-...`" + ` (or ` + "`--allow-bucket name`" + `).
+  ` + "`psps env edit aws <env> --allow-instance i-...`" + ` (or ` + "`--allow-bucket name`" + `,
+  ` + "`--allow-batch-queue`" + `, ` + "`--allow-batch-definition`" + `, ` + "`--allow-log-group`" + `).
 - ` + "`... because no identity-based policy allows <action>`" + ` — the allowlist
   already permits it, but the IAM role the broker assumes does not. AWS grants
   only what both the role's own policy and the session policy allow, so no
@@ -135,7 +140,7 @@ func skillBody(v proxy.View, envs map[string]Env) string {
 	var lines []string
 	for _, n := range names {
 		e := envs[n]
-		lines = append(lines, fmt.Sprintf("- `%s` — instances: %s; buckets: %s", n, describe(e.Instances), describe(e.Buckets)))
+		lines = append(lines, fmt.Sprintf("- `%s` — %s", n, e.describeAll()))
 	}
 	list := strings.Join(lines, "\n")
 	if list == "" {
