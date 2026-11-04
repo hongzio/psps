@@ -117,6 +117,7 @@ func teamCmd(p paths.Paths, args []string) error {
 		evalDir := fs.String("eval-dir", "", "where in the lead's isolation the eval runs, or the work copied to --eval-iso (default: the lead's directory)")
 		evalIso := fs.String("eval-iso", "", "an isolation, with no services but control, to run the eval in on a copy of --eval-dir (~ in the eval is then an empty home); - for the lead's own")
 		evalMinutes := fs.Int("eval-minutes", 0, "how long the eval may run (default 20)")
+		evalJob := fs.String("eval-job", "", "a runner (psps job help) the eval is a job of instead, on a copy of --eval-dir; its result.json's \"score\" is the score; - for none")
 		target := fs.String("target", "", "a score that ends the run once reached")
 		noTarget := fs.Bool("no-target", false, "no target")
 		patience := fs.Int("patience", 0, "evals in a row without a new best that end the run (default 3)")
@@ -163,6 +164,10 @@ func teamCmd(p paths.Paths, args []string) error {
 		if set["eval-iso"] {
 			name := strings.TrimPrefix(*evalIso, "-")
 			req.EvalIsolation = &name
+		}
+		if set["eval-job"] {
+			name := strings.TrimPrefix(*evalJob, "-")
+			req.EvalJob = &name
 		}
 		if set["target"] {
 			v, err := strconv.ParseFloat(*target, 64)
@@ -331,6 +336,13 @@ The eval
     files. Keep the grader there (psps iso shell ISO) and give its path in
     full. The lead hears the score alone; what the eval printed is yours.
 
+  Or, with --eval-job RUNNER in place of --eval, the eval is a job of one of
+  your runners (psps job help): psps copies --eval-dir from the lead's
+  isolation to the runner's and runs its command there, its meta.json saying
+  the caller is "system" and the team. The runner's terms are the eval's, its
+  result.json's "score" is the score, and the lead hears that alone. Agents
+  with control cannot change such an eval.
+
   An eval set or changed scores no round that ended before it: its first
   eval comes after the next round, or with psps team eval. The README's Teams
   section has a grader to start from.
@@ -348,7 +360,7 @@ Terms: psps team lead TEAM AGENT [flags]
                       per agent
   --plan-ceiling PCT  how full a plan window may get before nothing new starts
                       on it (90)
-  --eval CMD, --eval-dir DIR, --eval-iso ISO|-, --eval-minutes N
+  --eval CMD, --eval-dir DIR, --eval-iso ISO|-, --eval-minutes N, --eval-job RUNNER|-
                       the eval, above; --eval-iso - runs it in the lead's own
   --target X          a score that ends the run once reached (--no-target: none)
   --patience N        evals in a row without a new best that end the run (3)
@@ -395,7 +407,13 @@ func printRun(run api.TeamRun) error {
 	for _, w := range run.Plan {
 		fmt.Printf("  plan   %s %s %.0f%%\n", w.Kind, w.Window, w.Percent)
 	}
-	if s.Eval == "" {
+	if s.EvalJob != "" {
+		fmt.Printf("  eval   a job of runner %s, on a copy of %s, patience %d", s.EvalJob, s.EvalDir, s.Patience)
+		if s.Target != nil {
+			fmt.Printf(", target %g", *s.Target)
+		}
+		fmt.Println()
+	} else if s.Eval == "" {
 		fmt.Println("  eval   none")
 	} else {
 		where := "in " + s.EvalDir

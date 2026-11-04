@@ -187,9 +187,10 @@ func (m *Manager) mailHandler(iso string) http.Handler {
 	m.cronRoutes(mux, iso)
 	m.teamRoutes(mux, iso)
 	m.controlRoutes(mux, iso)
+	m.jobRoutes(mux, iso)
 	m.awsRoutes(mux, iso)
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
-		reply(w, nil, httpError{http.StatusNotFound, errors.New(`mail: there is GET "$PSPS_MAIL_URL/agents" and POST "$PSPS_MAIL_URL/send?to=AGENT" (the psps-mail skill), "$PSPS_CRON_URL" (the psps-cron skill), "$PSPS_TEAM_URL" (the psps-team skill), and "$PSPS_CONTROL_URL" (the psps-control skill)`)})
+		reply(w, nil, httpError{http.StatusNotFound, errors.New(`mail: there is GET "$PSPS_MAIL_URL/agents" and POST "$PSPS_MAIL_URL/send?to=AGENT" (the psps-mail skill), "$PSPS_CRON_URL" (the psps-cron skill), "$PSPS_TEAM_URL" (the psps-team skill), "$PSPS_CONTROL_URL" (the psps-control skill), and "$PSPS_JOB_URL" (the psps-job skill)`)})
 	})
 	return mux
 }
@@ -417,7 +418,13 @@ func (m *Manager) ClearInbox(idOrPrefix string) (int, error) {
 // Isolations fields keep by ID, by name. An isolation deleted since is
 // left out.
 func (m *Manager) settingsOut(svc proxy.Service, raw json.RawMessage) json.RawMessage {
-	fields := isolationFields(svc)
+	return m.isosOut(svc.Settings(), raw)
+}
+
+// isosOut shows a definition or settings whose Isolations fields keep
+// isolations by ID, by name.
+func (m *Manager) isosOut(fs []proxy.Field, raw json.RawMessage) json.RawMessage {
+	fields := isolationFields(fs)
 	if len(fields) == 0 || len(raw) == 0 {
 		return raw
 	}
@@ -444,7 +451,12 @@ func (m *Manager) settingsOut(svc proxy.Service, raw json.RawMessage) json.RawMe
 // settingsIn is settingsOut's reverse, for settings as typed: every name
 // must be an isolation's.
 func (m *Manager) settingsIn(svc proxy.Service, s map[string]any) error {
-	for _, k := range isolationFields(svc) {
+	return m.isosIn(svc.Settings(), s)
+}
+
+// isosIn is isosOut's reverse.
+func (m *Manager) isosIn(fs []proxy.Field, s map[string]any) error {
+	for _, k := range isolationFields(fs) {
 		if _, ok := s[k]; !ok {
 			continue
 		}
@@ -464,9 +476,9 @@ func (m *Manager) settingsIn(svc proxy.Service, s map[string]any) error {
 	return nil
 }
 
-func isolationFields(svc proxy.Service) []string {
+func isolationFields(fs []proxy.Field) []string {
 	var out []string
-	for _, f := range svc.Settings() {
+	for _, f := range fs {
 		if f.Isolations {
 			out = append(out, f.Key)
 		}

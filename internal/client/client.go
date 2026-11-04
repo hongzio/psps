@@ -12,6 +12,7 @@ import (
 	"net"
 	"net/http"
 	"net/url"
+	"strconv"
 	"strings"
 
 	"github.com/hongzio/psps/internal/api"
@@ -317,6 +318,35 @@ func (c *Client) EvalTeam(ctx context.Context, team string) error {
 // ResetBest has a team's run count no eval so far for its best.
 func (c *Client) ResetBest(ctx context.Context, team string) error {
 	return c.do(ctx, "DELETE", "/v1/teams/"+url.PathEscape(team)+"/best", nil, nil)
+}
+
+// Jobs are the jobs psps keeps, newest first; with live, those that have
+// not ended.
+func (c *Client) Jobs(ctx context.Context, live bool) ([]api.Job, error) {
+	var v []api.Job
+	q := ""
+	if live {
+		q = "?live=1"
+	}
+	return v, c.do(ctx, "GET", "/v1/jobs"+q, nil, &v)
+}
+
+// Job is one job, once it has ended or after wait seconds.
+func (c *Client) Job(ctx context.Context, id string, wait int) (api.Job, error) {
+	var v api.Job
+	return v, c.do(ctx, "GET", "/v1/jobs/"+url.PathEscape(id)+"?wait="+strconv.Itoa(wait), nil, &v)
+}
+
+// RunJob queues the operator's own job.
+func (c *Client) RunJob(ctx context.Context, req api.PostJob) (api.Job, error) {
+	var v api.Job
+	return v, c.do(ctx, "POST", "/v1/jobs", req, &v)
+}
+
+// CancelJob asks a job to stop.
+func (c *Client) CancelJob(ctx context.Context, id string) (api.Job, error) {
+	var v api.Job
+	return v, c.do(ctx, "DELETE", "/v1/jobs/"+url.PathEscape(id), nil, &v)
 }
 
 // Inbox is the mail waiting for an agent, in the order it will read it.

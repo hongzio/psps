@@ -13,6 +13,7 @@ import (
 	"github.com/hongzio/psps/internal/proxy/ddproxy"
 	"github.com/hongzio/psps/internal/proxy/gitproxy"
 	"github.com/hongzio/psps/internal/proxy/grafanaproxy"
+	"github.com/hongzio/psps/internal/proxy/jobproxy"
 	"github.com/hongzio/psps/internal/proxy/linearproxy"
 	"github.com/hongzio/psps/internal/proxy/mailproxy"
 	"github.com/hongzio/psps/internal/proxy/notionproxy"
@@ -43,5 +44,6 @@ func Registry() *proxy.Registry {
 		cronproxy.Service{},
 		teamproxy.Service{},
 		controlproxy.Service{},
+		jobproxy.Service{},
 	)
 }

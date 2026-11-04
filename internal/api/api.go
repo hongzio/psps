@@ -154,10 +154,12 @@ type PutLead struct {
 	EvalMinutes *int    `json:"eval_minutes,omitempty"`
 	// EvalIsolation names the isolation the eval runs in, on a copy of
 	// EvalDir; "" is the lead's own.
-	EvalIsolation *string  `json:"eval_isolation,omitempty"`
-	Target        *float64 `json:"target,omitempty"`
-	NoTarget      bool     `json:"no_target,omitempty"`
-	Patience      *int     `json:"patience,omitempty"`
+	EvalIsolation *string `json:"eval_isolation,omitempty"`
+	// EvalJob names the runner the eval is a job of instead; "" is none.
+	EvalJob  *string  `json:"eval_job,omitempty"`
+	Target   *float64 `json:"target,omitempty"`
+	NoTarget bool     `json:"no_target,omitempty"`
+	Patience *int     `json:"patience,omitempty"`
 }
 
 // TeamRun is a team with a lead, as its operator and its lead see it.

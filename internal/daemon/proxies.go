@@ -23,6 +23,7 @@ import (
 	"github.com/hongzio/psps/internal/proxy/awsproxy"
 	"github.com/hongzio/psps/internal/proxy/controlproxy"
 	"github.com/hongzio/psps/internal/proxy/cronproxy"
+	"github.com/hongzio/psps/internal/proxy/jobproxy"
 	"github.com/hongzio/psps/internal/proxy/mailproxy"
 	"github.com/hongzio/psps/internal/proxy/teamproxy"
 	"github.com/hongzio/psps/internal/shimproto"
@@ -303,6 +304,8 @@ type isoWorkspace struct {
 	team bool
 	// control: its agents have a control address (controlEnv).
 	control bool
+	// job: its agents have a job address (jobEnv).
+	job bool
 	// awsStrict: its agents ask psps to run SSM commands (awsEnv).
 	awsStrict bool
 	// skills are the files of the services whose files come and go
@@ -328,6 +331,9 @@ func (w isoWorkspace) signature() string {
 	}
 	if w.control {
 		sig += "\ncontrol"
+	}
+	if w.job {
+		sig += "\njob"
 	}
 	if w.awsStrict {
 		sig += "\naws-strict"
@@ -363,6 +369,7 @@ func (m *Manager) workspace(iso string) (isoWorkspace, error) {
 		w.cron = w.cron || svc.Name() == cronproxy.Name
 		w.team = w.team || svc.Name() == teamproxy.Name
 		w.control = w.control || svc.Name() == controlproxy.Name
+		w.job = w.job || svc.Name() == jobproxy.Name
 		if svc.Name() == awsService {
 			_, w.awsStrict = m.awsStrict(iso)
 		}
@@ -581,6 +588,9 @@ func (m *Manager) Services() []api.Service {
 }
 
 func (m *Manager) envView(e store.Env) api.Env {
+	if svc, err := m.registry().Get(e.Service); err == nil {
+		e.Config = m.isosOut(svc.Fields(), e.Config)
+	}
 	v := api.Env{Env: e}
 	if _, keeps := creds.Fields[e.Service]; keeps && m.creds != nil {
 		missing, err := m.creds.Status(e.Service, e.Name)
@@ -636,8 +646,11 @@ func (m *Manager) PutEnv(ctx context.Context, service, name string, p proxy.Patc
 	case err != nil && !errors.Is(err, store.ErrNotFound):
 		return api.Env{}, err
 	}
-	cfg, err := proxy.Apply(svc.Fields(), cur.Config, p)
+	cfg, err := proxy.Apply(svc.Fields(), m.isosOut(svc.Fields(), cur.Config), p)
 	if err != nil {
+		return api.Env{}, badRequest(err)
+	}
+	if err := m.isosIn(svc.Fields(), cfg); err != nil {
 		return api.Env{}, badRequest(err)
 	}
 	warnings, err := svc.Normalize(name, cfg)

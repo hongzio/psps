@@ -445,6 +445,28 @@ func (m *Manager) Handler() http.Handler {
 	mux.HandleFunc("DELETE /v1/teams/{team}/best", func(w http.ResponseWriter, r *http.Request) {
 		reply(w, nil, m.ResetBest(r.PathValue("team")))
 	})
+	// Jobs (jobs.go): the runners' commands run on copies of a directory.
+	mux.HandleFunc("GET /v1/jobs", func(w http.ResponseWriter, r *http.Request) {
+		v, err := m.Jobs(r.URL.Query().Get("live") != "")
+		reply(w, v, err)
+	})
+	mux.HandleFunc("POST /v1/jobs", func(w http.ResponseWriter, r *http.Request) {
+		var req api.PostJob
+		if !decode(w, r, &req) {
+			return
+		}
+		v, err := m.RunJob(req)
+		reply(w, v, err)
+	})
+	mux.HandleFunc("GET /v1/jobs/{id}", func(w http.ResponseWriter, r *http.Request) {
+		wait, _ := strconv.Atoi(r.URL.Query().Get("wait"))
+		v, err := m.Job(r.Context(), r.PathValue("id"), wait)
+		reply(w, v, err)
+	})
+	mux.HandleFunc("DELETE /v1/jobs/{id}", func(w http.ResponseWriter, r *http.Request) {
+		v, err := m.CancelJob(r.PathValue("id"))
+		reply(w, v, err)
+	})
 	mux.HandleFunc("POST /v1/agents/{id}/archive", func(w http.ResponseWriter, r *http.Request) {
 		reply(w, nil, m.Archive(r.Context(), r.PathValue("id")))
 	})

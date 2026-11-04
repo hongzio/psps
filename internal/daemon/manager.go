@@ -67,6 +67,14 @@ type Containers interface {
 	EvalPoll(ctx context.Context, container, run string, max int) (isolation.EvalState, error)
 	EvalStop(ctx context.Context, container, run string) error
 	EvalForget(ctx context.Context, container, run string) error
+	// A runner isolation's jobs (isolation/job.go).
+	JobPrepare(ctx context.Context, container, id string, p isolation.JobPrep) error
+	JobCopy(ctx context.Context, from, dir, to, id string, lim isolation.CopyLimits) (isolation.CopyStats, error)
+	JobStart(ctx context.Context, container, id string, meta []byte, argv []string) error
+	JobPoll(ctx context.Context, container, id string) (isolation.JobState, error)
+	JobCollect(ctx context.Context, container, id string, maxResult, maxLog int) ([]byte, string, error)
+	JobSignal(ctx context.Context, container, id string, kill bool) error
+	JobForget(ctx context.Context, container, id string) error
 	// Kill ends a container container no longer answers for (isolation/kill.go).
 	Kill(ctx context.Context, container string) ([]int, error)
 }
@@ -145,6 +153,14 @@ type Manager struct {
 	// controlMu keeps counting the agents made through the control service
 	// and making one from crossing another such pair.
 	controlMu sync.Mutex
+	// jobsMu keeps a job's moves between queued, starting and cancelled
+	// from crossing; jobWake tells RunJobs a runner may have room or a job
+	// waits. jobWaiters are closed as their job ends, and jobHooks are what
+	// psps asked a job for (a team's eval), told as it ends (jobs.go).
+	jobsMu     sync.Mutex
+	jobWake    chan struct{}
+	jobWaiters map[string]chan struct{}
+	jobHooks   map[string]func(store.Job)
 }
 
 // fenceState is whether an isolation's network fence was measured to hold.
@@ -192,7 +208,8 @@ func NewManager(ctx context.Context, st *store.Store, cli Containers, fence Fenc
 		tunnelPort: func(p int) int { return p }, instances: map[string]map[string]proxy.Instance{},
 		tunnels: map[string]*tunnelState{}, synced: map[string]string{}, swapped: map[string]string{}, versions: map[string]string{}, lastEnv: map[string]string{}, health: map[string]isoHealth{}, ssm: newSSMBook(),
 		mailBuckets: map[string]*proxy.TokenBucket{}, cronWake: make(chan struct{}, 1),
-		teamsDue: map[string]bool{}, teamWake: make(chan struct{}, 1), evaluating: map[string]bool{}, busy: map[string]map[string]bool{}}
+		teamsDue: map[string]bool{}, teamWake: make(chan struct{}, 1), evaluating: map[string]bool{}, busy: map[string]map[string]bool{},
+		jobWake: make(chan struct{}, 1), jobWaiters: map[string]chan struct{}{}, jobHooks: map[string]func(store.Job){}}
 	m.loops.Add(1)
 	go func() {
 		defer m.loops.Done()

@@ -77,10 +77,14 @@ func Run(ctx context.Context, p paths.Paths, logger *log.Logger) error {
 			logger.Printf("reconcile: %v", err)
 		}
 	}()
-	m.loops.Add(2)
+	m.loops.Add(3)
 	go func() {
 		defer m.loops.Done()
 		m.RunCrons()
+	}()
+	go func() {
+		defer m.loops.Done()
+		m.RunJobs()
 	}()
 	go func() {
 		defer m.loops.Done()

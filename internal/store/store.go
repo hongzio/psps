@@ -155,7 +155,7 @@ func Open(path string) (*Store, error) {
 	// One writer is all SQLite allows anyway; a single connection turns
 	// contention into queueing instead of SQLITE_BUSY.
 	db.SetMaxOpenConns(1)
-	if _, err := db.Exec(schema + envSchema + accountSchema + mailSchema + cronSchema + todoSchema + orderSchema + teamSchema + leadSchema); err != nil {
+	if _, err := db.Exec(schema + envSchema + accountSchema + mailSchema + cronSchema + todoSchema + orderSchema + teamSchema + leadSchema + jobSchema); err != nil {
 		db.Close()
 		return nil, fmt.Errorf("store: schema: %w", err)
 	}
@@ -187,6 +187,7 @@ func (s *Store) Vacuum() error {
 
 // columns added after a table first shipped, with their definitions.
 var added = []struct{ table, column, def string }{
+	{"team_eval_runs", "job", "TEXT NOT NULL DEFAULT ''"},
 	{"isolations", "network", "TEXT NOT NULL DEFAULT ''"},
 	{"isolations", "fence", "TEXT NOT NULL DEFAULT 'on'"},
 	{"agents", "handle", "TEXT"},

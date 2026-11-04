@@ -86,13 +86,19 @@ const usage = `psps — run coding agents in isolated containers
   psps team new NAME...
   psps team rename TEAM NAME...
   psps team rm TEAM             its agents stay, in no team, where it was
-  psps team lead TEAM AGENT [--budget N] [--eval CMD] [--eval-dir DIR] [--eval-iso ISO] [--target X] [--patience N] [--max-live N] [--turn-minutes N] [--plan-ceiling PCT]
+  psps team lead TEAM AGENT [--budget N] [--eval CMD] [--eval-dir DIR] [--eval-iso ISO] [--eval-job RUNNER] [--target X] [--patience N] [--max-live N] [--turn-minutes N] [--plan-ceiling PCT]
                                 its lead: makes agents of its own in the team and hears when their turns end; --clear: none
   psps team show TEAM [--json]  its run: spending, the eval's scores, the lead's agents
   psps team eval TEAM           run its eval now; the result goes to the lead
   psps team reset-best TEAM     the evals so far count for no best; the next scored is it
   psps team resume TEAM         a run psps stopped (budget, target, no new best) goes on
   psps team help                how a team and its lead work, from a first team on
+
+  psps job ls [--live]          jobs: a runner's command run in its isolation on a copy of a directory
+  psps job show ID [--json] [--wait SECONDS]
+  psps job run RUNNER --from ISO [--options JSON|@FILE] [--wait] DIR
+  psps job cancel ID
+  psps job help                 what a runner is, what its command gets, what comes back
 
   psps tui [--keys]             the terminal UI; --keys prints a keys.toml with every default
   psps web [--url] [--rotate]   open the web UI signed in (and print the phone link via Tailscale)
@@ -144,6 +150,8 @@ func run(args []string) error {
 		return accountCmd(p, args[1:])
 	case "team":
 		return teamCmd(p, args[1:])
+	case "job":
+		return jobCmd(p, args[1:])
 	case "pf":
 		return pfCmd(args[1:])
 	case "pfd":
