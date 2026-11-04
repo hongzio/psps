@@ -206,6 +206,9 @@ What the command gets
   isolation's own environment (its services' addresses, psps iso env) and
   nothing of root's, in a cgroup of the job's own: --memory (no swap) and
   --pids hold for all it starts, and whatever it leaves running ends with it.
+  Where the isolation cannot give it such a cgroup (Apple's container), it runs
+  without those limits, the VM's memory the bound, held together by a session
+  of its own; meta.json's "limits" is null then.
   timeout(1) sends SIGTERM at --minutes and SIGKILL two minutes later; a job
   cancelled is sent SIGTERM at once and ended two minutes later.
 
@@ -214,6 +217,7 @@ What the command gets
                        {"v":1, "job", "runner", "caller": "agent"|"system"|"operator",
                         "agent": {"id","handle","name"}|null, "isolation": where the
                         directory is, "team": {"id","name"}|null, "dir", "why",
+                        "limits": {"memory","pids","minutes"}|null,
                         "requested_at", "started_at", "deadline"}
     PSPS_JOB_OPTIONS   the caller's options, a JSON object psps did not read
     PSPS_JOB_OUT       where it leaves result.json

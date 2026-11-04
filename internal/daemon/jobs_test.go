@@ -32,12 +32,14 @@ func (f *fakeContainers) jobDir(name, id string) string {
 	return filepath.Join(f.base, name, "jobs", id)
 }
 
-func (f *fakeContainers) JobPrepare(_ context.Context, name, id string, p isolation.JobPrep) error {
+// JobPrepare: with noLimits the container's cgroup cannot give the
+// limits.
+func (f *fakeContainers) JobPrepare(_ context.Context, name, id string, p isolation.JobPrep) (bool, error) {
 	d := f.jobDir(name, id)
 	os.RemoveAll(d)
 	for _, s := range []string{"work", "out", "run"} {
 		if err := os.MkdirAll(filepath.Join(d, s), 0o755); err != nil {
-			return err
+			return false, err
 		}
 	}
 	f.mu.Lock()
@@ -45,8 +47,9 @@ func (f *fakeContainers) JobPrepare(_ context.Context, name, id string, p isolat
 		f.jobPreps = map[string]isolation.JobPrep{}
 	}
 	f.jobPreps[id] = p
+	limits := !f.noLimits
 	f.mu.Unlock()
-	return os.WriteFile(filepath.Join(d, "options.json"), p.Options, 0o444)
+	return limits, os.WriteFile(filepath.Join(d, "options.json"), p.Options, 0o444)
 }
 
 // JobCopy copies dir on this Mac through isolation.FilterTar, as the real
@@ -307,6 +310,9 @@ echo printed-for-the-operator`
 	if err := json.Unmarshal(b, &meta); err != nil {
 		t.Fatal(err, string(b))
 	}
+	if meta.Limits == nil || meta.Limits.Memory != 4<<30 || meta.Limits.Pids != jobproxy.DefaultPids || meta.Limits.Minutes != jobproxy.DefaultMinutes {
+		t.Fatalf("limits %+v", meta.Limits)
+	}
 	if meta.V != 1 || meta.Job != j.ID || meta.Caller != store.CallerAgent || meta.Agent == nil || meta.Agent.ID != a.ID || meta.Agent.Handle != "asker" ||
 		meta.Isolation != "dev" || meta.Dir != dir || meta.Runner != "sim" || meta.Deadline.Sub(meta.StartedAt) != jobproxy.DefaultMinutes*60e9 {
 		t.Fatalf("meta %+v", meta)
@@ -478,6 +484,16 @@ func TestAJobRunsOnWhileTheDaemonStopsAndTheNextFollowsIt(t *testing.T) {
 	os.WriteFile(filepath.Join(dir, "code"), []byte("3"), 0o644)
 	j = askJob(t, m, a.ID, api.PostJob{Dir: dir})
 	if got := jobNow(t, m, a.ID, j.ID, 20); got.Status != store.JobFailed || got.Error != "the command: exit status 3" {
+		t.Fatalf("%+v", got)
+	}
+	// An isolation whose cgroup cannot give the limits runs it without, and
+	// says so.
+	e.fc.mu.Lock()
+	e.fc.noLimits = true
+	e.fc.mu.Unlock()
+	os.WriteFile(filepath.Join(dir, "code"), []byte("0"), 0o644)
+	j = askJob(t, m, a.ID, api.PostJob{Dir: dir})
+	if got := jobNow(t, m, a.ID, j.ID, 20); got.Status != store.JobDone || !strings.Contains(got.Note, "no memory or pids limit: isolation run's cgroup cannot give them") {
 		t.Fatalf("%+v", got)
 	}
 	// A copy over the runner's limits never runs.
