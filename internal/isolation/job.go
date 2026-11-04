@@ -51,9 +51,14 @@ echo 1 > "$cg/cgroup.kill" 2>/dev/null || true
 i=0; while [ $i -lt 50 ] && ! rmdir "$cg" 2>/dev/null; do i=$((i+1)); sleep 0.1; done
 fi`
 
-// jobPrepare makes a job's directory anew and its cgroup, with the
-// memory and pids controllers turned on for the root's children. An
-// isolation that cannot have them runs no job: its limits would not hold.
+// jobPrepare makes a job's directory anew and its cgroup, and gives it
+// the memory and pids limits where the isolation's cgroup can have the
+// controllers turned on for its children. One whose cgroup has processes
+// of its own, a container's under a cgroup namespace, cannot: the cgroup
+// still holds the job's processes together and ends them, without limits.
+// One that cannot even take a process (Apple's container) has none: the
+// job's session is all that holds it together then. It says "limits", or
+// "nolimits" for either of those.
 const jobPrepare = `set -e
 d=$1 cg=$2 mem=$3 pids=$4 opts=$5
 umask 022
@@ -68,29 +73,42 @@ printf '%s' "$opts" > "$d/options.json"
 chmod 444 "$d/options.json"
 ctl=/sys/fs/cgroup/cgroup.subtree_control
 for c in memory pids; do
-  grep -qw "$c" "$ctl" || echo "+$c" > "$ctl" || { echo "this isolation's cgroups have no $c controller" >&2; exit 1; }
+  grep -qw "$c" "$ctl" || echo "+$c" > "$ctl" 2>/dev/null || true
 done
 mkdir "$cg"
-echo "$mem" > "$cg/memory.max"
-[ ! -f "$cg/memory.swap.max" ] || echo 0 > "$cg/memory.swap.max"
-echo "$pids" > "$cg/pids.max"`
+if ! sh -c 'echo $$ > "$1/cgroup.procs"' psps-job-probe "$cg" 2>/dev/null; then
+  rmdir "$cg"
+  echo nolimits
+elif [ -f "$cg/memory.max" ] && [ -f "$cg/pids.max" ]; then
+  echo "$mem" > "$cg/memory.max"
+  [ ! -f "$cg/memory.swap.max" ] || echo 0 > "$cg/memory.swap.max"
+  echo "$pids" > "$cg/pids.max"
+  echo limits
+else
+  echo nolimits
+fi`
 
-// JobPrepare readies job id's directory and cgroup in container.
-func (c CLI) JobPrepare(ctx context.Context, container, id string, p JobPrep) error {
-	out, err := c.Exec(ctx, container, ExecOpts{User: "0:0"}, "sh", "-c", jobPrepare, "psps-job-prepare",
-		JobDir(id), JobCgroup(id), strconv.FormatInt(p.Memory, 10), strconv.Itoa(p.Pids), string(p.Options)).CombinedOutput()
+// JobPrepare readies job id's directory and cgroup in container, and
+// says whether its memory and pids limits hold (jobPrepare).
+func (c CLI) JobPrepare(ctx context.Context, container, id string, p JobPrep) (bool, error) {
+	var stderr bytes.Buffer
+	cmd := c.Exec(ctx, container, ExecOpts{User: "0:0"}, "sh", "-c", jobPrepare, "psps-job-prepare",
+		JobDir(id), JobCgroup(id), strconv.FormatInt(p.Memory, 10), strconv.Itoa(p.Pids), string(p.Options))
+	cmd.Stderr = &stderr
+	out, err := cmd.Output()
 	if err != nil {
-		return fmt.Errorf("readying the job: %w: %s", err, strings.TrimSpace(string(out)))
+		return false, fmt.Errorf("readying the job: %w: %s", err, strings.TrimSpace(stderr.String()+string(out)))
 	}
-	return nil
+	return strings.TrimSpace(string(out)) == "limits", nil
 }
 
-// jobStart starts the job's argv in its work directory, in a session of
-// its own so it runs on when the daemon stops, and in the job's cgroup:
-// the shell that waits for it stays out, as root, so what the job does to
-// its cgroup (running out of memory or processes, being killed) cannot
-// keep its exit status from being written. What the job leaves running in
-// its cgroup ends as it does.
+// jobStart starts the job's argv in its work directory, apart from the
+// daemon, so it runs on when that stops: a root shell in a session of its
+// own waits for it, and the job runs in another session, its ID in
+// run/sid, and in the job's cgroup if it has one. The waiting shell stays
+// out of both, so what the job does to them (running out of memory or
+// processes, being killed) cannot keep its exit status from being
+// written. What the job leaves running in them ends as it does.
 const jobStart = `d=$1 cg=$2 meta=$3
 shift 3
 umask 022
@@ -100,9 +118,10 @@ setsid sh -c '
 d=$1 cg=$2
 shift 2
 echo $$ > "$d/run/pid"
-(cd -- "$d/work" && exec sh -c '"'"'echo $$ > "$0/cgroup.procs" && exec "$@"'"'"' "$cg" "$@") > "$d/run/log" 2>&1 < /dev/null
+(cd -- "$d/work" && exec setsid sh -c '"'"'echo $$ > "$0/run/sid" && { [ ! -d "$1" ] || echo $$ > "$1/cgroup.procs"; } && shift && exec "$@"'"'"' "$d" "$cg" "$@") > "$d/run/log" 2>&1 < /dev/null
 code=$?
 echo 1 > "$cg/cgroup.kill" 2>/dev/null
+s=$(cat "$d/run/sid" 2>/dev/null) && [ -n "$s" ] && pkill -KILL -s "$s"
 echo $code > "$d/run/exit.new" && mv "$d/run/exit.new" "$d/run/exit"' psps-job "$d" "$cg" "$@" < /dev/null > /dev/null 2>&1 &`
 
 // JobStart writes job id's meta.json and starts argv as the job
@@ -183,11 +202,13 @@ func (c CLI) JobCollect(ctx context.Context, container, id string, maxResult, ma
 // JobSignal sends SIGTERM to everything in job id's cgroup, or with kill
 // ends it all at once (cgroup.kill).
 func (c CLI) JobSignal(ctx context.Context, container, id string, kill bool) error {
-	script := `cg=$1; [ -d "$cg" ] || exit 0; for p in $(cat "$cg/cgroup.procs"); do kill -TERM "$p" 2>/dev/null; done; true`
+	script := `cg=$1 d=$2; s=$(cat "$d/run/sid" 2>/dev/null) && [ -n "$s" ] && pkill -TERM -s "$s"
+[ ! -d "$cg" ] || for p in $(cat "$cg/cgroup.procs"); do kill -TERM "$p" 2>/dev/null; done; true`
 	if kill {
-		script = `cg=$1; [ -d "$cg" ] || exit 0; echo 1 > "$cg/cgroup.kill"`
+		script = `cg=$1 d=$2; s=$(cat "$d/run/sid" 2>/dev/null) && [ -n "$s" ] && pkill -KILL -s "$s"
+[ ! -d "$cg" ] || echo 1 > "$cg/cgroup.kill" 2>/dev/null; true`
 	}
-	out, err := c.Exec(ctx, container, ExecOpts{User: "0:0"}, "sh", "-c", script, "psps-job-signal", JobCgroup(id)).CombinedOutput()
+	out, err := c.Exec(ctx, container, ExecOpts{User: "0:0"}, "sh", "-c", script, "psps-job-signal", JobCgroup(id), JobDir(id)).CombinedOutput()
 	if err != nil {
 		return fmt.Errorf("signalling the job: %w: %s", err, strings.TrimSpace(string(out)))
 	}
@@ -198,6 +219,7 @@ func (c CLI) JobSignal(ctx context.Context, container, id string, kill bool) err
 // directory.
 func (c CLI) JobForget(ctx context.Context, container, id string) error {
 	out, err := c.Exec(ctx, container, ExecOpts{User: "0:0"}, "sh", "-c", `cg=$1
+s=$(cat "$2/run/sid" 2>/dev/null) && [ -n "$s" ] && pkill -KILL -s "$s"
 `+jobCgKill+`
 rm -rf -- "$2"`, "psps-job-forget", JobCgroup(id), JobDir(id)).CombinedOutput()
 	if err != nil {

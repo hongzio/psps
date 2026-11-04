@@ -1005,7 +1005,7 @@ services' addresses and `psps iso env`) and nothing of root's:
 | Variable | What it is |
 |---|---|
 | `PSPS_JOB_WORK` | the copy, the working directory: the job's alone |
-| `PSPS_JOB_META` | who asked, written by psps, root's and read-only: `v`, `job`, `runner`, `caller` (`agent`, `system` or `operator`), `agent` (`id`, `handle`, `name`) or null, `isolation` (where the directory is), `team` (`id`, `name`) or null, `dir`, `why`, `requested_at`, `started_at`, `deadline` |
+| `PSPS_JOB_META` | who asked, written by psps, root's and read-only: `v`, `job`, `runner`, `caller` (`agent`, `system` or `operator`), `agent` (`id`, `handle`, `name`) or null, `isolation` (where the directory is), `team` (`id`, `name`) or null, `dir`, `why`, `limits` (`memory`, `pids`, `minutes`) or null, `requested_at`, `started_at`, `deadline` |
 | `PSPS_JOB_OPTIONS` | the caller's options, a JSON object of at most 16 KiB that psps does not read |
 | `PSPS_JOB_OUT` | where the command leaves `result.json` |
 | `PSPS_JOB_ID`, `PSPS_JOB_RUNNER`, `PSPS_JOB_DEADLINE` | as named |
@@ -1016,6 +1016,11 @@ of who asked is `meta.json`: check that it is root's, under
 its `caller` what the job may do. A copy has files, directories and symbolic
 links, links as links and never followed; devices, FIFOs and sockets are
 left out, and one over the limits is refused before anything runs.
+Where the isolation's cgroup cannot give a job a cgroup of its own with
+controllers (Apple's container cannot: the container's cgroup holds
+processes, and takes none into a child), the job runs without the memory and
+pids limits, the VM's memory being the bound, and its own session holds it
+together: `meta.json`'s `limits` is null then, and the job's note says so.
 `timeout(1)` sends SIGTERM at `--minutes` and SIGKILL two minutes later; a
 job cancelled is sent SIGTERM at once and ended two minutes later; whatever
 the command leaves running ends with it, and its directory is removed.

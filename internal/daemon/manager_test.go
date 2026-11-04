@@ -195,6 +195,7 @@ type fakeContainers struct {
 	// its ID (jobs_test.go).
 	jobPreps map[string]isolation.JobPrep
 	jobArgvs map[string][]string
+	noLimits bool
 	// dial is what the tunnel connects the daemon to inside: the isolation's
 	// loopback, as the shim allows; nil is a shim from before forwards.
 	dial tunnel.Allow

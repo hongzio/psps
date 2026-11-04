@@ -361,18 +361,19 @@ func (m *Manager) scheduleJobs() {
 
 // jobMeta is meta.json: who asked, as psps knows it.
 type jobMeta struct {
-	V           int        `json:"v"`
-	Job         string     `json:"job"`
-	Runner      string     `json:"runner"`
-	Caller      string     `json:"caller"`
-	Agent       *metaAgent `json:"agent"`
-	Isolation   string     `json:"isolation"`
-	Team        *metaTeam  `json:"team"`
-	Dir         string     `json:"dir"`
-	Why         string     `json:"why,omitempty"`
-	RequestedAt time.Time  `json:"requested_at"`
-	StartedAt   time.Time  `json:"started_at"`
-	Deadline    time.Time  `json:"deadline"`
+	V           int         `json:"v"`
+	Job         string      `json:"job"`
+	Runner      string      `json:"runner"`
+	Caller      string      `json:"caller"`
+	Agent       *metaAgent  `json:"agent"`
+	Isolation   string      `json:"isolation"`
+	Team        *metaTeam   `json:"team"`
+	Dir         string      `json:"dir"`
+	Why         string      `json:"why,omitempty"`
+	Limits      *metaLimits `json:"limits"`
+	RequestedAt time.Time   `json:"requested_at"`
+	StartedAt   time.Time   `json:"started_at"`
+	Deadline    time.Time   `json:"deadline"`
 }
 
 type metaAgent struct {
@@ -381,14 +382,25 @@ type metaAgent struct {
 	Name   string `json:"name"`
 }
 
+// metaLimits are the memory (bytes) and processes the job may have; null
+// in meta.json when its isolation cannot hold them.
+type metaLimits struct {
+	Memory  int64 `json:"memory"`
+	Pids    int   `json:"pids"`
+	Minutes int   `json:"minutes"`
+}
+
 type metaTeam struct {
 	ID   string `json:"id"`
 	Name string `json:"name"`
 }
 
-func (m *Manager) jobMetaOf(j store.Job, started, deadline time.Time) []byte {
+func (m *Manager) jobMetaOf(j store.Job, env jobproxy.Env, limited bool, started, deadline time.Time) []byte {
 	meta := jobMeta{V: 1, Job: j.ID, Runner: j.Runner, Caller: j.Caller, Isolation: m.isoName(j.From), Dir: j.Dir, Why: j.Why,
 		RequestedAt: j.RequestedAt, StartedAt: started, Deadline: deadline}
+	if limited {
+		meta.Limits = &metaLimits{Memory: env.MemoryBytes(), Pids: env.Pids, Minutes: env.Minutes}
+	}
 	if j.Agent != "" {
 		meta.Agent = &metaAgent{ID: j.Agent}
 		if a, err := m.storedAgent(j.Agent); err == nil {
@@ -452,13 +464,15 @@ func (m *Manager) startJob(j store.Job, env jobproxy.Env) (store.Job, error) {
 	if _, err := m.ensureIsolation(ctx, from.ID); err != nil {
 		return j, err
 	}
-	if err := m.cli.JobPrepare(ctx, iso.Container, j.ID, isolation.JobPrep{Options: []byte(j.Options), Memory: env.MemoryBytes(), Pids: env.Pids}); err != nil {
-		return j, err
-	}
 	forget := func() {
 		fctx, fcancel := context.WithTimeout(m.ctx, time.Minute)
 		defer fcancel()
 		m.cli.JobForget(fctx, iso.Container, j.ID)
+	}
+	limited, err := m.cli.JobPrepare(ctx, iso.Container, j.ID, isolation.JobPrep{Options: []byte(j.Options), Memory: env.MemoryBytes(), Pids: env.Pids})
+	if err != nil {
+		forget()
+		return j, err
 	}
 	st, err := m.cli.JobCopy(ctx, from.Container, j.Dir, iso.Container, j.ID, env.Limits())
 	if err != nil {
@@ -466,6 +480,9 @@ func (m *Manager) startJob(j store.Job, env jobproxy.Env) (store.Job, error) {
 		return j, fmt.Errorf("copying %s from isolation %s: %w", j.Dir, from.Name, err)
 	}
 	j.Note = copyNote(st)
+	if !limited {
+		j.Note = joinNote(j.Note, fmt.Sprintf("no memory or pids limit: isolation %s's cgroup cannot give them (its VM's memory is the bound), and its session holds the job together", iso.Name))
+	}
 	if cur, err := m.store.Job(j.ID); err == nil && cur.CancelAt != nil {
 		forget()
 		j.CancelAt = cur.CancelAt
@@ -474,7 +491,7 @@ func (m *Manager) startJob(j store.Job, env jobproxy.Env) (store.Job, error) {
 	started := time.Now().UTC()
 	j.Limit = time.Duration(env.Minutes) * time.Minute
 	deadline := started.Add(j.Limit)
-	if err := m.cli.JobStart(ctx, iso.Container, j.ID, m.jobMetaOf(j, started, deadline), m.jobArgv(j, env, iso, deadline)); err != nil {
+	if err := m.cli.JobStart(ctx, iso.Container, j.ID, m.jobMetaOf(j, env, limited, started, deadline), m.jobArgv(j, env, iso, deadline)); err != nil {
 		forget()
 		return j, err
 	}

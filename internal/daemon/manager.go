@@ -68,7 +68,7 @@ type Containers interface {
 	EvalStop(ctx context.Context, container, run string) error
 	EvalForget(ctx context.Context, container, run string) error
 	// A runner isolation's jobs (isolation/job.go).
-	JobPrepare(ctx context.Context, container, id string, p isolation.JobPrep) error
+	JobPrepare(ctx context.Context, container, id string, p isolation.JobPrep) (bool, error)
 	JobCopy(ctx context.Context, from, dir, to, id string, lim isolation.CopyLimits) (isolation.CopyStats, error)
 	JobStart(ctx context.Context, container, id string, meta []byte, argv []string) error
 	JobPoll(ctx context.Context, container, id string) (isolation.JobState, error)
