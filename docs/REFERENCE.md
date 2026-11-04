@@ -440,6 +440,27 @@ psps iso expose dev aws dev
 psps env choices aws dev role_arn --aws-profile dev   # what that profile's login lists
 ```
 
+An allowlist can also name AWS Batch and CloudWatch logs, so an isolation
+may run jobs under a role that can do much more, with the session policy
+the only thing narrowing it:
+
+```sh
+psps env add aws batch --role-arn ... --aws-profile prod --allow-bucket mtlab-work \
+  --allow-batch-queue mtlab-eval --allow-batch-queue mtlab-dev \
+  --allow-batch-definition mtlab-replay-eval --allow-batch-definition mtlab-replay-dev \
+  --allow-log-group /mtlab/replay
+```
+
+A job is submitted only to a named queue with a named definition (any of
+its revisions), as SubmitJob is authorized against both; queues and
+definitions go together, and either alone is refused. What is done to a job
+once it is there is not so narrow: CancelJob, TerminateJob and TagResource
+(which SubmitJob's tags need) authorize against `job/<id>`, which names no
+queue, and DescribeJobs, ListJobs and the queue and definition lists
+against no resource, so those reach every Batch job in the role's account,
+what it runs and its environment included. psps warns of it as the env is
+saved. A log group is read with `logs:GetLogEvents` on its streams.
+
 The web and TUI forms pick all of it from what the Mac's AWS CLI lists: the
 profile (`aws configure list-profiles`), then with it the role, the instances
 and the buckets, looked up again when the profile changes. Roles are the

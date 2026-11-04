@@ -50,6 +50,27 @@ func TestNormalizeRefusesWhatCannotWork(t *testing.T) {
 	}
 }
 
+func TestNormalizeKeepsBatchNamesOnceAndWarnsOfItsReach(t *testing.T) {
+	cli := newFakeAWS(t).path
+	env := map[string]any{"role_arn": role, "aws_profile": "dev", "aws_cli": cli, "buckets": []string{"mtlab-work"},
+		"batch_queues": []any{"mtlab-eval", "mtlab-dev", "mtlab-eval"}, "batch_definitions": []string{"mtlab-replay-dev"},
+		"log_groups": []string{}}
+	warn, err := normalize(t, env)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(env["batch_queues"], []string{"mtlab-dev", "mtlab-eval"}) || env["log_groups"] != nil {
+		t.Fatalf("env = %v", env)
+	}
+	if len(warn) != 1 || !strings.Contains(warn[0], "any Batch job in the role's account") {
+		t.Fatalf("warn = %v", warn)
+	}
+	env = map[string]any{"role_arn": role, "aws_profile": "dev", "aws_cli": cli, "batch_queues": []string{"mtlab-eval"}}
+	if _, err := normalize(t, env); err == nil || !strings.Contains(err.Error(), "--allow-batch-definition") {
+		t.Fatalf("a queue alone: %v", err)
+	}
+}
+
 func manyInstances(n int) []string {
 	var out []string
 	for i := range n {
@@ -110,7 +131,7 @@ func TestCheckAssumesTheRoleAndAsksWhoItIs(t *testing.T) {
 		t.Fatal(err)
 	}
 	// get-caller-identity ran on the issued session, not the Mac's profile.
-	if !strings.Contains(out, "identity   arn:aws:sts::050017197842:assumed-role/axis-tre-workspace/token") || !strings.Contains(out, "instances  "+jp) {
+	if !strings.Contains(out, "identity   arn:aws:sts::050017197842:assumed-role/axis-tre-workspace/token") || !strings.Contains(out, "instances: "+jp) {
 		t.Fatalf("out = %s", out)
 	}
 	if strings.Contains(f.env(), "AWS_PROFILE=") {

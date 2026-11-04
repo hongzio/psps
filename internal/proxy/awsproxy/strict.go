@@ -83,9 +83,9 @@ func (e Env) CanRun(instance string) error {
 
 // strictPolicy is the isolation's session policy in strict mode: the
 // allowlist with every SSM action taken out, so what is left is the
-// buckets and finding instances.
-func strictPolicy(instances, buckets []string) (Policy, error) {
-	p, err := SessionPolicy(instances, buckets)
+// buckets, Batch, the log groups and finding instances.
+func strictPolicy(a Allowlist) (Policy, error) {
+	p, err := a.Policy()
 	if err != nil {
 		return Policy{}, err
 	}

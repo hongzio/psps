@@ -20,7 +20,7 @@ func actions(p Policy) []string {
 }
 
 func TestAStrictPolicyOpensNoSSMButKeepsTheBuckets(t *testing.T) {
-	p, err := strictPolicy([]string{jp, kr + "=session"}, []string{bucket + "=read"})
+	p, err := strictPolicy(Allowlist{Instances: []string{jp, kr + "=session"}, Buckets: []string{bucket + "=read"}})
 	if err != nil {
 		t.Fatal(err)
 	}

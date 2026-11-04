@@ -265,3 +265,104 @@ func TestDistinctNamesStaySortedAndCanonical(t *testing.T) {
 		t.Fatalf("got %v, %v", got, err)
 	}
 }
+
+func batchStatements(t *testing.T, a Allowlist) map[string]Statement {
+	t.Helper()
+	p, err := a.Policy()
+	if err != nil {
+		t.Fatal(err)
+	}
+	out := map[string]Statement{}
+	for _, s := range p.Statement {
+		out[s.Sid] = s
+	}
+	return out
+}
+
+func TestASubmissionIsPinnedToTheNamedQueuesAndDefinitions(t *testing.T) {
+	// SubmitJob authorizes against the queue, the definition and the new
+	// job together: the queue and the definition are what pin it, so
+	// neither may be a wildcard, and every revision of a definition is in.
+	s := batchStatements(t, Allowlist{BatchQueues: []string{"mtlab-eval", "mtlab-dev"}, BatchDefinitions: []string{"mtlab-replay-dev"}})
+	sub := s["BatchSubmit"]
+	if !reflect.DeepEqual(sub.Action, []string{"batch:SubmitJob"}) {
+		t.Fatalf("actions = %v", sub.Action)
+	}
+	want := []string{
+		"arn:aws:batch:*:*:job-queue/mtlab-dev", "arn:aws:batch:*:*:job-queue/mtlab-eval",
+		"arn:aws:batch:*:*:job-definition/mtlab-replay-dev", "arn:aws:batch:*:*:job-definition/mtlab-replay-dev:*",
+		"arn:aws:batch:*:*:job/*",
+	}
+	if !reflect.DeepEqual(sub.Resource, want) {
+		t.Fatalf("resources = %v", sub.Resource)
+	}
+	for _, r := range sub.Resource {
+		if strings.HasSuffix(r, "job-queue/*") || strings.HasSuffix(r, "job-definition/*") {
+			t.Fatalf("a wildcard queue or definition: %s", r)
+		}
+	}
+	// The job actions and reads are in statements of their own, so the
+	// breadth they need never reaches SubmitJob.
+	if !reflect.DeepEqual(s["BatchJobs"].Resource, []string{"arn:aws:batch:*:*:job/*"}) || slices.Contains(s["BatchJobs"].Action, "batch:SubmitJob") {
+		t.Fatalf("job actions = %+v", s["BatchJobs"])
+	}
+	if slices.Contains(s["BatchReads"].Action, "batch:SubmitJob") || !slices.Contains(s["BatchReads"].Action, "batch:DescribeJobs") {
+		t.Fatalf("reads = %+v", s["BatchReads"])
+	}
+	// Nothing else rides along: no S3, no SSM.
+	if len(s) != 3 {
+		t.Fatalf("statements = %v", s)
+	}
+}
+
+func TestAQueueWithoutADefinitionIsRefused(t *testing.T) {
+	_, err := Allowlist{BatchQueues: []string{"mtlab-eval"}}.Policy()
+	mustDeny(t, err, "--allow-batch-definition")
+	_, err = Allowlist{Buckets: []string{bucket}, BatchDefinitions: []string{"mtlab-replay-dev"}}.Policy()
+	mustDeny(t, err, "--allow-batch-queue")
+}
+
+func TestABatchOrLogNameCannotCarryAWildcard(t *testing.T) {
+	for _, a := range []Allowlist{
+		{BatchQueues: []string{"*"}, BatchDefinitions: []string{"d"}},
+		{BatchQueues: []string{"q"}, BatchDefinitions: []string{"mtlab-*"}},
+		{BatchQueues: []string{"q"}, BatchDefinitions: []string{"d:3"}},
+		{LogGroups: []string{"/mtlab/*"}},
+		{LogGroups: []string{"/mtlab/replay:log-stream:x"}},
+	} {
+		if _, err := a.Policy(); err == nil {
+			t.Fatalf("accepted %+v", a)
+		}
+	}
+}
+
+func TestALogGroupIsReadStreamByStream(t *testing.T) {
+	s := batchStatements(t, Allowlist{LogGroups: []string{"/mtlab/replay"}})
+	if !reflect.DeepEqual(s["LogReads"], Statement{Sid: "LogReads", Effect: "Allow", Action: []string{"logs:GetLogEvents"},
+		Resource: []string{"arn:aws:logs:*:*:log-group:/mtlab/replay:log-stream:*"}}) {
+		t.Fatalf("logs = %+v", s["LogReads"])
+	}
+}
+
+func TestStrictModeKeepsBatch(t *testing.T) {
+	p, err := strictPolicy(Allowlist{Instances: []string{jp}, BatchQueues: []string{"q"}, BatchDefinitions: []string{"d"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var sids []string
+	for _, s := range p.Statement {
+		sids = append(sids, s.Sid)
+	}
+	if !slices.Contains(sids, "BatchSubmit") || slices.Contains(sids, "Sessions") {
+		t.Fatalf("statements = %v", sids)
+	}
+}
+
+func TestTheMTLabSimAllowlistFitsSTS(t *testing.T) {
+	_, err := Allowlist{Buckets: []string{"mtlab-work", "mtlab-tapes=read"},
+		BatchQueues: []string{"mtlab-eval", "mtlab-dev"}, BatchDefinitions: []string{"mtlab-replay-dev", "mtlab-replay-eval"},
+		LogGroups: []string{"/mtlab/replay"}}.Policy()
+	if err != nil {
+		t.Fatal(err)
+	}
+}

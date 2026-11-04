@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"os"
 	"os/exec"
+	"regexp"
 	"sort"
 	"strings"
 	"sync"
@@ -33,7 +34,30 @@ type Env struct {
 	Bastion   string   `json:"bastion,omitempty"`
 	Instances []string `json:"instances"`
 	Buckets   []string `json:"buckets"`
-	CLI       string   `json:"aws_cli,omitempty"`
+	// BatchQueues and BatchDefinitions are where jobs may be submitted and
+	// what they may run; LogGroups are the CloudWatch log groups read.
+	BatchQueues      []string `json:"batch_queues,omitempty"`
+	BatchDefinitions []string `json:"batch_definitions,omitempty"`
+	LogGroups        []string `json:"log_groups,omitempty"`
+	CLI              string   `json:"aws_cli,omitempty"`
+}
+
+// Allow is the env's allowlist.
+func (e Env) Allow() Allowlist {
+	return Allowlist{Instances: e.Instances, Buckets: e.Buckets,
+		BatchQueues: e.BatchQueues, BatchDefinitions: e.BatchDefinitions, LogGroups: e.LogGroups}
+}
+
+// describeAll is the allowlist in a line.
+func (e Env) describeAll() string {
+	out := fmt.Sprintf("instances: %s; buckets: %s", describe(e.Instances), describe(e.Buckets))
+	if len(e.BatchQueues) > 0 || len(e.BatchDefinitions) > 0 {
+		out += fmt.Sprintf("; Batch queues: %s, job definitions: %s", describe(e.BatchQueues), describe(e.BatchDefinitions))
+	}
+	if len(e.LogGroups) > 0 {
+		out += "; log groups: " + describe(e.LogGroups)
+	}
+	return out
 }
 
 func (e Env) runner() CLI {
@@ -55,7 +79,7 @@ type Service struct{}
 func (Service) Name() string { return "aws" }
 func (Service) Ports() []int { return []int{Port} }
 func (Service) Summary() string {
-	return "scoped, short-lived AWS credentials from an assumed role, for SSM and S3"
+	return "scoped, short-lived AWS credentials from an assumed role, for SSM, S3, Batch and CloudWatch logs"
 }
 
 // capHelp is what each capability allows, as the session policy grants it.
@@ -93,6 +117,12 @@ func (Service) Fields() []proxy.Field {
 		{Key: "buckets", Kind: proxy.List, Flag: "allow-bucket", Clear: "clear-buckets", Metavar: "BUCKET[=CAPS]",
 			Lookup: true, LookupWith: withProfile, Caps: caps(Bucket),
 			Help: "an S3 bucket objects may move through; =read, =write, =delete narrow it (repeat; replaces the list)"},
+		{Key: "batch_queues", Kind: proxy.List, Flag: "allow-batch-queue", Clear: "clear-batch-queues", Metavar: "NAME",
+			Help: "a Batch job queue jobs may be submitted to, with a job definition of --allow-batch-definition; cancelling, terminating and describing jobs then reach every job in the account, as Batch cannot narrow them (repeat; replaces the list)"},
+		{Key: "batch_definitions", Kind: proxy.List, Flag: "allow-batch-definition", Clear: "clear-batch-definitions", Metavar: "NAME",
+			Help: "a Batch job definition, any revision, submitted jobs may run (repeat; replaces the list)"},
+		{Key: "log_groups", Kind: proxy.List, Flag: "allow-log-group", Clear: "clear-log-groups", Metavar: "NAME",
+			Help: "a CloudWatch log group whose streams may be read, logs:GetLogEvents (repeat; replaces the list)"},
 		{Key: "aws_cli", Kind: proxy.String, Flag: "aws-cli", Metavar: "BIN",
 			Help: "the Mac's aws binary (default aws on PATH, pinned to its full path)"},
 	}
@@ -124,6 +154,27 @@ func (Service) Normalize(name string, env map[string]any) ([]string, error) {
 		return nil, err
 	}
 	env["instances"], env["buckets"] = instances, buckets
+	allow := Allowlist{Instances: instances, Buckets: buckets}
+	for _, l := range []struct {
+		key, what string
+		re        *regexp.Regexp
+		to        *[]string
+	}{
+		{"batch_queues", "Batch job queue", BatchName, &allow.BatchQueues},
+		{"batch_definitions", "Batch job definition", BatchName, &allow.BatchDefinitions},
+		{"log_groups", "CloudWatch log group", LogGroupName, &allow.LogGroups},
+	} {
+		names, err := Names(proxy.Strings(env, l.key), l.re, l.what)
+		if err != nil {
+			return nil, err
+		}
+		if len(names) == 0 {
+			delete(env, l.key)
+		} else {
+			env[l.key] = names
+		}
+		*l.to = names
+	}
 	role := proxy.StringOr(env, "role_arn", "")
 	if role == "" {
 		return nil, fmt.Errorf("--role-arn is required; it names the IAM role the broker assumes for %q", name)
@@ -157,13 +208,16 @@ func (Service) Normalize(name string, env map[string]any) ([]string, error) {
 		}
 		env["aws_cli"] = found
 	}
-	if len(instances) == 0 && len(buckets) == 0 {
-		return []string{fmt.Sprintf("env %q has an empty allowlist; the broker refuses to issue its credentials until --allow-instance/--allow-bucket", name)}, nil
+	if allow.Empty() && (len(allow.BatchQueues) == 0) == (len(allow.BatchDefinitions) == 0) {
+		return []string{fmt.Sprintf("env %q has an empty allowlist; the broker refuses to issue its credentials until --allow-instance, --allow-bucket, --allow-batch-queue with --allow-batch-definition, or --allow-log-group", name)}, nil
 	}
 	// The allowlist is checked against STS's size limit here, where the
 	// operator hears it, not at the first request, where the agent does.
-	if _, err := SessionPolicy(instances, buckets); err != nil {
+	if _, err := allow.Policy(); err != nil {
 		return nil, err
+	}
+	if len(allow.BatchQueues) > 0 {
+		return []string{fmt.Sprintf("env %q submits Batch jobs only to its queues and definitions, but cancels, terminates, tags and describes any Batch job in the role's account: Batch names no queue in a job's ARN, so no session policy narrows those", name)}, nil
 	}
 	return nil, nil
 }
@@ -310,17 +364,17 @@ func (in *instance) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	// An empty allowlist still answers, because "connection refused" teaches
 	// nothing while a 503 names the fix.
-	if len(e.Instances) == 0 && len(e.Buckets) == 0 {
-		msg := fmt.Sprintf("environment %q has an empty allowlist; the operator adds to it with `psps env edit aws %s --allow-instance i-...` or `--allow-bucket name`", name, name)
+	if e.Allow().Empty() {
+		msg := fmt.Sprintf("environment %q has an empty allowlist; the operator adds to it with `psps env edit aws %s --allow-instance i-...`, `--allow-bucket name`, `--allow-batch-queue` with `--allow-batch-definition`, or `--allow-log-group`", name, name)
 		send(w, 503, reason(msg))
 		in.logf("FAIL %s: %s", r.URL.Path, msg)
 		return
 	}
 	var st Settings
 	v.Settings(&st)
-	policy, err := SessionPolicy(e.Instances, e.Buckets)
+	policy, err := e.Allow().Policy()
 	if st.Strict() {
-		policy, err = strictPolicy(e.Instances, e.Buckets)
+		policy, err = strictPolicy(e.Allow())
 	}
 	if err == nil {
 		var c Credentials
@@ -368,7 +422,7 @@ func (Service) Check(ctx context.Context, name string, cfg json.RawMessage, _ *c
 	if err := json.Unmarshal(cfg, &e); err != nil {
 		return "", err
 	}
-	policy, err := SessionPolicy(e.Instances, e.Buckets)
+	policy, err := e.Allow().Policy()
 	if err != nil {
 		return "", err
 	}
@@ -385,8 +439,8 @@ func (Service) Check(ctx context.Context, name string, cfg json.RawMessage, _ *c
 		if err != nil {
 			return "", err
 		}
-		return fmt.Sprintf("bastion    %s\nidentity   %s\nexpires    %s\ninstances  %s\nbuckets    %s\n",
-			who, src.Assumed(), c.Expiration, describe(e.Instances), describe(e.Buckets)), nil
+		return fmt.Sprintf("bastion    %s\nidentity   %s\nexpires    %s\nallowlist  %s\n",
+			who, src.Assumed(), c.Expiration, e.describeAll()), nil
 	}
 	c, err := src.Get(ctx, time.Now())
 	if err != nil {
@@ -411,6 +465,5 @@ func (Service) Check(ctx context.Context, name string, cfg json.RawMessage, _ *c
 	}
 	var id struct{ Arn string }
 	json.Unmarshal(out, &id)
-	return fmt.Sprintf("identity   %s\nexpires    %s\ninstances  %s\nbuckets    %s\n",
-		id.Arn, c.Expiration, describe(e.Instances), describe(e.Buckets)), nil
+	return fmt.Sprintf("identity   %s\nexpires    %s\nallowlist  %s\n", id.Arn, c.Expiration, e.describeAll()), nil
 }

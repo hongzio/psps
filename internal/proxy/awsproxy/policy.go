@@ -6,7 +6,9 @@
 //	             |  (the isolation's tunnel)
 //	daemon     this broker: checks the workspace token, then
 //	             `aws sts assume-role` with a session policy built from the
-//	             env's allowlist (--allow-instance / --allow-bucket)
+//	             env's allowlist (--allow-instance, --allow-bucket,
+//	             --allow-batch-queue and --allow-batch-definition,
+//	             --allow-log-group)
 //	             |
 //	           scoped credentials, nothing written to disk
 //
@@ -17,7 +19,8 @@
 // WebSocket data channel stays untouched.
 //
 // The allowlist is enforced by AWS, not here: the session policy names
-// exactly the allowed instances and buckets, and a call outside it is
+// exactly the allowed instances, buckets, Batch queues and job definitions
+// and log groups, and a call outside it is
 // refused upstream with the action, the resource and "because no session
 // policy allows..." spelled out. The broker's own refusals carry their
 // reason as JSON.
@@ -45,7 +48,31 @@ import (
 var (
 	InstanceID = regexp.MustCompile(`^i-[0-9a-f]{8,17}$`)
 	BucketName = regexp.MustCompile(`^[a-z0-9][a-z0-9.-]{1,61}[a-z0-9]$`)
+	// BatchName is a job queue's or a job definition's name, as Batch
+	// allows them.
+	BatchName = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$`)
+	// LogGroupName is CloudWatch Logs' own rule, which has no wildcard in it.
+	LogGroupName = regexp.MustCompile(`^[A-Za-z0-9._/#-]{1,512}$`)
 )
+
+// Names is a list of names the pattern allows, sorted, once each; what
+// is a list of what they are, for the refusal.
+func Names(entries []string, re *regexp.Regexp, what string) ([]string, error) {
+	seen := map[string]bool{}
+	out := []string{}
+	for _, e := range entries {
+		e = strings.TrimSpace(e)
+		if !re.MatchString(e) {
+			return nil, proxy.Deny("%q is not a valid %s name", e, what)
+		}
+		if !seen[e] {
+			seen[e] = true
+			out = append(out, e)
+		}
+	}
+	sort.Strings(out)
+	return out, nil
+}
 
 type Kind string
 
@@ -191,7 +218,28 @@ func (p Policy) JSON() string {
 	return string(b)
 }
 
-// SessionPolicy is the allowlist as IAM will enforce it.
+// Allowlist is what an env's session policy names.
+type Allowlist struct {
+	Instances, Buckets []string
+	// BatchQueues and BatchDefinitions are where a job may be submitted
+	// and what it may run; a job is submitted only with both, so either
+	// alone grants nothing.
+	BatchQueues, BatchDefinitions []string
+	LogGroups                     []string
+}
+
+// Empty is an allowlist that names nothing; Batch needs both of its lists.
+func (a Allowlist) Empty() bool {
+	return len(a.Instances) == 0 && len(a.Buckets) == 0 && len(a.LogGroups) == 0 &&
+		(len(a.BatchQueues) == 0 || len(a.BatchDefinitions) == 0)
+}
+
+// SessionPolicy is an allowlist of instances and buckets alone.
+func SessionPolicy(instances, buckets []string) (Policy, error) {
+	return Allowlist{Instances: instances, Buckets: buckets}.Policy()
+}
+
+// Policy is the allowlist as IAM will enforce it.
 //
 // Statements split two ways. By how actions authorize, which isolate
 // measured rather than assumed: StartSession and SendCommand check the
@@ -201,7 +249,17 @@ func (p Policy) JSON() string {
 // own broad statement (the ec2 ARN grammar keeps that breadth away from the
 // session actions). And by capability, so `i-...=session` or `bucket=read`
 // lands its resource in exactly the statements its suffix names.
-func SessionPolicy(instances, buckets []string) (Policy, error) {
+//
+// Batch authorizes SubmitJob against the queue, the job definition and the
+// new job together, so a submission is pinned to the named queues and
+// definitions (any revision). What is done to a job once it is there,
+// cancelling, terminating and tagging it (tagging is how SubmitJob's tags
+// are put on), authorizes against the job's ARN, job/<uuid>, which names
+// neither, and the reads (DescribeJobs, ListJobs and the queue and
+// definition lists) against no resource at all: those reach every job in
+// the account, and no session policy can narrow them further.
+func (a Allowlist) Policy() (Policy, error) {
+	instances, buckets := a.Instances, a.Buckets
 	type parsed struct {
 		name string
 		caps map[string]bool
@@ -225,8 +283,24 @@ func SessionPolicy(instances, buckets []string) (Policy, error) {
 	if err != nil {
 		return Policy{}, err
 	}
-	if len(ins) == 0 && len(bks) == 0 {
-		return Policy{}, proxy.Deny("the AWS allowlist is empty; add --allow-instance i-... or --allow-bucket name before credentials can be issued")
+	queues, err := Names(a.BatchQueues, BatchName, "Batch job queue")
+	if err != nil {
+		return Policy{}, err
+	}
+	defs, err := Names(a.BatchDefinitions, BatchName, "Batch job definition")
+	if err != nil {
+		return Policy{}, err
+	}
+	groups, err := Names(a.LogGroups, LogGroupName, "CloudWatch log group")
+	if err != nil {
+		return Policy{}, err
+	}
+	if (len(queues) == 0) != (len(defs) == 0) {
+		return Policy{}, proxy.Deny("a Batch job is submitted to a queue with a job definition, and the allowlist names %s; add --allow-batch-queue and --allow-batch-definition together",
+			map[bool]string{true: "a queue but no definition", false: "a definition but no queue"}[len(defs) == 0])
+	}
+	if len(ins) == 0 && len(bks) == 0 && len(queues) == 0 && len(groups) == 0 {
+		return Policy{}, proxy.Deny("the AWS allowlist is empty; add --allow-instance i-..., --allow-bucket name, --allow-batch-queue with --allow-batch-definition, or --allow-log-group before credentials can be issued")
 	}
 
 	documents := []string{"arn:aws:ssm:*:*:document/*", "arn:aws:ssm:*::document/AWS-RunShellScript"}
@@ -273,10 +347,30 @@ func SessionPolicy(instances, buckets []string) (Policy, error) {
 			allow(s.sid, s.actions, res)
 		}
 	}
+	if len(queues) > 0 {
+		const batch = "arn:aws:batch:*:*:"
+		res := []string{}
+		for _, q := range queues {
+			res = append(res, batch+"job-queue/"+q)
+		}
+		for _, d := range defs {
+			res = append(res, batch+"job-definition/"+d, batch+"job-definition/"+d+":*")
+		}
+		allow("BatchSubmit", []string{"batch:SubmitJob"}, append(res, batch+"job/*"))
+		allow("BatchJobs", []string{"batch:CancelJob", "batch:TerminateJob", "batch:TagResource"}, []string{batch + "job/*"})
+		allow("BatchReads", []string{"batch:DescribeJobs", "batch:ListJobs", "batch:DescribeJobQueues", "batch:DescribeJobDefinitions"}, []string{"*"})
+	}
+	if len(groups) > 0 {
+		var res []string
+		for _, g := range groups {
+			res = append(res, "arn:aws:logs:*:*:log-group:"+g+":log-stream:*")
+		}
+		allow("LogReads", []string{"logs:GetLogEvents"}, res)
+	}
 	p := Policy{Version: "2012-10-17", Statement: st}
 	if size := len(p.JSON()); size > PolicyLimit {
-		return Policy{}, proxy.Deny("the session policy is %d characters; STS caps it at %d. Narrow the allowlist (%d instances, %d buckets)",
-			size, PolicyLimit, len(ins), len(bks))
+		return Policy{}, proxy.Deny("the session policy is %d characters; STS caps it at %d. Narrow the allowlist (%d instances, %d buckets, %d Batch queues, %d job definitions, %d log groups)",
+			size, PolicyLimit, len(ins), len(bks), len(queues), len(defs), len(groups))
 	}
 	return p, nil
 }
