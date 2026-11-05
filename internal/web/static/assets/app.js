@@ -123,10 +123,12 @@ const S = {
   isoCreateError: null,
   // edit is the user message being rewritten in place: { agent, id, text,
   // sending }. openRewound holds the earlier versions shown unfolded,
-  // openTools the runs of one tool likewise.
+  // openTools the runs of one tool likewise, openLong the long messages
+  // the person sent that they opened.
   edit: null,
   openRewound: new Set(),
   openTools: new Set(),
+  openLong: new Set(),
 }
 
 const coarse = matchMedia('(pointer: coarse)').matches
@@ -2080,9 +2082,73 @@ function renderConvo(forceBottom) {
   }
   const ta = typing && inner.querySelector('.edit-box')
   if (ta && ta !== typing) { ta.focus({ preventScroll: true }); ta.setSelectionRange(...sel) }
+  foldLong()
   if (stick) box.scrollTop = box.scrollHeight
   renderLastSent()
   renderAskJump()
+}
+
+// A message the person sent that the screen shows as longFold lines or more
+// is folded to its first foldPeek, and opens on a click anywhere on it. The
+// lines are as drawn, in the bubble's own line height: a paragraph with no
+// break in it folds once it wraps that far, and a narrower window folds
+// more. An open one folds again only from its button, so selecting its
+// text never folds it.
+const longFold = 20
+const foldPeek = 8
+// foldWidth is the width each bubble was measured at, so a redraw measures
+// only those new or rewrapped.
+const foldWidth = new WeakMap()
+let foldSeen = null
+const foldResize = typeof ResizeObserver === 'function' ? new ResizeObserver(() => foldLong()) : null
+
+function foldLong() {
+  const box = document.getElementById('convo')
+  if (!box) return
+  if (foldResize && foldSeen !== box) { foldResize.disconnect(); foldResize.observe(box); foldSeen = box }
+  // Every measure first, then every change, so the layout is worked out once.
+  const todo = []
+  for (const b of box.querySelectorAll('.msg-user[data-fold]')) {
+    const body = b.firstElementChild
+    const w = body.clientWidth
+    if (!w || foldWidth.get(b) === w) continue
+    const lh = parseFloat(getComputedStyle(body).lineHeight) || 22.5
+    todo.push([b, w, Math.round(body.scrollHeight / lh)])
+  }
+  for (const [b, w, lines] of todo) {
+    foldWidth.set(b, w)
+    setFold(b, lines)
+  }
+}
+
+function setFold(b, lines) {
+  const long = lines >= longFold
+  const folded = long && !S.openLong.has(b.dataset.fold)
+  b.classList.toggle('long', long)
+  b.classList.toggle('folded', folded)
+  b.querySelector(':scope > .fold-btn')?.remove()
+  b.onclick = folded ? (e) => toggleFold(e, b, lines) : null
+  if (!long) return
+  b.style.setProperty('--peek', foldPeek)
+  b.append(h('button', {
+    type: 'button', class: 'fold-btn', 'aria-expanded': String(!folded), onclick: (e) => toggleFold(e, b, lines),
+  }, icon('chevron-down'), folded ? 'Show all' : 'Show less', folded ? h('span', { class: 'n' }, ` · ${lines} lines`) : null))
+}
+
+function toggleFold(e, b, lines) {
+  e.stopPropagation()
+  // A click that ends a selection of the folded text is not one to open it.
+  if (b.classList.contains('folded') && e.target === b.firstElementChild && String(getSelection()).length) return
+  const key = b.dataset.fold
+  const wasOpen = S.openLong.has(key)
+  if (wasOpen) S.openLong.delete(key)
+  else S.openLong.add(key)
+  stick = false
+  setFold(b, lines)
+  // Folding a long message back keeps its top in view rather than leaving the reader below it.
+  const box = document.getElementById('convo')
+  if (wasOpen && b.getBoundingClientRect().top < box.getBoundingClientRect().top) b.scrollIntoView({ block: 'start' })
+  b.querySelector(':scope > .fold-btn')?.focus({ preventScroll: true })
 }
 
 const convoPage = 150
@@ -2190,7 +2256,7 @@ function entryView(en, a, frozen) {
       const cm = cronMsg(en.text)
       if (cm) return h('div', { class: 'msg-cron' }, h('div', { class: 'who' }, icon('clock'), ` Cron #${cm.id}${cm.self ? ' (the agent\'s own)' : cm.by ? ` (set by ${cm.by})` : ''} · ${describeSchedule(cm.schedule)}`), h('div', { class: 'text' }, richText(cm.body)))
       if (!frozen && S.edit?.agent === a.id && S.edit.id === en.id) return editView(en, a)
-      const bubble = h('div', { class: 'msg-user text' }, richText(en.text))
+      const bubble = h('div', { class: 'msg-user text', 'data-fold': `${a.id}:${en.id || en.time}` }, h('div', { class: 'msg-body' }, richText(en.text)))
       const edit = !frozen && en.id && rewindable(a)
         ? h('button', { class: 'edit-msg', title: 'Edit and resend: the agent goes back to here', 'aria-label': 'Edit message', onclick: () => startEdit(a, en) }, icon('pencil'))
         : null
