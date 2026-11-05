@@ -139,7 +139,8 @@ func TestAnAgentsTeamFollowsItsLine(t *testing.T) {
 		t.Fatalf("the fork's team %q", f.Team)
 	}
 	c, _ := m.CreateAgent(ctx, api.CreateAgent{Isolation: "dev", Kind: driver.Codex, Handle: "id3"})
-	if got, want := liveIDs(m), []string{b.ID, sent.Agent, f.ID, c.ID}; !slices.Equal(got, want) {
+	// The fork is right under the one it forks, in their team.
+	if got, want := liveIDs(m), []string{b.ID, f.ID, sent.Agent, c.ID}; !slices.Equal(got, want) {
 		t.Fatalf("live %v, want %v", got, want)
 	}
 	if v, _ := m.Agent(sent.Agent); v.Team != "backend" {
@@ -200,9 +201,40 @@ func TestANewAgentGoesAfterTheLastOfItsIsolation(t *testing.T) {
 			[]agentView{agent("a", "y"), agent("t1", "x"), agent("new", "x")}, nil},
 	}
 	for _, c := range cases {
-		got, ok := placedAfter(c.live, c.as, teams, "new", "x")
+		got, ok := placedAfter(c.live, c.as, teams, "new", false, func(a agentView) bool { return a.IsolationID == "x" })
 		if ok != (c.want != nil) || !slices.Equal(got, c.want) {
 			t.Errorf("%s: %v %v, want %v", c.name, got, ok, c.want)
 		}
+	}
+}
+
+func TestAForkIsRightUnderTheAgentItForks(t *testing.T) {
+	e := newTestEnv(t)
+	ctx := context.Background()
+	m, stop := e.daemon()
+	defer stop()
+
+	a, _ := m.CreateAgent(ctx, api.CreateAgent{Isolation: "dev", Kind: driver.Codex, Handle: "id1"})
+	b, _ := m.CreateAgent(ctx, api.CreateAgent{Isolation: "dev", Kind: driver.Codex, Handle: "id2"})
+	c, _ := m.CreateAgent(ctx, api.CreateAgent{Isolation: "dev", Kind: driver.Codex, Handle: "id3"})
+	e.waitFor("the agents", func() bool {
+		return status(m, a.ID) == event.StatusIdle && status(m, b.ID) == event.StatusIdle && status(m, c.ID) == event.StatusIdle
+	})
+	f, err := m.Fork(ctx, "id1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, want := liveIDs(m), []string{a.ID, f.ID, b.ID, c.ID}; !slices.Equal(got, want) {
+		t.Fatalf("live %v, want %v", got, want)
+	}
+	// A fork of the fork is right under it, and one of an archived agent
+	// goes where a new one does.
+	g, _ := m.Fork(ctx, f.ID)
+	if err := m.Archive(ctx, "id2"); err != nil {
+		t.Fatal(err)
+	}
+	h, _ := m.Fork(ctx, "id2")
+	if got, want := liveIDs(m), []string{a.ID, f.ID, g.ID, c.ID, h.ID}; !slices.Equal(got, want) {
+		t.Fatalf("live %v, want %v", got, want)
 	}
 }

@@ -189,7 +189,8 @@ what is typed there works the same.
   session there now, which is archived. One session of an agent is live at
   a time. Forking one, live or archived (Fork in the web UI, `f` in the
   TUI, `psps agent fork`), makes a new agent instead: its ID is the
-  agent's with a random suffix, it works in the same isolation and
+  agent's with a random suffix, it is right under the agent in the
+  sidebar (in its team, if it has one), it works in the same isolation and
   directory, and its session starts as a copy of the agent's (Claude's
   `--fork-session`, Codex's `thread/fork`), with no crons or mail. Its
   conversation in the web UI and the TUI starts with a copy of the agent's

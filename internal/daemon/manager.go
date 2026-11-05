@@ -1454,6 +1454,9 @@ func (m *Manager) fork(ctx context.Context, id, via string) (api.Agent, error) {
 			m.log.Printf("agent %s: its team: %v", a.ID, err)
 		}
 	}
+	if err := m.placeFork(a, from); err != nil {
+		m.log.Printf("agent %s: its place: %v", a.ID, err)
+	}
 	if _, err := m.ensureRuntime(a); err != nil {
 		return api.Agent{}, err
 	}
