@@ -294,19 +294,30 @@ func printFields(fields []proxy.Field) {
 	}
 }
 
-// listFlag collects a repeated flag.
+// listFlag collects a repeated flag, a comma also separating entries.
+// caps are the capabilities an entry may narrow itself to (NAME=CAP,CAP):
+// a capability after an entry that has one is that entry's, so
+// `bucket=read,write` is one entry and not a bucket named write.
 type listFlag struct {
 	vals []string
 	set  bool
+	caps map[string]bool
 }
 
 func (l *listFlag) String() string { return strings.Join(l.vals, ",") }
 func (l *listFlag) Set(v string) error {
 	l.set = true
+	narrowing := false
 	for _, part := range strings.Split(v, ",") {
-		if part = strings.TrimSpace(part); part != "" {
-			l.vals = append(l.vals, part)
+		if part = strings.TrimSpace(part); part == "" {
+			continue
 		}
+		if narrowing && l.caps[part] {
+			l.vals[len(l.vals)-1] += "," + part
+			continue
+		}
+		narrowing = strings.Contains(part, "=")
+		l.vals = append(l.vals, part)
 	}
 	return nil
 }
@@ -338,7 +349,10 @@ func parsePatch(name string, fields []proxy.Field, args []string, extra ...func(
 				b.no = fs.Bool(f.Neg, false, "the opposite of --"+f.Flag)
 			}
 		case proxy.List:
-			b.list = &listFlag{}
+			b.list = &listFlag{caps: map[string]bool{}}
+			for _, c := range f.Caps {
+				b.list.caps[c.Name] = true
+			}
 			fs.Var(b.list, f.Flag, f.Help)
 			if f.Clear != "" {
 				b.cleared = fs.Bool(f.Clear, false, "empty the list")
