@@ -309,8 +309,15 @@ func TestASubmissionIsPinnedToTheNamedQueuesAndDefinitions(t *testing.T) {
 	if slices.Contains(s["BatchReads"].Action, "batch:SubmitJob") || !slices.Contains(s["BatchReads"].Action, "batch:DescribeJobs") {
 		t.Fatalf("reads = %+v", s["BatchReads"])
 	}
+	// A tagged submission checks TagResource on the definition, by name and
+	// by revision, and on nothing wider.
+	tags := s["BatchSubmitTags"]
+	if !reflect.DeepEqual(tags.Action, []string{"batch:TagResource"}) ||
+		!reflect.DeepEqual(tags.Resource, []string{"arn:aws:batch:*:*:job-definition/mtlab-replay-dev", "arn:aws:batch:*:*:job-definition/mtlab-replay-dev:*"}) {
+		t.Fatalf("submit tags = %+v", tags)
+	}
 	// Nothing else rides along: no S3, no SSM.
-	if len(s) != 3 {
+	if len(s) != 4 {
 		t.Fatalf("statements = %v", s)
 	}
 }
