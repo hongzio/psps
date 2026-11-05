@@ -254,8 +254,9 @@ func SessionPolicy(instances, buckets []string) (Policy, error) {
 // new job together, so a submission is pinned to the named queues and
 // definitions (any revision). What is done to a job once it is there,
 // cancelling, terminating and tagging it (tagging is how SubmitJob's tags
-// are put on, and a tagged SubmitJob checks TagResource on the job
-// definition as well, so the named definitions are taggable too),
+// are put on, and a tagged SubmitJob checks TagResource on the job queue
+// and the job definition as well, so the named queues and definitions are
+// taggable too),
 // authorizes against the job's ARN, job/<uuid>, which names
 // neither, and the reads (DescribeJobs, ListJobs and the queue and
 // definition lists) against no resource at all: those reach every job in
@@ -351,10 +352,11 @@ func (a Allowlist) Policy() (Policy, error) {
 	}
 	if len(queues) > 0 {
 		const batch = "arn:aws:batch:*:*:"
-		res := []string{}
+		var queueRes []string
 		for _, q := range queues {
-			res = append(res, batch+"job-queue/"+q)
+			queueRes = append(queueRes, batch+"job-queue/"+q)
 		}
+		res := append([]string{}, queueRes...)
 		var defRes []string
 		for _, d := range defs {
 			defRes = append(defRes, batch+"job-definition/"+d, batch+"job-definition/"+d+":*")
@@ -362,8 +364,8 @@ func (a Allowlist) Policy() (Policy, error) {
 		res = append(res, defRes...)
 		allow("BatchSubmit", []string{"batch:SubmitJob"}, append(res, batch+"job/*"))
 		// A SubmitJob that carries tags is checked for TagResource on the
-		// job definition too, by name and by revision.
-		allow("BatchSubmitTags", []string{"batch:TagResource"}, defRes)
+		// job queue and the job definition too (by name and by revision).
+		allow("BatchSubmitTags", []string{"batch:TagResource"}, append(append([]string{}, queueRes...), defRes...))
 		allow("BatchJobs", []string{"batch:CancelJob", "batch:TerminateJob", "batch:TagResource"}, []string{batch + "job/*"})
 		allow("BatchReads", []string{"batch:DescribeJobs", "batch:ListJobs", "batch:DescribeJobQueues", "batch:DescribeJobDefinitions"}, []string{"*"})
 	}
