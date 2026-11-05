@@ -2288,7 +2288,8 @@ function entryView(en, a, frozen) {
       if (cm) return h('div', { class: 'msg-cron' }, h('div', { class: 'who' }, icon('clock'), ` Cron #${cm.id}${cm.self ? ' (the agent\'s own)' : cm.by ? ` (set by ${cm.by})` : ''} · ${describeSchedule(cm.schedule)}`), h('div', { class: 'text' }, richText(cm.body)))
       if (!frozen && S.edit?.agent === a.id && S.edit.id === en.id) return editView(en, a)
       const bubble = h('div', { class: 'msg-user text', 'data-fold': `${a.id}:${en.id || en.time}` }, h('div', { class: 'msg-body' }, richText(en.text)))
-      const edit = !frozen && en.id && rewindable(a)
+      // One copied from the agent forked (src below zero) is not its CLI's to go back to.
+      const edit = !frozen && en.id && en.src > 0 && rewindable(a)
         ? h('button', { class: 'edit-msg', title: 'Edit and resend: the agent goes back to here', 'aria-label': 'Edit message', onclick: () => startEdit(a, en) }, icon('pencil'))
         : null
       return h('div', { class: 'msg-user-row' }, edit, stamp(en.time), bubble)

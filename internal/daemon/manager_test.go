@@ -2441,6 +2441,20 @@ func TestAForkStartsFromTheConversationItForks(t *testing.T) {
 	if cs, _ := m.Crons(f.ID); len(cs.Crons) != 0 {
 		t.Fatalf("the fork has %d crons", len(cs.Crons))
 	}
+	// Its conversation starts with the one it forks, below zero in Src so
+	// no record of its own is taken for one of them, and a line saying so.
+	evs, _ := e.st.Events(f.ID, 0, 0)
+	var copied, said bool
+	for _, ev := range evs {
+		if ev.Src >= 0 || ev.Agent != f.ID {
+			t.Fatalf("a copied event: %+v", ev)
+		}
+		copied = copied || ev.Kind == event.KindUser && ev.Text == "one"
+		said = said || ev.Kind == event.KindNotice && strings.HasPrefix(ev.Text, "Forked from id1")
+	}
+	if !copied || !said || evs[len(evs)-1].Kind != event.KindNotice {
+		t.Fatalf("the fork's conversation: %+v", evs)
+	}
 	if _, err := m.Message(f.Handle, "two"); err != nil {
 		t.Fatal(err)
 	}

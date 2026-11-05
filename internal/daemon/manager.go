@@ -1387,7 +1387,8 @@ func (m *Manager) Restore(ctx context.Context, id string) (api.Agent, error) {
 
 // Fork makes a new agent from one, live or archived: in the same isolation
 // and directory, with its kind and settings, and its session as a copy of
-// the one it forks, so it knows what that one was told and did. It has no
+// the one it forks, so it knows what that one was told and did, and its
+// conversation starts with a copy of that one's, for the person. It has no
 // crons or mail; it is an agent of its own, on a line of its own, going by
 // the ID of the one it forks with a random suffix.
 func (m *Manager) Fork(ctx context.Context, id string) (api.Agent, error) {
@@ -1438,6 +1439,10 @@ func (m *Manager) fork(ctx context.Context, id, via string) (api.Agent, error) {
 	}
 	if a, err = m.store.Agent(a.ID); err != nil {
 		return api.Agent{}, err
+	}
+	// Its conversation shows where it starts from, as its session does.
+	if err := m.store.CopyEvents(from.ID, a.ID, fmt.Sprintf("Forked from %s: the conversation above is its, copied; this agent goes on from here, on its own.", cmp.Or(from.Handle, from.ID))); err != nil {
+		m.log.Printf("agent %s: its conversation: %v", a.ID, err)
 	}
 	m.log.Printf("agent %s: forked from %s", a.ID, from.ID)
 	// A fork is of its agent's team: its work is the same work's.

@@ -191,7 +191,11 @@ what is typed there works the same.
   TUI, `psps agent fork`), makes a new agent instead: its ID is the
   agent's with a random suffix, it works in the same isolation and
   directory, and its session starts as a copy of the agent's (Claude's
-  `--fork-session`, Codex's `thread/fork`), with no crons or mail.
+  `--fork-session`, Codex's `thread/fork`), with no crons or mail. Its
+  conversation in the web UI and the TUI starts with a copy of the agent's
+  too, up to a line saying it was forked; a copied message of yours cannot
+  be edited and resent there, and an approval that was still open is shown
+  void.
 - Claude's: its slash commands and skills, as the running `claude` lists
   them (asked once a process, which costs no turn). Its `/model` and
   `/effort` are left out for psps's, which last beyond the process, and
