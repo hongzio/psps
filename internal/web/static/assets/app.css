@@ -422,6 +422,14 @@ a.btn { display: inline-flex; align-items: center; color: var(--text); text-deco
 .msg-user.long:not(.folded) .fold-btn .icon { transform: rotate(180deg); }
 @media (prefers-reduced-motion: reduce) { .fold-btn .icon { transition: none; } }
 .msg-agent.live .text::after { content: "▍"; color: var(--accent); animation: pulse 1s infinite; }
+/* An agent at work: three dots that rise in turn, in a bubble under its last word. */
+.typing-row { align-self: flex-start; display: inline-flex; padding: 9px 12px; border-radius: 14px 14px 14px 4px; background: var(--code); color: var(--muted); }
+.typing { display: inline-flex; align-items: center; gap: 4px; }
+.typing i { width: 6px; height: 6px; border-radius: 50%; background: currentColor; animation: typing-hop 1.2s ease-in-out infinite; }
+.typing i:nth-child(2) { animation-delay: .15s; }
+.typing i:nth-child(3) { animation-delay: .3s; }
+@keyframes typing-hop { 0%, 60%, 100% { transform: none; opacity: .35; } 30% { transform: translateY(-3px); opacity: 1; } }
+@media (prefers-reduced-motion: reduce) { .typing i { animation: none; opacity: .7; } }
 .text p { margin: 0 0 .6em; overflow-wrap: anywhere; }
 .text p.raw { white-space: pre-wrap; }
 .text code { background: var(--code); padding: 1px 5px; border-radius: 4px; }
