@@ -4,8 +4,23 @@ import (
 	"reflect"
 	"testing"
 
+	"github.com/hongzio/psps/internal/proxy/awsproxy"
 	"github.com/hongzio/psps/internal/proxy/gitproxy"
 )
+
+func TestACapabilityListStaysWithItsEntry(t *testing.T) {
+	// --allow-bucket b=read,write is one bucket with two capabilities, not
+	// bucket b=read and a bucket named write.
+	p, _, err := parsePatch("t", awsproxy.Service{}.Fields(), []string{"mtlab",
+		"--allow-bucket", "mtlab-work", "--allow-bucket", "mtlab-tapes=read,write", "--allow-bucket", "a=read,b,c=write,delete"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []string{"mtlab-work", "mtlab-tapes=read,write", "a=read", "b", "c=write,delete"}
+	if !reflect.DeepEqual(p.Set["buckets"], want) {
+		t.Fatalf("buckets = %v", p.Set["buckets"])
+	}
+}
 
 func TestFlagsBecomeAPatchOfOnlyWhatWasGiven(t *testing.T) {
 	fields := gitproxy.Service{}.Fields()
