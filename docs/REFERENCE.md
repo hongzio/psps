@@ -149,7 +149,10 @@ the way back on top. Each has an address of its own
 (`#/isolations/dev/services`), so a page can be bookmarked and the back
 gesture goes where it should. In the sidebar an idle agent's grey dot means it
 wants a look; tapping it parks the agent (a dimmer grey: it needs none), and
-tapping again undoes that. Its next turn takes it out of being parked. A team
+tapping again undoes that. Its next turn takes it out of being parked. An
+agent whose turn ended, working to idle, while another was open has a red dot
+at the end of its name until it is opened (or parked); the browser keeps it,
+and a folded team rings that agent's dot in red. A team
 (an agent's Edit, or New agent, names it; a new name makes one) is a group
 there that folds to a dot for each of its agents, the ones that want a look
 first. A long press moves an agent within its list: a team's agents within

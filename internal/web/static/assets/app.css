@@ -14,6 +14,7 @@
   --warn: #9a5b00;
   --warn-soft: #fff4e0;
   --err: #b42318;
+  --unread: #e5372b;
   --err-soft: #fdecea;
   --on-err: #ffffff;
   --code: #f2f2f6;
@@ -41,6 +42,7 @@
     --warn: #ffc46b;
     --warn-soft: #2e2512;
     --err: #ff8a80;
+    --unread: #ff5a4e;
     --err-soft: #331b1a;
     --on-err: #2a0e0c;
     --code: #1f1f26;
@@ -64,6 +66,7 @@
   --warn: #ffc46b;
   --warn-soft: #2e2512;
   --err: #ff8a80;
+  --unread: #ff5a4e;
   --err-soft: #331b1a;
   --on-err: #2a0e0c;
   --code: #1f1f26;
@@ -238,6 +241,14 @@ body.resizing { cursor: col-resize; user-select: none; -webkit-user-select: none
 .lead-actions { display: flex; gap: 8px; margin-top: 4px; }
 .lead-actions:empty { display: none; }
 .agent .name .mark { color: var(--faint); margin-right: 4px; }
+/* An agent whose turn ended while another was open, not opened since: a red
+   dot at the end of its name, smaller and brighter than an error's. */
+.agent .name.with-unread { display: flex; align-items: center; gap: 8px; }
+.agent .name.with-unread .title { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.agent .name .unread { flex: none; width: 7px; height: 7px; border-radius: 50%; background: var(--unread); animation: unread-pop .25s ease-out; }
+.team-dots .dot.unread { box-shadow: 0 0 0 1.5px var(--sidebar), 0 0 0 3px var(--unread); }
+@keyframes unread-pop { from { transform: scale(0); } }
+@media (prefers-reduced-motion: reduce) { .agent .name .unread { animation: none; } }
 .agent .name .mark .icon { width: 13px; height: 13px; vertical-align: -2px; }
 .fold {
   display: block;

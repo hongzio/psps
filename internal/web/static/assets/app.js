@@ -73,6 +73,11 @@ const S = {
   // Teams folded to their heads in the sidebar, by ID: this browser's,
   // kept across visits.
   foldedTeams: new Set((() => { try { return JSON.parse(localStorage.getItem('psps.foldedTeams') || '[]') } catch { return [] } })()),
+  // Agents whose turn ended, working to idle, while another was open, and
+  // not opened since, by ID: this browser's, kept across visits. lastStatus
+  // is each one's status as last seen, to tell a turn's end by.
+  unread: new Set((() => { try { return JSON.parse(localStorage.getItem('psps.unread') || '[]') } catch { return [] } })()),
+  lastStatus: new Map(),
   // A sidebar row is held or being moved: the sidebar is not redrawn under
   // it, but once it is let go.
   sorting: false,
@@ -729,6 +734,7 @@ function follow(id) {
       const a = agentById(id)
       if (a && a.state?.status !== e.status) {
         a.state = { ...a.state, status: e.status }
+        noteTurns()
         renderSidebar()
         if (S.sel === id) renderTopbar()
       }
@@ -770,6 +776,7 @@ async function refreshAgents() {
   const before = agentById(S.sel)
   S.agents = agents
   S.order = order
+  noteTurns()
   // The open agent was archived as a new session took its place (/new):
   // go on in the new one, as if it were the same agent.
   const now = agentById(S.sel)
@@ -866,7 +873,28 @@ function setHash(hash) {
   if (location.hash !== hash) history.pushState(null, '', hash)
 }
 
+// noteTurns marks an agent whose turn has ended, working to idle, unless it
+// is the one open; one that is working again, parked, archived or gone is no
+// longer marked.
+function noteTurns() {
+  const before = S.unread.size, changed = []
+  for (const a of S.agents) {
+    const st = a.archived_at ? 'archived' : a.state?.status || 'idle'
+    const was = S.lastStatus.get(a.id)
+    S.lastStatus.set(a.id, st)
+    if (was === 'working' && st === 'idle' && !(S.view === 'agent' && S.sel === a.id) && !a.parked) { S.unread.add(a.id); changed.push(a.id) }
+    else if (S.unread.has(a.id) && (st !== 'idle' || a.parked)) { S.unread.delete(a.id); changed.push(a.id) }
+  }
+  for (const id of S.unread) if (!agentById(id)) { S.unread.delete(id); changed.push(id) }
+  if (changed.length) saveUnread()
+}
+
+function saveUnread() {
+  try { localStorage.setItem('psps.unread', JSON.stringify([...S.unread])) } catch {}
+}
+
 function select(id, closeDrawer = true) {
+  if (S.unread.delete(id)) saveUnread()
   if (S.sel && S.sel !== id) S.drafts.set(S.sel, document.querySelector('.composer textarea')?.value || '')
   if (S.sel !== id) S.edit = null
   S.sel = id
@@ -1036,6 +1064,7 @@ function togglePark(a) {
   if (a.archived_at || (a.state?.status || 'idle') !== 'idle') return false
   const want = !a.parked
   a.parked = want
+  if (want && S.unread.delete(a.id)) saveUnread()
   renderSidebar()
   guarded(async () => {
     try {
@@ -1081,7 +1110,9 @@ function renderSidebar() {
     return h('button', {
       class: 'agent' + (a.id === S.sel && S.view === 'agent' ? ' selected' : '') + (a.archived_at ? ' archived' : ''),
       'data-line': a.line || a.id, onclick: () => select(a.id),
-    }, dot, h('span', { class: 'name' }, mark, agentTitle(a)),
+    }, dot, S.unread.has(a.id)
+      ? h('span', { class: 'name with-unread' }, h('span', { class: 'title' }, mark, agentTitle(a)), h('span', { class: 'unread', title: 'Its turn ended; not opened since', 'aria-label': 'turn ended, not opened since' }))
+      : h('span', { class: 'name' }, mark, agentTitle(a)),
       h('span', { class: 'meta' + (marks ? ' with-marks' : '') }, marks ? h('span', { class: 'meta-text' }, meta) : meta, marks))
   }
   // An agent's archived sessions are one folded line, under the ID it goes
@@ -1283,7 +1314,9 @@ function teamGroup(t, members, row) {
   }
   // Folded, the head has a dot for each of its agents, those that want a
   // look first, so none is out of sight.
-  const dots = folded ? members.map(agentState).sort((x, y) => (teamRank[x] ?? 9) - (teamRank[y] ?? 9)) : []
+  // An agent whose turn ended unopened is ringed in red, and first of its state.
+  const dots = folded ? members.map((a) => ({ st: agentState(a), u: S.unread.has(a.id) }))
+    .sort((x, y) => (teamRank[x.st] ?? 9) - (teamRank[y.st] ?? 9) || y.u - x.u) : []
   const holdsOpen = folded && S.view === 'agent' && members.some((a) => a.id === S.sel)
   return h('div', { class: 'team' + (folded ? ' folded' : ''), 'data-line': 'team:' + t.id },
     h('div', { class: 'team-head' + (holdsOpen ? ' selected' : '') },
@@ -1291,8 +1324,8 @@ function teamGroup(t, members, row) {
         h('span', { class: 'caret' }, icon(folded ? 'chevron-right' : 'chevron-down')),
         h('span', { class: 'name' }, t.name),
         h('span', { class: 'count' }, String(members.length)),
-        dots.length ? h('span', { class: 'team-dots', 'aria-label': dots.join(', ') },
-          dots.slice(0, 8).map((st) => h('span', { class: 'dot ' + st })),
+        dots.length ? h('span', { class: 'team-dots', 'aria-label': dots.map((d) => d.st + (d.u ? ' (not opened)' : '')).join(', ') },
+          dots.slice(0, 8).map((d) => h('span', { class: 'dot ' + d.st + (d.u ? ' unread' : '') })),
           dots.length > 8 ? h('span', { class: 'more' }, `+${dots.length - 8}`) : null) : null),
       h('button', { class: 'team-edit', title: 'The team: its name, its lead and the terms', 'aria-label': `Edit team ${t.name}`, onclick: () => editTeam(t) },
         icon('pencil'))),
