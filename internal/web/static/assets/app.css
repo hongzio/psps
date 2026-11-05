@@ -414,8 +414,28 @@ a.btn { display: inline-flex; align-items: center; color: var(--text); text-deco
 .text p { margin: 0 0 .6em; overflow-wrap: anywhere; }
 .text p.raw { white-space: pre-wrap; }
 .text code { background: var(--code); padding: 1px 5px; border-radius: 4px; }
-.text pre.code { background: var(--code); padding: 10px 12px; border-radius: 8px; overflow-x: auto; margin: 0 0 .6em; }
+.text pre.code { background: var(--code); padding: 10px 12px; border-radius: 8px; overflow-x: auto; margin: 0; }
 .text pre.code code { background: none; padding: 0; }
+/* A code block's copy button: its top right corner, over the code, on hover or focus. */
+.text .codeblock { position: relative; min-width: 0; margin: 0 0 .6em; }
+.copy-btn {
+  position: absolute; top: 5px; right: 5px;
+  display: inline-flex; align-items: center; gap: 4px; height: 26px; padding: 0 8px 0 6px;
+  border: 1px solid var(--border); border-radius: 6px; background: var(--code); color: var(--muted);
+  font-size: 12px; cursor: pointer; opacity: 0; transition: opacity .12s, color .12s;
+}
+.copy-btn .icon { width: 14px; height: 14px; flex: none; }
+.codeblock:hover .copy-btn, .copy-btn:focus-visible, .copy-btn.done, .copy-btn.fail { opacity: 1; }
+.copy-btn:hover { color: var(--text); }
+.copy-btn.done { color: var(--ok); }
+.copy-btn.fail { color: var(--err); }
+/* No hover on a touch screen: always there, on a slim row of its own, so it covers no code. */
+@media (hover: none) {
+  .text .codeblock { display: flex; flex-direction: column; background: var(--code); border-radius: 8px; }
+  .copy-btn { position: static; order: -1; align-self: flex-end; opacity: 1; height: 30px; margin: 2px 2px -8px 0; border-color: transparent; background: transparent; }
+  .codeblock > pre.code { border-radius: 0 0 8px 8px; }
+}
+@media (prefers-reduced-motion: reduce) { .copy-btn { transition: none; } }
 .text :is(h1, h2, h3, h4, h5, h6) { margin: 1em 0 .4em; line-height: 1.3; }
 .text h1 { font-size: 1.3em; }
 .text h2 { font-size: 1.18em; }
@@ -424,7 +444,7 @@ a.btn { display: inline-flex; align-items: center; color: var(--text); text-deco
 .text :is(ul, ol) { margin: 0 0 .6em; padding-left: 1.5em; }
 .text li { overflow-wrap: anywhere; }
 .text li + li { margin-top: .2em; }
-.text li > :is(p, ul, ol, pre.code, blockquote, .table-wrap) { margin-bottom: .3em; }
+.text li > :is(p, ul, ol, .codeblock, blockquote, .table-wrap) { margin-bottom: .3em; }
 .text li.task { list-style: none; }
 .text li.task > input, .text li.task > p > input { margin: 0 .45em 0 -1.35em; vertical-align: -1px; }
 .text blockquote { margin: 0 0 .6em; padding-left: 12px; border-left: 3px solid var(--border); color: var(--muted); }

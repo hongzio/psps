@@ -580,7 +580,7 @@ function mdBlock(t) {
     case 'paragraph': return h('p', null, mdInline(t.tokens))
     case 'text': return t.tokens ? mdInline(t.tokens) : entities(t.text) // a tight list item's
     case 'heading': return h(`h${t.depth}`, null, mdInline(t.tokens))
-    case 'code': return h('pre', { class: 'code' }, h('code', null, t.text))
+    case 'code': return codeBlock(t.text)
     case 'blockquote': return h('blockquote', null, t.tokens.map(mdBlock))
     case 'list':
       return h(t.ordered ? 'ol' : 'ul', { start: t.ordered && t.start !== 1 ? t.start : null }, t.items.map(mdItem))
@@ -640,6 +640,37 @@ const entities = (s) => s.replace(/&(?:#(\d{1,7})|#[xX]([0-9a-fA-F]{1,6})|(\w+))
   return c > 0 && c <= 0x10ffff && (c < 0xd800 || c > 0xdfff) ? String.fromCodePoint(c) : '�'
 })
 
+// codeBlock is a fenced block of a message with a button that copies it.
+// The button sits outside the <pre>, so a wide block scrolls under it; with
+// a pointer it shows on hover or focus, on a touch screen it is always
+// there, on a row of its own above the code (app.css).
+function codeBlock(text) {
+  const btn = h('button', { type: 'button', class: 'copy-btn', 'aria-label': 'Copy code' }, icon('copy'), h('span', null, 'Copy'))
+  const pre = h('pre', { class: 'code' }, h('code', null, text))
+  let timer
+  const show = (state, name, word) => {
+    clearTimeout(timer)
+    btn.className = 'copy-btn' + (state ? ' ' + state : '')
+    btn.replaceChildren(icon(name), h('span', null, word))
+    if (state) timer = setTimeout(() => show('', 'copy', 'Copy'), 2000)
+  }
+  btn.onclick = async (e) => {
+    e.stopPropagation() // a folded message of yours would open
+    try {
+      await navigator.clipboard.writeText(text)
+      show('done', 'check', 'Copied')
+    } catch {
+      // No clipboard (an http page that is not localhost): select the code so ⌘C takes it.
+      const r = document.createRange()
+      r.selectNodeContents(pre.firstChild)
+      getSelection().removeAllRanges()
+      getSelection().addRange(r)
+      show('fail', 'copy', 'Press ⌘C')
+    }
+  }
+  return h('div', { class: 'codeblock' }, pre, btn)
+}
+
 // richText renders what a person writes lightly: fenced code, `inline
 // code`, **bold**, paragraphs. A line of theirs that starts with "1." or
 // "#" stays as typed. Text nodes only.
@@ -649,7 +680,7 @@ function richText(text) {
     if (i % 2 === 1) {
       const nl = part.indexOf('\n')
       const body = nl >= 0 && /^[\w+.-]*$/.test(part.slice(0, nl)) ? part.slice(nl + 1) : part
-      frag.append(h('pre', { class: 'code' }, h('code', null, body.replace(/\n$/, ''))))
+      frag.append(codeBlock(body.replace(/\n$/, '')))
       return
     }
     for (const para of part.split(/\n{2,}/)) {
