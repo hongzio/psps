@@ -622,3 +622,47 @@ func TestMailFromBeforeTheHistoryStillWaits(t *testing.T) {
 		t.Fatalf("%+v %v", in, err)
 	}
 }
+
+func TestCopyEventsMovesTheirRecordsBelowZero(t *testing.T) {
+	s := open(t)
+	now := time.Now()
+	if err := s.PutIsolation(Isolation{ID: "dev", Name: "dev", Container: "c", Image: "img", CreatedAt: now}); err != nil {
+		t.Fatal(err)
+	}
+	for _, id := range []string{"a1", "a2"} {
+		if err := s.CreateAgent(Agent{ID: id, Kind: driver.Claude, IsolationID: "dev", Workdir: "/w", CreatedAt: now}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	s.Commit("a1", 3, []event.Event{{Agent: "a1", Src: 3, Kind: event.KindUser, Text: "hi"}})
+	s.Commit("a1", 5, []event.Event{{Agent: "a1", Src: 5, Kind: event.KindRewind, Rewind: &event.Rewind{From: 3, To: 5}}})
+	s.Commit("a1", 9, []event.Event{{Agent: "a1", Src: 9, Kind: event.KindApproval, Approval: &event.Approval{ID: "p1", Kind: "command"}}})
+
+	if err := s.CopyEvents("a1", "a2", "forked"); err != nil {
+		t.Fatal(err)
+	}
+	evs, _ := s.Events("a2", 0, 0)
+	if len(evs) != 5 {
+		t.Fatalf("copied = %+v", evs)
+	}
+	// Order and the rewind's range are kept, all of it below zero.
+	if evs[0].Src != -7 || evs[0].Agent != "a2" || evs[0].ID != 1 || *evs[1].Rewind != (event.Rewind{From: -7, To: -5}) || evs[2].Src != -1 {
+		t.Fatalf("copied = %+v", evs)
+	}
+	// The open approval is closed void, then the note.
+	if evs[3].Kind != event.KindApprovalDone || evs[3].Approval.ID != "p1" || evs[3].Approval.Decision != "void" ||
+		evs[4].Kind != event.KindNotice || evs[4].Text != "forked" {
+		t.Fatalf("closing = %+v", evs[3:])
+	}
+	// The agent's own go on after them, and its read position is its own.
+	got, _ := s.Commit("a2", 1, []event.Event{{Agent: "a2", Src: 1, Kind: event.KindUser, Text: "own"}})
+	if got[0].ID != 6 {
+		t.Fatalf("own = %+v", got)
+	}
+	if a, _ := s.Agent("a2"); a.LastSrc != 1 {
+		t.Fatalf("last src = %d", a.LastSrc)
+	}
+	if err := s.CopyEvents("a1", "a2", ""); err == nil {
+		t.Fatal("copied over a conversation")
+	}
+}

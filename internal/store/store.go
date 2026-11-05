@@ -816,6 +816,76 @@ func (s *Store) Commit(agentID string, src int64, evs []event.Event) ([]event.Ev
 	return out, tx.Commit()
 }
 
+// CopyEvents puts the conversation of agent from in front of agent to's,
+// which has none yet: a fork's history, as its session starts as a copy.
+// Their Src is the shim log record of from's, not to's, so each is moved
+// below zero, in order, with the ranges of from's rewinds: none can then be
+// taken for a record of to's, so nothing of to's is folded by a rewind of
+// from's and no copied message can be gone back to (to's CLI never had
+// it). An approval still open in from is closed void in to, which cannot
+// answer it, and note, if any, ends the copy.
+func (s *Store) CopyEvents(from, to, note string) error {
+	evs, err := s.Events(from, 0, 0)
+	if err != nil {
+		return err
+	}
+	var top int64
+	for _, e := range evs {
+		top = max(top, e.Src)
+	}
+	shift := func(src int64) int64 { return src - top - 1 }
+	open := map[string]bool{}
+	var out []event.Event
+	for _, e := range evs {
+		e.ID, e.Agent, e.Src = 0, to, shift(e.Src)
+		if e.Rewind != nil {
+			r := *e.Rewind
+			r.From, r.To = shift(r.From), shift(r.To)
+			e.Rewind = &r
+		}
+		if e.Approval != nil {
+			switch e.Kind {
+			case event.KindApproval:
+				open[e.Approval.ID] = true
+			case event.KindApprovalDone:
+				delete(open, e.Approval.ID)
+			}
+		}
+		out = append(out, e)
+	}
+	now := time.Now().UTC()
+	for _, e := range evs {
+		if e.Kind == event.KindApproval && e.Approval != nil && open[e.Approval.ID] {
+			delete(open, e.Approval.ID)
+			out = append(out, event.Event{Agent: to, Src: -1, Time: now, Kind: event.KindApprovalDone,
+				Approval: &event.Approval{ID: e.Approval.ID, Kind: e.Approval.Kind, Decision: "void"}})
+		}
+	}
+	if note != "" {
+		out = append(out, event.Event{Agent: to, Src: -1, Time: now, Kind: event.KindNotice, Text: note})
+	}
+	tx, err := s.db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	var n int
+	if err := tx.QueryRow(`SELECT COUNT(*) FROM events WHERE agent = ?`, to).Scan(&n); err != nil {
+		return err
+	}
+	if n > 0 {
+		return fmt.Errorf("agent %s already has a conversation", to)
+	}
+	for i, e := range out {
+		e.ID = int64(i + 1)
+		b, _ := json.Marshal(e)
+		if _, err := tx.Exec(`INSERT INTO events (agent, id, src, body) VALUES (?, ?, ?, ?)`, to, e.ID, e.Src, string(b)); err != nil {
+			return err
+		}
+	}
+	return tx.Commit()
+}
+
 // Event returns one stored event.
 func (s *Store) Event(agentID string, id int64) (event.Event, error) {
 	var body string
