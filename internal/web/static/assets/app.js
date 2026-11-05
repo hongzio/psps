@@ -797,6 +797,8 @@ async function refreshAgents() {
   if (S.view === 'agent' && S.sel && S.drawn !== S.sel && agentById(S.sel)) { render(); return }
   renderSidebar()
   if (S.view === 'agent') { renderTopbar(); renderStatusLine() }
+  // Its turn started or ended between two events of its stream: the dots under its last word follow.
+  if (S.view === 'agent' && before && now && before.state?.status !== now.state?.status) scheduleConvo()
 }
 
 async function refreshIsolations() {
@@ -2135,6 +2137,14 @@ function renderConvo(forceBottom) {
     items.unshift(c.earlier)
   }
   if (!items.length) items.push(h('div', { class: 'empty' }, c.ready ? 'Nothing yet: the first message you send starts it.' : 'Loading…'))
+  // While it works, three dots under its last word, where its next comes;
+  // not under a reply it is writing, which has a cursor of its own.
+  const last = c.entries[c.entries.length - 1]
+  if (c.ready && a.state?.status === 'working' && !a.archived_at && !(last?.kind === 'assistant' && last.live)) {
+    c.typing ||= h('div', { class: 'typing-row', role: 'status', 'aria-label': `${agentTitle(a)} is working` },
+      h('span', { class: 'typing' }, h('i'), h('i'), h('i')))
+    items.push(c.typing)
+  }
   // Nodes already in place stay, so what is read does not move. Those
   // gone go first: the rest are then in order, and none is moved.
   const keep = new Set(items)
