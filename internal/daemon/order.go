@@ -136,25 +136,46 @@ func archivedRanks(as []agentView) map[string]int {
 // agent there of its isolation, outside a team as it is. With none, or in a
 // team, it stays where a new line goes: at the bottom.
 func (m *Manager) placeNew(a store.Agent) error {
+	if team, err := m.store.LineTeam(cmp.Or(a.Line, a.ID)); err != nil || team != "" {
+		return err
+	}
+	_, err := m.placeIn(a, func(b agentView) bool { return b.IsolationID == a.IsolationID })
+	return err
+}
+
+// placeFork puts a fork's line right under the line of the agent it forks,
+// in the live list or, in that one's team, in the team's list. One forked
+// from an archived agent goes where a new one does.
+func (m *Manager) placeFork(a store.Agent, from store.Agent) error {
+	of := cmp.Or(from.Line, from.ID)
+	if from.ArchivedAt == nil {
+		ok, err := m.placeIn(a, func(b agentView) bool { return cmp.Or(b.Line, b.ID) == of })
+		if ok || err != nil {
+			return err
+		}
+	}
+	return m.placeNew(a)
+}
+
+// placeIn puts a's line right after the last line in its list, live or its
+// team's, of the agents under picks; whether there was one.
+func (m *Manager) placeIn(a store.Agent, under func(agentView) bool) (bool, error) {
 	line := cmp.Or(a.Line, a.ID)
 	all, err := m.store.Agents()
 	if err != nil {
-		return err
+		return false, err
 	}
 	order, err := m.store.Order()
 	if err != nil {
-		return err
+		return false, err
 	}
 	teams, err := m.store.LineTeams()
 	if err != nil {
-		return err
-	}
-	if _, ok := teams[line]; ok {
-		return nil
+		return false, err
 	}
 	lists, err := m.store.Lists()
 	if err != nil {
-		return err
+		return false, err
 	}
 	as := make([]agentView, 0, len(all))
 	for _, x := range all {
@@ -162,18 +183,25 @@ func (m *Manager) placeNew(a store.Agent) error {
 	}
 	sortAgents(as)
 	orderAgents(as, order, teams)
-	next, ok := placedAfter(lists[store.LiveList], as, teams, line, a.IsolationID)
-	if !ok {
-		return nil
+	list := store.LiveList
+	team, inTeam := teams[line]
+	if inTeam {
+		list = store.TeamLine(team)
 	}
-	return m.store.SetOrder(store.LiveList, next)
+	next, ok := placedAfter(lists[list], as, teams, line, inTeam, under)
+	if !ok {
+		return false, nil
+	}
+	return true, m.store.SetOrder(list, next)
 }
 
-// placedAfter is the live list live with line right after the last line of
-// as, in their order, that is of isolation iso and in no team. A line it
-// has not placed yet is drawn after the ones it has, as the rows before it
-// are; those are placed with it, so they stay where they are drawn.
-func placedAfter(live []string, as []agentView, teams map[string]string, line, iso string) ([]string, bool) {
+// placedAfter is the list placed (the live list, or with team the list of
+// line's team) with line right after the last row of as, in their order,
+// of an agent under picks: in the live list one in no team, in a team's
+// one of that team. A row it has not placed yet is drawn after the ones it
+// has, as the rows before it are; those are placed with it, so they stay
+// where they are drawn.
+func placedAfter(placed []string, as []agentView, teams map[string]string, line string, team bool, under func(agentView) bool) ([]string, bool) {
 	var rows []string
 	seen := map[string]bool{line: true}
 	last := -1
@@ -182,9 +210,15 @@ func placedAfter(live []string, as []agentView, teams map[string]string, line, i
 			continue
 		}
 		row := cmp.Or(a.Line, a.ID)
-		if t, ok := teams[row]; ok {
+		t, inTeam := teams[row]
+		if team {
+			if !inTeam || t != teams[line] {
+				continue
+			}
+		} else if inTeam {
 			row = store.TeamLine(t)
-		} else if row != line && a.IsolationID == iso {
+		}
+		if row != line && (team || !inTeam) && under(a) {
 			last = max(last, slices.Index(rows, row))
 			if !seen[row] {
 				last = len(rows)
@@ -199,20 +233,20 @@ func placedAfter(live []string, as []agentView, teams map[string]string, line, i
 		return nil, false
 	}
 	after := rows[last]
-	placed := map[string]bool{}
+	in := map[string]bool{}
 	var next []string
-	for _, l := range live {
+	for _, l := range placed {
 		if l == line {
 			continue
 		}
-		placed[l] = true
+		in[l] = true
 		next = append(next, l)
 	}
 	if i := slices.Index(next, after); i >= 0 {
 		return slices.Insert(next, i+1, line), true
 	}
 	for _, r := range rows[:last+1] {
-		if !placed[r] {
+		if !in[r] {
 			next = append(next, r)
 		}
 	}
