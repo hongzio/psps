@@ -456,8 +456,9 @@ its revisions), as SubmitJob is authorized against both; queues and
 definitions go together, and either alone is refused. What is done to a job
 once it is there is not so narrow: CancelJob, TerminateJob and TagResource
 (which SubmitJob's tags need) authorize against `job/<id>`, which names no
-queue (a tagged SubmitJob also checks TagResource on the job definition, so
-the named definitions, by name and revision, can be tagged too), and DescribeJobs, ListJobs and the queue and definition lists
+queue (a tagged SubmitJob also checks TagResource on the job queue and the
+job definition, so the named queues and definitions, by name and revision,
+can be tagged too), and DescribeJobs, ListJobs and the queue and definition lists
 against no resource, so those reach every Batch job in the role's account,
 what it runs and its environment included. psps warns of it as the env is
 saved. A log group is read with `logs:GetLogEvents` on its streams.
