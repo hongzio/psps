@@ -393,6 +393,23 @@ a.btn { display: inline-flex; align-items: center; color: var(--text); text-deco
 .stamp { font-size: 11px; font-weight: 400; color: var(--muted); white-space: nowrap; font-variant-numeric: tabular-nums; }
 .msg-agent .who .stamp { margin-left: 6px; }
 .msg-user-row > .stamp { align-self: flex-end; margin-bottom: 2px; }
+/* A long message of yours: its first lines, faded out, until it is opened. */
+.msg-user.long.folded { cursor: pointer; }
+.msg-user.long.folded > .msg-body {
+  max-height: calc(var(--peek) * 1.5em + .3em); overflow: hidden;
+  -webkit-mask-image: linear-gradient(to bottom, #000 55%, transparent);
+          mask-image: linear-gradient(to bottom, #000 55%, transparent);
+}
+.fold-btn {
+  display: inline-flex; align-items: center; gap: 4px; margin-top: 6px; padding: 2px 8px 2px 6px;
+  border: 0; border-radius: 6px; background: transparent; color: var(--accent);
+  font-size: 12.5px; font-weight: 600; cursor: pointer;
+}
+.fold-btn:hover { background: color-mix(in srgb, var(--accent) 12%, transparent); }
+.fold-btn .n { font-weight: 400; color: var(--muted); font-variant-numeric: tabular-nums; }
+.fold-btn .icon { width: 14px; height: 14px; transition: transform .15s; }
+.msg-user.long:not(.folded) .fold-btn .icon { transform: rotate(180deg); }
+@media (prefers-reduced-motion: reduce) { .fold-btn .icon { transition: none; } }
 .msg-agent.live .text::after { content: "▍"; color: var(--accent); animation: pulse 1s infinite; }
 .text p { margin: 0 0 .6em; overflow-wrap: anywhere; }
 .text p.raw { white-space: pre-wrap; }
