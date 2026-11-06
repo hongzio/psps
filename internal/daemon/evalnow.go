@@ -127,7 +127,8 @@ func (m *Manager) evalNow(l store.Lead, evals []store.Eval) *api.EvalNow {
 	switch {
 	case due:
 		v.State, v.Since = "due", since
-	case l.Dirty:
+	case l.Dirty || m.childrenBusy(l.Line) > 0:
+		// Its agents at work end a round when they are done.
 		v.State, v.Waiting = "waiting", m.runDoing(l)
 	default:
 		v.State = "idle"
