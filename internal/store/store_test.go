@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"slices"
 	"testing"
 	"time"
 
@@ -664,5 +665,53 @@ func TestCopyEventsMovesTheirRecordsBelowZero(t *testing.T) {
 	}
 	if err := s.CopyEvents("a1", "a2", ""); err == nil {
 		t.Fatal("copied over a conversation")
+	}
+}
+
+// A history's end comes whole turns at a time: back to the user message the
+// first of the last events follows, with whether there is more before it.
+func TestEventsTailStartsAtAUserMessage(t *testing.T) {
+	s := open(t)
+	now := time.Now()
+	if err := s.PutIsolation(Isolation{ID: "dev", Name: "dev", Container: "c", Image: "img", CreatedAt: now}); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.CreateAgent(Agent{ID: "a1", Kind: driver.Claude, IsolationID: "dev", Workdir: "/w", CreatedAt: now}); err != nil {
+		t.Fatal(err)
+	}
+	// Three turns of a user message and two answers: IDs 1-3, 4-6, 7-9.
+	src := int64(0)
+	for turn := 0; turn < 3; turn++ {
+		for _, k := range []event.Kind{event.KindUser, event.KindAssistant, event.KindAssistant} {
+			src++
+			if _, err := s.Commit("a1", src, []event.Event{{Agent: "a1", Src: src, Kind: k, Text: "x"}}); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+	ids := func(evs []event.Event) (out []int64) {
+		for _, e := range evs {
+			out = append(out, e.ID)
+		}
+		return out
+	}
+	for _, c := range []struct {
+		before  int64
+		limit   int
+		want    []int64
+		earlier bool
+	}{
+		{0, 1, []int64{7, 8, 9}, true},
+		{0, 3, []int64{7, 8, 9}, true},
+		{0, 4, []int64{4, 5, 6, 7, 8, 9}, true},
+		{0, 100, []int64{1, 2, 3, 4, 5, 6, 7, 8, 9}, false},
+		{7, 2, []int64{4, 5, 6}, true},
+		{4, 5, []int64{1, 2, 3}, false},
+		{1, 5, nil, false},
+	} {
+		evs, earlier, err := s.EventsTail("a1", c.before, c.limit)
+		if err != nil || !slices.Equal(ids(evs), c.want) || earlier != c.earlier {
+			t.Errorf("before %d, limit %d: %v, earlier %v, %v; want %v, earlier %v", c.before, c.limit, ids(evs), earlier, err, c.want, c.earlier)
+		}
 	}
 }

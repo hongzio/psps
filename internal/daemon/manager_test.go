@@ -1864,6 +1864,81 @@ func TestFollowingSaysWhenTheHistoryIsAllThere(t *testing.T) {
 	}
 }
 
+// A long history can be read from its end: ?tail serves the last turns,
+// followed with whether there are more in the ready event, and the earlier
+// before an event as JSON.
+func TestEventsServeTheirTail(t *testing.T) {
+	e := newTestEnv(t)
+	ctx := context.Background()
+	m, stop := e.daemon()
+	defer stop()
+	_, sock := serveAPI(t, m)
+	a, err := m.CreateAgent(ctx, api.CreateAgent{Isolation: "dev", Kind: driver.Codex})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, msg := range []string{"one", "two"} {
+		if err := m.Send(a.ID, msg); err != nil {
+			t.Fatal(err)
+		}
+		e.waitFor("an answer to "+msg, func() bool { return e.hasAssistant(a.ID, "echo: "+msg) })
+	}
+	hc := &http.Client{Transport: &http.Transport{DialContext: func(ctx context.Context, _, _ string) (net.Conn, error) {
+		var d net.Dialer
+		return d.DialContext(ctx, "unix", sock)
+	}}}
+	get := func(path string) *http.Response {
+		req, _ := http.NewRequestWithContext(ctx, "GET", "http://psps/v1/agents/"+a.ID+path, nil)
+		resp, err := hc.Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return resp
+	}
+
+	// Followed: the last turn, starting at its message, then ready.
+	resp := get("/events?follow=1&tail=1")
+	r := bufio.NewReader(resp.Body)
+	var got []event.Event
+	ready := ""
+	for ready == "" {
+		line, err := r.ReadString('\n')
+		if err != nil {
+			t.Fatalf("followed %v: %v", got, err)
+		}
+		if line == "event: ready\n" {
+			ready, _ = r.ReadString('\n')
+		} else if d, ok := strings.CutPrefix(line, "data: "); ok {
+			var ev event.Event
+			json.Unmarshal([]byte(d), &ev)
+			got = append(got, ev)
+		}
+	}
+	resp.Body.Close()
+	if len(got) == 0 || got[0].Kind != event.KindUser || got[0].Text != "two" || ready != `data: {"earlier":true}`+"\n" {
+		t.Fatalf("followed %+v, ready %q", got, ready)
+	}
+
+	// The earlier, before the first of those: all the rest.
+	resp = get(fmt.Sprintf("/events?tail=1000&before=%d", got[0].ID))
+	var tail api.EventsTail
+	json.NewDecoder(resp.Body).Decode(&tail)
+	resp.Body.Close()
+	if tail.Earlier || len(tail.Events) == 0 || tail.Events[0].ID != 1 || tail.Events[len(tail.Events)-1].ID != got[0].ID-1 {
+		t.Fatalf("earlier = %+v", tail)
+	}
+	if !slices.ContainsFunc(tail.Events, func(ev event.Event) bool { return ev.Kind == event.KindUser && ev.Text == "one" }) {
+		t.Fatalf("earlier = %+v", tail.Events)
+	}
+
+	// A tail is from the end, not after an event.
+	resp = get("/events?tail=1&after=3")
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusBadRequest {
+		t.Fatalf("tail after: %d", resp.StatusCode)
+	}
+}
+
 // A new name is all that changes: a running turn carries on, an archived
 // agent takes one as well, and a name is one line of text.
 func TestRenamingAnAgent(t *testing.T) {
