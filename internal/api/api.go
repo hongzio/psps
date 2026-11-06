@@ -456,6 +456,9 @@ type Env struct {
 	CredentialElsewhere bool     `json:"credential_elsewhere,omitempty"`
 	ExposedTo           []string `json:"exposed_to,omitempty"`
 	Warnings            []string `json:"warnings,omitempty"`
+	// Status is what the service knows of the env beyond its definition
+	// (a skill from GitHub: whether there is an update).
+	Status *proxy.EnvStatus `json:"status,omitempty"`
 }
 
 // Exposure is one service's state for one isolation.

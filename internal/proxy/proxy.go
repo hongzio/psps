@@ -338,6 +338,29 @@ type Pruner interface {
 	Prune() []string
 }
 
+// Statuser is a service whose env has a state beyond its definition that
+// a list should show (skill: whether the GitHub repository it came from
+// has moved on). Status is quick: what it does not know yet it may look up
+// in the background, for the next listing. nil is nothing to show.
+type Statuser interface {
+	Status(env string, cfg json.RawMessage) *EnvStatus
+}
+
+// EnvStatus is an env's state as chips, as of CheckedAt; Action is what a
+// list offers for it ("update"), Detail what it says beside the chips.
+type EnvStatus struct {
+	Chips     []StatusChip `json:"chips,omitempty"`
+	Action    string       `json:"action,omitempty"`
+	Detail    string       `json:"detail,omitempty"`
+	CheckedAt time.Time    `json:"checked_at,omitzero"`
+}
+
+// StatusChip is one state: Kind is ok, warn, error or plain.
+type StatusChip struct {
+	Text string `json:"text"`
+	Kind string `json:"kind"`
+}
+
 // Deleter is a service that keeps something of an env's beside its
 // definition, to remove when the env is.
 type Deleter interface {
@@ -550,6 +573,10 @@ type Choice struct {
 	Value string `json:"value"`
 	// Note is what to show beside it ("private", "archived").
 	Note string `json:"note,omitempty"`
+	// Name is what the choice is called where Value is an address (a
+	// skill in a repository: its name), and Where what was looked in.
+	Name  string `json:"name,omitempty"`
+	Where string `json:"where,omitempty"`
 }
 
 // ChoiceLister finds a Lookup field's choices from the env as a form has it

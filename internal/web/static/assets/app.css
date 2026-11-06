@@ -1132,3 +1132,27 @@ kbd {
 .agent .meta.with-marks .meta-text { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .agent .tasks-marks { display: inline-flex; gap: 4px; flex: none; color: var(--accent); }
 .agent .tasks-marks .icon { width: 13px; height: 13px; }
+
+/* skill: where one comes from, the skills a repository has, and when
+   GitHub was last asked. */
+.seg { display: flex; flex-wrap: wrap; gap: 6px; }
+.field input.mono { font-family: var(--mono); font-size: 13.5px; }
+.field-row { display: flex; flex-wrap: wrap; gap: 0 12px; }
+.field-row .field { flex: 1 1 180px; min-width: 0; }
+.field-row .field.grow { flex: 3 1 320px; }
+.field.narrow { max-width: 360px; }
+.skill-found { border: 1px solid var(--border); border-radius: 10px; background: var(--panel); overflow: hidden; max-height: 360px; overflow-y: auto; }
+.skill-found[hidden] { display: none; }
+.skill-pick { display: flex; align-items: center; gap: 12px; width: 100%; padding: 10px 14px; border: 0; border-top: 1px solid var(--border); background: transparent; color: var(--text); font: inherit; text-align: left; cursor: pointer; }
+.skill-pick:first-child { border-top: 0; }
+.skill-pick:hover:not(:disabled) { background: var(--bg); }
+.skill-pick.on { background: var(--accent-soft); }
+.skill-pick:disabled { cursor: default; opacity: .6; }
+.skill-pick .dot { flex: none; width: 16px; height: 16px; box-sizing: border-box; border-radius: 50%; border: 1.5px solid var(--faint); background: var(--panel); }
+.skill-pick.on .dot { border: 5px solid var(--accent); }
+.skill-pick-text { display: grid; gap: 1px; flex: 1; min-width: 0; }
+.skill-pick-line { display: flex; flex-wrap: wrap; align-items: baseline; gap: 2px 10px; }
+.skill-pick-name { font-family: var(--mono); font-size: 14px; font-weight: 600; }
+.skill-pick-path { font-family: var(--mono); font-size: 12px; color: var(--faint); overflow-wrap: anywhere; }
+.skill-pick .hint { color: var(--muted); font-size: 13px; }
+.skill-checked { display: flex; align-items: center; flex-wrap: wrap; gap: 8px 12px; margin: -4px 0 12px; }

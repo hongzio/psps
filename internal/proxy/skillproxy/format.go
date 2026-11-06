@@ -96,17 +96,77 @@ func Load(dir, name string) (Skill, error) {
 	if err := sk.read(dir, "", 0); err != nil {
 		return sk, err
 	}
+	return sk, sk.finish(dir)
+}
+
+// FromFiles checks a skill that is not on disk (one fetched from GitHub)
+// as Load checks a folder: where names it in what is said.
+func FromFiles(where, name string, files []File) (Skill, error) {
+	sk := Skill{Name: name}
+	for _, f := range files {
+		p := path.Clean(f.Path)
+		if p != f.Path || p == "." || strings.HasPrefix(p, "../") || p == ".." || path.IsAbs(p) {
+			return sk, proxy.Deny("%q in %s is not a path inside the skill", f.Path, where)
+		}
+		segs := strings.Split(p, "/")
+		if len(segs)-1 > maxDepth {
+			return sk, proxy.Deny("%s nests deeper than %d folders", path.Join(where, path.Dir(p)), maxDepth)
+		}
+		skip := false
+		for i, seg := range segs {
+			if seg == ".git" && i < len(segs)-1 || seg == ".DS_Store" && i == len(segs)-1 {
+				skip = true
+			}
+			if err := usableName(seg, where); err != nil {
+				return sk, err
+			}
+		}
+		if skip {
+			continue
+		}
+		if err := sk.take(where, p, f.Exec, f.Content); err != nil {
+			return sk, err
+		}
+	}
+	slices.SortFunc(sk.Files, func(a, b File) int { return strings.Compare(a.Path, b.Path) })
+	return sk, sk.finish(where)
+}
+
+// finish finds SKILL.md among the files taken in and checks it.
+func (sk *Skill) finish(where string) error {
 	i := slices.IndexFunc(sk.Files, func(f File) bool { return f.Path == "SKILL.md" })
 	if i < 0 {
 		if j := slices.IndexFunc(sk.Files, func(f File) bool { return strings.EqualFold(f.Path, "SKILL.md") }); j >= 0 {
-			return sk, proxy.Deny("%s: %s must be named SKILL.md, in capitals", dir, sk.Files[j].Path)
+			return proxy.Deny("%s: %s must be named SKILL.md, in capitals", where, sk.Files[j].Path)
 		}
-		return sk, proxy.Deny("%s has no SKILL.md at its top: a skill is a folder with SKILL.md in it", dir)
+		return proxy.Deny("%s has no SKILL.md at its top: a skill is a folder with SKILL.md in it", where)
 	}
 	if err := sk.parse(sk.Files[i]); err != nil {
-		return sk, fmt.Errorf("%s/SKILL.md: %w", dir, err)
+		return fmt.Errorf("%s/SKILL.md: %w", where, err)
 	}
-	return sk, nil
+	return nil
+}
+
+func usableName(name, where string) error {
+	if !utf8.ValidString(name) || strings.ContainsFunc(name, func(r rune) bool { return unicode.IsControl(r) || r == '\\' }) {
+		return proxy.Deny("%q in %s is not a usable file name", name, where)
+	}
+	return nil
+}
+
+// take adds one file, within the limits on a skill.
+func (sk *Skill) take(where, p string, exec bool, b []byte) error {
+	if len(b) > maxFileBytes {
+		return proxy.Deny("%s is %d KiB; a skill's file may be up to %d KiB", path.Join(where, p), len(b)>>10, maxFileBytes>>10)
+	}
+	sk.Files = append(sk.Files, File{Path: p, Exec: exec, Content: b})
+	if len(sk.Files) > maxFiles {
+		return proxy.Deny("%s has more than %d files", where, maxFiles)
+	}
+	if n := sk.Size(); n > maxBytes {
+		return proxy.Deny("%s holds more than %d MiB", where, maxBytes>>20)
+	}
+	return nil
 }
 
 // read takes in every file under dir/rel. Links are refused rather than
@@ -126,8 +186,8 @@ func (sk *Skill) read(dir, rel string, depth int) error {
 		if name == ".DS_Store" || (name == ".git" && e.IsDir()) {
 			continue
 		}
-		if !utf8.ValidString(name) || strings.ContainsFunc(name, func(r rune) bool { return unicode.IsControl(r) || r == '\\' }) {
-			return proxy.Deny("%q in %s is not a usable file name", name, dir)
+		if err := usableName(name, dir); err != nil {
+			return err
 		}
 		switch t := e.Type(); {
 		case t&fs.ModeSymlink != 0:
@@ -151,12 +211,8 @@ func (sk *Skill) read(dir, rel string, depth int) error {
 		if err != nil {
 			return err
 		}
-		sk.Files = append(sk.Files, File{Path: p, Exec: info.Mode()&0o111 != 0, Content: b})
-		if len(sk.Files) > maxFiles {
-			return proxy.Deny("%s has more than %d files", dir, maxFiles)
-		}
-		if n := sk.Size(); n > maxBytes {
-			return proxy.Deny("%s holds more than %d MiB", dir, maxBytes>>20)
+		if err := sk.take(dir, p, info.Mode()&0o111 != 0, b); err != nil {
+			return err
 		}
 	}
 	return nil
