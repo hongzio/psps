@@ -99,6 +99,7 @@ type Manager struct {
 	bridgeOf  func(gateway4 string) string
 	log       *log.Logger
 	hub       *hub
+	changes   *changes
 	// workRoot is where agent workspaces go inside an isolation, home the
 	// agent user's home there.
 	workRoot, home string
@@ -207,7 +208,7 @@ type agentView = api.Agent
 
 func NewManager(ctx context.Context, st *store.Store, cli Containers, fence Fence, logger *log.Logger) *Manager {
 	m := &Manager{ctx: ctx, store: st, cli: cli, fence: fence, hostAddrs: pf.SystemAddrs, bridgeOf: pf.SystemBridge,
-		log: logger, hub: newHub(), workRoot: isolation.WorkRoot, home: isolation.AgentHome,
+		log: logger, hub: newHub(), changes: newChanges(), workRoot: isolation.WorkRoot, home: isolation.AgentHome,
 		runtimes: map[string]*runtime{}, isos: map[string]*isoState{}, fences: map[string]*fenceState{},
 		tunnelPort: func(p int) int { return p }, instances: map[string]map[string]proxy.Instance{},
 		tunnels: map[string]*tunnelState{}, synced: map[string]string{}, swapped: map[string]string{}, versions: map[string]string{}, lastEnv: map[string]string{}, health: map[string]isoHealth{}, ssm: newSSMBook(),

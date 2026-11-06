@@ -247,6 +247,7 @@ func (m *Manager) Handler() http.Handler {
 	})
 	mux.HandleFunc("GET /v1/agents/{id}/events", m.handleEvents)
 	mux.HandleFunc("GET /v1/events", m.handleEvents)
+	mux.HandleFunc("GET /v1/changes", m.handleChanges)
 	mux.HandleFunc("POST /v1/agents/{id}/messages", func(w http.ResponseWriter, r *http.Request) {
 		var req api.Message
 		if !decode(w, r, &req) {
@@ -484,7 +485,7 @@ func (m *Manager) Handler() http.Handler {
 	mux.HandleFunc("DELETE /v1/agents/{id}", func(w http.ResponseWriter, r *http.Request) {
 		reply(w, nil, m.DeleteAgent(r.Context(), r.PathValue("id"), r.URL.Query().Get("purge") == "1"))
 	})
-	return mux
+	return m.noteChanges(mux)
 }
 
 type httpError struct {
