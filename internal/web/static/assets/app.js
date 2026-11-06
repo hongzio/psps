@@ -1278,9 +1278,16 @@ function setLineIcon(a, ic, keepOpen) {
   const was = a.icon
   const set = (v) => { for (const x of S.agents) if ((x.line || x.id) === line) x.icon = v || undefined }
   set(ic)
-  if (ic && !keepOpen) {
-    S.recentIcons = [ic, ...S.recentIcons.filter((r) => r.name !== ic.name || (r.color || '') !== ic.color)].slice(0, 8)
+  if (ic) {
+    // Recent holds it as it is drawn: a new color for the icon it has takes
+    // the place of the one it had, if that one is the latest.
+    const same = (r, i) => r.name === i.name && (r.color || '') === (i.color || '')
+    const rest = S.recentIcons.filter((r) => !same(r, ic))
+    if (keepOpen && was && rest[0] && same(rest[0], was)) rest.shift()
+    S.recentIcons = [ic, ...rest].slice(0, 8)
     try { localStorage.setItem('psps.recentIcons', JSON.stringify(S.recentIcons)) } catch {}
+  }
+  if (ic && !keepOpen) {
     S.iconFresh = a.id
     setTimeout(() => { if (S.iconFresh === a.id) S.iconFresh = null }, 300)
   }
