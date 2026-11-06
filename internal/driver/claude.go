@@ -15,7 +15,10 @@ import (
 
 // Claude speaks `claude -p` with stream-json on both sides: one JSON message
 // per line, user messages in, transcript out. Options are command-line flags,
-// so changing them means restarting the process with --resume.
+// so changing them means restarting the process with --resume, but for an
+// approvals mode between ask and auto: the running process is told it with a
+// set_permission_mode control request, and goes on in it. What it runs on is
+// its command line's and those requests' answers, all in the log.
 //
 // Permission prompts use the control protocol the Agent SDK uses
 // (`--permission-prompt-tool stdio`): a control_request arrives on stdout and
@@ -76,6 +79,88 @@ type claude struct {
 	models   []Choice
 	terminal []string
 	usage    Usage
+	// running are the options this generation runs on, as its command line
+	// and the modes it took since say; known once it started. switching is
+	// a set_permission_mode it was sent and has not answered, refused one
+	// it said no to, and sentMode the last psps wrote, which the log may
+	// not show yet.
+	running   Options
+	known     bool
+	switching *clSwitch
+	refused   Approvals
+	sentMode  Approvals
+	// changed: the options were set since it started, for one whose command
+	// line psps cannot read, which it replaces then as it always did.
+	changed bool
+}
+
+type clSwitch struct {
+	id   string
+	mode Approvals
+}
+
+// clModes are the approvals modes a running claude switches between, as
+// --permission-mode names them; the others start with a command line of
+// their own (never without the prompt tool, default with no mode).
+var clModes = map[Approvals]string{ApprovalsAsk: "manual", ApprovalsAuto: "auto"}
+
+func clMode(name string) (Approvals, bool) {
+	for a, n := range clModes {
+		if n == name {
+			return a, true
+		}
+	}
+	return "", false
+}
+
+// clRunning are the options a claude command line runs on; false for one
+// whose approvals psps cannot tell.
+func clRunning(argv []string) (Options, bool) {
+	after := func(flag string) string {
+		if i := slices.Index(argv, flag); i >= 0 && i+1 < len(argv) {
+			return argv[i+1]
+		}
+		return ""
+	}
+	o := Options{Model: after("--model"), Effort: after("--effort")}
+	mode, prompt := after("--permission-mode"), slices.Contains(argv, "--permission-prompt-tool")
+	switch {
+	case mode == "bypassPermissions" && !prompt:
+		o.Approvals = ApprovalsNever
+	case mode == "" && prompt:
+		o.Approvals = ApprovalsDefault
+	default:
+		a, ok := clMode(mode)
+		if !ok || !prompt {
+			return o, false
+		}
+		o.Approvals = a
+	}
+	return o, true
+}
+
+// switchable is whether the agent's options differ from the running ones
+// in an approvals mode alone that the process can be told, and has not
+// refused.
+func (c *claude) switchable() bool {
+	r, o := c.running, c.opts
+	_, from := clModes[r.approvals()]
+	_, to := clModes[o.approvals()]
+	return r.Model == o.Model && r.Effort == o.Effort && from && to && c.refused != o.approvals()
+}
+
+func (c *claude) stale() bool {
+	if !c.alive {
+		return false
+	}
+	if !c.known {
+		return c.changed
+	}
+	r, o := c.running, c.opts
+	if r.Model == o.Model && r.Effort == o.Effort && r.approvals() == o.approvals() {
+		return false
+	}
+	return !c.switchable()
 }
 
 // clHidden are claude's commands psps keeps out of its list: /model and
@@ -152,7 +237,7 @@ func (c *claude) Command() []string {
 }
 
 func (c *claude) State() State {
-	return State{Status: c.status, Alive: c.alive, Busy: c.busy, SessionID: c.sessionID, Error: c.errText, Restart: c.restart, Queued: len(c.queue),
+	return State{Status: c.status, Alive: c.alive, Busy: c.busy, SessionID: c.sessionID, Error: c.errText, Restart: c.restart, Stale: c.stale(), Queued: len(c.queue),
 		Background: len(c.tasks), Tasks: slices.Clone(c.tasks), Usage: c.usage.shown()}
 }
 
@@ -248,10 +333,16 @@ func (c *claude) wentBack(rec shimproto.Record, rw *clRewind) []event.Event {
 	return []event.Event{e}
 }
 
-// SetOptions takes effect when the next process starts: replacing the
-// one running is its caller's, which waits for what that one runs in the
-// background.
-func (c *claude) SetOptions(o Options) { c.opts = o }
+// SetOptions takes effect when the next process starts, or, for an
+// approvals mode the running process switches to, as soon as it is told;
+// replacing the process for the rest is its caller's (State's Stale), which
+// waits for what that one runs in the background.
+func (c *claude) SetOptions(o Options) {
+	if o != c.opts {
+		c.changed = true
+	}
+	c.opts = o
+}
 
 func (c *claude) Approve(id string, d Decision, answers map[string]string) error {
 	for _, p := range c.pending {
@@ -309,6 +400,13 @@ func (c *claude) Next() [][]byte {
 		out = append(out, line(map[string]any{"type": "control_request",
 			"request_id": fmt.Sprintf("psps-init-%d", c.gen),
 			"request":    map[string]any{"subtype": "initialize"}}))
+	}
+	if want := c.opts.approvals(); c.known && c.switching == nil && want != c.running.approvals() && want != c.sentMode && c.switchable() {
+		c.ctlSeq++
+		c.sentMode = want
+		out = append(out, line(map[string]any{"type": "control_request",
+			"request_id": fmt.Sprintf("psps-mode-%d-%d", c.gen, c.ctlSeq),
+			"request":    map[string]any{"subtype": "set_permission_mode", "mode": clModes[want]}}))
 	}
 	for _, p := range c.pending {
 		if p.sent {
@@ -446,12 +544,15 @@ func (c *claude) Observe(rec shimproto.Record) []event.Event {
 			c.busy, c.blocked, c.pendingTurns, c.pending, c.stopping, c.tasks = false, false, 0, nil, false, nil
 			evs = append(evs, c.text(rec, event.KindNotice, "", fmt.Sprintf("claude started (pid %d)", rec.Sys.PID)))
 			c.forking = slices.Contains(rec.Sys.Argv, "--fork-session")
+			c.running, c.known = clRunning(rec.Sys.Argv)
+			c.switching, c.refused, c.sentMode, c.changed = nil, "", "", false
 			if rw := c.rewindIn(rec.Sys.Argv); rw != nil {
 				rw.start, rw.before = rec.Seq, c.lastEntry
 				c.rewind, c.going, c.lastEntry = nil, rw, rw.at
 			}
 		case shimproto.SysExited, shimproto.SysLost:
 			c.pending, c.pendingTurns, c.tasks = nil, 0, nil
+			c.known, c.switching = false, nil
 			evs = c.processEnded(rec, "claude")
 			if c.forking {
 				// It never forked: the session it is a copy of is gone. The
@@ -510,9 +611,14 @@ func (c *claude) observeIn(rec shimproto.Record, m clMessage) []event.Event {
 	case "control_request":
 		var r struct {
 			Subtype string `json:"subtype"`
+			Mode    string `json:"mode"`
 		}
 		json.Unmarshal(m.Request, &r)
 		switch r.Subtype {
+		case "set_permission_mode":
+			if a, ok := clMode(r.Mode); ok {
+				c.switching = &clSwitch{id: m.RequestID, mode: a}
+			}
 		case "initialize":
 			c.asked = true
 		case "interrupt":
@@ -695,6 +801,9 @@ func (c *claude) observeOut(rec shimproto.Record, m clMessage) []event.Event {
 		return evs
 
 	case "control_response":
+		if evs := c.switched(rec, m.Response); evs != nil {
+			return evs
+		}
 		c.answered(m.Response)
 
 	case "control_request":
@@ -729,6 +838,32 @@ func (c *claude) observeOut(rec shimproto.Record, m clMessage) []event.Event {
 		return []event.Event{e}
 	}
 	return nil
+}
+
+// switched takes claude's answer to a set_permission_mode: the mode it runs
+// in from now on, or, refused, the one it keeps until a new process starts
+// with the agent's. nil for an answer to anything else.
+func (c *claude) switched(rec shimproto.Record, raw json.RawMessage) []event.Event {
+	var r struct {
+		Subtype   string `json:"subtype"`
+		RequestID string `json:"request_id"`
+		Error     string `json:"error"`
+	}
+	if json.Unmarshal(raw, &r) != nil || c.switching == nil || r.RequestID != c.switching.id {
+		return nil
+	}
+	s := c.switching
+	c.switching = nil
+	if r.Subtype == "success" {
+		c.running.Approvals = s.mode
+		return []event.Event{c.text(rec, event.KindNotice, "", fmt.Sprintf("approvals are %s now, in the running claude", s.mode))}
+	}
+	c.refused = s.mode
+	msg := fmt.Sprintf("claude could not switch to approvals %s while it runs", s.mode)
+	if r.Error != "" {
+		msg += " (" + r.Error + ")"
+	}
+	return []event.Event{c.text(rec, event.KindNotice, "", msg+"; it restarts with it when it is idle, with nothing in the background")}
 }
 
 // answered takes claude's commands and models from its answer to psps's
