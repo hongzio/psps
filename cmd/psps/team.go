@@ -5,6 +5,7 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"math"
 	"os"
 	"strconv"
 	"strings"
@@ -19,7 +20,7 @@ import (
 // their leads. An agent joins one with `psps agent team`.
 func teamCmd(p paths.Paths, args []string) error {
 	if len(args) == 0 {
-		return errors.New("usage: psps team ls|new|rename|rm|lead|show|eval|reset-best|resume  (psps team help: how teams work)")
+		return errors.New("usage: psps team ls|new|rename|rm|lead|show|eval|stop-eval|reset-best|resume  (psps team help: how teams work)")
 	}
 	switch args[0] {
 	case "help", "-h", "--help":
@@ -213,6 +214,16 @@ func teamCmd(p paths.Paths, args []string) error {
 		fmt.Println("the eval runs; its result goes to the lead, and shows in `psps team show`")
 		return nil
 
+	case "stop-eval":
+		if len(args) != 2 {
+			return errors.New("usage: psps team stop-eval TEAM")
+		}
+		if err := c.StopEval(ctx, args[1]); err != nil {
+			return err
+		}
+		fmt.Println("the eval's job is stopped; the eval counts as not run, and the lead hears so")
+		return nil
+
 	case "reset-best":
 		if len(args) != 2 {
 			return errors.New("usage: psps team reset-best TEAM")
@@ -263,6 +274,7 @@ Commands
   psps team show TEAM [--json]      the run: status, spending, plan windows,
                                     scores, the lead's agents
   psps team eval TEAM               run the eval now; the score goes to the lead
+  psps team stop-eval TEAM          stop the eval under way (a runner's job); it counts as not run
   psps team reset-best TEAM         the evals so far count for no best; the next scored is it
   psps team resume TEAM             a run psps stopped goes on
 
@@ -429,10 +441,13 @@ func printRun(run api.TeamRun) error {
 		}
 		fmt.Println()
 	}
+	if line := evalNowLine(run.Eval, run.Team.Name); line != "" {
+		fmt.Println(line)
+	}
 	for _, e := range run.Evals {
 		score := "no score"
 		if e.Score != nil {
-			score = strconv.FormatFloat(*e.Score, 'g', -1, 64)
+			score = shortScore(*e.Score)
 		} else if e.NotRun {
 			score = "not run"
 		}
@@ -446,7 +461,7 @@ func printRun(run api.TeamRun) error {
 		}
 	}
 	if run.Best != nil {
-		fmt.Printf("  best   %g at #%d; %d since without a new one\n", *run.Best.Score, run.Best.ID, run.Stale)
+		fmt.Printf("  best   %s at #%d; %d since without a new one\n", shortScore(*run.Best.Score), run.Best.ID, run.Stale)
 	}
 	if len(run.Agents) == 0 {
 		fmt.Printf("  agents none live (%d archived)\n", run.Archived)
@@ -515,4 +530,68 @@ func orLine(a api.Agent) string {
 		return a.Line
 	}
 	return a.ID
+}
+
+// shortScore is a score as a person reads it: two decimals at most.
+func shortScore(v float64) string {
+	return strconv.FormatFloat(math.Round(v*100)/100, 'f', -1, 64)
+}
+
+// evalNowLine is what the run's eval is doing now, for team show; "" for
+// a team without one.
+func evalNowLine(ev *api.EvalNow, team string) string {
+	if ev == nil {
+		return ""
+	}
+	took := func(d time.Duration) string { return d.Round(time.Second).String() }
+	usual := ""
+	if ev.Usual > 0 {
+		usual = " (usually ~" + took(ev.Usual) + ")"
+	}
+	on := ""
+	switch {
+	case ev.Runner != "":
+		on = " on runner " + ev.Runner
+	case ev.Isolation != "":
+		on = " in isolation " + ev.Isolation
+	}
+	job := ""
+	if ev.Job != "" {
+		job = "\n         job " + ev.Job + " (psps job show " + ev.Job + "; psps team stop-eval stops it)"
+	}
+	switch ev.State {
+	case "running":
+		return fmt.Sprintf("  now    #%d running%s for %s%s, as %s%s", ev.Number, on, took(time.Since(ev.Since)), usual, ev.Why, job)
+	case "queued":
+		place := ""
+		if ev.Place > 0 {
+			place = fmt.Sprintf(", %s in line", ordinal(ev.Place))
+		}
+		return fmt.Sprintf("  now    #%d queued%s%s, as %s%s", ev.Number, on, place, ev.Why, job)
+	case "waiting":
+		return fmt.Sprintf("  now    no eval; the next when the round ends (%s)", ev.Waiting)
+	case "due":
+		d := time.Since(ev.Since)
+		if d < time.Minute {
+			return "  now    the round ended; the eval is starting"
+		}
+		return fmt.Sprintf("  now    no eval, though the round ended %s ago: psps team eval %q runs one", took(d), team)
+	case "idle":
+		return "  now    no eval; nothing changed since the last"
+	}
+	return ""
+}
+
+func ordinal(n int) string {
+	switch {
+	case n%100 >= 11 && n%100 <= 13:
+		return fmt.Sprintf("%dth", n)
+	case n%10 == 1:
+		return fmt.Sprintf("%dst", n)
+	case n%10 == 2:
+		return fmt.Sprintf("%dnd", n)
+	case n%10 == 3:
+		return fmt.Sprintf("%drd", n)
+	}
+	return fmt.Sprintf("%dth", n)
 }

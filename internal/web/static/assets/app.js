@@ -1488,6 +1488,7 @@ function teamGroup(t, members, row) {
       h('button', { class: 'team-edit', title: 'The team: its name, its lead and the terms', 'aria-label': `Edit team ${t.name}`, onclick: () => editTeam(t) },
         icon('pencil'))),
     t.run ? teamRunLine(t.run, () => editTeam(t)) : null,
+    t.run ? teamEvalLine(t.run, () => editTeam(t)) : null,
     folded ? null : members.length
       ? sortable('team:' + t.id, members.map(row))
       : h('div', { class: 'team-empty' }, 'No agents; an agent joins in Edit.'))
@@ -1496,7 +1497,7 @@ function teamGroup(t, members, row) {
 // teamRunLine is what a team's head says of its lead's run: what it does,
 // its spending (of its budget, if it has one), and its best score.
 function teamRunLine(run, open) {
-  const text = `${run.status} · ${tokens(run.spent)}` + (run.budget ? ` of ${tokens(run.budget)}` : '') + (run.best != null ? ` · best ${run.best}` : '')
+  const text = `${run.status} · ${tokens(run.spent)}` + (run.budget ? ` of ${tokens(run.budget)}` : '') + (run.best != null ? ` · best ${score2(run.best)}` : '')
   return h('button', { type: 'button', class: 'team-run' + (run.status.startsWith('stopped') ? ' stopped' : run.status.startsWith('paused') ? ' paused' : ''), title: text, onclick: open }, text)
 }
 
@@ -1606,12 +1607,10 @@ async function editTeam(t) {
   const runView = run && h('div', { class: 'lead-run' + (run.stopped ? ' stopped' : '') },
     h('div', null, h('strong', null, `${run.lead} leads it: `), run.status),
     h('div', null, `Spent ${tokens(run.spent.input + run.spent.output)}` + (run.settings.budget ? ` of ${tokens(run.settings.budget)} tokens` : ' tokens, no budget') +
-      (run.best ? ` · best ${run.best.score} at eval #${run.best.id}, ${run.stale} since without a new one` : '')),
-    run.evals.length ? h('div', { class: 'lead-evals' }, run.evals.slice(-5).map((e) =>
-      h('span', { title: e.why + (e.output ? '\n\n' + e.output : '') }, `#${e.id} ${e.score ?? (e.not_run ? 'not run' : 'no score')}`))) : null,
+      (run.best ? ` · best ${score2(run.best.score)} at eval #${run.best.id}, ${run.stale} since without a new one` : '')),
     h('div', { class: 'lead-actions' },
       run.settings.eval || run.settings.eval_job ? h('button', {
-        type: 'button', class: 'btn small', onclick: async (e) => {
+        type: 'button', class: 'btn small', disabled: run.evaluating, title: run.evaluating ? 'An eval is under way' : null, onclick: async (e) => {
           e.target.disabled = true
           await guarded(async () => { await api('POST', `/v1/teams/${enc(t.id)}/eval`); toast('The eval runs; its result goes to the lead') })
         },
@@ -1656,6 +1655,7 @@ async function editTeam(t) {
     wide: true,
     fields: [h('label', { class: 'dialog-field' }, 'Name', name),
       runView || null,
+      run ? evalSection(t, run) : null,
       h('div', { class: 'dialog-field' }, 'Lead', lead),
       terms,
       run?.stopped ? h('p', { class: 'field-hint' }, 'Saving a change to the lead or its terms resumes the stopped run.') : null,
@@ -1675,6 +1675,147 @@ async function editTeam(t) {
     },
   })
   if (ok) await guarded(refreshAgents)
+}
+
+// ---- A team's eval, as it is now: under way (queued on its runner, or
+// running against how long the last few took), waiting on the round, due
+// (the round ended and none started: a minute of that is something
+// wrong), or the last one's result.
+
+const score2 = (v) => String(Math.round(v * 100) / 100)
+const nsToMs = (ns) => (ns || 0) / 1e6
+function clock(ms) {
+  const s = Math.max(0, Math.round(ms / 1000))
+  const m = Math.floor(s / 60)
+  if (m >= 60) return `${Math.floor(m / 60)}h ${String(m % 60).padStart(2, '0')}m`
+  return m ? `${m}m ${String(s % 60).padStart(2, '0')}s` : `${s}s`
+}
+function agoShort(t) {
+  const s = Math.max(0, (Date.now() - new Date(t).getTime()) / 1000)
+  if (s < 60) return 'just now'
+  if (s < 3600) return `${Math.round(s / 60)}m ago`
+  if (s < 86400) return `${Math.round(s / 3600)}h ago`
+  return `${Math.round(s / 86400)}d ago`
+}
+const nth = (n) => n + ((n % 100 >= 11 && n % 100 <= 13) ? 'th' : ['th', 'st', 'nd', 'rd'][n % 10] || 'th')
+const EVAL_FRESH = 10 * 60 * 1000
+const DUE_AFTER = 60 * 1000
+
+// evalState is a run's eval for the head and the dialog alike: its words,
+// its tone (quiet, live, ok, warn, err), its mark and, under way, how far.
+function evalState(run) {
+  const ev = run.eval
+  if (!ev || ev.state === 'none') return null
+  const last = run.last
+  const lastText = last ? ` · last #${last.id} ${last.score != null ? score2(last.score) : last.not_run ? 'not run' : 'no score'}, ${agoShort(last.at)}` : ''
+  const usual = nsToMs(ev.usual)
+  const on = ev.runner ? ` on ${ev.runner}` : ev.isolation ? ` in ${ev.isolation}` : ''
+  if (ev.state === 'running') {
+    const el = Date.now() - new Date(ev.since).getTime()
+    const slow = usual && el > 2 * usual
+    return {
+      tone: slow ? 'warn' : 'live', mark: 'pulse', elapsed: el, usual,
+      pct: usual ? Math.min(100, (el / usual) * 100) : null,
+      text: slow ? `Eval #${ev.number} running · ${clock(el)}, usually ~${clock(usual)}`
+        : `Eval #${ev.number} running${on} · ${clock(el)}` + (usual ? ` of ~${clock(usual)}` : ''),
+    }
+  }
+  if (ev.state === 'queued') {
+    return { tone: 'live', mark: 'ring', text: `Eval #${ev.number} queued${on}` + (ev.place ? ` · ${nth(ev.place)} in line` : '') }
+  }
+  if (ev.state === 'due') {
+    const el = Date.now() - new Date(ev.since).getTime()
+    return el < DUE_AFTER
+      ? { tone: 'live', mark: 'ring', text: `Round ended · eval #${ev.number} starting` }
+      : { tone: 'warn', mark: 'dot', due: true, text: `Round ended ${clock(el)} ago, eval not started` }
+  }
+  // Nothing under way: a result just told stands out for a while.
+  if (last && Date.now() - (new Date(last.at).getTime() + nsToMs(last.took)) < EVAL_FRESH) {
+    const ended = new Date(new Date(last.at).getTime() + nsToMs(last.took))
+    if (last.score == null) return { tone: 'err', mark: 'square', text: `#${last.id} ${last.not_run ? 'not run' : 'no score'}` + (last.note ? `: ${last.note}` : '') }
+    return { tone: last.new_best ? 'ok' : 'quiet', mark: 'dot', text: `#${last.id} ${score2(last.score)}` + (last.new_best ? ' · new best' : '') + ` · ${agoShort(ended)}` }
+  }
+  if (ev.state === 'waiting') return { tone: 'quiet', mark: 'ring', text: 'Eval after this round' + lastText }
+  return { tone: 'quiet', mark: 'ring', text: (last ? 'No change since the last eval' : 'No eval yet') + lastText }
+}
+
+function teamEvalLine(run, open) {
+  const st = evalState(run)
+  if (!st) return null
+  return [
+    h('button', { type: 'button', class: `team-eval ${st.tone}`, title: st.text, onclick: open },
+      h('span', { class: `ev-mark ${st.mark}`, 'aria-hidden': 'true' }), h('span', { class: 'ev-text' }, st.text)),
+    st.elapsed != null ? h('div', { class: `ev-bar ${st.tone}` + (st.pct == null ? ' unknown' : '') }, h('span', { style: `width: ${st.pct ?? 100}%` })) : null,
+  ]
+}
+
+// evalSection is the eval in a team's dialog: the one under way, with
+// Stop eval for a runner's job, and the last five.
+function evalSection(t, run) {
+  if (!run.settings.eval && !run.settings.eval_job) return null
+  const ev = run.eval || {}
+  const st = evalState({ eval: ev, last: run.evals.length ? { ...run.evals[run.evals.length - 1], new_best: run.best?.id === run.evals[run.evals.length - 1].id } : null })
+  const s = run.settings
+  const what = s.eval_job ? `a job of runner ${s.eval_job}` : run.eval_isolation ? `in isolation ${run.eval_isolation}` : "in the lead's isolation"
+  const under = ev.state === 'running' || ev.state === 'queued'
+  const stop = h('button', {
+    type: 'button', class: 'btn small danger', onclick: async (e) => {
+      e.target.closest('dialog').close('cancel')
+      if (!await ask({ title: `Stop eval #${ev.number}?`, body: `Its job ${ev.job} is cancelled. The eval counts as not run, for no patience, and the lead hears so.`, ok: 'Stop eval', danger: true })) return
+      await guarded(async () => {
+        await api('DELETE', `/v1/teams/${enc(t.id)}/eval`)
+        toast(`Team "${t.name}": eval #${ev.number} stopped`)
+        await refreshAgents()
+      })
+    },
+  }, 'Stop eval')
+  const card = under || ev.state === 'due'
+    ? h('div', { class: 'eval-now ' + (st?.tone || 'live') },
+      h('div', { class: 'eval-now-head' },
+        h('span', { class: `ev-mark ${st?.mark || 'ring'}`, 'aria-hidden': 'true' }),
+        h('strong', null, ev.state === 'due' ? 'Round ended, no eval' : `#${ev.number} ${ev.state}`),
+        ev.why ? h('span', { class: 'note' }, `as ${ev.why}`) : null,
+        st?.elapsed != null ? h('span', { class: 'eval-clock' }, clock(st.elapsed)) : null),
+      st?.elapsed != null ? h('div', { class: `ev-bar big ${st.tone}` + (st.pct == null ? ' unknown' : '') }, h('span', { style: `width: ${st.pct ?? 100}%` })) : null,
+      h('div', { class: 'eval-now-meta' },
+        h('span', null, ev.state === 'due' ? `the round ended ${clock(Date.now() - new Date(ev.since).getTime())} ago` : ev.started ? `started ${new Date(ev.started).toLocaleTimeString()}` : ev.place ? `${nth(ev.place)} in line on ${ev.runner}` : 'waiting for its runner'),
+        h('span', null, [st?.usual ? `usually ~${clock(st.usual)} (the last 5)` : null, ev.limit ? `limit ${clock(nsToMs(ev.limit))}` : null].filter(Boolean).join(' · '))),
+      ev.note ? h('div', { class: 'eval-now-meta' }, h('span', null, ev.note)) : null,
+      h('div', { class: 'eval-now-actions' },
+        ev.stoppable ? stop : null,
+        ev.job ? h('span', { class: 'eval-job' }, `job ${ev.job} · psps job show ${ev.job}`) : null))
+    : st ? h('p', { class: 'note' }, st.text) : null
+  const evals = run.evals.slice(-5).reverse()
+  const scores = run.evals.slice(-5).map((e) => e.score).filter((v) => v != null)
+  const spark = scores.length > 1 ? sparkline(scores) : null
+  return h('div', { class: 'eval-section' },
+    h('div', { class: 'eval-section-head' }, h('strong', null, 'Eval'), h('span', { class: 'note' }, `${what} · patience ${s.patience}`)),
+    card,
+    evals.length ? h('div', { class: 'eval-recent' },
+      h('div', { class: 'eval-recent-head' }, h('span', { class: 'label' }, 'Recent'), spark),
+      h('div', { class: 'eval-table' },
+        h('div', { class: 'eval-row head' }, h('span', null, '#'), h('span', null, 'when'), h('span', null, 'why'), h('span', null, 'took'), h('span', null, 'score')),
+        evals.map((e) => h('div', { class: 'eval-row', title: e.output ? e.output.slice(-600) : '' },
+          h('span', { class: 'muted' }, String(e.id)),
+          h('span', null, new Date(e.at).toLocaleString(undefined, { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })),
+          h('span', { class: 'muted ellipsis' }, e.why),
+          h('span', { class: 'muted' }, clock(nsToMs(e.took))),
+          h('span', { class: 'score' + (run.best?.id === e.id ? ' best' : '') }, e.score != null ? score2(e.score) + (run.best?.id === e.id ? ' ★' : '') : e.not_run ? 'not run' : 'no score'))))) : null)
+}
+
+// sparkline is a few scores as a line, the last one marked.
+function sparkline(vs) {
+  const w = 120, hgt = 28, lo = Math.min(...vs), hi = Math.max(...vs)
+  const x = (i) => 4 + (i * (w - 8)) / (vs.length - 1)
+  const y = (v) => hi === lo ? hgt / 2 : 3 + (1 - (v - lo) / (hi - lo)) * (hgt - 6)
+  const svg = document.createElementNS(svgNS, 'svg')
+  for (const [k, v] of Object.entries({ width: w, height: hgt, viewBox: `0 0 ${w} ${hgt}`, role: 'img', 'aria-label': 'The last scores: ' + vs.map(score2).join(', '), class: 'spark' })) svg.setAttribute(k, v)
+  const pl = document.createElementNS(svgNS, 'polyline')
+  pl.setAttribute('points', vs.map((v, i) => `${x(i)},${y(v)}`).join(' '))
+  const dot = document.createElementNS(svgNS, 'circle')
+  for (const [k, v] of Object.entries({ cx: x(vs.length - 1), cy: y(vs[vs.length - 1]), r: 2.5 })) dot.setAttribute(k, v)
+  svg.append(pl, dot)
+  return svg
 }
 
 // parseTokens reads a budget: 5000000, 5M, 800k, or 0 for nothing or

@@ -90,6 +90,7 @@ const usage = `psps — run coding agents in isolated containers
                                 its lead: makes agents of its own in the team and hears when their turns end; --clear: none
   psps team show TEAM [--json]  its run: spending, the eval's scores, the lead's agents
   psps team eval TEAM           run its eval now; the result goes to the lead
+  psps team stop-eval TEAM      stop the eval under way (one that is a runner's job); it counts as not run
   psps team reset-best TEAM     the evals so far count for no best; the next scored is it
   psps team resume TEAM         a run psps stopped (budget, target, no new best) goes on
   psps team help                how a team and its lead work, from a first team on

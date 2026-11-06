@@ -12,6 +12,7 @@ import (
 	"strings"
 	"syscall"
 	"testing"
+	"time"
 
 	"github.com/hongzio/psps/internal/api"
 	"github.com/hongzio/psps/internal/creds"
@@ -538,6 +539,7 @@ func TestATeamsEvalIsAJobOfARunner(t *testing.T) {
 		t.Fatal(err)
 	}
 	cmd := fmt.Sprintf(`cp "$PSPS_JOB_META" %s/meta; [ "$(cat n)" = fail ] && exit 3; [ "$(cat n)" = none ] && { echo '{}' > "$PSPS_JOB_OUT/result.json"; exit 0; }
+while [ -e slow ]; do sleep 0.05; done
 printf '{"score": %%s, "detail": "the-holdout-says"}' "$(cat n)" > "$PSPS_JOB_OUT/result.json"; echo printed-the-holdout`, keep)
 	if _, err := m.PutEnv(ctx, jobproxy.Name, "sim", proxy.Patch{Set: map[string]any{"isolation": []string{"run"}, "command": cmd}}, true); err != nil {
 		t.Fatal(err)
@@ -589,7 +591,9 @@ printf '{"score": %%s, "detail": "the-holdout-says"}' "$(cat n)" > "$PSPS_JOB_OU
 	os.WriteFile(filepath.Join(dir, "n"), []byte("7"), 0o644)
 	before := len(news(e, boss.ID))
 	a := makeAgent(t, m, boss.ID, api.TeamAgentNew{Role: "one", Kind: driver.Codex, Prompt: "hello"})
-	e.waitFor("the turn's news", func() bool { return strings.Contains(strings.Join(news(e, boss.ID), "\n"), a.ID+` ("one", codex) ended its turn`) })
+	e.waitFor("the turn's news", func() bool {
+		return strings.Contains(strings.Join(news(e, boss.ID), "\n"), a.ID+` ("one", codex) ended its turn`)
+	})
 	e.waitFor("the lead idle", func() bool { return free(m, boss.ID) })
 	m.teamCheck(team.ID)
 	e.waitFor("the round's eval", func() bool {
@@ -599,6 +603,61 @@ printf '{"score": %%s, "detail": "the-holdout-says"}' "$(cat n)" > "$PSPS_JOB_OU
 	if n := news(e, boss.ID); !strings.Contains(n[len(n)-1], "SCORE 7") {
 		t.Fatal(n[len(n)-1])
 	}
+
+	// While it runs the run says so, with its job, and the operator can
+	// stop it; it then counts as not run.
+	run, _ = m.TeamRun("lab")
+	if ev := run.Eval; ev == nil || ev.State != "idle" || ev.Number != int64(len(run.Evals))+1 {
+		t.Fatalf("before: %+v", run.Eval)
+	}
+	os.WriteFile(filepath.Join(dir, "n"), []byte("8"), 0o644)
+	os.WriteFile(filepath.Join(dir, "slow"), nil, 0o644)
+	if err := m.EvalTeam("lab"); err != nil {
+		t.Fatal(err)
+	}
+	e.waitFor("the eval under way", func() bool {
+		r, _ := m.TeamRun("lab")
+		return r.Eval != nil && (r.Eval.State == "running" || r.Eval.State == "queued") && r.Eval.Job != ""
+	})
+	run, _ = m.TeamRun("lab")
+	if ev := run.Eval; !ev.Stoppable || ev.Runner != "sim" || ev.Why != "your operator asked" || ev.Since.IsZero() {
+		t.Fatalf("under way: %+v", ev)
+	}
+	if err := m.StopEval("lab"); err != nil {
+		t.Fatal(err)
+	}
+	e.waitFor("the stopped eval kept", func() bool { r, _ := m.TeamRun("lab"); return !r.Evaluating })
+	run, _ = m.TeamRun("lab")
+	if last := run.Evals[len(run.Evals)-1]; !last.NotRun || last.Score != nil {
+		t.Fatalf("stopped: %+v", last)
+	}
+	if err := m.StopEval("lab"); err == nil {
+		t.Fatal("stopped an eval that is not under way")
+	}
+	os.Remove(filepath.Join(dir, "slow"))
+
+	// A round over with no eval started is due, and a minute of it is told.
+	m.store.SetLeadDirty(team.ID, true)
+	l, _ := m.store.Lead(team.ID)
+	if !m.roundOver(l) {
+		t.Fatal("the round is not over")
+	}
+	now := time.Now()
+	m.watchDue(now)
+	run, _ = m.TeamRun("lab")
+	if run.Eval.State != "due" || !run.Eval.Since.Equal(now) {
+		t.Fatalf("due: %+v", run.Eval)
+	}
+	m.watchDue(now.Add(2 * time.Minute))
+	if !strings.Contains(e.logged(), "the round ended 2m0s ago and no eval has started") {
+		t.Fatal(e.logged())
+	}
+	m.teamCheck(team.ID)
+	m.watchDue(now.Add(3 * time.Minute))
+	if r, _ := m.TeamRun("lab"); r.Eval.State == "due" {
+		t.Fatalf("still due once the eval started: %+v", r.Eval)
+	}
+	e.waitFor("the round's eval kept", func() bool { r, _ := m.TeamRun("lab"); return !r.Evaluating })
 
 	// A command again is no runner's.
 	if _, err := m.SetLead(ctx, "lab", api.PutLead{Agent: "boss", Eval: ptr("echo SCORE: 1")}); err != nil {

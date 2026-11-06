@@ -452,7 +452,8 @@ func (m *Manager) runBriefs() (map[string]*api.TeamBrief, error) {
 			return nil, err
 		}
 		best, _ := bestOf(evals, l)
-		b := &api.TeamBrief{Lead: l.Line, Status: m.runStatus(l), Spent: teamSpent(l, agents, spent).New(), Budget: l.Settings.Budget}
+		b := &api.TeamBrief{Lead: l.Line, Status: m.runStatus(l), Spent: teamSpent(l, agents, spent).New(), Budget: l.Settings.Budget,
+			Eval: m.evalNow(l, evals), Last: lastEval(evals, l)}
 		if best != nil {
 			b.Best = best.Score
 		}
@@ -473,7 +474,7 @@ func (m *Manager) teamRun(t store.Team, l store.Lead) (api.TeamRun, error) {
 	}
 	best, stale := bestOf(evals, l)
 	run := api.TeamRun{Team: t, Lead: l.Line, LeadLine: l.Line, Settings: l.Settings, Since: l.Since, Stopped: l.Stopped,
-		Status: m.runStatus(l), TeamsOff: m.teamsOff(l), Spent: teamSpent(l, agents, spent), Evaluating: m.evalRunning(t.ID), Stale: stale, Evals: []store.Eval{}, Agents: []api.TeamAgent{}}
+		Status: m.runStatus(l), TeamsOff: m.teamsOff(l), Spent: teamSpent(l, agents, spent), Evaluating: m.evalRunning(t.ID), Eval: m.evalNow(l, evals), Stale: stale, Evals: []store.Eval{}, Agents: []api.TeamAgent{}}
 	if best != nil {
 		b := cutEval(*best)
 		run.Best = &b
@@ -751,6 +752,7 @@ func (m *Manager) RunTeams() {
 		select {
 		case <-tick.C:
 			m.turnLimits(time.Now())
+			m.watchDue(time.Now())
 			if leads, err := m.store.Leads(); err == nil {
 				m.mu.Lock()
 				for _, l := range leads {

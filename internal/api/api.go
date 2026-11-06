@@ -135,6 +135,50 @@ type TeamBrief struct {
 	Spent  int64    `json:"spent"`
 	Budget int64    `json:"budget"`
 	Best   *float64 `json:"best,omitempty"`
+	// Eval is the eval as it is now, Last the one before it, if any.
+	Eval *EvalNow   `json:"eval,omitempty"`
+	Last *EvalBrief `json:"last,omitempty"`
+}
+
+// EvalNow is a team's eval as it is now. State is one of:
+//   - running: it runs (Started), as a job of Runner or in Isolation
+//   - queued: its job waits on Runner, Place in line
+//   - waiting: the round goes on (Waiting says on what); its end runs one
+//   - due: the round ended at Since and no eval has started; a minute of
+//     that is something wrong
+//   - idle: nothing has changed since the last eval
+//   - none: the team has no eval, or its run is stopped
+type EvalNow struct {
+	State string `json:"state"`
+	// Number is the number it will be kept as.
+	Number  int64     `json:"number,omitempty"`
+	Why     string    `json:"why,omitempty"`
+	Since   time.Time `json:"since,omitzero"`
+	Started time.Time `json:"started,omitzero"`
+	Place   int       `json:"place,omitempty"`
+	Job     string    `json:"job,omitempty"`
+	Runner  string    `json:"runner,omitempty"`
+	// Isolation is where a command eval runs ("" in the lead's).
+	Isolation string `json:"isolation,omitempty"`
+	Note      string `json:"note,omitempty"`
+	// Usual is the median of what the last few took, Limit its limit.
+	Usual   time.Duration `json:"usual,omitempty"`
+	Limit   time.Duration `json:"limit,omitempty"`
+	Waiting string        `json:"waiting,omitempty"`
+	// Stoppable: the operator can stop it (a job's).
+	Stoppable bool `json:"stoppable,omitempty"`
+}
+
+// EvalBrief is an eval that ended, as a team's head shows it.
+type EvalBrief struct {
+	ID      int64         `json:"id"`
+	At      time.Time     `json:"at"`
+	Took    time.Duration `json:"took"`
+	Score   *float64      `json:"score,omitempty"`
+	NotRun  bool          `json:"not_run,omitempty"`
+	NewBest bool          `json:"new_best,omitempty"`
+	// Note is why it has no score.
+	Note string `json:"note,omitempty"`
 }
 
 // PutTeam makes a team, or renames one.
@@ -184,6 +228,7 @@ type TeamRun struct {
 	// Plan are the plan windows of the CLIs its agents run on.
 	Plan       []PlanWindow `json:"plan,omitempty"`
 	Evaluating bool         `json:"evaluating,omitempty"`
+	Eval       *EvalNow     `json:"eval,omitempty"`
 	// Evals are the latest, oldest first; Best the best of all, and Stale
 	// how many have come since without a new one.
 	Evals []store.Eval `json:"evals"`

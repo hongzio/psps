@@ -149,7 +149,11 @@ type Manager struct {
 	teamsDue   map[string]bool
 	teamWake   chan struct{}
 	evaluating map[string]bool
-	busy       map[string]map[string]bool
+	// dueSince: since when a team's round has been over with no eval
+	// (evalnow.go); dueTold, that the log said so.
+	dueSince map[string]time.Time
+	dueTold  map[string]bool
+	busy     map[string]map[string]bool
 	// controlMu keeps counting the agents made through the control service
 	// and making one from crossing another such pair.
 	controlMu sync.Mutex
@@ -208,7 +212,7 @@ func NewManager(ctx context.Context, st *store.Store, cli Containers, fence Fenc
 		tunnelPort: func(p int) int { return p }, instances: map[string]map[string]proxy.Instance{},
 		tunnels: map[string]*tunnelState{}, synced: map[string]string{}, swapped: map[string]string{}, versions: map[string]string{}, lastEnv: map[string]string{}, health: map[string]isoHealth{}, ssm: newSSMBook(),
 		mailBuckets: map[string]*proxy.TokenBucket{}, cronWake: make(chan struct{}, 1),
-		teamsDue: map[string]bool{}, teamWake: make(chan struct{}, 1), evaluating: map[string]bool{}, busy: map[string]map[string]bool{},
+		teamsDue: map[string]bool{}, teamWake: make(chan struct{}, 1), evaluating: map[string]bool{}, dueSince: map[string]time.Time{}, dueTold: map[string]bool{}, busy: map[string]map[string]bool{},
 		jobWake: make(chan struct{}, 1), jobWaiters: map[string]chan struct{}{}, jobHooks: map[string]func(store.Job){}}
 	m.loops.Add(1)
 	go func() {
