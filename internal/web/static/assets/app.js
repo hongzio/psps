@@ -892,6 +892,12 @@ async function refreshIsolations() {
 // typing: an inline form is open, or a field on it has the focus.
 function editing(id) {
   if (S.openForm) return true
+  // Text being selected (to copy an address, say) would be lost to a redraw.
+  const sel = window.getSelection && window.getSelection()
+  if (sel && !sel.isCollapsed && sel.anchorNode) {
+    const n = sel.anchorNode.nodeType === 1 ? sel.anchorNode : sel.anchorNode.parentElement
+    if (n && n.closest && n.closest('#' + id)) return true
+  }
   const a = document.activeElement
   return !!(a && a.closest && a.closest('#' + id) && (/^(INPUT|SELECT|TEXTAREA)$/.test(a.tagName) || a.classList.contains('dropdown')))
 }
@@ -916,25 +922,51 @@ async function refreshExposures() {
   }
 }
 
+// startPolling keeps the lists current. The daemon names a list on
+// /v1/changes each time it changes, and only that one is read again; a
+// page drawn anew every two seconds lost a selection being made on it.
+// On connecting, and again after a reconnect, every list is read, as one
+// may have changed while the stream was down. A hidden tab closes it and
+// catches up the moment it is shown again.
 function startPolling() {
-  let n = 0
-  const tick = async () => {
-    // The first load always happens; after that a hidden tab stops polling
-    // and catches up the moment it is shown again.
-    if ((n === 0 || !document.hidden) && S.authed) {
-      await guarded(refreshAgents)
-      // The isolations list runs `container inspect` per isolation; keep it
-      // to every 10s unless that page is open.
-      if (S.view !== 'agent' || n % 5 === 0) await guarded(refreshIsolations)
-      if (S.view === 'services') await guarded(refreshServices)
-    }
-    n++
-    setTimeout(tick, 2000)
+  let es = null
+  let retry = null
+  const all = async () => {
+    await guarded(refreshAgents)
+    await guarded(refreshIsolations)
+    if (S.view === 'services') await guarded(refreshServices)
   }
-  tick()
-  document.addEventListener('visibilitychange', () => {
-    if (!document.hidden && S.authed) { guarded(refreshAgents); guarded(refreshIsolations) }
-  })
+  const on = {
+    hello: all,
+    agents: () => guarded(refreshAgents),
+    isolations: () => guarded(refreshIsolations),
+    // The services' envs and which isolations have each.
+    services: () => S.view === 'services' ? guarded(refreshServices) : S.view === 'isolations' ? guarded(refreshIsolations) : null,
+  }
+  const open = () => {
+    clearTimeout(retry)
+    retry = null
+    if (es || document.hidden) return
+    if (!S.authed) { retry = setTimeout(open, 2000); return }
+    es = new EventSource('/v1/changes')
+    for (const [name, fn] of Object.entries(on)) es.addEventListener(name, fn)
+    // EventSource reconnects by itself unless the answer was not a stream
+    // (signed out, the daemon restarting): then try again in a while.
+    es.onerror = () => {
+      if (es.readyState !== EventSource.CLOSED) return
+      es = null
+      retry = setTimeout(open, 2000)
+    }
+  }
+  const close = () => {
+    clearTimeout(retry)
+    retry = null
+    if (es) { es.close(); es = null }
+  }
+  // The first load always happens, a hidden tab's too.
+  if (document.hidden && S.authed) all()
+  open()
+  document.addEventListener('visibilitychange', () => document.hidden ? close() : open())
 }
 
 // ---- Actions
