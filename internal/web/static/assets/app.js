@@ -1852,15 +1852,8 @@ function renderTopbar() {
             })
           },
         }, icon('trash-2'), h('span', { class: 'label' }, ' Delete')) : null,
-        a.archived_at ? null : h('button', {
-          class: 'btn ghost', title: 'Archive', onclick: async () => {
-            if (!await ask({ title: `Archive "${agentTitle(a)}"?`, body: 'Its history is kept.', ok: 'Archive' })) return
-            await guarded(() => api('POST', `/v1/agents/${a.id}/archive`))
-            S.sel = null
-            await guarded(refreshAgents)
-            render()
-          },
-        }, icon('archive'), h('span', { class: 'label' }, ' Archive')))),
+        a.archived_at ? null : h('button', { class: 'btn ghost', title: 'Archive (x)', onclick: () => askArchive(a) },
+          icon('archive'), h('span', { class: 'label' }, ' Archive')))),
     a.problem ? h('div', { class: 'banner' }, a.problem) : null,
   ].filter(Boolean))
   fitTopbar()
@@ -4903,6 +4896,7 @@ const shortcuts = [
   ['c', 'Cron of the agent'],
   ['t', 'TODO of the agent'],
   ['e', 'Name and ID of the agent'],
+  ['x', 'Archive the agent (Enter archives, Esc keeps it)'],
   ['g then i / s / a', 'Go to Isolations / Services / Accounts'],
 ]
 
@@ -4913,6 +4907,15 @@ function showShortcuts() {
     extra: h('table', { class: 'shortcuts' }, shortcuts.map(([k, what]) =>
       h('tr', null, h('td', null, k === '/' ? h('kbd', null, k) : k.split(' ').map((p) => ['then', '/'].includes(p) ? ` ${p} ` : h('kbd', null, p))), h('td', null, what)))),
   })
+}
+
+// askArchive asks before archiving the agent, as its Archive does and x.
+async function askArchive(a) {
+  if (!await ask({ title: `Archive "${agentTitle(a)}"?`, body: 'Its history is kept.', ok: 'Archive' })) return
+  await guarded(() => api('POST', `/v1/agents/${a.id}/archive`))
+  S.sel = null
+  await guarded(refreshAgents)
+  render()
 }
 
 // askStop asks before interrupting the agent's turn, as Esc does.
@@ -5034,6 +5037,7 @@ document.addEventListener('keydown', (e) => {
       c: a && !a.archived_at && (() => openCrons(a)),
       t: a && !a.archived_at && (() => openTodos(a)),
       e: a && (() => editAgent(a)),
+      x: a && !a.archived_at && (() => askArchive(a)),
       g: () => { goPending = Date.now() },
       // Out of the message box, Esc asks to stop the agent at work: the
       // dialog's Stop has the focus, so Enter stops and Esc closes it.
