@@ -1610,7 +1610,7 @@ async function editTeam(t) {
     run.evals.length ? h('div', { class: 'lead-evals' }, run.evals.slice(-5).map((e) =>
       h('span', { title: e.why + (e.output ? '\n\n' + e.output : '') }, `#${e.id} ${e.score ?? (e.not_run ? 'not run' : 'no score')}`))) : null,
     h('div', { class: 'lead-actions' },
-      run.settings.eval ? h('button', {
+      run.settings.eval || run.settings.eval_job ? h('button', {
         type: 'button', class: 'btn small', onclick: async (e) => {
           e.target.disabled = true
           await guarded(async () => { await api('POST', `/v1/teams/${enc(t.id)}/eval`); toast('The eval runs; its result goes to the lead') })

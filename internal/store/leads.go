@@ -103,6 +103,10 @@ type LeadSettings struct {
 	Patience int      `json:"patience"`
 }
 
+// HasEval is whether the run has an eval at all: a command, or a job of a
+// runner.
+func (s LeadSettings) HasEval() bool { return s.Eval != "" || s.EvalJob != "" }
+
 type Lead struct {
 	Team     string       `json:"team"`
 	Line     string       `json:"line"`

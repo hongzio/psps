@@ -190,7 +190,7 @@ func (m *Manager) stopsAgain(l store.Lead, evals []store.Eval) (string, error) {
 // without it the lead would wait, told only that the run stopped.
 func (m *Manager) resumedNews(l store.Lead, why string, evals []store.Eval) {
 	msg := "Your operator resumed the run, which psps had stopped (" + why + ")."
-	if l.Settings.Eval != "" {
+	if l.Settings.HasEval() {
 		msg += " The evals so far count no more toward its patience."
 		if best, _ := bestOf(evals, l); best != nil {
 			msg += fmt.Sprintf(" The best is %g, at eval #%d.", *best.Score, best.ID)
@@ -790,7 +790,7 @@ func (m *Manager) teamCheck(team string) {
 		m.stopRunLocked(l, fmt.Sprintf("the budget is used: %s of %s tokens", tokens(used), tokens(l.Settings.Budget)))
 		return
 	}
-	if l.Settings.Eval == "" || m.evalRunning(team) || m.childrenBusy(l.Line) > 0 {
+	if !l.Settings.HasEval() || m.evalRunning(team) || m.childrenBusy(l.Line) > 0 {
 		return
 	}
 	// A round is over once its lead has heard of it and started nothing
@@ -922,7 +922,7 @@ func (m *Manager) evalRunning(team string) bool {
 
 // startEval runs l's eval, unless it runs already; its result is news.
 func (m *Manager) startEval(l store.Lead, why string) error {
-	if l.Settings.Eval == "" && l.Settings.EvalJob == "" {
+	if !l.Settings.HasEval() {
 		return httpError{http.StatusConflict, errors.New("the team has no eval; its operator sets one with `psps team lead TEAM AGENT --eval CMD` or `--eval-job RUNNER`")}
 	}
 	m.mu.Lock()
@@ -1111,7 +1111,7 @@ func (m *Manager) nudgeText(l store.Lead) string {
 // nextTeam asks l's lead what it does now. A change it makes alone ends
 // no round, so with an eval it is told how to have one scored.
 func nextTeam(l store.Lead) string {
-	if l.Settings.Eval == "" {
+	if !l.Settings.HasEval() {
 		return "Design the next team, or say why you stop."
 	}
 	return "Before you design the next team, write in EVOLUTION.md which signs of a stuck team yours shows (drifting to easy paths, findings lost between teams, stuck debugging, only tuning what is there), and give each role the problem and the measurements, not a list of ideas (the psps-team skill, Leading)." +
@@ -1533,7 +1533,7 @@ func (r *runtime) deliverNewsLocked() {
 		r.news = 0
 		return
 	}
-	if l.Settings.Eval != "" && l.Stopped == "" && ((l.Dirty && r.m.childrenBusy(l.Line) > 0) || r.m.evalRunning(l.Team)) {
+	if l.Settings.HasEval() && l.Stopped == "" && ((l.Dirty && r.m.childrenBusy(l.Line) > 0) || r.m.evalRunning(l.Team)) {
 		return
 	}
 	if on, err := r.m.teamOn(r.agent.IsolationID); err != nil || !on {

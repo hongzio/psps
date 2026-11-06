@@ -585,6 +585,21 @@ printf '{"score": %%s, "detail": "the-holdout-says"}' "$(cat n)" > "$PSPS_JOB_OU
 	if n := news(e, boss.ID)[2]; !strings.Contains(n, `left no score: its result.json has no "score" number`) {
 		t.Fatal(n)
 	}
+	// A round ends with the runner's eval, as with a command.
+	os.WriteFile(filepath.Join(dir, "n"), []byte("7"), 0o644)
+	before := len(news(e, boss.ID))
+	a := makeAgent(t, m, boss.ID, api.TeamAgentNew{Role: "one", Kind: driver.Codex, Prompt: "hello"})
+	e.waitFor("the turn's news", func() bool { return strings.Contains(strings.Join(news(e, boss.ID), "\n"), a.ID+` ("one", codex) ended its turn`) })
+	e.waitFor("the lead idle", func() bool { return free(m, boss.ID) })
+	m.teamCheck(team.ID)
+	e.waitFor("the round's eval", func() bool {
+		ns := news(e, boss.ID)
+		return len(ns) > before+1 && strings.Contains(ns[len(ns)-1], "(the round ended)")
+	})
+	if n := news(e, boss.ID); !strings.Contains(n[len(n)-1], "SCORE 7") {
+		t.Fatal(n[len(n)-1])
+	}
+
 	// A command again is no runner's.
 	if _, err := m.SetLead(ctx, "lab", api.PutLead{Agent: "boss", Eval: ptr("echo SCORE: 1")}); err != nil {
 		t.Fatal(err)
