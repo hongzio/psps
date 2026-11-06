@@ -66,7 +66,8 @@ crons or mail (it counts as one made through this service):
     curl -sS -X PUT "$PSPS_CONTROL_URL/agents/ID/options" --json '{"model": "...", "effort": "high"}'`,
 	"agent.cron": `An agent's crons, and crons you set on it: a message sent to it on a schedule
 (a cron expression in the Mac's time, "@daily", "@every 2h"), skipped or
-waiting if it is busy. It reads that you set it.
+waiting if it is busy; "compact": true sends it /compact first, and the
+message once it is idle after it. It reads that you set it.
 
     curl -sS "$PSPS_CONTROL_URL/agents/ID/crons"
     curl -sS "$PSPS_CONTROL_URL/agents/ID/crons" --json '{"schedule": "@every 2h", "prompt": "...", "if_busy": "skip"}'

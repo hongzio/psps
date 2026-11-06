@@ -38,7 +38,7 @@ you, without this conversation's context, so write the message the way you
 would brief a colleague: what to do, where, and when to stop.
 
 Your crons (JSON: the Mac's time zone, and each cron's id, schedule, prompt,
-if_busy, once, enabled, next_at, last_result, and self, true for those you set):
+if_busy, once, compact, enabled, next_at, last_result, and self, true for those you set):
 
     curl -sS "$PSPS_CRON_URL"
 
@@ -61,11 +61,15 @@ Set one:
   hour, day and month, as "30 14 3 11 *") and once. A cron that comes once
   always waits if you are busy, so its one run is not lost.
 
+- "compact": true has each run send you /compact first, compacting the
+  conversation, and the message once you are idle after it: for a cron that
+  runs long and would otherwise fill your context.
+
 Once, at 14:30 on November 3:
 
     curl -sS "$PSPS_CRON_URL" --data-binary '{"schedule": "30 14 3 11 *", "once": true, "prompt": "..."}'
 
-Change one you set (any of schedule, prompt, if_busy, once, enabled), or remove it:
+Change one you set (any of schedule, prompt, if_busy, once, compact, enabled), or remove it:
 
     curl -sS -X PATCH "$PSPS_CRON_URL/3" --data-binary '{"enabled": false}'
     curl -sS -X DELETE "$PSPS_CRON_URL/3"

@@ -40,6 +40,9 @@ func cronLetter(c store.Cron) string {
 	if c.Once {
 		who += " It comes this once: psps has removed it."
 	}
+	if c.Compact {
+		who += " psps compacted your conversation (/compact) just before it, as the cron asks."
+	}
 	return fmt.Sprintf("[psps cron #%d, on schedule %q. %s]\n\n%s", c.ID, c.Schedule, who, c.Prompt)
 }
 
@@ -221,12 +224,15 @@ func setCron(c *store.Cron, req api.PutCron, now time.Time) error {
 	if req.Once != nil {
 		c.Once = *req.Once
 	}
+	if req.Compact != nil {
+		c.Compact = *req.Compact
+	}
 	// Its one run is not skipped.
 	if c.Once {
 		c.IfBusy = store.CronWait
 	}
 	if !c.Enabled {
-		c.NextAt, c.WaitingSince = nil, nil
+		c.NextAt, c.WaitingSince, c.CompactedAt = nil, nil, nil
 		return nil
 	}
 	if c.IfBusy == store.CronSkip {
@@ -313,7 +319,7 @@ func (m *Manager) cronDue(c store.Cron, now time.Time) {
 	if err != nil {
 		// Not one this daemon reads: it is turned off, saying why.
 		m.log.Printf("cron %d of agent %s: %v; turned off", c.ID, c.Agent, err)
-		c.Enabled, c.NextAt, c.WaitingSince = false, nil, nil
+		c.Enabled, c.NextAt, c.WaitingSince, c.CompactedAt = false, nil, nil, nil
 		if err := m.store.PutCron(c); err != nil {
 			m.log.Printf("cron %d: %v", c.ID, err)
 		}
@@ -333,10 +339,19 @@ func (m *Manager) cronDue(c store.Cron, now time.Time) {
 func (r *runtime) cronsChanged() {
 	r.mu.Lock()
 	defer r.mu.Unlock()
+	r.countCronsLocked()
+	r.kickLocked()
+}
+
+// countCronsLocked reads again how many of the agent's crons wait for it,
+// and how many have their message wait on their /compact.
+func (r *runtime) countCronsLocked() {
 	if n, err := r.m.store.WaitingCrons(r.agent.ID); err == nil {
 		r.crons = n
 	}
-	r.kickLocked()
+	if n, err := r.m.store.CompactedCrons(r.agent.ID); err == nil {
+		r.compacted = n
+	}
 }
 
 // cronDue is cron c coming due at now, next coming at next.
@@ -353,16 +368,19 @@ func (r *runtime) cronDue(c store.Cron, now, next time.Time) {
 		why := busyWhy(st, r.starting || len(r.outbox) > 0)
 		wait := c.IfBusy == store.CronWait
 		result := "skipped: " + why
-		if wait {
+		switch {
+		case c.CompactedAt != nil:
+			// The run before it is still on its way, after its /compact:
+			// this one is folded into it.
+			wait, result = false, "folded into the run before, whose message waits for /compact to end"
+		case wait:
 			result = "waiting: " + why
 		}
 		if err := r.m.store.CronCame(c.ID, now, next, result, wait); err != nil {
 			r.m.log.Printf("agent %s: cron %d: %v", r.agent.ID, c.ID, err)
 			return
 		}
-		if n, err := r.m.store.WaitingCrons(r.agent.ID); err == nil {
-			r.crons = n
-		}
+		r.countCronsLocked()
 		return
 	}
 	r.sendCronLocked(c, now, &next)
@@ -379,23 +397,41 @@ func (r *runtime) sendWaitingCronLocked() {
 		r.m.log.Printf("agent %s: cron: %v", r.agent.ID, err)
 		return
 	}
-	if n, err := r.m.store.WaitingCrons(r.agent.ID); err == nil {
-		r.crons = n
+	r.countCronsLocked()
+}
+
+// sendCompactedCronLocked sends the message of the cron whose /compact went
+// first, now that the agent is free after it.
+func (r *runtime) sendCompactedCronLocked() {
+	c, err := r.m.store.CompactedCron(r.agent.ID)
+	if err == nil {
+		r.sendCronLocked(c, time.Now(), nil)
+	} else if !errors.Is(err, store.ErrNotFound) {
+		r.m.log.Printf("agent %s: cron: %v", r.agent.ID, err)
+		return
 	}
+	r.countCronsLocked()
 }
 
 // sendCronLocked hands c to the driver through the outbox: from then on it
-// is a message like the operator's. next: it came due now.
+// is a message like the operator's. next: it came due now. A cron that
+// compacts first sends /compact instead, the first time; its message goes
+// the next time the agent is free (sendCompactedCronLocked).
 func (r *runtime) sendCronLocked(c store.Cron, now time.Time, next *time.Time) {
 	after := max(r.lastSeen, r.agent.LastSrc)
-	p, err := r.m.store.SendCron(c.ID, cronLetter(c), after, now, next)
+	p, compacting, err := r.m.store.SendCron(c.ID, cronLetter(c), after, now, next)
 	if err != nil {
 		r.m.log.Printf("agent %s: cron %d: %v", r.agent.ID, c.ID, err)
 		return
 	}
 	r.outbox = append(r.outbox, p)
-	r.nameLocked(c.Prompt)
 	r.drv.Send(p.Text)
+	if compacting {
+		r.compacted++
+		r.m.log.Printf("agent %s: cron %d: /compact sent first", r.agent.ID, c.ID)
+		return
+	}
+	r.nameLocked(c.Prompt)
 	r.m.log.Printf("agent %s: cron %d sent", r.agent.ID, c.ID)
 }
 

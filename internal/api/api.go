@@ -437,6 +437,9 @@ type PutCron struct {
 	Enabled  *bool   `json:"enabled,omitempty"`
 	// Once: sent once, then removed; it waits if the agent is busy.
 	Once *bool `json:"once,omitempty"`
+	// Compact: each run first sends the agent /compact, and the message
+	// once it is idle after it.
+	Compact *bool `json:"compact,omitempty"`
 }
 
 // AddTodo puts a prompt aside for an agent.
