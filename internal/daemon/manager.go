@@ -1094,6 +1094,9 @@ func (m *Manager) Agents() ([]api.Agent, error) {
 	if err := m.withTeams(out); err != nil {
 		return nil, err
 	}
+	if err := m.withIcons(out); err != nil {
+		return nil, err
+	}
 	if err := m.withRuns(out); err != nil {
 		return nil, err
 	}
@@ -1130,6 +1133,9 @@ func (m *Manager) viewOf(a store.Agent) (api.Agent, error) {
 	}
 	v := []api.Agent{m.view(a, inbox, crons, todos)}
 	if err := m.withTeams(v); err != nil {
+		return v[0], err
+	}
+	if err := m.withIcons(v); err != nil {
 		return v[0], err
 	}
 	return v[0], m.withRuns(v)
@@ -1240,6 +1246,11 @@ func (m *Manager) UpdateAgent(idOrPrefix string, req api.UpdateAgent) (api.Agent
 			return api.Agent{}, err
 		}
 	}
+	if req.Icon != nil {
+		if err := checkIcon(*req.Icon); err != nil {
+			return api.Agent{}, err
+		}
+	}
 	a, err := m.storedAgent(idOrPrefix)
 	if err != nil {
 		return api.Agent{}, err
@@ -1274,6 +1285,11 @@ func (m *Manager) UpdateAgent(idOrPrefix string, req api.UpdateAgent) (api.Agent
 	}
 	if req.Team != nil {
 		if err := m.setTeam(a, *req.Team); err != nil {
+			return api.Agent{}, err
+		}
+	}
+	if req.Icon != nil {
+		if err := m.store.SetLineIcon(cmp.Or(a.Line, a.ID), *req.Icon); err != nil {
 			return api.Agent{}, err
 		}
 	}

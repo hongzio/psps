@@ -153,7 +153,12 @@ tapping again undoes that. Its next turn takes it out of being parked. An
 agent whose turn ended, working to idle, while another was open has a red dot
 at the end of its name until it is opened (or parked); the browser keeps it,
 and a folded team rings that agent's dot in red. While the open agent works,
-three dots in a bubble under its last message say so. A team
+three dots in a bubble under its last message say so. The faint smile at
+the end of an agent's second line gives it an icon of your choosing, in one
+of nine colors (picked lately ones, as they were, on a row of their own:
+the browser keeps those); tapping the icon changes or removes it. The daemon
+keeps it for the agent's line (`PATCH /v1/agents/ID` with `icon`), so its
+`/new` and archived sessions wear it too, and a fork does not. A team
 (an agent's Edit, or New agent, names it; a new name makes one) is a group
 there that folds to a dot for each of its agents, the ones that want a look
 first. A long press moves an agent within its list: a team's agents within

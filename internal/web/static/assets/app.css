@@ -15,6 +15,8 @@
   --warn-soft: #fff4e0;
   --err: #b42318;
   --unread: #e5372b;
+  --ic-default: #4a4a56; --ic-red: #d92d20; --ic-orange: #e8590c; --ic-yellow: #ca8a04; --ic-green: #16a34a;
+  --ic-teal: #0d9488; --ic-blue: #2563eb; --ic-violet: #7c3aed; --ic-pink: #db2777;
   --err-soft: #fdecea;
   --on-err: #ffffff;
   --code: #f2f2f6;
@@ -43,6 +45,8 @@
     --warn-soft: #2e2512;
     --err: #ff8a80;
     --unread: #ff5a4e;
+    --ic-default: #d4d4dc; --ic-red: #ff6b5e; --ic-orange: #ff9a52; --ic-yellow: #f5c84b; --ic-green: #5fd68e;
+    --ic-teal: #4fd1c5; --ic-blue: #6ea8ff; --ic-violet: #b69cff; --ic-pink: #ff7ab8;
     --err-soft: #331b1a;
     --on-err: #2a0e0c;
     --code: #1f1f26;
@@ -67,6 +71,8 @@
   --warn-soft: #2e2512;
   --err: #ff8a80;
   --unread: #ff5a4e;
+  --ic-default: #d4d4dc; --ic-red: #ff6b5e; --ic-orange: #ff9a52; --ic-yellow: #f5c84b; --ic-green: #5fd68e;
+  --ic-teal: #4fd1c5; --ic-blue: #6ea8ff; --ic-violet: #b69cff; --ic-pink: #ff7ab8;
   --err-soft: #331b1a;
   --on-err: #2a0e0c;
   --code: #1f1f26;
@@ -248,6 +254,32 @@ body.resizing { cursor: col-resize; user-select: none; -webkit-user-select: none
 .agent .name .unread { flex: none; width: 7px; height: 7px; border-radius: 50%; background: var(--unread); animation: unread-pop .25s ease-out; }
 .team-dots .dot.unread { box-shadow: 0 0 0 1.5px var(--sidebar), 0 0 0 3px var(--unread); }
 @keyframes unread-pop { from { transform: scale(0); } }
+/* The operator's icon for a line: last on its row's second line, where a
+   faint smile with a plus waits for one; tapping either opens the picker. */
+.agent .pick { display: inline-grid; place-items: center; width: 20px; height: 20px; margin: -3px -4px -3px 0; border-radius: 6px; flex: none; cursor: pointer; }
+.agent .pick .icon { width: 14px; height: 14px; }
+.agent .pick:hover { background: color-mix(in srgb, var(--text) 8%, transparent); }
+.agent .pick.empty { color: var(--faint); opacity: .45; transition: opacity .12s; }
+.agent:hover .pick.empty, .agent .pick.empty:focus-visible, .agent .pick[aria-expanded="true"] { opacity: 1; }
+.agent .pick.fresh { animation: pick-pop .2s ease-out; }
+@keyframes pick-pop { from { transform: scale(.4); } }
+.icon-pop { position: fixed; z-index: 30; width: 272px; max-width: calc(100vw - 16px); background: var(--panel); border: 1px solid var(--border); border-radius: 12px; box-shadow: var(--shadow); padding: 10px; }
+.icon-pop .pop-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 8px; font-size: 12.5px; color: var(--muted); }
+.icon-pop .pop-head .who { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.icon-pop .clear { flex: none; display: inline-flex; align-items: center; gap: 4px; border: 0; background: transparent; color: var(--muted); font: inherit; padding: 3px 6px; border-radius: 6px; cursor: pointer; }
+.icon-pop .clear:hover { background: color-mix(in srgb, var(--text) 8%, transparent); color: var(--text); }
+.icon-pop .clear .icon { width: 13px; height: 13px; }
+.icon-pop .swatches { display: flex; flex-wrap: wrap; gap: 6px; padding-bottom: 10px; margin-bottom: 8px; border-bottom: 1px solid var(--border); }
+.icon-pop .swatch { width: 22px; height: 22px; padding: 0; border: 0; border-radius: 50%; cursor: pointer; background: var(--sw); box-shadow: inset 0 0 0 1px rgb(0 0 0 / .08); }
+.icon-pop .swatch[aria-checked="true"] { box-shadow: 0 0 0 2px var(--panel), 0 0 0 4px var(--sw); }
+.icon-pop .pop-label { margin: 0 0 4px 2px; font-size: 11.5px; color: var(--faint); }
+.icon-pop .icons { display: grid; grid-template-columns: repeat(8, 1fr); gap: 2px; }
+.icon-pop .icons.recent { padding-bottom: 8px; margin-bottom: 8px; border-bottom: 1px solid var(--border); }
+.icon-pop .icons button { aspect-ratio: 1; display: grid; place-items: center; padding: 0; border: 0; border-radius: 7px; background: transparent; color: var(--ic); cursor: pointer; }
+.icon-pop .icons button .icon { width: 17px; height: 17px; }
+.icon-pop .icons button:hover { background: color-mix(in srgb, var(--text) 8%, transparent); }
+.icon-pop .icons button[aria-checked="true"], .icon-pop .icons button[aria-pressed="true"] { background: color-mix(in srgb, currentColor 16%, transparent); }
+@media (prefers-reduced-motion: reduce) { .agent .pick.fresh { animation: none; } }
 @media (prefers-reduced-motion: reduce) { .agent .name .unread { animation: none; } }
 .agent .name .mark .icon { width: 13px; height: 13px; vertical-align: -2px; }
 .fold {

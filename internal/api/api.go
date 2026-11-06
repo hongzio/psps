@@ -97,6 +97,8 @@ type Agent struct {
 	// sidebar groups a team's live agents.
 	Team   string `json:"team,omitempty"`
 	TeamID string `json:"team_id,omitempty"`
+	// Icon is the one the operator picked for its line, if any.
+	Icon *store.Icon `json:"icon,omitempty"`
 	// Leads is the run of the team it leads, if it leads one.
 	Leads *TeamBrief `json:"leads,omitempty"`
 }
@@ -272,6 +274,9 @@ type UpdateAgent struct {
 	// Team puts its line, every session of it, in the team of that name,
 	// made if there is none; "" takes it out of its team.
 	Team *string `json:"team,omitempty"`
+	// Icon gives its line, every session of it, that icon; one with no
+	// name takes its icon away.
+	Icon *store.Icon `json:"icon,omitempty"`
 }
 
 type CreateAgent struct {
