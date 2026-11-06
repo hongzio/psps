@@ -742,10 +742,19 @@ psps team lead lab tara --eval-iso grader  # the eval runs in grader, on a copy
 psps agent send tara '/psps-team Build what SPEC.md describes.'   # the work, for the team
 psps team show lab                         # spending, scores, the lead's agents
 psps team eval lab                         # run the eval now
+psps team stop-eval lab                    # stop the one under way (a runner's job); it counts as not run
 psps team reset-best lab                   # the evals so far count for no best (the target, the patience)
 psps team resume lab                       # go on after psps stopped the run
 psps team lead lab --clear                 # no lead; its agents are yours
 ```
+
+`psps team show` says what the eval is doing now: running (for how long,
+and how long the last five took at the median), queued on its runner and
+where in line, waiting on the round, or none since nothing changed. A round
+that ended with no eval started for a minute is something wrong: the line
+says so, as does the web, and the daemon logs it once. The web's team
+heads carry the same, a line under the run's, and its team dialog the eval
+under way with Stop eval, and the last five.
 
 The same is set in a team's dialog in the web (the pencil on its name, or its
 run's line under it) and on its page in the TUI (`l` on its name), which

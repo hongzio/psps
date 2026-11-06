@@ -737,7 +737,11 @@ type testEnv struct {
 
 	mu       sync.Mutex
 	noBridge bool // the isolation's bridge is not up (yet)
+	// logs is what the daemon logged.
+	logs syncBuffer
 }
+
+func (e *testEnv) logged() string { return e.logs.String() }
 
 func (e *testEnv) bridge() string {
 	e.mu.Lock()
@@ -789,7 +793,7 @@ func newTestEnv(t *testing.T) *testEnv {
 // daemon exiting, leaving agents and shims alone.
 func (e *testEnv) daemon() (m *Manager, stop func()) {
 	ctx, cancel := context.WithCancel(context.Background())
-	m = NewManager(ctx, e.st, e.fc, e.fence, log.New(io.Discard, "", 0))
+	m = NewManager(ctx, e.st, e.fc, e.fence, log.New(&e.logs, "", 0))
 	// The Mac as the fence measurement sees it: the isolation's bridge with
 	// its link-local address, and a LAN address.
 	m.bridgeOf = func(string) string { return e.bridge() }

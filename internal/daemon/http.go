@@ -442,6 +442,9 @@ func (m *Manager) Handler() http.Handler {
 	mux.HandleFunc("POST /v1/teams/{team}/eval", func(w http.ResponseWriter, r *http.Request) {
 		reply(w, nil, m.EvalTeam(r.PathValue("team")))
 	})
+	mux.HandleFunc("DELETE /v1/teams/{team}/eval", func(w http.ResponseWriter, r *http.Request) {
+		reply(w, nil, m.StopEval(r.PathValue("team")))
+	})
 	mux.HandleFunc("DELETE /v1/teams/{team}/best", func(w http.ResponseWriter, r *http.Request) {
 		reply(w, nil, m.ResetBest(r.PathValue("team")))
 	})

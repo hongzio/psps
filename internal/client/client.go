@@ -315,6 +315,11 @@ func (c *Client) EvalTeam(ctx context.Context, team string) error {
 	return c.do(ctx, "POST", "/v1/teams/"+url.PathEscape(team)+"/eval", nil, nil)
 }
 
+// StopEval stops a team's eval under way.
+func (c *Client) StopEval(ctx context.Context, team string) error {
+	return c.do(ctx, "DELETE", "/v1/teams/"+url.PathEscape(team)+"/eval", nil, nil)
+}
+
 // ResetBest has a team's run count no eval so far for its best.
 func (c *Client) ResetBest(ctx context.Context, team string) error {
 	return c.do(ctx, "DELETE", "/v1/teams/"+url.PathEscape(team)+"/best", nil, nil)
