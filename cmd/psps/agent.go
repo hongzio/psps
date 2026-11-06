@@ -327,13 +327,15 @@ func agentCmd(p paths.Paths, args []string) error {
 		skip := fs.Bool("skip", false, "a run that finds the agent busy is skipped (a new cron's default)")
 		once := fs.Bool("once", false, "it is sent the first time it comes, then removed (it waits if the agent is busy)")
 		every := fs.Bool("every-time", false, "with --set: no longer --once")
+		compact := fs.Bool("compact", false, "each run first sends the agent /compact, and the message once it is idle after it")
+		noCompact := fs.Bool("no-compact", false, "with --set: no longer --compact")
 		on := fs.Int64("on", 0, "turn cron `N` on")
 		off := fs.Int64("off", 0, "turn cron `N` off")
 		rm := fs.Int64("rm", 0, "delete cron `N`")
 		pos := parse(fs, args[1:])
 		usage := errors.New(`usage: psps agent cron AGENT                                   its crons
-       psps agent cron AGENT --add SCHEDULE [--wait] [--once] MESSAGE...
-       psps agent cron AGENT --set N [--schedule SCHEDULE] [--wait|--skip] [--once|--every-time] [MESSAGE...]
+       psps agent cron AGENT --add SCHEDULE [--wait] [--once] [--compact] MESSAGE...
+       psps agent cron AGENT --set N [--schedule SCHEDULE] [--wait|--skip] [--once|--every-time] [--compact|--no-compact] [MESSAGE...]
        psps agent cron AGENT --on N | --off N | --rm N`)
 		acts := 0
 		for _, x := range []bool{*add != "", *set != 0, *on != 0, *off != 0, *rm != 0} {
@@ -341,7 +343,7 @@ func agentCmd(p paths.Paths, args []string) error {
 				acts++
 			}
 		}
-		if len(pos) < 1 || acts > 1 || (*wait && *skip) || (*once && *every) || (*schedule != "" && *set == 0) || (*every && *set == 0) {
+		if len(pos) < 1 || acts > 1 || (*wait && *skip) || (*once && *every) || (*compact && *noCompact) || (*noCompact && *set == 0) || (*schedule != "" && *set == 0) || (*every && *set == 0) {
 			return usage
 		}
 		agent, msg := pos[0], strings.Join(pos[1:], " ")
@@ -358,7 +360,7 @@ func agentCmd(p paths.Paths, args []string) error {
 			if msg == "" {
 				return usage
 			}
-			cr, err := c.AddCron(ctx, agent, api.PutCron{Schedule: add, Prompt: &msg, IfBusy: busy, Once: once})
+			cr, err := c.AddCron(ctx, agent, api.PutCron{Schedule: add, Prompt: &msg, IfBusy: busy, Once: once, Compact: compact})
 			if err != nil {
 				return err
 			}
@@ -368,6 +370,9 @@ func agentCmd(p paths.Paths, args []string) error {
 			n, req.IfBusy = *set, busy
 			if *once || *every {
 				req.Once = once
+			}
+			if *compact || *noCompact {
+				req.Compact = compact
 			}
 			if *schedule != "" {
 				req.Schedule = schedule
@@ -428,6 +433,9 @@ func agentCmd(p paths.Paths, args []string) error {
 			busy := cr.IfBusy
 			if cr.Once {
 				busy += ", once"
+			}
+			if cr.Compact {
+				busy += ", compacts first"
 			}
 			fmt.Fprintf(tw, "%d\t%s\t%s\t%s\t%s\t%s\t%s\n", cr.ID, cr.Schedule, busy, next, last, by, mailLine(cr.Prompt))
 		}
@@ -499,10 +507,14 @@ func cronLine(c store.Cron) string {
 	if c.IfBusy == store.CronWait {
 		busy = "waits"
 	}
-	if c.Once {
-		return fmt.Sprintf("%s, once, %s, then removed; it waits if it finds it busy", c.Schedule, c.NextAt.Local().Format("Mon Jan 2 15:04"))
+	compact := ""
+	if c.Compact {
+		compact = "; /compact goes first, the message once it is idle after it"
 	}
-	return fmt.Sprintf("%s, next %s; a run that finds it busy %s", c.Schedule, c.NextAt.Local().Format("Mon Jan 2 15:04"), busy)
+	if c.Once {
+		return fmt.Sprintf("%s, once, %s, then removed; it waits if it finds it busy%s", c.Schedule, c.NextAt.Local().Format("Mon Jan 2 15:04"), compact)
+	}
+	return fmt.Sprintf("%s, next %s; a run that finds it busy %s%s", c.Schedule, c.NextAt.Local().Format("Mon Jan 2 15:04"), busy, compact)
 }
 
 func mailLine(text string) string {

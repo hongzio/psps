@@ -56,6 +56,10 @@ type runtime struct {
 	// oldest first, whenever it is idle. crons is how many of its crons
 	// have a run waiting for it, sent the same way after the mail.
 	inbox, crons int
+	// compacted is how many of its crons sent /compact first and have
+	// their message wait for it: sent the moment it is free again, ahead
+	// of anything else, so nothing comes between the two.
+	compacted int
 	// todoDue is set when a turn ends in idle: then, and only then, the
 	// oldest auto todo is sent, ahead of mail and crons. Another turn, an
 	// approval or a failure clears it.
@@ -105,6 +109,10 @@ func (m *Manager) newRuntime(a store.Agent) (*runtime, error) {
 	if err != nil {
 		return nil, err
 	}
+	compacted, err := m.store.CompactedCrons(a.ID)
+	if err != nil {
+		return nil, err
+	}
 	news, err := m.leadNewsWaiting(a)
 	if err != nil {
 		return nil, err
@@ -115,7 +123,7 @@ func (m *Manager) newRuntime(a store.Agent) (*runtime, error) {
 	}
 	ctx, cancel := context.WithCancel(m.ctx)
 	return &runtime{m: m, ctx: ctx, cancel: cancel, agent: a, drv: drv, outbox: outbox,
-		decisions: map[string]decision{}, inbox: inbox, crons: crons, news: news, spent: spent[a.ID]}, nil
+		decisions: map[string]decision{}, inbox: inbox, crons: crons, compacted: compacted, news: news, spent: spent[a.ID]}, nil
 }
 
 func (r *runtime) loop() {
@@ -352,6 +360,10 @@ func (r *runtime) kickLocked() {
 		r.problem = ""
 	}
 	st = r.drv.State()
+	if fenced && r.compacted > 0 && r.freeLocked(st) {
+		r.sendCompactedCronLocked()
+		st = r.drv.State()
+	}
 	if fenced && r.todoDue && r.freeLocked(st) {
 		r.sendTodoLocked()
 		st = r.drv.State()

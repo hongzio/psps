@@ -2233,7 +2233,9 @@ async function openCrons(a) {
       c.waiting_since ? h('span', { class: 'chip waiting', title: `since ${when(c.waiting_since)}` }, 'waiting for idle') : null,
       c.self ? h('span', { class: 'chip', title: 'The agent set this cron itself, with the cron service' }, 'set by the agent') : null,
       c.set_by ? h('span', { class: 'chip', title: 'An agent set this cron, through the control service' }, `set by ${c.set_by}`) : null,
-      c.once ? h('span', { class: 'chip', title: 'Sent the first time it comes, then removed' }, 'once') : null),
+      c.once ? h('span', { class: 'chip', title: 'Sent the first time it comes, then removed' }, 'once') : null,
+      c.compact ? h('span', { class: 'chip', title: 'Each run sends /compact first, and the message once the agent is idle after it' }, '/compact first') : null,
+      c.compacted_at ? h('span', { class: 'chip waiting', title: `/compact sent ${when(c.compacted_at)}` }, 'compacting') : null),
     h('div', { class: 'cron-meta' },
       [c.enabled && c.next_at ? `next ${when(c.next_at)}` : null, c.if_busy === 'wait' ? 'waits if busy' : 'skipped if busy'].filter(Boolean).join(' · ')),
     c.last_at ? h('div', { class: 'cron-meta' }, `${when(c.last_at)}: ${c.last_result}` +
@@ -2399,6 +2401,8 @@ function cronForm(a, c, zone, saved, cancel) {
   }
   onceBox.addEventListener('change', drawOnce)
   drawOnce()
+  const compactBox = h('input', { type: 'checkbox', checked: !!c.compact })
+  const compact = h('label', { class: 'check' }, compactBox, h('span', null, h('strong', null, 'Compact first'), ' — each run sends /compact, and the message once the agent is idle after it.'))
   const err = h('p', { class: 'form-error dialog-error', role: 'alert', hidden: true })
   const fail = (msg) => { err.textContent = msg; err.hidden = false }
   const save = h('button', { type: 'button', class: 'btn primary' }, c.id ? 'Save' : 'Add cron')
@@ -2419,7 +2423,7 @@ function cronForm(a, c, zone, saved, cancel) {
       if (!spec) return fail('Write the cron expression.')
     }
     if (!prompt.value.trim()) return fail('Write the message to send.')
-    const body = { schedule: spec, prompt: prompt.value, if_busy: wait.querySelector('input').checked ? 'wait' : 'skip', once: onceBox.checked }
+    const body = { schedule: spec, prompt: prompt.value, if_busy: wait.querySelector('input').checked ? 'wait' : 'skip', once: onceBox.checked, compact: compactBox.checked }
     save.disabled = true
     try {
       if (c.id) await api('PATCH', `/v1/agents/${enc(a.id)}/crons/${c.id}`, body)
@@ -2437,7 +2441,7 @@ function cronForm(a, c, zone, saved, cancel) {
       h('span', { class: 'hint' }, `The Mac's time: ${zone}. Runs missed while the Mac slept or psps was down come due once, as soon as they can.`)),
     h('label', { class: 'dialog-field' }, 'Message', prompt),
     h('div', { class: 'dialog-field' }, 'If the agent is busy when it comes', h('div', { class: 'busy' }, skip, wait)),
-    h('div', { class: 'dialog-field' }, h('div', { class: 'busy' }, once)),
+    h('div', { class: 'dialog-field' }, h('div', { class: 'busy' }, once, compact)),
     err,
     h('div', { class: 'dialog-actions' }, h('button', { type: 'button', class: 'btn', onclick: cancel }, 'Back'), save))
   form.addEventListener('keydown', (e) => {

@@ -38,6 +38,11 @@ type Cron struct {
 	// Once: it is sent once, then removed. A run of it that finds the
 	// agent busy waits, so that one is not lost.
 	Once bool `json:"once,omitempty"`
+	// Compact: each run first sends the agent /compact, and its message
+	// once the agent is idle after it. CompactedAt is when this run's
+	// /compact was sent: its message goes the next time the agent is free.
+	Compact     bool       `json:"compact,omitempty"`
+	CompactedAt *time.Time `json:"compacted_at,omitempty"`
 }
 
 const (
@@ -61,12 +66,14 @@ CREATE TABLE IF NOT EXISTS crons (
 	sent_at       TEXT,
 	self          INTEGER NOT NULL DEFAULT 0,
 	once          INTEGER NOT NULL DEFAULT 0,
-	set_by        TEXT NOT NULL DEFAULT ''
+	set_by        TEXT NOT NULL DEFAULT '',
+	compact       INTEGER NOT NULL DEFAULT 0,
+	compacted_at  TEXT
 );
 CREATE INDEX IF NOT EXISTS crons_agent ON crons(agent, id);
 `
 
-const cronColumns = `id, agent, schedule, prompt, if_busy, enabled, created_at, next_at, waiting_since, last_at, last_result, sent_at, self, once, set_by`
+const cronColumns = `id, agent, schedule, prompt, if_busy, enabled, created_at, next_at, waiting_since, last_at, last_result, sent_at, self, once, set_by, compact, compacted_at`
 
 // cronLive is the condition for a cron that runs: on, of an agent that is not
 // archived.
@@ -86,8 +93,8 @@ func nullTS(t *time.Time) any {
 func scanCron(row interface{ Scan(...any) error }) (Cron, error) {
 	var c Cron
 	var created string
-	var next, waiting, last, sent sql.NullString
-	err := row.Scan(&c.ID, &c.Agent, &c.Schedule, &c.Prompt, &c.IfBusy, &c.Enabled, &created, &next, &waiting, &last, &c.LastResult, &sent, &c.Self, &c.Once, &c.SetBy)
+	var next, waiting, last, sent, compacted sql.NullString
+	err := row.Scan(&c.ID, &c.Agent, &c.Schedule, &c.Prompt, &c.IfBusy, &c.Enabled, &created, &next, &waiting, &last, &c.LastResult, &sent, &c.Self, &c.Once, &c.SetBy, &c.Compact, &compacted)
 	if errors.Is(err, sql.ErrNoRows) {
 		return c, ErrNotFound
 	}
@@ -98,7 +105,7 @@ func scanCron(row interface{ Scan(...any) error }) (Cron, error) {
 	for _, f := range []struct {
 		s  sql.NullString
 		to **time.Time
-	}{{next, &c.NextAt}, {waiting, &c.WaitingSince}, {last, &c.LastAt}, {sent, &c.SentAt}} {
+	}{{next, &c.NextAt}, {waiting, &c.WaitingSince}, {last, &c.LastAt}, {sent, &c.SentAt}, {compacted, &c.CompactedAt}} {
 		if f.s.Valid {
 			t := parseTS(f.s.String)
 			*f.to = &t
@@ -127,8 +134,8 @@ func (s *Store) crons(where string, args ...any) ([]Cron, error) {
 // AddCron stores c and returns it with its ID.
 func (s *Store) AddCron(c Cron) (Cron, error) {
 	c.CreatedAt = time.Now().UTC().Truncate(time.Second)
-	res, err := s.db.Exec(`INSERT INTO crons (agent, schedule, prompt, if_busy, enabled, created_at, next_at, self, once, set_by) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		c.Agent, c.Schedule, c.Prompt, c.IfBusy, c.Enabled, cts(c.CreatedAt), nullTS(c.NextAt), c.Self, c.Once, c.SetBy)
+	res, err := s.db.Exec(`INSERT INTO crons (agent, schedule, prompt, if_busy, enabled, created_at, next_at, self, once, set_by, compact) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		c.Agent, c.Schedule, c.Prompt, c.IfBusy, c.Enabled, cts(c.CreatedAt), nullTS(c.NextAt), c.Self, c.Once, c.SetBy, c.Compact)
 	if err != nil {
 		return c, err
 	}
@@ -149,11 +156,11 @@ func (s *Store) Cron(agent string, id int64) (Cron, error) {
 	return c, err
 }
 
-// PutCron writes what the operator sets of c, with when it next comes due
-// and whether a run of it waits.
+// PutCron writes what the operator sets of c, with when it next comes due,
+// whether a run of it waits, and whether one waits for its /compact.
 func (s *Store) PutCron(c Cron) error {
-	res, err := s.db.Exec(`UPDATE crons SET schedule = ?, prompt = ?, if_busy = ?, enabled = ?, once = ?, next_at = ?, waiting_since = ? WHERE id = ? AND agent = ?`,
-		c.Schedule, c.Prompt, c.IfBusy, c.Enabled, c.Once, nullTS(c.NextAt), nullTS(c.WaitingSince), c.ID, c.Agent)
+	res, err := s.db.Exec(`UPDATE crons SET schedule = ?, prompt = ?, if_busy = ?, enabled = ?, once = ?, compact = ?, next_at = ?, waiting_since = ?, compacted_at = ? WHERE id = ? AND agent = ?`,
+		c.Schedule, c.Prompt, c.IfBusy, c.Enabled, c.Once, c.Compact, nullTS(c.NextAt), nullTS(c.WaitingSince), nullTS(c.CompactedAt), c.ID, c.Agent)
 	if err != nil {
 		return err
 	}
@@ -241,6 +248,25 @@ func (s *Store) WaitingCron(agent string) (Cron, error) {
 	return cs[0], nil
 }
 
+// CompactedCron is the live cron of agent's whose /compact went first,
+// longest ago: its message is next.
+func (s *Store) CompactedCron(agent string) (Cron, error) {
+	cs, err := s.crons(cronLive+` AND c.agent = ? AND c.compacted_at IS NOT NULL ORDER BY c.compacted_at, c.id LIMIT 1`, agent)
+	if err != nil {
+		return Cron{}, err
+	}
+	if len(cs) == 0 {
+		return Cron{}, ErrNotFound
+	}
+	return cs[0], nil
+}
+
+func (s *Store) CompactedCrons(agent string) (int, error) {
+	var n int
+	err := s.db.QueryRow(`SELECT COUNT(*) FROM crons c WHERE `+cronLive+` AND c.agent = ? AND c.compacted_at IS NOT NULL`, agent).Scan(&n)
+	return n, err
+}
+
 func (s *Store) WaitingCrons(agent string) (int, error) {
 	var n int
 	err := s.db.QueryRow(`SELECT COUNT(*) FROM crons c WHERE `+cronLive+` AND c.agent = ? AND c.waiting_since IS NOT NULL`, agent).Scan(&n)
@@ -252,39 +278,58 @@ func (s *Store) WaitingCrons(agent string) (int, error) {
 // once whenever the daemon dies. next, if given, is that it came due at at
 // and next comes then; without it, it is a run that waited being sent. A
 // cron that comes once is removed as it is sent.
-func (s *Store) SendCron(id int64, text string, after int64, at time.Time, next *time.Time) (Pending, error) {
+//
+// A cron that compacts first, whose run has not yet, has /compact go to the
+// outbox in text's place, and records it (compacting true): its message is
+// sent by a later SendCron, once the agent is free again.
+func (s *Store) SendCron(id int64, text string, after int64, at time.Time, next *time.Time) (p Pending, compacting bool, err error) {
 	tx, err := s.db.Begin()
 	if err != nil {
-		return Pending{}, err
+		return Pending{}, false, err
 	}
 	defer tx.Rollback()
 	var agent string
-	var once bool
-	err = tx.QueryRow(`SELECT agent, once FROM crons WHERE id = ? AND enabled = 1`, id).Scan(&agent, &once)
+	var once, compact bool
+	var compacted sql.NullString
+	err = tx.QueryRow(`SELECT agent, once, compact, compacted_at FROM crons WHERE id = ? AND enabled = 1`, id).Scan(&agent, &once, &compact, &compacted)
 	if errors.Is(err, sql.ErrNoRows) {
-		return Pending{}, fmt.Errorf("cron %d: %w", id, ErrNotFound)
+		return Pending{}, false, fmt.Errorf("cron %d: %w", id, ErrNotFound)
 	}
 	if err != nil {
-		return Pending{}, err
+		return Pending{}, false, err
 	}
 	now := cts(at)
-	q, args := `UPDATE crons SET waiting_since = NULL, last_result = 'sent', sent_at = ? WHERE id = ?`, []any{now, id}
-	if next != nil {
-		q, args = `UPDATE crons SET waiting_since = NULL, last_result = 'sent', sent_at = ?, last_at = ?, next_at = ? WHERE id = ?`, []any{now, now, cts(*next), id}
-	}
-	if once {
+	compacting = compact && !compacted.Valid
+	var q string
+	var args []any
+	switch {
+	case compacting:
+		text = CompactCommand
+		q, args = `UPDATE crons SET waiting_since = NULL, compacted_at = ?, last_result = 'compacting first' WHERE id = ?`, []any{now, id}
+		if next != nil {
+			q, args = `UPDATE crons SET waiting_since = NULL, compacted_at = ?, last_result = 'compacting first', last_at = ?, next_at = ? WHERE id = ?`, []any{now, now, cts(*next), id}
+		}
+	case once:
 		q, args = `DELETE FROM crons WHERE id = ?`, []any{id}
+	case next != nil:
+		q, args = `UPDATE crons SET waiting_since = NULL, compacted_at = NULL, last_result = 'sent', sent_at = ?, last_at = ?, next_at = ? WHERE id = ?`, []any{now, now, cts(*next), id}
+	default:
+		q, args = `UPDATE crons SET waiting_since = NULL, compacted_at = NULL, last_result = 'sent', sent_at = ? WHERE id = ?`, []any{now, id}
 	}
 	if _, err := tx.Exec(q, args...); err != nil {
-		return Pending{}, err
+		return Pending{}, false, err
 	}
 	res, err := tx.Exec(`INSERT INTO outbox (agent, text, after, created_at) VALUES (?, ?, ?, ?)`, agent, text, after, now)
 	if err != nil {
-		return Pending{}, err
+		return Pending{}, false, err
 	}
-	p := Pending{Text: text, After: after}
+	p = Pending{Text: text, After: after}
 	if p.ID, err = res.LastInsertId(); err != nil {
-		return Pending{}, err
+		return Pending{}, false, err
 	}
-	return p, tx.Commit()
+	return p, compacting, tx.Commit()
 }
+
+// CompactCommand is what a cron that compacts first sends ahead of its
+// message: both drivers take it as their agent's own /compact.
+const CompactCommand = "/compact"

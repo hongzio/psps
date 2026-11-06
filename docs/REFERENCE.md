@@ -722,6 +722,16 @@ the agent is busy.
 psps agent cron <id> --add "30 14 3 11 *" --once "deploy the release branch"
 ```
 
+A cron that compacts first (`--compact`, the web's Compact first, `"compact":
+true`) sends the agent `/compact` as each run goes, and its message only once
+the agent is idle after it, ahead of mail, todos and other crons, so nothing
+comes between the two. A run that comes due while its message waits on the
+`/compact` is folded into it. `--set N --no-compact` turns it off.
+
+```sh
+psps agent cron <id> --add @daily --compact "go over yesterday's alerts"
+```
+
 ## Teams
 
 A team is a named group of agents in the sidebar (`psps agent team <id>

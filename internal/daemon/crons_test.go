@@ -3,6 +3,7 @@ package daemon
 import (
 	"context"
 	"errors"
+	"slices"
 	"strings"
 	"syscall"
 	"testing"
@@ -250,5 +251,80 @@ func TestACronThatComesOnceIsRemovedAsItIsSent(t *testing.T) {
 	}
 	if _, err := m.store.Cron(a.ID, c.ID); !errors.Is(err, store.ErrNotFound) {
 		t.Fatalf("still there: %v", err)
+	}
+}
+
+// A cron that compacts first sends /compact as it comes, and its message
+// only once the agent is idle after it; a run that comes due meanwhile is
+// folded into it.
+func TestACronThatCompactsFirst(t *testing.T) {
+	e := newTestEnv(t)
+	m, stop := e.daemon()
+	defer stop()
+	a, _ := m.CreateAgent(context.Background(), api.CreateAgent{Isolation: "dev", Kind: driver.Codex, Prompt: "hi"})
+	e.waitFor("the first turn", func() bool { return e.hasAssistant(a.ID, "echo: hi") })
+	e.waitFor("idle", func() bool { return status(m, a.ID) == event.StatusIdle })
+
+	c, err := m.AddCron(a.ID, api.PutCron{Schedule: ptr("@every 5m"), Prompt: ptr("tick"), Compact: ptr(true)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !c.Compact {
+		t.Fatalf("%+v", c)
+	}
+	m.cronTick(*c.NextAt)
+	e.waitFor("the cron's message", func() bool { return e.hasAssistant(a.ID, "echo: "+cronLetter(c)) })
+	if got := users(e, a.ID); !slices.Equal(got, []string{"hi", "/compact", cronLetter(c)}) {
+		t.Fatalf("turns %q", got)
+	}
+	var compacted, before bool
+	for _, ev := range e.events(a.ID) {
+		compacted = compacted || ev.Kind == event.KindNotice && ev.Text == "context compacted"
+		if ev.Kind == event.KindUser && ev.Text == cronLetter(c) {
+			before = compacted
+		}
+	}
+	if !before {
+		t.Fatal("the message went before the conversation was compacted")
+	}
+	if !strings.Contains(cronLetter(c), "/compact") {
+		t.Fatalf("%q", cronLetter(c))
+	}
+	if c = cronOf(t, m, a.ID, c.ID); c.CompactedAt != nil || c.LastResult != "sent" || c.SentAt == nil {
+		t.Fatalf("%+v", c)
+	}
+
+	// Set to wait, it comes due again while its message waits on /compact:
+	// that run is folded into the one on its way.
+	e.waitFor("idle", func() bool { return status(m, a.ID) == event.StatusIdle })
+	if _, err := m.UpdateCron(a.ID, c.ID, api.PutCron{IfBusy: ptr(store.CronWait)}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := m.Message(a.ID, "hang"); err != nil {
+		t.Fatal(err)
+	}
+	e.waitFor("the hanging turn", func() bool { return status(m, a.ID) == event.StatusWorking })
+	m.cronTick(*c.NextAt)
+	if c = cronOf(t, m, a.ID, c.ID); c.WaitingSince == nil {
+		t.Fatalf("not waiting: %+v", c)
+	}
+	if err := syscall.Kill(agentPID(t, m, a.ID), syscall.SIGKILL); err != nil {
+		t.Fatal(err)
+	}
+	e.waitFor("the interruption", func() bool { return status(m, a.ID) == event.StatusInterrupted })
+	if err := m.Send(a.ID, "go on"); err != nil {
+		t.Fatal(err)
+	}
+	e.waitFor("the second /compact", func() bool { return cronOf(t, m, a.ID, c.ID).CompactedAt != nil || len(users(e, a.ID)) >= 7 })
+	if cc := cronOf(t, m, a.ID, c.ID); cc.CompactedAt != nil {
+		m.cronTick(cc.NextAt.Add(time.Second))
+		if cc = cronOf(t, m, a.ID, c.ID); cc.WaitingSince != nil {
+			t.Fatalf("a run during /compact waits on its own: %+v", cc)
+		}
+	}
+	e.waitFor("the second message", func() bool { return len(users(e, a.ID)) == 7 })
+	time.Sleep(300 * time.Millisecond)
+	if got := users(e, a.ID); !slices.Equal(got[3:], []string{"hang", "go on", "/compact", cronLetter(c)}) {
+		t.Fatalf("turns %q", got)
 	}
 }
