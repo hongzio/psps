@@ -184,6 +184,7 @@ func (m *Manager) Message(id, text string) (api.Sent, error) {
 	if shown(v) == shown(*field) {
 		return api.Sent{Done: what + " is already " + shown(v) + "."}, nil
 	}
+	was := *field
 	*field = v
 	if err := m.SetOptions(a.ID, o); err != nil {
 		return api.Sent{}, err
@@ -191,6 +192,11 @@ func (m *Manager) Message(id, text string) (api.Sent, error) {
 	when := "Codex uses it from the next turn."
 	if a.Kind == driver.Claude {
 		when = "Claude restarts with it when it is idle, with nothing in the background."
+		// Between ask and auto the running process switches.
+		live := func(s string) bool { return s == string(driver.ApprovalsAsk) || s == string(driver.ApprovalsAuto) }
+		if name == "approvals" && live(was) && live(v) {
+			when = "Claude switches to it now, in the turn it runs; should it refuse, it restarts with it when it is idle."
+		}
 	}
 	return api.Sent{Done: fmt.Sprintf("%s set to %s. %s", what, shown(v), when)}, nil
 }

@@ -123,6 +123,10 @@ type State struct {
 	// rewind, a message after a failed login). The caller does it when the
 	// agent is not busy.
 	Restart bool `json:"restart,omitempty"`
+	// Stale: the process runs on options other than the agent's, which only
+	// a new process takes up. The caller replaces it when it is idle with
+	// nothing in the background, which would end with it.
+	Stale bool `json:"stale,omitempty"`
 	// Queued user messages are waiting for the agent to be ready.
 	Queued int `json:"queued,omitempty"`
 	// Background is how many tasks the process runs in the background,

@@ -521,11 +521,12 @@ func (r *runtime) freeLocked(st driver.State) bool {
 }
 
 // envRestartDue is whether the process is to be replaced now for a new
-// environment or new options: not while it runs tasks in the background,
-// which would die with it. Until they end it goes on with the environment it has, taking
-// turns as before; one that never ends keeps it.
+// environment or options it runs without (State's Stale): not while it
+// runs tasks in the background, which would die with it. Until they end it
+// goes on with what it has, taking turns as before; one that never ends
+// keeps it.
 func (r *runtime) envRestartDue(st driver.State) bool {
-	return r.restartWhenIdle && st.Background == 0
+	return (r.restartWhenIdle || st.Stale) && st.Background == 0
 }
 
 // deliverMailLocked moves the oldest mail from the inbox to the outbox,
@@ -611,11 +612,9 @@ func (r *runtime) setOptions(o driver.Options) {
 		return
 	}
 	r.agent.Options = o
+	// Claude reads its options as flags as it starts: what its process
+	// cannot switch to while it runs, the driver says is stale.
 	r.drv.SetOptions(o)
-	// Claude reads its options as flags as it starts.
-	if r.agent.Kind == driver.Claude {
-		r.restartWhenIdle = true
-	}
 	r.kickLocked()
 }
 

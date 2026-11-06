@@ -24,34 +24,38 @@ func TestANewEnvironmentWaitsForWhatRunsInTheBackground(t *testing.T) {
 }
 
 // Claude's new options wait for what its process runs in the background,
-// as a new environment does; Codex's reach its next turn, and options
-// saved as they were replace nothing.
+// as a new environment does, but for an approvals mode it switches to
+// while it runs; Codex's reach its next turn, and options saved as they were
+// replace nothing.
 func TestNewOptionsWaitForWhatRunsInTheBackground(t *testing.T) {
 	for _, c := range []struct {
 		kind    driver.Kind
-		o       driver.Options
+		was, o  driver.Options
 		replace bool
 	}{
-		{driver.Claude, driver.Options{Approvals: driver.ApprovalsAuto, Effort: "high"}, true},
-		{driver.Claude, driver.Options{Approvals: driver.ApprovalsAuto}, false},
-		{driver.Codex, driver.Options{Approvals: driver.ApprovalsAuto, Effort: "high"}, false},
+		{driver.Claude, driver.Options{Approvals: driver.ApprovalsAuto}, driver.Options{Approvals: driver.ApprovalsAuto, Effort: "high"}, true},
+		{driver.Claude, driver.Options{Approvals: driver.ApprovalsAuto}, driver.Options{Approvals: driver.ApprovalsAuto}, false},
+		{driver.Claude, driver.Options{Approvals: driver.ApprovalsAsk}, driver.Options{Approvals: driver.ApprovalsAuto}, false},
+		{driver.Claude, driver.Options{Approvals: driver.ApprovalsAsk}, driver.Options{Approvals: driver.ApprovalsNever}, true},
+		{driver.Codex, driver.Options{Approvals: driver.ApprovalsAuto}, driver.Options{Approvals: driver.ApprovalsAuto, Effort: "high"}, false},
 	} {
-		was := driver.Options{Approvals: driver.ApprovalsAuto}
-		d, err := driver.New(c.kind, "a1", "", was)
+		d, err := driver.New(c.kind, "a1", "", c.was)
 		if err != nil {
 			t.Fatal(err)
 		}
-		d.Observe(shimproto.Record{Dir: shimproto.DirSys, Sys: &shimproto.Sys{Kind: shimproto.SysStarted, PID: 1}})
-		r := &runtime{agent: store.Agent{ID: "a1", Kind: c.kind, Options: was}, drv: d}
+		d.Observe(shimproto.Record{Dir: shimproto.DirSys, Sys: &shimproto.Sys{Kind: shimproto.SysStarted, PID: 1, Argv: d.Command()}})
+		r := &runtime{agent: store.Agent{ID: "a1", Kind: c.kind, Options: c.was}, drv: d}
 		r.setOptions(c.o)
 		st := r.drv.State()
 		if st.Restart {
 			t.Fatalf("%s %+v: replaced at once, whatever runs in the background", c.kind, c.o)
 		}
-		if busy := (driver.State{Alive: true, Background: 1}); r.envRestartDue(busy) {
+		busy := st
+		busy.Background = 1
+		if r.envRestartDue(busy) {
 			t.Fatalf("%s %+v: replaced with a task in the background", c.kind, c.o)
 		}
-		if got := r.envRestartDue(driver.State{Alive: true}); got != c.replace {
+		if got := r.envRestartDue(st); got != c.replace {
 			t.Fatalf("%s %+v: replaced with nothing in the background = %v, want %v", c.kind, c.o, got, c.replace)
 		}
 	}

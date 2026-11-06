@@ -305,7 +305,10 @@ one to ask, so it does not.
   starts a process that resumes the same session.
 - An agent's process lives from turn to turn. psps replaces it, resuming the
   same session, when what it starts with changes: its options, a rewind, or
-  its isolation's services, login or CLI. That waits for an idle moment, and a
+  its isolation's services, login or CLI. Claude's approvals between ask and
+  auto are the exception: the running process is told the new mode and takes
+  it from its next tool call, in the turn it is in (a notice says so); one it
+  refuses waits for a new process like the rest. That waits for an idle moment, and a
   change of the isolation's waits too until nothing Claude started runs in the
   background (a shell, a subagent), which would end with the process.
 - An isolation is an ID to psps (`7f3a9c1b`); its name is what people call
