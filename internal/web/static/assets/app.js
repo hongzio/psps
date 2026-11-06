@@ -1684,7 +1684,7 @@ async function editTeam(t) {
 
 const score2 = (v) => String(Math.round(v * 100) / 100)
 const nsToMs = (ns) => (ns || 0) / 1e6
-function clock(ms) {
+function evClock(ms) {
   const s = Math.max(0, Math.round(ms / 1000))
   const m = Math.floor(s / 60)
   if (m >= 60) return `${Math.floor(m / 60)}h ${String(m % 60).padStart(2, '0')}m`
@@ -1716,8 +1716,8 @@ function evalState(run) {
     return {
       tone: slow ? 'warn' : 'live', mark: 'pulse', elapsed: el, usual,
       pct: usual ? Math.min(100, (el / usual) * 100) : null,
-      text: slow ? `Eval #${ev.number} running · ${clock(el)}, usually ~${clock(usual)}`
-        : `Eval #${ev.number} running${on} · ${clock(el)}` + (usual ? ` of ~${clock(usual)}` : ''),
+      text: slow ? `Eval #${ev.number} running · ${evClock(el)}, usually ~${evClock(usual)}`
+        : `Eval #${ev.number} running${on} · ${evClock(el)}` + (usual ? ` of ~${evClock(usual)}` : ''),
     }
   }
   if (ev.state === 'queued') {
@@ -1727,7 +1727,7 @@ function evalState(run) {
     const el = Date.now() - new Date(ev.since).getTime()
     return el < DUE_AFTER
       ? { tone: 'live', mark: 'ring', text: `Round ended · eval #${ev.number} starting` }
-      : { tone: 'warn', mark: 'dot', due: true, text: `Round ended ${clock(el)} ago, eval not started` }
+      : { tone: 'warn', mark: 'dot', due: true, text: `Round ended ${evClock(el)} ago, eval not started` }
   }
   // Nothing under way: a result just told stands out for a while.
   if (last && Date.now() - (new Date(last.at).getTime() + nsToMs(last.took)) < EVAL_FRESH) {
@@ -1775,11 +1775,11 @@ function evalSection(t, run) {
         h('span', { class: `ev-mark ${st?.mark || 'ring'}`, 'aria-hidden': 'true' }),
         h('strong', null, ev.state === 'due' ? 'Round ended, no eval' : `#${ev.number} ${ev.state}`),
         ev.why ? h('span', { class: 'note' }, `as ${ev.why}`) : null,
-        st?.elapsed != null ? h('span', { class: 'eval-clock' }, clock(st.elapsed)) : null),
+        st?.elapsed != null ? h('span', { class: 'eval-clock' }, evClock(st.elapsed)) : null),
       st?.elapsed != null ? h('div', { class: `ev-bar big ${st.tone}` + (st.pct == null ? ' unknown' : '') }, h('span', { style: `width: ${st.pct ?? 100}%` })) : null,
       h('div', { class: 'eval-now-meta' },
-        h('span', null, ev.state === 'due' ? `the round ended ${clock(Date.now() - new Date(ev.since).getTime())} ago` : ev.started ? `started ${new Date(ev.started).toLocaleTimeString()}` : ev.place ? `${nth(ev.place)} in line on ${ev.runner}` : 'waiting for its runner'),
-        h('span', null, [st?.usual ? `usually ~${clock(st.usual)} (the last 5)` : null, ev.limit ? `limit ${clock(nsToMs(ev.limit))}` : null].filter(Boolean).join(' · '))),
+        h('span', null, ev.state === 'due' ? `the round ended ${evClock(Date.now() - new Date(ev.since).getTime())} ago` : ev.started ? `started ${new Date(ev.started).toLocaleTimeString()}` : ev.place ? `${nth(ev.place)} in line on ${ev.runner}` : 'waiting for its runner'),
+        h('span', null, [st?.usual ? `usually ~${evClock(st.usual)} (the last 5)` : null, ev.limit ? `limit ${evClock(nsToMs(ev.limit))}` : null].filter(Boolean).join(' · '))),
       ev.note ? h('div', { class: 'eval-now-meta' }, h('span', null, ev.note)) : null,
       h('div', { class: 'eval-now-actions' },
         ev.stoppable ? stop : null,
@@ -1799,7 +1799,7 @@ function evalSection(t, run) {
           h('span', { class: 'muted' }, String(e.id)),
           h('span', null, new Date(e.at).toLocaleString(undefined, { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })),
           h('span', { class: 'muted ellipsis' }, e.why),
-          h('span', { class: 'muted' }, clock(nsToMs(e.took))),
+          h('span', { class: 'muted' }, evClock(nsToMs(e.took))),
           h('span', { class: 'score' + (run.best?.id === e.id ? ' best' : '') }, e.score != null ? score2(e.score) + (run.best?.id === e.id ? ' ★' : '') : e.not_run ? 'not run' : 'no score'))))) : null)
 }
 
