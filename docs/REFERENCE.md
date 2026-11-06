@@ -1016,6 +1016,7 @@ simulation, a benchmark, a build in a clean room.
 ```sh
 psps env add job sim --isolation sim --command '/home/agent/sim/run'
 psps env edit job sim --minutes 120 --memory 8G --max-live 3 --max-mb 1000
+psps env edit job sim --about 'Replays the strategy in the copy on market tapes, on AWS Batch. Options: {"mode":"quick"|"full"}. Result: {"pnl":…,"fills":…}'
 psps iso expose dev job sim          # dev's agents may ask for jobs on sim
 psps job run sim --from dev --options '{"mode":"quick"}' --wait /home/agent/work/x
 psps job ls                          # every job, newest first, kept 14 days
@@ -1029,7 +1030,11 @@ A runner's terms: `--isolation` (one), `--command` (a shell command),
 starts, `--max-live` (2) jobs at once with `--max-queued` (20) more waiting,
 psps's own first and never refused, and the copy's limits, `--max-mb` (500)
 and `--max-files` (50000), and the names it leaves out wherever they are,
-`--exclude` (`.git`).
+`--exclude` (`.git`). `--about` (at most 4 KiB, `""` clears it) is what the
+agents it is open to read of it in their listing: what it does, the options it
+takes, what its result holds. They never see its command, so without one a
+runner is a name and its limits to them, and an agent that wants what it does
+(a simulator with access its own isolation lacks) may not know it is there.
 
 For each job psps readies `/var/lib/psps-job/ID` in the runner's isolation,
 root's, which the agent user may pass through but not list or change, and a

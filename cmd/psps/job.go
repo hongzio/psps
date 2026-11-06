@@ -196,7 +196,9 @@ psps's own first, up to max_queued (psps's own always wait).
 
   psps env add job sim --isolation sim --command './simulate' [--minutes 60]
       [--memory 4G] [--pids 512] [--max-live 2] [--max-queued 20]
-      [--max-mb 500] [--max-files 50000] [--exclude .git]
+      [--max-mb 500] [--max-files 50000] [--exclude .git] [--about TEXT]
+      --about: what its agents read of it (what it does, its options, its
+      result); its command they never see
   psps iso expose dev job sim[,other] [--default-env sim]
       dev's agents may ask for jobs on those runners
 

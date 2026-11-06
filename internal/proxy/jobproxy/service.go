@@ -59,6 +59,8 @@ const (
 	OptionsMax = 16 << 10
 	// ResultMax is the most a job's result.json may be.
 	ResultMax = 1 << 20
+	// AboutMax is the most a runner's about may be.
+	AboutMax = 4 << 10
 )
 
 // DefaultExclude are the names a copy leaves out when the runner does not
@@ -77,6 +79,10 @@ type Env struct {
 	MaxMB     int      `json:"max_mb"`
 	MaxFiles  int      `json:"max_files"`
 	Exclude   []string `json:"exclude"`
+	// About is the operator's word to the agents it is open to: what it does,
+	// the options it takes and what its result holds. Its command is not
+	// theirs to see.
+	About string `json:"about,omitempty"`
 }
 
 // Iso is the runner's isolation, by ID; "" if it has none.
@@ -132,6 +138,8 @@ func (Service) Fields() []proxy.Field {
 			Help: fmt.Sprintf("the most a copy's files may be, in MiB (default %d)", DefaultMaxMB)},
 		{Key: "max_files", Kind: proxy.Int, Flag: "max-files", Metavar: "N",
 			Help: fmt.Sprintf("the most entries a copy may have (default %d)", DefaultMaxFiles)},
+		{Key: "about", Kind: proxy.String, Flag: "about", Metavar: "TEXT",
+			Help: fmt.Sprintf("what the agents it is open to are told of it, in its listing: what it does, its options, what its result holds (at most %d bytes; \"\" clears it)", AboutMax)},
 		{Key: "exclude", Kind: proxy.List, Flag: "exclude", Clear: "clear-exclude", Metavar: "NAME",
 			Help: "a name a copy leaves out wherever it is in the tree (repeat; replaces the list; default " + strings.Join(DefaultExclude, ", ") + ")"},
 	}
@@ -180,6 +188,11 @@ func (Service) Normalize(name string, env map[string]any) ([]string, error) {
 		return nil, fmt.Errorf("--memory: %w", err)
 	}
 	env["memory"] = mem
+	if about, _ := env["about"].(string); about == "" {
+		delete(env, "about")
+	} else if len(about) > AboutMax {
+		return nil, fmt.Errorf("--about is at most %d bytes, not %d", AboutMax, len(about))
+	}
 	for _, b := range []struct {
 		key, flag   string
 		def, lo, hi int

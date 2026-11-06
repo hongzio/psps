@@ -950,7 +950,7 @@ func (m *Manager) jobRoutes(mux *http.ServeMux, iso string) {
 			if err != nil {
 				continue
 			}
-			rv := api.Runner{Name: name, Default: name == x.Default, Minutes: e.Minutes, Memory: e.Memory, Pids: e.Pids, MaxLive: e.MaxLive,
+			rv := api.Runner{Name: name, Default: name == x.Default, About: e.About, Minutes: e.Minutes, Memory: e.Memory, Pids: e.Pids, MaxLive: e.MaxLive,
 				MaxQueued: e.MaxQueued, MaxMB: e.MaxMB, MaxFiles: e.MaxFiles, Exclude: e.Exclude}
 			for _, j := range live {
 				if j.Runner != name {
