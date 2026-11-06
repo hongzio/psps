@@ -608,6 +608,11 @@ func (m *Manager) envView(e store.Env) api.Env {
 	}
 	ids, _ := m.store.Exposing(e.Service, e.Name)
 	v.ExposedTo = m.isoNames(ids)
+	if svc, err := m.registry().Get(e.Service); err == nil {
+		if st, ok := svc.(proxy.Statuser); ok {
+			v.Status = st.Status(e.Name, e.Config)
+		}
+	}
 	return v
 }
 

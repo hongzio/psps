@@ -2,7 +2,8 @@
 // Code and Codex find them in an isolation. It is not a proxy either; there
 // is no port and nothing held back. Each env is one skill, kept on the Mac
 // in ~/.config/psps/skills/<env>, copied there from the folder it is added
-// from, after it is checked (format.go). An isolation that has it exposed
+// from or fetched from a public GitHub repository (github.go), after it is
+// checked (format.go). An isolation that has it exposed
 // gets each skill at ~/.claude/skills/psps-skill-<env> and
 // ~/.codex/skills/psps-skill-<env>, written by `psps-shim sync` like every
 // file psps manages there; both CLIs know a skill by the name in its
@@ -21,6 +22,7 @@ import (
 	"fmt"
 	"io/fs"
 	"net"
+	"net/http"
 	"os"
 	"path"
 	"path/filepath"
@@ -42,22 +44,33 @@ var roots = []string{"/home/agent/.claude/skills", "/home/agent/.codex/skills"}
 const prefix = "psps-skill-"
 
 // Service is skill. Dir is where the skills are kept and Protected what a
-// skill is never copied from; empty, they are psps's own.
+// skill is never copied from; empty, they are psps's own. API, Raw and
+// Client are GitHub's, for tests; empty, the real ones.
 type Service struct {
 	Dir       string
 	Protected []string
+	API, Raw  string
+	Client    *http.Client
 }
 
 func (Service) Name() string { return Name }
 func (Service) Ports() []int { return nil }
 func (Service) Summary() string {
-	return "a skill of your own (a folder with SKILL.md), checked and kept in ~/.config/psps/skills, for Claude Code and Codex in the isolation"
+	return "a skill of your own (a folder with SKILL.md, on the Mac or in a public GitHub repository), checked and kept in ~/.config/psps/skills, for Claude Code and Codex in the isolation"
 }
 
 func (Service) Fields() []proxy.Field {
 	return []proxy.Field{
 		{Key: "path", Kind: proxy.String, Flag: "path", Metavar: "DIR", Path: true,
 			Help: "the skill's folder, SKILL.md at its top, to copy in (replacing what is kept); left out, the one already in ~/.config/psps/skills/NAME is checked"},
+		{Key: "github", Kind: proxy.String, Flag: "github", Metavar: "OWNER/REPO[/PATH]", Lookup: true, LookupWith: []string{"ref"},
+			Help: "instead of --path: a public GitHub repository to fetch the skill from, as owner/repo (the skill called NAME in it), owner/repo/PATH (its folder) or a github.com address"},
+		{Key: "ref", Kind: proxy.String, Flag: "ref", Metavar: "REF",
+			Help: "with --github: the branch, tag or commit (default: the repository's default branch); on a skill from GitHub, follow REF instead and fetch it now"},
+		{Key: "update", Kind: proxy.Bool, Flag: "update",
+			Help: "on a skill from GitHub: fetch what its ref has now, checked, in place of what is kept"},
+		{Key: "force", Kind: proxy.Bool, Flag: "force",
+			Help: "with --update or --ref: replace the kept copy even though it was changed on the Mac since it was fetched"},
 	}
 }
 
@@ -79,36 +92,93 @@ func (s Service) protected() []string {
 	return []string{p.Config, p.Data, p.State}
 }
 
-// Normalize adds the skill: copied in from path when one is given, checked
-// where it is kept when not. What is stored is where it came from and what
-// it says it is for; the skill itself is the folder.
+// Normalize adds the skill: copied in from path or fetched from GitHub
+// when one is given, fetched again from where it came from on --update,
+// checked where it is kept when neither. What is stored is where it came
+// from and what it says it is for; the skill itself is the folder.
 func (s Service) Normalize(name string, env map[string]any) ([]string, error) {
 	if err := CheckName(name); err != nil {
 		return nil, err
 	}
 	src := strings.TrimSpace(proxy.StringOr(env, "path", ""))
-	delete(env, "path")
+	gh := strings.TrimSpace(proxy.StringOr(env, "github", ""))
+	ref := strings.TrimSpace(proxy.StringOr(env, "ref", ""))
+	update, force := proxy.BoolOr(env, "update", false), proxy.BoolOr(env, "force", false)
+	for _, k := range []string{"path", "github", "ref", "update", "force"} {
+		delete(env, k)
+	}
+	origin, fromGitHub := originOf(env)
+	ctx, cancel := context.WithTimeout(context.Background(), fetchTimeout)
+	defer cancel()
 	var (
-		sk  Skill
-		err error
+		sk       Skill
+		warnings []string
+		err      error
 	)
-	if src != "" {
+	switch {
+	case src != "" && gh != "":
+		return nil, proxy.Deny("give --path or --github, not both: they are two places the skill could come from")
+	case src != "":
+		if ref != "" || update {
+			return nil, proxy.Deny("--ref and --update are for a skill from GitHub; --path copies the folder as it is now")
+		}
 		if sk, err = s.Import(src, name); err != nil {
 			return nil, err
 		}
 		env["source"] = sk.source
-	} else {
+		delete(env, "origin")
+		warnings = sk.Warnings
+	case gh != "":
+		sp, err := ParseSpec(gh)
+		if err != nil {
+			return nil, err
+		}
+		if sk, origin, warnings, err = s.fetch(ctx, name, sp, ref); err != nil {
+			return nil, err
+		}
+		if err := s.install(sk, name); err != nil {
+			return nil, err
+		}
+		env["origin"] = origin.env()
+		delete(env, "source")
+	case update || ref != "":
+		if !fromGitHub {
+			return nil, proxy.Deny("%s was not fetched from GitHub, so there is nothing to update it from: give --github OWNER/REPO, or --path to copy a folder in again", name)
+		}
+		if !force && s.changedHere(name, origin) {
+			return nil, proxy.Deny("%s was changed in %s since it was fetched; updating replaces that change: give --force to replace it", name, filepath.Join(s.dir(), name))
+		}
+		sp := Spec{Repo: origin.Repo, Ref: origin.Ref, Path: origin.Path, Exact: true}
+		if sk, origin, warnings, err = s.fetch(ctx, name, sp, ref); err != nil {
+			return nil, fmt.Errorf("%s was left as it was: %w", name, err)
+		}
+		if err := s.install(sk, name); err != nil {
+			return nil, err
+		}
+		env["origin"] = origin.env()
+	default:
+		if force {
+			return nil, proxy.Deny("--force goes with --update or --ref")
+		}
 		dir := filepath.Join(s.dir(), name)
 		if _, err := os.Lstat(dir); errors.Is(err, fs.ErrNotExist) {
-			return nil, proxy.Deny("there is no skill %s in %s yet: give --path, the skill's folder to copy in", name, s.dir())
+			return nil, proxy.Deny("there is no skill %s in %s yet: give --path, the skill's folder to copy in, or --github, a repository to fetch it from", name, s.dir())
 		}
 		if sk, err = Load(dir, name); err != nil {
 			return nil, err
 		}
+		warnings = sk.Warnings
 	}
 	env["description"] = sk.Description
 	env["files"] = len(sk.Files)
-	return sk.Warnings, nil
+	forget(filepath.Join(s.dir(), name))
+	return warnings, nil
+}
+
+// changedHere is whether the kept copy is not what was fetched.
+func (s Service) changedHere(name string, o Origin) bool {
+	sk, err := Load(filepath.Join(s.dir(), name), name)
+	return err == nil && o.Digest != "" && digest(sk.Files) != o.Digest
 }
 
 // Import checks the skill in src and, if it passes, makes it the one kept
@@ -123,33 +193,38 @@ func (s Service) Import(src, name string) (Skill, error) {
 		return sk, err
 	}
 	sk.source = from
-	dest := filepath.Join(s.dir(), name)
-	if real(dest) == from {
+	if real(filepath.Join(s.dir(), name)) == from {
 		return sk, nil
 	}
+	return sk, s.install(sk, name)
+}
+
+// install makes sk, already checked, the one kept as name, all at once.
+func (s Service) install(sk Skill, name string) error {
+	dest := filepath.Join(s.dir(), name)
 	if err := os.MkdirAll(s.dir(), 0o700); err != nil {
-		return sk, err
+		return err
 	}
 	tmp, err := os.MkdirTemp(s.dir(), ".add-"+name+"-")
 	if err != nil {
-		return sk, err
+		return err
 	}
 	defer os.RemoveAll(tmp)
 	os.Chmod(tmp, 0o755)
 	for _, f := range sk.Files {
 		p := filepath.Join(tmp, filepath.FromSlash(f.Path))
 		if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
-			return sk, err
+			return err
 		}
 		if err := os.WriteFile(p, f.Content, f.mode()); err != nil {
-			return sk, err
+			return err
 		}
 	}
 	old := ""
 	if _, err := os.Lstat(dest); err == nil {
 		old = tmp + ".old"
 		if err := os.Rename(dest, old); err != nil {
-			return sk, err
+			return err
 		}
 		defer os.RemoveAll(old)
 	}
@@ -157,9 +232,9 @@ func (s Service) Import(src, name string) (Skill, error) {
 		if old != "" {
 			os.Rename(old, dest)
 		}
-		return sk, err
+		return err
 	}
-	return sk, nil
+	return nil
 }
 
 func (f File) mode() fs.FileMode {
@@ -272,7 +347,7 @@ func (s Service) Deleted(name string) error {
 	return os.RemoveAll(filepath.Join(s.dir(), name))
 }
 
-func (s Service) Check(_ context.Context, name string, _ json.RawMessage, _ *creds.Store) (string, error) {
+func (s Service) Check(ctx context.Context, name string, cfg json.RawMessage, _ *creds.Store) (string, error) {
 	dir := filepath.Join(s.dir(), name)
 	sk, err := Load(dir, name)
 	if err != nil {
@@ -281,6 +356,11 @@ func (s Service) Check(_ context.Context, name string, _ json.RawMessage, _ *cre
 	out := fmt.Sprintf("%s: %d file%s, %s, kept in %s: %s", name, len(sk.Files), map[bool]string{true: "", false: "s"}[len(sk.Files) == 1], size(sk.Size()), dir, sk.Description)
 	for _, w := range sk.Warnings {
 		out += "\nwarning: " + w
+	}
+	var env map[string]any
+	json.Unmarshal(cfg, &env)
+	if o, ok := originOf(env); ok {
+		out += "\n" + s.look(ctx, name, o).report(name, o)
 	}
 	return out, nil
 }

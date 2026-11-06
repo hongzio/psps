@@ -1139,6 +1139,39 @@ psps env check skill pdf                        # what is kept, and anything wor
 psps env rm skill pdf                           # gone from the Mac and every isolation
 ```
 
+Or fetch one from a public GitHub repository, as `npx skills add` does:
+
+```sh
+psps env add skill pdf --github anthropics/skills          # the skill called pdf in it, wherever it is
+psps env add skill pdf --github anthropics/skills/skills/pdf   # ...or its folder, named
+psps env add skill pdf --github https://github.com/anthropics/skills/tree/main/skills/pdf
+psps env add skill pdf --github anthropics/skills --ref v1.2.0   # a tag or commit stays put
+psps env choices skill pdf github --github anthropics/skills     # the skills it has
+psps env check skill pdf                       # is the repository ahead of what is kept?
+psps env edit skill pdf --update               # take what its ref has now
+psps env edit skill pdf --ref main             # follow another ref, fetched now
+```
+
+Without a folder, a repository is searched for the skill whose `name` is
+NAME: its top folder, `skills/`, `.claude/skills`, `.codex/skills`,
+`.agents/skills`, then up to 4 folders down (`node_modules` aside); a skill
+there not by that name lists the names it has. The daemon fetches it over
+HTTPS (the GitHub API's tarball, no `git` needed), checks it as it would a
+folder, links refused, and keeps it in the same place; the isolation never
+reaches GitHub for it. Only public repositories, and GitHub's limit of 60
+unauthenticated requests an hour from the Mac applies.
+
+The env keeps where it came from: the repository, the ref it follows, the
+folder, the commit it was fetched at and that folder's git tree. Nothing is
+updated by itself, since a skill's scripts run as the agent: `psps env check`
+(and the web, about once a day while it lists skills) compares the folder's
+tree at what the ref names now, so a commit elsewhere in the repository is
+no update, and lists the files an update changes. `--update` fetches and
+checks it, and a skill that no longer passes is left as it was. A kept copy
+edited on the Mac since it was fetched is not replaced without `--force`.
+A ref that is a commit is pinned: there is nothing to follow. `--path`
+copies a folder in again and forgets the GitHub source.
+
 psps keeps its own copy in `~/.config/psps/skills/NAME`; the folder it came
 from can move or change without touching what agents have. Both CLIs drop a
 skill they cannot read without telling the agent, so a skill is checked as it

@@ -4121,8 +4121,16 @@ function renderServices() {
   split(page, chosen, 'Services', grouped(S.services).map((g) => [
     h('div', { class: 'master-group label' }, g.name),
     g.services.map((s) => masterItem(svcHash(s.name), s === shown,
-      h('span', { class: 'item-line' }, h('span', { class: 'item-name' }, s.name), h('span', { class: 'item-side' }, serviceCount(s))))),
+      h('span', { class: 'item-line' }, h('span', { class: 'item-name' }, s.name), h('span', { class: 'item-side' }, serviceCount(s))),
+      serviceAttention(s))),
   ]), serviceDetail(shown))
+}
+
+// serviceAttention is what of a service's envs waits on the operator
+// (skills with an update to review), under its name in the list.
+function serviceAttention(s) {
+  const n = S.envs.filter((e) => e.service === s.name && e.status?.action === 'update').length
+  return n ? h('span', { class: 'item-sub warn' }, n === 1 ? '1 update available' : `${n} updates available`) : null
 }
 
 // serviceCount is what a service has defined: how many environments, or
@@ -4142,9 +4150,10 @@ function serviceDetail(s) {
       h('div', { class: 'grow' }, h('div', { class: 'label' }, SERVICE_GROUPS[serviceGroup(s)].name), h('h2', null, s.name)),
       s.fields?.length && S.openForm !== key ? h('button', { class: 'btn primary', onclick: () => openForm(key) }, '+ New environment') : null),
     h('p', { class: 'lead' }, cap(s.summary) + '.'),
-    S.openForm === key ? block('New environment', envForm(s, null)) : null,
+    S.openForm === key ? block('New environment', s.name === 'skill' ? skillForm(s, null) : envForm(s, null)) : null,
     s.fields?.length
-      ? block(`Environments · ${envs.length}`, envs.length ? envs.map((e) => envCard(s, e)) : h('p', { class: 'note' }, 'None yet: an isolation turns this service on with one.'))
+      ? block(`Environments · ${envs.length}`, s.name === 'skill' ? skillChecked(s, envs) : null,
+        envs.length ? envs.map((e) => envCard(s, e)) : h('p', { class: 'note' }, 'None yet: an isolation turns this service on with one.'))
       : h('p', { class: 'note' }, 'Nothing to define: turn it on for an isolation.'),
     block('In isolations', serviceUse(s)),
   ]
@@ -4175,7 +4184,8 @@ function secretChip(s, e) {
 function envCard(s, e) {
   const k = (what) => `${what}:${s.name}:${e.name}`
   let open = null
-  if (S.openForm === k('edit')) open = envForm(s, e)
+  if (S.openForm === k('edit')) open = s.name === 'skill' ? skillForm(s, e) : envForm(s, e)
+  else if (S.openForm === k('review') && S.checkOut) open = skillReview(s, e)
   else if (S.openForm === k('secret')) open = secretForm(s, e)
   else if (S.openForm === k('login') && S.login) open = loginForm(s, e)
   else if (S.openForm === k('check') && S.checkOut) {
@@ -4185,12 +4195,13 @@ function envCard(s, e) {
   }
   return h('div', { class: 'env-card' },
     h('div', { class: 'env-head' },
-      h('strong', null, e.name), secretChip(s, e),
+      h('strong', null, e.name), secretChip(s, e), statusChips(e),
       e.exposed_to?.length
         ? [h('span', { class: 'note' }, 'on for'), e.exposed_to.map((n) => navLink(isoHash(n, 'services'), 'chip accent', n))]
         : h('span', { class: 'note' }, 'not on for any isolation')),
-    envConfig(s, e.config),
+    s.name === 'skill' ? skillConfig(e) : envConfig(s, e.config),
     open || h('div', { class: 'actions' },
+      e.status?.action === 'update' ? h('button', { class: 'btn primary', onclick: () => checkEnv(s, e, k('review')) }, 'Review update') : null,
       h('button', { class: 'btn', onclick: () => openForm(k('edit')) }, 'Edit'),
       s.secrets?.length ? h('button', {
         class: 'btn', onclick: () => s.login ? startLogin(s, e, k('login')) : openForm(k('secret')),
@@ -4364,6 +4375,236 @@ function loginForm(s, e) {
     h('p', null, '2. The page it sends you to will not load. Copy that page’s address and paste it here:'),
     h('div', { class: 'field' }, pasted), err,
     h('div', { class: 'actions' }, finish, h('button', { class: 'btn', onclick: closeForm }, 'Cancel')))
+}
+
+// statusChips is what a service knows of an env beyond its definition (a
+// skill from GitHub: up to date, an update to review, changed on the Mac).
+const CHIP_KIND = { ok: ' ok', warn: ' blocked', error: ' error', plain: '' }
+function statusChips(e) {
+  return (e.status?.chips || []).map((c) => h('span', { class: 'chip' + (CHIP_KIND[c.kind] ?? '') }, c.text))
+}
+
+// ---- skill: its own form and card. A skill comes from a folder of the
+// Mac's or a public GitHub repository; one from GitHub says whether the
+// repository has moved on since, and is updated only when asked.
+
+const skillOrigin = (e) => e?.config?.origin || null
+const skillWhere = (o) => o.path ? `${o.repo}/${o.path}` : o.repo
+const shortSha = (sha) => (sha || '').slice(0, 7)
+const githubURL = (o) => `https://github.com/${o.repo}/tree/${encodeURIComponent(o.ref).replaceAll('%2F', '/')}${o.path ? '/' + o.path : ''}`
+
+function ago(t) {
+  const s = Math.max(0, (Date.now() - new Date(t).getTime()) / 1000)
+  if (s < 90) return 'just now'
+  if (s < 5400) return `${Math.round(s / 60)} minutes ago`
+  if (s < 129600) return `${Math.round(s / 3600)} hours ago`
+  return `${Math.round(s / 86400)} days ago`
+}
+
+// skillChecked heads the skills' list when some come from GitHub: when
+// they were last looked at, and a button to look again. A look the daemon
+// started for this listing shows a moment later.
+function skillChecked(s, envs) {
+  const gh = envs.filter(skillOrigin)
+  if (!gh.length) return null
+  const times = gh.map((e) => e.status?.checked_at).filter(Boolean).map((t) => new Date(t).getTime())
+  if (times.length < gh.length && !S.skillRelook) {
+    S.skillRelook = setTimeout(async () => { await guarded(refreshServices); S.skillRelook = null }, 4000)
+  }
+  const btn = h('button', { class: 'btn small' }, 'Check now')
+  btn.addEventListener('click', async () => {
+    btn.disabled = true
+    btn.textContent = 'Checking…'
+    await guarded(async () => {
+      for (const e of gh) await api('POST', envPath(s.name, e.name) + '/check')
+      await refreshServices()
+      renderServices()
+      toast(`Checked ${plural(gh.length, 'skill')} against GitHub`)
+    })
+    btn.disabled = false
+    btn.textContent = 'Check now'
+  })
+  return h('div', { class: 'skill-checked' },
+    h('span', { class: 'note' }, times.length ? `GitHub sources checked ${ago(Math.min(...times))}` : 'Checking GitHub sources…'), btn)
+}
+
+function skillConfig(e) {
+  const c = e.config || {}
+  const o = skillOrigin(e)
+  const mono = (t) => h('code', null, t)
+  return kv([
+    c.description ? ['description', c.description] : null,
+    o ? ['from', h('a', { href: githubURL(o), target: '_blank', rel: 'noopener' }, mono(skillWhere(o)))] : null,
+    o ? ['ref', [mono(o.ref), h('span', { class: 'note' }, /^[0-9a-f]{7,40}$/i.test(o.ref) && o.commit.startsWith(o.ref.toLowerCase()) ? ' · a commit, so it stays put' : ' · followed')]] : null,
+    o ? ['kept', [mono(shortSha(o.commit)), h('span', { class: 'note' }, ` · ${plural(c.files || 0, 'file')} · fetched ${new Date(o.fetched_at).toLocaleDateString(undefined, { month: 'short', day: 'numeric' })}`)]] : null,
+    !o && c.source ? ['source', [mono(c.source), h('span', { class: 'note' }, ' · a folder on the Mac; Edit copies it in again')]] : null,
+    !o ? ['files', String(c.files ?? '?')] : null,
+    e.status?.detail ? [e.status.action === 'update' ? 'update' : 'source', e.status.detail] : null,
+  ])
+}
+
+// skillReview is the check's account of an update (what changes, file by
+// file), and taking it: with --force when the kept copy was changed on the
+// Mac since, which the operator is asked about first.
+function skillReview(s, e) {
+  const out = S.checkOut
+  const here = (e.status?.chips || []).some((c) => c.text === 'changed on the Mac')
+  const err = h('p', { class: 'form-error' })
+  const take = async (force) => {
+    err.textContent = ''
+    try {
+      const v = await api('PATCH', envPath(s.name, e.name), { set: force ? { update: true, force: true } : { update: true }, clear: [] })
+      S.openForm = null
+      S.checkOut = null
+      const o = skillOrigin(v)
+      toast([`${s.name}/${e.name} updated to ${shortSha(o?.commit)}` + (v.exposed_to?.length ? ` — ${v.exposed_to.join(', ')} have it` : ''), ...(v.warnings || [])].join(' — '))
+      await refreshServices()
+      renderServices()
+    } catch (x) {
+      if (x instanceof Unauthorized) { S.authed = false; render(); return }
+      err.textContent = x.message
+    }
+  }
+  return h('div', { class: 'subform' },
+    h('div', { class: 'out' + (out.error ? ' bad' : '') }, h('pre', null, (out.output || '') + (out.error ? '✗ ' + out.error : ''))),
+    h('p', { class: 'note' }, 'A skill’s scripts run as the agent in every isolation that has it: read what changes before you take it.'),
+    err,
+    h('div', { class: 'actions' },
+      here
+        ? h('button', { class: 'btn danger', onclick: () => take(true) }, 'Replace my edit and update')
+        : h('button', { class: 'btn primary', onclick: () => take(false) }, 'Update'),
+      h('button', { class: 'btn', onclick: closeForm }, 'Not now')))
+}
+
+// skillForm adds or edits a skill: from a folder of the Mac's, or from a
+// GitHub repository, whose skills are listed to pick one; the name is the
+// one its SKILL.md gives, filled in by the pick.
+function skillForm(s, e) {
+  const o = skillOrigin(e)
+  let from = o || !e ? 'github' : 'folder'
+  const taken = new Set(S.envs.filter((x) => x.service === 'skill' && x.name !== e?.name).map((x) => x.name))
+  const name = e ? null : h('input', { id: 'skill-name', placeholder: 'the name its SKILL.md gives', autocomplete: 'off' })
+  let named = false
+  name?.addEventListener('input', () => { named = !!name.value.trim() })
+  const repo = h('input', { id: 'skill-repo', class: 'mono', value: o ? skillWhere(o) : '', placeholder: 'owner/repo, or a github.com address', autocomplete: 'off', spellcheck: 'false' })
+  const ref = h('input', { id: 'skill-ref', class: 'mono', value: o ? o.ref : '', placeholder: 'the default branch', autocomplete: 'off', spellcheck: 'false' })
+  const dir = h('input', { id: 'skill-path', class: 'mono', value: e?.config?.source || '', placeholder: '/Users/you/skills/pdf', autocomplete: 'off', spellcheck: 'false' })
+  const list = h('div', { class: 'skill-found', role: 'radiogroup', 'aria-label': 'Skills in the repository' })
+  const listHint = h('span', { class: 'hint' })
+  let choices = []
+  let picked = null
+  const drawList = () => {
+    list.hidden = !choices.length
+    list.replaceChildren(...choices.map((c) => {
+      const off = taken.has(c.name) || (e && c.name !== e.name)
+      const on = picked === c
+      return h('button', {
+        type: 'button', role: 'radio', 'aria-checked': on ? 'true' : 'false', class: 'skill-pick' + (on ? ' on' : ''), disabled: off,
+        onclick: () => {
+          picked = c
+          if (name && !named) name.value = c.name
+          drawList()
+        },
+      }, h('span', { class: 'dot', 'aria-hidden': 'true' }),
+      h('span', { class: 'skill-pick-text' },
+        h('span', { class: 'skill-pick-line' }, h('span', { class: 'skill-pick-name' }, c.name), h('span', { class: 'skill-pick-path' }, c.value)),
+        c.note ? h('span', { class: 'hint' }, c.note) : null),
+      taken.has(c.name) ? h('span', { class: 'chip' }, 'already added') : null)
+    }))
+  }
+  let asked = null
+  let pending = null
+  const lookup = () => {
+    clearTimeout(pending)
+    pending = setTimeout(async () => {
+      const set = { github: repo.value.trim() }
+      if (ref.value.trim()) set.ref = ref.value.trim()
+      const key = JSON.stringify(set)
+      if (!set.github || key === asked) return
+      asked = key
+      listHint.className = 'hint'
+      listHint.textContent = 'Looking in the repository…'
+      try {
+        const got = await api('POST', '/v1/services/skill/choices/github', { set })
+        if (key !== asked) return
+        choices = got || []
+        const want = e ? e.name : name.value.trim()
+        picked = choices.find((c) => c.name === want && !taken.has(c.name)) || (choices.length === 1 && !taken.has(choices[0].name) ? choices[0] : null)
+        if (picked && name && !named) name.value = picked.name
+        listHint.textContent = choices.length ? `${plural(choices.length, 'skill')} in ${choices[0].where}` : 'No skill found there.'
+      } catch (x) {
+        if (x instanceof Unauthorized) { S.authed = false; render(); return }
+        if (key !== asked) return
+        choices = []
+        picked = null
+        listHint.className = 'hint warn'
+        listHint.textContent = x.message
+      }
+      drawList()
+    }, 500)
+  }
+  repo.addEventListener('input', lookup)
+  ref.addEventListener('input', lookup)
+  const seg = (id, label) => h('button', { type: 'button', role: 'radio', class: 'btn opt' + (from === id ? ' on' : ''), 'aria-checked': from === id ? 'true' : 'false', onclick: () => { from = id; draw() } }, label)
+  const body = h('div', { class: 'skill-from' })
+  const draw = () => {
+    body.replaceChildren(
+      h('div', { class: 'field' }, h('label', null, 'from'),
+        h('div', { class: 'seg', role: 'radiogroup', 'aria-label': 'Where the skill comes from' }, seg('folder', 'Folder on the Mac'), seg('github', 'GitHub'))),
+      from === 'github'
+        ? [h('div', { class: 'field-row' },
+          h('div', { class: 'field grow' }, h('label', { for: 'skill-repo' }, 'repository'), repo,
+            h('span', { class: 'hint' }, 'A public repository: owner/repo, owner/repo/PATH, or an address ending in /tree/REF/PATH')),
+          h('div', { class: 'field' }, h('label', { for: 'skill-ref' }, 'ref'), ref,
+            h('span', { class: 'hint' }, 'a branch is followed; a tag or commit stays put'))),
+        h('div', { class: 'field' }, h('label', null, 'skill'), list, listHint)]
+        : h('div', { class: 'field' }, h('label', { for: 'skill-path' }, 'path'), dir,
+          h('span', { class: 'hint' }, 'the skill’s folder, SKILL.md at its top, to copy in')))
+  }
+  draw()
+  drawList()
+  if (repo.value.trim()) lookup()
+  const err = h('p', { class: 'form-error' })
+  const save = h('button', { class: 'btn primary' }, 'Save')
+  save.addEventListener('click', async () => {
+    err.textContent = ''
+    const n = e ? e.name : name.value.trim()
+    if (!n) { err.textContent = 'A name is required: pick a skill, or type the name its SKILL.md gives.'; return }
+    const set = {}
+    if (from === 'folder') {
+      if (dir.value.trim()) set.path = dir.value.trim()
+      else if (!e || o) { err.textContent = 'Give the skill’s folder.'; return }
+    } else {
+      const r = repo.value.trim()
+      if (!r) { err.textContent = 'Give a repository.'; return }
+      const sameRepo = o && r === skillWhere(o)
+      const sameRef = o && ref.value.trim() === o.ref
+      if (!sameRepo) {
+        set.github = picked ? picked.value : r
+        if (ref.value.trim()) set.ref = ref.value.trim()
+      } else if (!sameRef && ref.value.trim()) set.ref = ref.value.trim()
+    }
+    save.disabled = true
+    save.textContent = set.github || set.ref ? 'Fetching…' : 'Saving…'
+    try {
+      const v = await api(e ? 'PATCH' : 'POST', envPath(s.name, n), { set, clear: [] })
+      S.openForm = null
+      const vo = skillOrigin(v)
+      toast([`${s.name}/${n} saved` + (vo ? ` from ${skillWhere(vo)} @ ${shortSha(vo.commit)}` : ''), ...(v.warnings || [])].join(' — '))
+      await refreshServices()
+      renderServices()
+    } catch (x) {
+      if (x instanceof Unauthorized) { S.authed = false; render(); return }
+      err.textContent = x.message
+      save.disabled = false
+      save.textContent = 'Save'
+    }
+  })
+  return h('div', { class: 'subform' },
+    body,
+    name ? h('div', { class: 'field narrow' }, h('label', { for: 'skill-name' }, 'name'), name, h('span', { class: 'hint' }, 'what isolations expose; the name its SKILL.md gives')) : null,
+    err,
+    h('div', { class: 'actions' }, save, h('button', { class: 'btn', onclick: closeForm }, 'Cancel')))
 }
 
 async function checkEnv(s, e, key) {
