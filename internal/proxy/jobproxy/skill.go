@@ -30,6 +30,12 @@ how big a copy may be, what it leaves out), and the jobs asked for here:
 
     curl -sS "$PSPS_JOB_URL"
 
+A runner's "about", where it has one, is your operator's word on it: what it
+does, the options it takes and what its result holds. Look here before you
+decide something cannot be done from this isolation: a runner may be the way
+your operator gave you to do it (a simulator, an evaluation, a build
+elsewhere), with access this isolation has not.
+
 ## Asking for a job
 
     curl -sS "$PSPS_JOB_URL/jobs" --json @- <<'JOB'
@@ -42,8 +48,8 @@ how big a copy may be, what it leaves out), and the jobs asked for here:
   FIFOs and sockets are left out, as are the runner's excluded names (.git
   unless it says otherwise). A copy over the runner's limits is refused.
 - options: a JSON object for the runner's command, at most 16 KiB. psps does not
-  read it; what it may hold is the runner's to say, so ask your operator or read
-  what the runner refused.
+  read it; what it may hold is the runner's to say: its "about", or else ask
+  your operator or read what the runner refused.
 
 It answers 202 with the job: its "id" and "status" (queued until the runner has
 room, then running). The runner runs a few jobs at once and queues the rest, up

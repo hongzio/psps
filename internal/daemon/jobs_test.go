@@ -338,8 +338,23 @@ echo printed-for-the-operator`
 			t.Fatalf("argv lacks %q: %s", want, argv)
 		}
 	}
-	if code, out := jobAs(t, m, a.ID, "GET", "", ""); code != http.StatusOK || !strings.Contains(out, `"name":"sim","default":true`) || !strings.Contains(out, j.ID) {
+	if code, out := jobAs(t, m, a.ID, "GET", "", ""); code != http.StatusOK || !strings.Contains(out, `"name":"sim","default":true`) || !strings.Contains(out, j.ID) ||
+		strings.Contains(out, `"about"`) || strings.Contains(out, "seen-meta") {
 		t.Fatalf("the home: %d %s", code, out)
+	}
+
+	// The operator's word on it is in its listing; its command never is.
+	if _, err := m.PutEnv(context.Background(), jobproxy.Name, "sim", proxy.Patch{Set: map[string]any{"about": "  replays a tape; options: {\"mode\"}  "}}, false); err != nil {
+		t.Fatal(err)
+	}
+	if _, out := jobAs(t, m, a.ID, "GET", "", ""); !strings.Contains(out, `"about":"replays a tape; options: {\"mode\"}"`) || strings.Contains(out, "seen-meta") {
+		t.Fatalf("the home with an about: %s", out)
+	}
+	if _, err := m.PutEnv(context.Background(), jobproxy.Name, "sim", proxy.Patch{Set: map[string]any{"about": ""}}, false); err != nil {
+		t.Fatal(err)
+	}
+	if _, out := jobAs(t, m, a.ID, "GET", "", ""); strings.Contains(out, `"about"`) {
+		t.Fatalf("a cleared about is still there: %s", out)
 	}
 }
 
@@ -384,6 +399,7 @@ func TestAJobIsRefusedWhatItsCallerMayNotHave(t *testing.T) {
 		"has a command":    {"isolation": []string{"run"}},
 		"no isolation":     {"isolation": []string{"gone"}, "command": "true"},
 		"is 1 to":          {"isolation": []string{"run"}, "command": "true", "max_live": 0},
+		"at most 4096":     {"isolation": []string{"run"}, "command": "true", "about": strings.Repeat("x", 4097)},
 	} {
 		if _, err := m.PutEnv(ctx, jobproxy.Name, "bad", proxy.Patch{Set: want}, true); err == nil || !strings.Contains(err.Error(), set) {
 			t.Errorf("%v: %v", want, err)

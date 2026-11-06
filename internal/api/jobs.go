@@ -52,8 +52,11 @@ type PostJob struct {
 
 // Runner is a runner as the agents it is open to see it.
 type Runner struct {
-	Name      string   `json:"name"`
-	Default   bool     `json:"default,omitempty"`
+	Name    string `json:"name"`
+	Default bool   `json:"default,omitempty"`
+	// About is what the operator says of it: what it does, its options and
+	// what its result holds.
+	About     string   `json:"about,omitempty"`
 	Minutes   int      `json:"minutes"`
 	Memory    string   `json:"memory"`
 	Pids      int      `json:"pids"`
