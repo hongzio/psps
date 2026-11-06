@@ -12,6 +12,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"math"
 	"os"
 	"time"
 
@@ -923,6 +924,57 @@ func (s *Store) Events(agentID string, after int64, limit int) ([]event.Event, e
 		out = append(out, e)
 	}
 	return out, rows.Err()
+}
+
+// EventsTail is the end of an agent's history before event before (0: the
+// whole of it): its last limit events at least, back to the user message
+// the first of them follows, so no answer comes without what it answers.
+// Earlier is whether there are events before those.
+func (s *Store) EventsTail(agentID string, before int64, limit int) (evs []event.Event, earlier bool, err error) {
+	if before <= 0 {
+		before = math.MaxInt64
+	}
+	if limit <= 0 {
+		limit = 1
+	}
+	// start is the first event sent; 0 sends from the beginning.
+	var start int64
+	err = s.db.QueryRow(`SELECT id FROM events WHERE agent = ? AND id < ? ORDER BY id DESC LIMIT 1 OFFSET ?`, agentID, before, limit-1).Scan(&start)
+	if errors.Is(err, sql.ErrNoRows) {
+		start, err = 0, nil
+	}
+	if err != nil {
+		return nil, false, err
+	}
+	if start > 0 {
+		var turn sql.NullInt64
+		if err := s.db.QueryRow(`SELECT MAX(id) FROM events WHERE agent = ? AND id <= ? AND json_extract(body, '$.kind') = 'user'`, agentID, start).Scan(&turn); err != nil {
+			return nil, false, err
+		}
+		start = turn.Int64
+	}
+	if start > 0 {
+		if err := s.db.QueryRow(`SELECT EXISTS (SELECT 1 FROM events WHERE agent = ? AND id < ?)`, agentID, start).Scan(&earlier); err != nil {
+			return nil, false, err
+		}
+	}
+	rows, err := s.db.Query(`SELECT body FROM events WHERE agent = ? AND id >= ? AND id < ? ORDER BY id`, agentID, start, before)
+	if err != nil {
+		return nil, false, err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var body string
+		if err := rows.Scan(&body); err != nil {
+			return nil, false, err
+		}
+		var e event.Event
+		if err := json.Unmarshal([]byte(body), &e); err != nil {
+			return nil, false, err
+		}
+		evs = append(evs, e)
+	}
+	return evs, earlier, rows.Err()
 }
 
 // Pending is a user message the daemon accepted and the agent's log does not

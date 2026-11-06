@@ -540,6 +540,11 @@ func reply(w http.ResponseWriter, v any, err error) {
 // handleEvents serves an agent's stored history after ?after=N, as JSON, or
 // as a server-sent event stream that continues live with ?follow=1. Without
 // an agent in the path it follows every agent and has no history.
+//
+// ?tail=N serves only the history's end instead (store.EventsTail), before
+// event ?before=ID if given: as JSON {events, earlier}, or followed, with
+// earlier in the ready event. A long one is then read from its end, the
+// rest fetched as it is scrolled up to.
 func (m *Manager) handleEvents(w http.ResponseWriter, r *http.Request) {
 	agentID := r.PathValue("id")
 	if agentID != "" {
@@ -551,11 +556,25 @@ func (m *Manager) handleEvents(w http.ResponseWriter, r *http.Request) {
 		agentID = a.ID
 	}
 	after, _ := strconv.ParseInt(r.URL.Query().Get("after"), 10, 64)
+	before, _ := strconv.ParseInt(r.URL.Query().Get("before"), 10, 64)
+	tail, _ := strconv.Atoi(r.URL.Query().Get("tail"))
 	follow := r.URL.Query().Get("follow") == "1"
+	if tail > 0 && (agentID == "" || after > 0 || follow && before > 0) {
+		reply(w, nil, badRequest(errors.New("a tail is an agent's, from its end, before an event only unfollowed")))
+		return
+	}
 
 	if !follow {
 		if agentID == "" {
 			reply(w, nil, badRequest(errors.New("history needs an agent")))
+			return
+		}
+		if tail > 0 {
+			evs, earlier, err := m.store.EventsTail(agentID, before, tail)
+			if evs == nil {
+				evs = []event.Event{}
+			}
+			reply(w, api.EventsTail{Events: evs, Earlier: earlier}, err)
 			return
 		}
 		evs, err := m.store.Events(agentID, after, 0)
@@ -588,7 +607,14 @@ func (m *Manager) handleEvents(w http.ResponseWriter, r *http.Request) {
 	}
 	last := after
 	if agentID != "" {
-		evs, err := m.store.Events(agentID, after, 0)
+		var evs []event.Event
+		var earlier bool
+		var err error
+		if tail > 0 {
+			evs, earlier, err = m.store.EventsTail(agentID, 0, tail)
+		} else {
+			evs, err = m.store.Events(agentID, after, 0)
+		}
 		if err != nil {
 			return
 		}
@@ -600,7 +626,7 @@ func (m *Manager) handleEvents(w http.ResponseWriter, r *http.Request) {
 		}
 		// The history is all there: an agent with none has none, rather
 		// than one still on its way.
-		if _, err := fmt.Fprint(w, "event: ready\ndata: {}\n\n"); err != nil {
+		if _, err := fmt.Fprintf(w, "event: ready\ndata: {\"earlier\":%t}\n\n", earlier); err != nil {
 			return
 		}
 	}

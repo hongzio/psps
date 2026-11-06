@@ -447,8 +447,13 @@ dropdown.n = 0
 
 // ---- Conversation: events folded into what a person reads (mirrors the TUI)
 
+// A conversation is read from its end: first is the earliest event it has,
+// more whether the daemon has any before it, and log every stored event it
+// has, to fold again with the earlier when they come.
+const newConvo = () => ({ lastID: 0, entries: [], byItem: new Map(), log: [], first: 0, firstSrc: 0, more: false })
+
 function convo(id) {
-  if (!S.convos.has(id)) S.convos.set(id, { lastID: 0, entries: [], byItem: new Map() })
+  if (!S.convos.has(id)) S.convos.set(id, newConvo())
   return S.convos.get(id)
 }
 
@@ -456,6 +461,8 @@ function apply(c, e) {
   if (e.id) {
     if (e.id <= c.lastID) return
     c.lastID = e.id
+    if (!c.first) { c.first = e.id; c.firstSrc = e.src }
+    c.log.push(e)
   }
   // src is the shim log record an entry came from: a rewind names what it
   // took back by those.
@@ -730,7 +737,10 @@ function follow(id) {
   if (S.esFor === id && S.es && S.es.readyState !== EventSource.CLOSED) return
   if (S.es) S.es.close()
   const c = convo(id)
-  const es = new EventSource(`/v1/agents/${encodeURIComponent(id)}/events?follow=1&after=${c.lastID}`)
+  // Opened for the first time, only the history's end comes: the earlier
+  // is fetched as it is scrolled up to.
+  const tail = !c.lastID
+  const es = new EventSource(`/v1/agents/${encodeURIComponent(id)}/events?follow=1&` + (tail ? `tail=${tailEvents}` : `after=${c.lastID}`))
   es.onmessage = (m) => {
     const e = JSON.parse(m.data)
     apply(c, e)
@@ -750,7 +760,8 @@ function follow(id) {
     if (S.sel === id && c.ready) scheduleConvo()
   }
   // After its history: an agent with none has none yet.
-  es.addEventListener('ready', () => {
+  es.addEventListener('ready', (m) => {
+    if (tail) { try { c.more = !!JSON.parse(m.data).earlier } catch { c.more = false } }
     c.ready = true
     if (S.sel === id) scheduleConvo()
   })
@@ -759,6 +770,59 @@ function follow(id) {
   }
   S.es = es
   S.esFor = id
+}
+
+// tailEvents is how many of the last events come at first, earlierEvents
+// how many more each time the earlier are scrolled up to; both reach back
+// to a message the person sent.
+const tailEvents = 400
+const earlierEvents = 1500
+
+// loadEarlier fetches the events before the first the conversation has and
+// draws them above, the one read staying where it was. It is true when they
+// came; failed, the next scroll up tries again.
+async function loadEarlier(id) {
+  const c = convo(id)
+  if (!c.more || c.loadingEarlier) return false
+  c.loadingEarlier = true
+  if (S.sel === id) scheduleConvo()
+  const r = await guarded(() => api('GET', `/v1/agents/${encodeURIComponent(id)}/events?tail=${earlierEvents}&before=${c.first}`))
+  c.loadingEarlier = false
+  if (r) prepend(c, r.events || [], !!r.earlier)
+  if (S.sel === id) showEarlier(c)
+  return !!r
+}
+
+// prepend puts earlier events in front of a conversation. Those later can
+// reach back over them: a decision on an approval, a status that voids the
+// open ones. A rewind over them, or one run of a tool on both sides, folds
+// it all again instead, keeping only an answer being written, which is not
+// stored.
+function prepend(c, evs, earlier) {
+  c.more = earlier
+  if (!evs.length) return
+  const before = newConvo()
+  for (const e of evs) apply(before, e)
+  const crosses = c.log.some((e) => e.kind === 'rewind' && e.rewind && e.rewind.from < c.firstSrc) ||
+    [...before.byItem.keys()].some((k) => c.byItem.has(k))
+  const log = before.log.concat(c.log)
+  // What is drawn starts where it did, now further down.
+  const was = groupTools(c.entries).length
+  if (crosses) {
+    const all = newConvo()
+    for (const e of log) apply(all, e)
+    for (const en of c.entries) if (en.live) { all.entries.push(en); if (en.item) all.byItem.set(en.item, en) }
+    c.entries = all.entries
+    c.byItem = all.byItem
+  } else {
+    for (const e of c.log) if (e.kind === 'approval_done' || e.kind === 'status') apply(before, e)
+    c.entries = before.entries.concat(c.entries)
+    for (const [k, en] of before.byItem) c.byItem.set(k, en)
+  }
+  if (c.from !== undefined) c.from += groupTools(c.entries).length - was
+  c.log = log
+  c.first = evs[0].id
+  c.firstSrc = evs[0].src
 }
 
 // Coalesce a burst of events into one render. A timer rather than
@@ -2358,7 +2422,11 @@ let stick = true
 function onConvoScroll(box, id) {
   stick = box.scrollHeight - box.scrollTop - box.clientHeight < 8
   // Drawing the earlier would stop a scroll the buttons began.
-  if (box.scrollTop < 400 && convo(id).hidden && Date.now() > goingUntil) showEarlier(convo(id))
+  if (box.scrollTop < 400 && Date.now() > goingUntil) {
+    const c = convo(id)
+    if (c.hidden) showEarlier(c)
+    else if (c.more) loadEarlier(id)
+  }
   if (!lastSentQueued) { lastSentQueued = true; requestAnimationFrame(() => { lastSentQueued = false; renderLastSent(); renderAskJump() }) }
 }
 let lastSentQueued = false
@@ -2421,9 +2489,9 @@ function renderConvo(forceBottom) {
   c.count = all.length - from
   const items = all.slice(from).map((en) => drawEntry(en, a)).filter(Boolean)
   c.hidden = from
-  if (from) {
-    c.earlier ||= h('div', { class: 'earlier' })
-    c.earlier.textContent = `${from} earlier`
+  if (from || c.more) {
+    c.earlier ||= h('div', { class: 'earlier', onclick: () => { if (c.hidden) showEarlier(c); else loadEarlier(a.id) } })
+    c.earlier.textContent = from ? `${from} earlier` : c.loadingEarlier ? 'Loading earlier…' : 'Earlier'
     items.unshift(c.earlier)
   }
   if (!items.length) items.push(h('div', { class: 'empty' }, c.ready ? 'Nothing yet: the first message you send starts it.' : 'Loading…'))
@@ -2537,7 +2605,7 @@ function renderLastSent() {
   if (btn.textContent !== text) { btn.textContent = text; btn.title = en.text }
   btn.onclick = () => node.scrollIntoView({ block: 'start', behavior: 'smooth' })
   const c = convo(S.sel)
-  bar.querySelector('[data-go=up]').disabled = !sentNear(-1) && !c.hidden
+  bar.querySelector('[data-go=up]').disabled = !sentNear(-1) && !c.hidden && !c.more
   bar.querySelector('[data-go=down]').disabled = !sentNear(1)
   const box = document.getElementById('convo')
   bar.querySelector('[data-go=end]').disabled = box.scrollHeight - box.scrollTop - box.clientHeight < 8
@@ -2562,6 +2630,7 @@ let goingUntil = 0
 function goSent(dir) {
   const c = convo(S.sel)
   // Before the first drawn, the earlier are drawn: they start at one.
+  if (dir < 0 && !sentNear(-1) && !c.hidden && c.more) { loadEarlier(S.sel).then((ok) => ok && goSent(dir)); return }
   if (dir < 0 && !sentNear(-1) && c.hidden) showEarlier(c)
   const node = sentNear(dir)
   if (!node) return

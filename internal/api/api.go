@@ -720,3 +720,10 @@ type Login struct {
 type LoginFinish struct {
 	Callback string `json:"callback"`
 }
+
+// EventsTail is the end of an agent's history (GET .../events?tail=N):
+// Earlier is whether there are events before these.
+type EventsTail struct {
+	Events  []event.Event `json:"events"`
+	Earlier bool          `json:"earlier"`
+}
