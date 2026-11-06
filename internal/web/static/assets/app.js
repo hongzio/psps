@@ -5218,7 +5218,12 @@ function stepAgent(by) {
   const ids = rows.map((r) => S.agents.find((a) => !a.archived_at && (a.line || a.id) === r.dataset.line)?.id)
   const at = ids.indexOf(S.view === 'agent' ? S.sel : null)
   const next = ids[at < 0 ? (by > 0 ? 0 : ids.length - 1) : Math.min(Math.max(at + by, 0), ids.length - 1)]
-  if (next) { select(next); rows[ids.indexOf(next)].scrollIntoView({ block: 'nearest' }) }
+  if (!next) return
+  const line = rows[ids.indexOf(next)].dataset.line
+  select(next)
+  // select draws the sidebar anew: the row to bring into view is the new
+  // one, the old having left the page.
+  document.querySelector(`#sidebar .sortable:first-of-type .agent[data-line="${CSS.escape(line)}"]`)?.scrollIntoView({ block: 'nearest' })
 }
 
 // The tasks list closes on a click anywhere else.
