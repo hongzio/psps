@@ -78,6 +78,12 @@ const S = {
   // is each one's status as last seen, to tell a turn's end by.
   unread: new Set((() => { try { return JSON.parse(localStorage.getItem('psps.unread') || '[]') } catch { return [] } })()),
   lastStatus: new Map(),
+  // The picker for a line's icon: the agent it is open for, the color it
+  // offers, and the icons picked lately, with their colors, in this browser.
+  iconFor: null,
+  iconColor: '',
+  iconFresh: null,
+  recentIcons: (() => { try { const v = JSON.parse(localStorage.getItem('psps.recentIcons') || '[]'); return Array.isArray(v) ? v : [] } catch { return [] } })(),
   // A sidebar row is held or being moved: the sidebar is not redrawn under
   // it, but once it is let go.
   sorting: false,
@@ -1115,7 +1121,7 @@ function renderSidebar() {
     }, dot, S.unread.has(a.id)
       ? h('span', { class: 'name with-unread' }, h('span', { class: 'title' }, mark, agentTitle(a)), h('span', { class: 'unread', title: 'Its turn ended; not opened since', 'aria-label': 'turn ended, not opened since' }))
       : h('span', { class: 'name' }, mark, agentTitle(a)),
-      h('span', { class: 'meta' + (marks ? ' with-marks' : '') }, marks ? h('span', { class: 'meta-text' }, meta) : meta, marks))
+      h('span', { class: 'meta with-marks' }, h('span', { class: 'meta-text' }, meta), marks, iconPick(a)))
   }
   // An agent's archived sessions are one folded line, under the ID it goes
   // by now; a lone one is a row of its own.
@@ -1150,6 +1156,149 @@ function renderSidebar() {
       h('button', { class: S.view === 'setup' ? 'active' : '', onclick: () => show('setup') }, icon('user-round'), ' Accounts')),
   )
   if (scrolled) el.querySelector('.agent-list').scrollTop = scrolled
+  placeIconPick()
+}
+
+// ---- A line's icon
+
+// The icons a line's icon is picked from, and the colors it may be drawn in,
+// '' for the text's own; the daemon keeps which one a line has.
+const PICK_ICONS = ['star', 'heart', 'flag', 'bookmark', 'pin', 'tag', 'target', 'trophy', 'zap', 'flame', 'rocket', 'sparkles',
+  'lightbulb', 'gem', 'bug', 'flask-conical', 'wrench', 'hammer', 'puzzle', 'cpu', 'database', 'server', 'cloud', 'globe',
+  'git-branch', 'package', 'file-text', 'book-open', 'chart-line', 'calendar', 'shield', 'lock', 'eye', 'coffee', 'leaf',
+  'anchor', 'music', 'smile']
+const ICON_COLORS = ['', 'red', 'orange', 'yellow', 'green', 'teal', 'blue', 'violet', 'pink']
+const iconColor = (c) => `var(--ic-${c || 'default'})`
+const shownIcon = (a) => a.icon && icons[a.icon.name] ? a.icon : null
+// styled sets el's CSS properties through the CSSOM: the page's policy
+// refuses style attributes.
+const styled = (el, props) => { for (const [k, v] of Object.entries(props)) el.style.setProperty(k, v); return el }
+
+// iconPick is the end of a row's second line: the line's icon, or a faint
+// button for one, either opening the picker.
+function iconPick(a) {
+  const ic = shownIcon(a)
+  const el = h('span', {
+    class: 'pick ' + (ic ? 'set' : 'empty') + (S.iconFresh === a.id ? ' fresh' : ''), role: 'button', tabindex: '0', 'data-pick': a.id,
+    'aria-haspopup': 'dialog', 'aria-expanded': String(S.iconFor === a.id),
+    title: ic ? 'Change its icon' : 'Give it an icon', 'aria-label': ic ? `Icon: ${ic.name}; change it` : 'Give it an icon',
+  }, icon(ic ? ic.name : 'smile-plus'))
+  if (ic) styled(el, { color: iconColor(ic.color) })
+  // Not the row's: it opens no agent.
+  const go = (e) => { e.stopPropagation(); e.preventDefault(); S.iconFor === a.id ? closeIconPick(true) : openIconPick(a) }
+  el.addEventListener('click', go)
+  el.addEventListener('keydown', (e) => { if (e.key === 'Enter' || e.key === ' ') go(e) })
+  el.addEventListener('pointerdown', (e) => e.stopPropagation())
+  return el
+}
+
+function openIconPick(a) {
+  S.iconFor = a.id
+  S.iconColor = shownIcon(a)?.color ?? S.iconColor
+  renderSidebar()
+  buildIconPick()
+  const pop = document.getElementById('icon-pop')
+  ;(pop?.querySelector('.all [aria-checked="true"]') || pop?.querySelector('.all button'))?.focus()
+}
+
+// closeIconPick says whether it was open; back, focus goes to the row's
+// icon.
+function closeIconPick(refocus) {
+  const id = S.iconFor
+  if (!id) return false
+  S.iconFor = null
+  document.getElementById('icon-pop')?.remove()
+  renderSidebar()
+  if (refocus) document.querySelector(`#sidebar [data-pick="${CSS.escape(id)}"]`)?.focus()
+  return true
+}
+
+// buildIconPick draws the picker: colors, then the icons picked lately as
+// they were, then them all in the color chosen.
+function buildIconPick() {
+  const a = S.agents.find((x) => x.id === S.iconFor)
+  if (!a) return
+  let pop = document.getElementById('icon-pop')
+  if (!pop) {
+    pop = h('div', { id: 'icon-pop', class: 'icon-pop', role: 'dialog' })
+    pop.addEventListener('click', (e) => e.stopPropagation())
+    document.body.append(pop)
+  }
+  const ic = shownIcon(a)
+  pop.setAttribute('aria-label', `Icon for ${agentTitle(a)}`)
+  pop.style.setProperty('--ic', iconColor(S.iconColor))
+  const recent = S.recentIcons.filter((r) => icons[r.name] && ICON_COLORS.includes(r.color ?? ''))
+  // replaceChildren takes nodes, not lists: these are flattened.
+  pop.replaceChildren(...[
+    h('div', { class: 'pop-head' }, h('span', { class: 'who' }, agentTitle(a)),
+      ic ? h('button', { type: 'button', class: 'clear', onclick: () => setLineIcon(a, null) }, icon('x'), 'Remove') : null),
+    h('div', { class: 'swatches', role: 'radiogroup', 'aria-label': 'Color' }, ICON_COLORS.map((c) => styled(h('button', {
+      type: 'button', class: 'swatch', role: 'radio', 'aria-checked': String(c === S.iconColor), 'aria-label': c || 'default', title: c || 'default',
+      'data-c': c,
+      onclick: () => {
+        S.iconColor = c
+        if (ic) setLineIcon(a, { name: ic.name, color: c }, true)
+        else buildIconPick()
+        pop.querySelector(`.swatch[data-c="${c}"]`)?.focus()
+      },
+    }), { '--sw': iconColor(c) }))),
+    recent.length ? [h('div', { class: 'pop-label' }, 'Recent'),
+      h('div', { class: 'icons recent', role: 'group', 'aria-label': 'Picked lately' }, recent.map((r) => styled(h('button', {
+        type: 'button', 'aria-pressed': String(ic?.name === r.name && (ic?.color || '') === (r.color || '')),
+        'aria-label': `${r.name}, ${r.color || 'default'}`, title: `${r.name} · ${r.color || 'default'}`,
+        onclick: () => setLineIcon(a, { name: r.name, color: r.color || '' }),
+      }, icon(r.name)), { color: iconColor(r.color) })))] : null,
+    h('div', { class: 'icons all', role: 'radiogroup', 'aria-label': 'Icon' }, PICK_ICONS.map((n) => h('button', {
+      type: 'button', role: 'radio', 'aria-checked': String(ic?.name === n), 'aria-label': n, title: n,
+      onclick: () => setLineIcon(a, { name: n, color: S.iconColor }),
+    }, icon(n)))),
+  ].flat().filter(Boolean))
+  placeIconPick()
+}
+
+// placeIconPick keeps the picker under its row's icon, or over it where
+// there is no room below, within the window; with the row gone it closes.
+function placeIconPick() {
+  const pop = document.getElementById('icon-pop')
+  if (!pop) return
+  const anchor = S.iconFor && document.querySelector(`#sidebar [data-pick="${CSS.escape(S.iconFor)}"]`)
+  if (!anchor) { S.iconFor = null; pop.remove(); return }
+  const r = anchor.getBoundingClientRect(), w = pop.offsetWidth, ht = pop.offsetHeight
+  const left = Math.max(8, Math.min(r.right + 6 - w, innerWidth - w - 8))
+  const below = r.bottom + 6
+  pop.style.left = left + 'px'
+  pop.style.top = (below + ht > innerHeight - 8 && r.top - 6 - ht >= 8 ? r.top - 6 - ht : below) + 'px'
+}
+
+// setLineIcon gives a's line, every session of it, the icon, or with none
+// takes its icon away; picking one closes the picker, a new color for the
+// icon it has keeps it open.
+function setLineIcon(a, ic, keepOpen) {
+  const line = a.line || a.id
+  const was = a.icon
+  const set = (v) => { for (const x of S.agents) if ((x.line || x.id) === line) x.icon = v || undefined }
+  set(ic)
+  if (ic && !keepOpen) {
+    S.recentIcons = [ic, ...S.recentIcons.filter((r) => r.name !== ic.name || (r.color || '') !== ic.color)].slice(0, 8)
+    try { localStorage.setItem('psps.recentIcons', JSON.stringify(S.recentIcons)) } catch {}
+    S.iconFresh = a.id
+    setTimeout(() => { if (S.iconFresh === a.id) S.iconFresh = null }, 300)
+  }
+  if (keepOpen) { renderSidebar(); buildIconPick() } else closeIconPick(true)
+  // A list asked for before the daemon has it would put the old one back:
+  // it is dropped, as is one asked for meanwhile.
+  agentsAsked++
+  guarded(async () => {
+    try {
+      await api('PATCH', `/v1/agents/${a.id}`, { icon: ic || { name: '' } })
+      agentsAsked++
+    } catch (x) {
+      set(was)
+      renderSidebar()
+      if (S.iconFor === a.id) buildIconPick()
+      throw x
+    }
+  })
 }
 
 // sortable is a sidebar list whose rows, a line each, move by a long press
@@ -4823,10 +4972,15 @@ function stepAgent(by) {
 
 // The tasks list closes on a click anywhere else.
 document.addEventListener('click', (e) => { if (S.tasksOpen && !e.target.closest?.('.tasks-pop, .sl-tasks')) closeTasks() })
+// So does the icon picker, which follows its row as the sidebar scrolls.
+document.addEventListener('click', (e) => { if (S.iconFor && !e.target.closest?.('#icon-pop, [data-pick]')) closeIconPick(false) })
+document.addEventListener('scroll', () => { if (S.iconFor) placeIconPick() }, true)
+addEventListener('resize', () => { if (S.iconFor) placeIconPick() })
 
 let goPending = 0
 document.addEventListener('keydown', (e) => {
   const t = e.target
+  if (e.key === 'Escape' && !e.isComposing && closeIconPick(true)) { e.preventDefault(); return }
   if (e.key === 'Escape' && !e.isComposing && closeTasks()) { e.preventDefault(); return }
   // Esc leaves the message box, or a field of the new agent's form, once
   // nothing in it (a completion) took it: the shortcuts work again.
