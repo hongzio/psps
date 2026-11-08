@@ -324,6 +324,10 @@ func (r *runtime) observe(rec shimproto.Record, liveAfter int64) {
 		} else {
 			r.agent.LastSrc = rec.Seq
 			for _, e := range committed {
+				if store.IsMessage(e) && !e.Time.IsZero() {
+					t := e.Time
+					r.agent.LastMessageAt = &t
+				}
 				r.m.hub.publish(e)
 			}
 		}

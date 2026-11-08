@@ -1197,6 +1197,40 @@ function togglePark(a) {
   return true
 }
 
+// msgAge is how long ago t was, in one word: now, 1m … 59m, 1h … 23h, 1d …
+// 364d, 1y, 2y, rounded down.
+function msgAge(t) {
+  const m = Math.floor((Date.now() - new Date(t).getTime()) / 60000)
+  if (!(m >= 1)) return 'now'
+  if (m < 60) return m + 'm'
+  const hr = Math.floor(m / 60)
+  if (hr < 24) return hr + 'h'
+  const d = Math.floor(hr / 24)
+  return d < 365 ? d + 'd' : Math.floor(d / 365) + 'y'
+}
+
+// nameWithAge is a sidebar row's name, with how long ago its last message
+// was at its end. An agent unread has that in red, where one with no
+// message yet has the red dot.
+function nameWithAge(a, mark) {
+  const unread = S.unread.has(a.id)
+  const at = a.last_message_at
+  if (!unread && !at) return h('span', { class: 'name' }, mark, agentTitle(a))
+  const said = at ? `Last message ${new Date(at).toLocaleString()}` : ''
+  return h('span', { class: 'name split' }, h('span', { class: 'title' }, mark, agentTitle(a)),
+    at ? h('span', { class: 'age' + (unread ? ' unread' : ''), 'data-at': at,
+      title: unread ? `Its turn ended; not opened since. ${said}` : said }, msgAge(at))
+      : h('span', { class: 'unread-dot', title: 'Its turn ended; not opened since', 'aria-label': 'turn ended, not opened since' }))
+}
+
+// The ages count on once a minute, in place.
+setInterval(() => {
+  for (const el of document.querySelectorAll('#sidebar .age[data-at]')) {
+    const now = msgAge(el.dataset.at)
+    if (el.textContent !== now) el.textContent = now
+  }
+}, 60000)
+
 function renderSidebar() {
   const el = document.getElementById('sidebar')
   if (!el) return
@@ -1226,9 +1260,7 @@ function renderSidebar() {
     return h('button', {
       class: 'agent' + (a.id === S.sel && S.view === 'agent' ? ' selected' : '') + (a.archived_at ? ' archived' : ''),
       'data-line': a.line || a.id, 'data-agent': a.id, 'data-group': a.archived_at ? 'archived' : 'live', onclick: () => select(a.id),
-    }, dot, S.unread.has(a.id)
-      ? h('span', { class: 'name with-unread' }, h('span', { class: 'title' }, mark, agentTitle(a)), h('span', { class: 'unread', title: 'Its turn ended; not opened since', 'aria-label': 'turn ended, not opened since' }))
-      : h('span', { class: 'name' }, mark, agentTitle(a)),
+    }, dot, nameWithAge(a, mark),
       h('span', { class: 'meta with-marks' }, h('span', { class: 'meta-text' }, meta), marks, iconPick(a)))
   }
   // An agent's archived sessions are one folded line, under the ID it goes
@@ -1933,6 +1965,9 @@ async function editTeam(t) {
   budget.addEventListener('input', warn)
   evalCmd.addEventListener('input', warn)
   warn()
+  const compactBox = h('input', { type: 'checkbox', checked: !!st.compact_first })
+  const compactFirst = h('label', { class: 'check lead-teams', title: "psps sends the lead /compact once the round's eval has ended, and the round's news and score after it" },
+    compactBox, h('span', null, "Compact before a round's result: the lead's conversation is compacted (/compact) before it hears the round's end and score"))
   const turnOn = h('input', { type: 'checkbox', checked: true })
   const offIn = h('span')
   const teamsOff = h('label', { class: 'check lead-teams', hidden: true }, turnOn, h('span', null, 'Turn teams on in ', offIn,
@@ -1946,6 +1981,7 @@ async function editTeam(t) {
     field('Eval isolation', evalIso, 'Another isolation, with no services but control, scores a copy of the eval directory made for each eval, as a user who can change nothing else there: out of the agents\' reach. Keep the grader and its data there, and take only what is scored from the copy; ~ in the eval is then an empty home, so give the grader\'s path in full. The lead hears only the score. An agent of yours there runs as the grader\'s owner: keep it from what the eval leaves.'),
     h('div', { class: 'lead-grid' },
       field('Eval directory', evalDir), field('Eval limit (min)', evalMin), field('Target', target, 'ends the run once reached'), field('Patience (evals)', patience, 'without a new best, end the run')),
+    compactFirst,
     teamsOff)
   let off = null
   const shown = async () => {
@@ -1965,9 +2001,6 @@ async function editTeam(t) {
     }
   }
   lead.addEventListener('change', shown)
-  const compactBox = h('input', { type: 'checkbox', checked: !!st.compact_first })
-  const compactFirst = h('label', { class: 'check lead-teams', title: "psps sends the lead /compact once the round's eval has ended, and the round's news and score after it" },
-    compactBox, h('span', null, "Compact before a round's result: the lead's conversation is compacted (/compact) before it hears the round's end and score"))
   shown()
   // terms are the form as the daemon takes them; a term left empty keeps
   // what it was, or its default.
@@ -1981,7 +2014,6 @@ async function editTeam(t) {
       const v = el.value.trim()
       if (!v) continue
       if (!/^\d+$/.test(v)) throw new Error(`${what} is a whole number, not "${v}".`)
-    compactFirst,
       req[k] = Number(v)
     }
     req.eval = evalCmd.value.trim()
@@ -1991,6 +2023,7 @@ async function editTeam(t) {
     if (!tv) req.no_target = true
     else if (Number.isFinite(Number(tv))) req.target = Number(tv)
     else throw new Error(`The target is a number, not "${tv}".`)
+    req.compact_first = compactBox.checked
     return req
   }
   const before = run ? JSON.stringify(asked()) : null
@@ -2023,7 +2056,6 @@ async function editTeam(t) {
           await guarded(async () => {
             await api('PUT', `/v1/teams/${enc(t.id)}/lead`, { agent: run.lead })
             toast(`Team "${t.name}" runs again`)
-    req.compact_first = compactBox.checked
             await refreshAgents()
           })
         },
@@ -5979,7 +6011,7 @@ function adminRow(a) {
     class: 'agent admin-row' + (a.id === S.sel && S.view === 'agent' ? ' selected' : ''),
     'data-line': a.line || a.id, onclick: () => select(a.id), title: 'Admin: runs on this Mac, outside every isolation',
   }, h('span', { class: 'admin-icon' }, icon('shield')),
-    h('span', { class: 'name' }, agentTitle(a), S.unread.has(a.id) ? h('span', { class: 'unread', 'aria-label': 'turn ended, not opened since' }) : null),
+    nameWithAge(a, null),
     h('span', { class: 'host-tag' }, 'HOST'),
     h('span', { class: 'meta' }, meta))
 }

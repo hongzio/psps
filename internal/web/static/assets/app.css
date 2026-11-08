@@ -249,9 +249,12 @@ body.resizing { cursor: col-resize; user-select: none; -webkit-user-select: none
 .agent .name .mark { color: var(--faint); margin-right: 4px; }
 /* An agent whose turn ended while another was open, not opened since: a red
    dot at the end of its name, smaller and brighter than an error's. */
-.agent .name.with-unread { display: flex; align-items: center; gap: 8px; }
-.agent .name.with-unread .title { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.agent .name .unread { flex: none; width: 7px; height: 7px; border-radius: 50%; background: var(--unread); animation: unread-pop .25s ease-out; }
+.agent .name.split { display: flex; align-items: center; gap: 8px; }
+.agent .name.split .title { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.agent .name .unread-dot { flex: none; width: 7px; height: 7px; border-radius: 50%; background: var(--unread); animation: unread-pop .25s ease-out; }
+/* How long ago its last message was, at the name's end; red while unread. */
+.agent .name .age { flex: none; margin-left: auto; color: var(--faint); font-size: 12px; font-weight: 400; font-variant-numeric: tabular-nums; }
+.agent .name .age.unread { color: var(--unread); font-weight: 500; }
 .team-dots .dot.unread { box-shadow: 0 0 0 1.5px var(--sidebar), 0 0 0 3px var(--unread); }
 @keyframes unread-pop { from { transform: scale(0); } }
 /* The operator's icon for a line: last on its row's second line, where a
@@ -280,7 +283,7 @@ body.resizing { cursor: col-resize; user-select: none; -webkit-user-select: none
 .icon-pop .icons button:hover { background: color-mix(in srgb, var(--text) 8%, transparent); }
 .icon-pop .icons button[aria-checked="true"], .icon-pop .icons button[aria-pressed="true"] { background: color-mix(in srgb, currentColor 16%, transparent); }
 @media (prefers-reduced-motion: reduce) { .agent .pick.fresh { animation: none; } }
-@media (prefers-reduced-motion: reduce) { .agent .name .unread { animation: none; } }
+@media (prefers-reduced-motion: reduce) { .agent .name .unread-dot { animation: none; } }
 .agent .name .mark .icon { width: 13px; height: 13px; vertical-align: -2px; }
 .fold {
   display: block;
@@ -1272,7 +1275,7 @@ kbd {
 .agent.admin-row .admin-icon { color: var(--warn); display: grid; place-items: center; height: 22px; }
 .agent.admin-row .admin-icon .icon { width: 15px; height: 15px; vertical-align: 0; }
 .agent.admin-row .name { display: flex; align-items: center; gap: 8px; font-weight: 600; min-width: 0; }
-.agent.admin-row .name .unread { flex: none; width: 7px; height: 7px; border-radius: 50%; background: var(--unread); }
+.agent.admin-row .name .title { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .agent.admin-row .meta { grid-column: 2 / 4; font-family: var(--mono); font-size: 12px; color: color-mix(in srgb, var(--warn) 70%, var(--text)); }
 .host-tag {
   align-self: center; padding: 1px 7px; border-radius: 99px;
