@@ -753,6 +753,7 @@ func (m *Manager) RunTeams() {
 		case <-tick.C:
 			m.turnLimits(time.Now())
 			m.watchDue(time.Now())
+			m.watchClocks(time.Now())
 			if leads, err := m.store.Leads(); err == nil {
 				m.mu.Lock()
 				for _, l := range leads {

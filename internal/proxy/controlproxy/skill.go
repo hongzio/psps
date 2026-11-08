@@ -35,13 +35,36 @@ var how = map[string]string{
   (elsewhere_approvals in GET $PSPS_CONTROL_URL) and yours are auto or
   never. Asking for approvals yourself is refused either way.
 - The agents of this isolation may have %d made this way live at once; archive
-  one that is done.`,
+  one that is done.
+- psps tells you when it has finished with its prompt, as agent.send says
+  (watch_note in the answer); ?watch=none and the rest work here too.`,
 	"agent.send": `Write to an agent. It reads it as yours: at once if it is idle, otherwise
-within or after the turn it is in.
+within or after the turn it is in. psps tells you what came of it: when the
+agent has finished with it (its turn ended and it runs nothing in the
+background), stopped, or waits for approval, however long that takes, with
+its last answer, as a message of its own once you are idle. If its turn ends
+with tasks still running in the background, you hear that once.
 
     curl -sS "$PSPS_CONTROL_URL/agents/ID/send" --data-binary @- <<'MSG'
     The profile is in notes/profile.md; start from its third finding.
-    MSG`,
+    MSG
+
+- Do not poll for it (sleep loops, background waits): end your turn if you
+  have nothing else to do, and the receipt comes. Your loops die when your
+  process is replaced; the receipt does not.
+- Do not tell your operator it is done before the receipt says so; read its
+  last answer and check that it did what you asked.
+- An agent that stopped (interrupted, in error, or whose process ended with
+  its background tasks) is your operator's to resume: tell them; do not
+  send it on yourself unless they asked you to.
+- ?watch=turn tells you as soon as the turn that read it ends; ?watch=none
+  sends without a receipt; &minutes=N also tells you once if it is still at
+  work after N minutes of psps running (the watch stays open).
+- You may have 20 watches open. GET $PSPS_CONTROL_URL/watches lists yours,
+  with each agent's state and last activity: if one has been quiet too long,
+  look at it yourself. DELETE $PSPS_CONTROL_URL/watches/N drops one, and
+  answers with where it is. POST $PSPS_CONTROL_URL/agents/ID/watch watches
+  an agent without writing to it: from the turn it is in, or its next.`,
 	"agent.interrupt": `Stop an agent's turn:
 
     curl -sS -X POST "$PSPS_CONTROL_URL/agents/ID/interrupt"`,

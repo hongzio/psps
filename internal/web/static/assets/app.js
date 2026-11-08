@@ -167,6 +167,14 @@ function cronMsg(text) {
   return m && { id: m[1], schedule: m[2], self: m[0].includes('You set this message yourself'), by: by?.[1], body: text.slice(m[0].length) }
 }
 
+// Receipts psps sends an agent of what came of what it sent through the
+// control service (internal/daemon/watches.go).
+const RECEIPTS = /^\[psps receipts: [^\n]*\]\n\n/
+function receiptsMsg(text) {
+  const m = RECEIPTS.exec(text)
+  return m && { body: text.slice(m[0].length) }
+}
+
 // A schedule as the cron form has it: every N minutes or hours, a time on
 // some days, or a cron expression as written. Days are cron's: 0 is Sunday.
 const DAYS = [[1, 'Mon'], [2, 'Tue'], [3, 'Wed'], [4, 'Thu'], [5, 'Fri'], [6, 'Sat'], [0, 'Sun']]
@@ -2037,6 +2045,8 @@ function renderTopbar() {
         working ? h('button', { class: 'btn stop', onclick: () => guarded(() => api('POST', `/v1/agents/${a.id}/interrupt`)) }, icon('square'), h('span', { class: 'label' }, ' Stop')) : null,
         h('button', { class: 'btn ghost', title: 'Its mail: what it was sent and what it wrote', onclick: () => openMail(a) },
           icon('mail'), h('span', { class: 'label' }, ' Mail'), a.inbox ? h('span', { class: 'badge' }, String(a.inbox)) : null),
+        (a.watching || a.watched_by?.length) ? h('button', { class: 'btn ghost' + (a.watch_stalled ? ' warn' : ''), title: watchTitle(a), onclick: () => openWatches(a) },
+          icon('target'), h('span', { class: 'label' }, a.watching ? ' Watching' : ' Awaited'), a.watching ? h('span', { class: 'badge' }, String(a.watching)) : null) : null,
         a.archived_at ? null : h('button', { class: 'btn ghost', title: 'Cron: messages sent to it on a schedule', onclick: () => openCrons(a) },
           icon('clock'), h('span', { class: 'label' }, ' Cron'), a.crons ? h('span', { class: 'badge' }, String(a.crons)) : null),
         a.archived_at ? null : h('button', { class: 'btn ghost', title: 'TODO: prompts put aside to send it later', onclick: () => openTodos(a) },
@@ -2142,6 +2152,61 @@ document.addEventListener('click', (e) => {
   const menu = document.querySelector('.more-menu')
   if (menu && !menu.hidden && !menu.contains(e.target)) { S.moreOpen = false; menu.hidden = true }
 })
+
+// watchTitle says who waits on whom, for the top bar's watch button.
+function watchTitle(a) {
+  const says = []
+  if (a.watching) says.push(`It waits to hear what came of ${plural(a.watching, 'message')} it sent`)
+  if (a.watched_by?.length) says.push(`${a.watched_by.join(', ')} ${a.watched_by.length === 1 ? 'waits' : 'wait'} to hear what comes of its work: what you have it do reaches them too`)
+  if (a.watch_stalled) says.push('Stalled: an agent lost its work with its process, and goes on only once you resume it')
+  return says.join('. ')
+}
+
+// openWatches shows who an agent waits on, and who waits on it: psps tells
+// a sender what came of its message once its agent has finished with it.
+// A watch can be dropped, which tells the sender nothing.
+async function openWatches(a) {
+  const box = h('div', { class: 'inbox' })
+  const states = {
+    waiting: (w) => ['idle', 'not read yet'],
+    reading: (w) => ['working', 'at work'],
+    background: (w) => ['working', `${plural(w.background, 'task')} in the background`],
+    stalled: (w) => ['interrupted', `stalled: ${plural(w.stalled, 'task')} lost, resume it`],
+  }
+  const draw = async () => {
+    const v = await guarded(() => api('GET', `/v1/agents/${enc(a.id)}/watches`))
+    if (!v) return
+    const row = (w, sent) => {
+      const [chip, label] = (states[w.state] || states.waiting)(w)
+      const other = sent ? w.target : w.sender
+      return h('div', { class: 'mail watch' + (w.state === 'stalled' ? ' stalled' : '') },
+        h('div', { class: 'mail-head' },
+          h('a', { href: `#/a/${other}`, title: 'Go to it', onclick: (e) => { e.preventDefault(); e.currentTarget.closest('dialog')?.close('cancel'); select(other) } },
+            h('strong', null, sent ? `→ ${w.target_id || w.target}` : `← ${w.sender_id || w.sender}`)),
+          h('span', { class: 'chip ' + chip }, label),
+          h('button', {
+            type: 'button', class: 'btn ghost danger', title: 'Stop waiting: the sender hears nothing more of it', onclick: () => guarded(async () => {
+              await api('DELETE', `/v1/watches/${w.id}`)
+              await draw()
+            }),
+          }, 'Drop')),
+        h('div', { class: 'mail-meta' }, [`#${w.id}`, w.mode, `since ${new Date(w.created_at).toLocaleString()}`,
+          w.last_activity ? `last activity ${new Date(w.last_activity).toLocaleString()}` : null].filter(Boolean).join(' · ')),
+        h('div', { class: 'mail-text' }, w.excerpt || 'No message: from its next turn on'))
+    }
+    box.replaceChildren(...[
+      v.sent.length ? h('h4', null, 'It waits on') : null, ...v.sent.map((w) => row(w, true)),
+      v.received.length ? h('h4', null, 'Waiting on it') : null, ...v.received.map((w) => row(w, false)),
+      !v.sent.length && !v.received.length ? h('p', { class: 'mail-lead' }, 'No one waits on anyone here now.') : null,
+    ].filter(Boolean))
+  }
+  await draw()
+  await ask({
+    title: `Watches of "${agentTitle(a)}"`, cancel: 'Close',
+    extra: h('div', null, h('p', { class: 'mail-lead' }, 'psps tells the sender what came of its message once the agent has finished with it, stopped, or waits for your approval. One stalled lost its work with its process: resume that agent, and the watch goes on.'), box),
+  })
+  await guarded(refreshAgents)
+}
 
 // openMail shows an agent's mail, newest first: what other agents sent it,
 // read or still waiting, and what it wrote to them. Waiting mail can be
@@ -2728,6 +2793,8 @@ function entryView(en, a, frozen) {
     case 'user': {
       const l = letter(en.text)
       if (l) return h('div', { class: 'msg-mail' }, h('div', { class: 'who' }, icon('mail'), ` Mail #${l.id} from ${l.from} · ${l.iso}`), h('div', { class: 'text' }, markdown(l.body)))
+      const rc = receiptsMsg(en.text)
+      if (rc) return h('div', { class: 'msg-cron msg-receipt' }, h('div', { class: 'who' }, icon('target'), ' From psps: what came of what it sent'), h('div', { class: 'text' }, richText(rc.body)))
       const cm = cronMsg(en.text)
       if (cm) return h('div', { class: 'msg-cron' }, h('div', { class: 'who' }, icon('clock'), ` Cron #${cm.id}${cm.self ? ' (the agent\'s own)' : cm.by ? ` (set by ${cm.by})` : ''} · ${describeSchedule(cm.schedule)}`), h('div', { class: 'text' }, richText(cm.body)))
       if (!frozen && S.edit?.agent === a.id && S.edit.id === en.id) return editView(en, a)

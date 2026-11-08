@@ -324,6 +324,14 @@ func execText(v api.ControlExec) string {
 
 // controlNew is an agent as an agent makes it. Approvals is there to be
 // refused: an agent's approvals are the operator's.
+// controlSent is what a message sent, or a watch begun, through the
+// control service comes to: the watch on it, if any, and what to expect.
+type controlSent struct {
+	Sent  string `json:"sent,omitempty"`
+	Watch int64  `json:"watch,omitempty"`
+	Note  string `json:"note"`
+}
+
 type controlNew struct {
 	Kind      driver.Kind `json:"kind"`
 	Prompt    string      `json:"prompt"`
@@ -432,40 +440,49 @@ func (m *Manager) controlExec(ctx context.Context, c controlCall, name string, r
 }
 
 // controlMake makes the agent req says, as c's.
-func (m *Manager) controlMake(ctx context.Context, c controlCall, req controlNew) (api.Agent, error) {
+func (m *Manager) controlMake(ctx context.Context, c controlCall, req controlNew, spec watchSpec) (controlMade, error) {
 	if req.Approvals != nil {
-		return api.Agent{}, errApprovals
+		return controlMade{}, errApprovals
 	}
 	if req.Kind != driver.Claude && req.Kind != driver.Codex {
-		return api.Agent{}, badRequest(fmt.Errorf(`control: "kind" is "claude" or "codex", not %q`, req.Kind))
+		return controlMade{}, badRequest(fmt.Errorf(`control: "kind" is "claude" or "codex", not %q`, req.Kind))
 	}
 	prompt := strings.TrimSpace(req.Prompt)
 	if prompt == "" {
-		return api.Agent{}, badRequest(errors.New(`control: an agent starts on its "prompt", and it is empty`))
+		return controlMade{}, badRequest(errors.New(`control: an agent starts on its "prompt", and it is empty`))
 	}
 	iso := store.Isolation{ID: c.s.iso, Name: c.s.name}
 	if strings.TrimSpace(req.Isolation) != "" {
 		var err error
 		if iso, err = m.reachIsolation(c, strings.TrimSpace(req.Isolation)); err != nil {
-			return api.Agent{}, err
+			return controlMade{}, err
 		}
 	}
 	approvals := c.approvalsIn(iso.ID)
 	m.controlMu.Lock()
 	defer m.controlMu.Unlock()
 	if err := m.roomForOne(c); err != nil {
-		return api.Agent{}, err
+		return controlMade{}, err
 	}
 	header := fmt.Sprintf("[psps control: agent %s made you, through psps's control service. Your operator may not be watching.]\n\n", c.by())
-	a, err := m.createAgent(ctx, api.CreateAgent{Isolation: iso.Name, Kind: req.Kind, Prompt: header + prompt, Name: req.Name,
+	a, wd, err := m.createAgentWatched(ctx, api.CreateAgent{Isolation: iso.Name, Kind: req.Kind, Prompt: header + prompt, Name: req.Name,
 		Workdir: req.Workdir, Repo: req.Repo, Team: req.Team,
 		Options: driver.Options{Model: strings.TrimSpace(req.Model), Effort: strings.TrimSpace(req.Effort), Approvals: approvals}},
-		store.Agent{MadeVia: c.me.ID})
+		store.Agent{MadeVia: c.me.ID}, spec.watch(c.me, prompt))
 	if err != nil {
-		return api.Agent{}, err
+		return controlMade{}, err
 	}
 	m.did(c, "agent.new", fmt.Sprintf("%s in isolation %s", shownID(a), iso.Name))
-	return m.viewOf(a)
+	v, err := m.viewOf(a)
+	return controlMade{Agent: v, Watch: wd.id, WatchNote: watchNote(a, wd, spec)}, err
+}
+
+// controlMade is an agent made through the control service, with the
+// watch of its maker's on its prompt, if one was asked for.
+type controlMade struct {
+	api.Agent
+	Watch     int64  `json:"watch,omitempty"`
+	WatchNote string `json:"watch_note"`
 }
 
 // controlCron is a cron as an agent sets one through the control service:
@@ -745,7 +762,12 @@ func (m *Manager) controlRoutes(mux *http.ServeMux, iso string) {
 			reply(w, nil, err)
 			return
 		}
-		v, err := m.controlMake(r.Context(), c, req)
+		spec, err := watchQuery(r.URL.Query())
+		if err != nil {
+			reply(w, nil, err)
+			return
+		}
+		v, err := m.controlMake(r.Context(), c, req, spec)
 		created(w, v, err)
 	})
 	route("POST /agents/{id}/send", "agent.send", func(w http.ResponseWriter, r *http.Request, c controlCall) {
@@ -753,7 +775,13 @@ func (m *Manager) controlRoutes(mux *http.ServeMux, iso string) {
 		if !ok {
 			return
 		}
+		spec, err := watchQuery(r.URL.Query())
+		if err != nil {
+			reply(w, nil, err)
+			return
+		}
 		body, err := io.ReadAll(io.LimitReader(r.Body, controlMax+1))
+		var wd watched
 		switch {
 		case err != nil:
 			err = badRequest(errors.New("control: the body could not be read"))
@@ -773,7 +801,10 @@ func (m *Manager) controlRoutes(mux *http.ServeMux, iso string) {
 				err = httpError{http.StatusTooManyRequests, fmt.Errorf("control: isolation %s's agents send at most %d messages a minute, mail included; wait and send again", c.s.name, mailproxy.PerMinute)}
 				break
 			}
-			err = m.Send(a.ID, fmt.Sprintf("[psps control: from agent %s, through psps's control service]\n\n%s", c.by(), body))
+			var rt *runtime
+			if rt, err = m.runtime(a.ID); err == nil {
+				wd, err = rt.sendWatched(fmt.Sprintf("[psps control: from agent %s, through psps's control service]\n\n%s", c.by(), body), spec.watch(c.me, string(body)))
+			}
 		}
 		if err != nil {
 			reply(w, nil, err)
@@ -782,7 +813,72 @@ func (m *Manager) controlRoutes(mux *http.ServeMux, iso string) {
 		m.did(c, "agent.send", shownID(a))
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusAccepted)
-		reply(w, map[string]string{"sent": "it reads it as yours: at once if it is idle, otherwise within or after its turn"}, nil)
+		reply(w, controlSent{Sent: "it reads it as yours: at once if it is idle, otherwise within or after its turn", Watch: wd.id, Note: watchNote(a, wd, spec)}, nil)
+	})
+	route("POST /agents/{id}/watch", "agent.send", func(w http.ResponseWriter, r *http.Request, c controlCall) {
+		a, ok := agent(w, r, c)
+		if !ok {
+			return
+		}
+		spec, err := watchQuery(r.URL.Query())
+		switch {
+		case err != nil:
+		case spec.mode == "":
+			err = badRequest(errors.New("control: watch=none watches nothing"))
+		case cmp.Or(a.Line, a.ID) == cmp.Or(c.me.Line, c.me.ID):
+			err = badRequest(errors.New("control: that is you"))
+		case a.ArchivedAt != nil:
+			err = httpError{http.StatusConflict, fmt.Errorf("control: %s is archived", shownID(a))}
+		}
+		var id int64
+		if err == nil {
+			var rt *runtime
+			if rt, err = m.runtime(a.ID); err == nil {
+				id, err = rt.watchNow(store.Watch{Sender: c.me.ID, Mode: spec.mode, Minutes: spec.minutes})
+			}
+		}
+		if errors.Is(err, store.ErrTooMany) {
+			err = httpError{http.StatusTooManyRequests, fmt.Errorf("control: you have %d watches open, as many as you may; DELETE one that no longer matters", maxWatches)}
+		}
+		if err != nil {
+			reply(w, nil, err)
+			return
+		}
+		m.did(c, "agent.watch", shownID(a))
+		created(w, controlSent{Watch: id, Note: watchNote(a, watched{id: id}, spec)}, nil)
+	})
+	route("GET /watches", "agent.send", func(w http.ResponseWriter, r *http.Request, c controlCall) {
+		ws, err := m.store.WatchesBy(c.me.ID)
+		if err != nil {
+			reply(w, nil, err)
+			return
+		}
+		v, err := m.watchViews(ws)
+		reply(w, v, err)
+	})
+	route("DELETE /watches/{watch}", "agent.send", func(w http.ResponseWriter, r *http.Request, c controlCall) {
+		id, _ := strconv.ParseInt(r.PathValue("watch"), 10, 64)
+		wt, err := m.store.Watch(id)
+		if err != nil || wt.Sender != c.me.ID || wt.DoneAt != nil {
+			reply(w, nil, httpError{http.StatusNotFound, fmt.Errorf("control: you have no open watch #%s (GET $PSPS_CONTROL_URL/watches lists them)", r.PathValue("watch"))})
+			return
+		}
+		all, err := m.store.Agents()
+		if err != nil {
+			reply(w, nil, err)
+			return
+		}
+		agents := map[string]store.Agent{}
+		for _, a := range all {
+			agents[a.ID] = a
+		}
+		v := m.watchView(wt, agents)
+		if err := m.DropWatch(id); err != nil {
+			reply(w, nil, err)
+			return
+		}
+		m.did(c, "agent.unwatch", fmt.Sprintf("#%d", id))
+		reply(w, v, nil)
 	})
 	route("POST /agents/{id}/interrupt", "agent.interrupt", func(w http.ResponseWriter, r *http.Request, c controlCall) {
 		if a, ok := agent(w, r, c); ok {
