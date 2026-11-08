@@ -884,3 +884,14 @@ func TestClaudeCountsWhatRunsInTheBackground(t *testing.T) {
 		t.Fatalf("after the process: %+v", st)
 	}
 }
+
+func TestLoginHintPointsAtTheMacForAHostAgent(t *testing.T) {
+	c := newClaude("a1", "", Options{})
+	if h := c.loginHint(Claude); !strings.Contains(h, "psps iso login") {
+		t.Fatalf("an isolation's agent: %q", h)
+	}
+	c.OnHost()
+	if h := c.loginHint(Claude); strings.Contains(h, "psps iso login") || !strings.Contains(h, "/login") {
+		t.Fatalf("a host agent: %q", h)
+	}
+}

@@ -189,6 +189,9 @@ type Driver interface {
 	// the session from: what it was told and did there, it knows. A
 	// session it already has goes on as it is.
 	ForkFrom(from string)
+	// OnHost marks the agent as one run on the Mac, in no isolation, so
+	// what it says about a login points at the CLI there.
+	OnHost()
 }
 
 // A Command is one a person types in a message: Prefix and Name, then what
@@ -247,6 +250,8 @@ type base struct {
 	opts  Options
 	// forkOf is the session to start the agent's own from, until it has one.
 	forkOf string
+	// host: the agent runs on the Mac, not in an isolation.
+	host bool
 
 	alive       bool
 	busy        bool
@@ -262,6 +267,17 @@ type base struct {
 }
 
 func (b *base) ForkFrom(from string) { b.forkOf = from }
+
+func (b *base) OnHost() { b.host = true }
+
+// loginHint says where to log the CLI in: inside the isolation, or on the
+// Mac itself for an agent run there.
+func (b *base) loginHint(cli Kind) string {
+	if b.host {
+		return "log " + string(cli) + " in on this Mac: run `" + string(cli) + "` in a terminal and log in (claude: /login, codex: codex login)"
+	}
+	return "run `psps iso login <isolation> " + string(cli) + "`"
+}
 
 func (b *base) Hold(on bool) { b.held = on }
 
