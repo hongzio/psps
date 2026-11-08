@@ -318,6 +318,57 @@ body.resizing { cursor: col-resize; user-select: none; -webkit-user-select: none
 .dot.interrupted { background: transparent; border: 2px solid var(--warn); }
 .dot.error { background: var(--err); }
 @keyframes pulse { 50% { opacity: .35; } }
+
+/* Picking agents: a row's status icon sits in a cell a finger can find,
+   which a long press turns, in its group, into a box drawn in the
+   status's color. The other group's rows fade. */
+.agent .lead {
+  grid-column: 1; grid-row: 1 / span 2;
+  display: flex; justify-content: center; align-items: flex-start;
+  margin: -8px -4px -8px -10px; padding: 8px 4px 8px 10px;
+  cursor: pointer; -webkit-user-select: none; user-select: none; -webkit-touch-callout: none;
+}
+.agent .lead .dot.toggle::after { display: none; }
+.pick-box {
+  --box: var(--faint);
+  display: none; place-items: center; width: 16px; height: 16px; margin-top: 3px; box-sizing: border-box;
+  border: 1.5px solid var(--box); border-radius: 5px; background: var(--panel); color: transparent;
+  transition: background .1s, border-color .1s;
+}
+.pick-box .icon { width: 12px; height: 12px; stroke-width: 3; }
+.pick-box.idle, .pick-box.parked { --box: var(--dot-idle); }
+.pick-box.working, .pick-box.starting { --box: var(--ok); }
+.pick-box.blocked, .pick-box.interrupted { --box: var(--warn); }
+.pick-box.error { --box: var(--err); }
+.agent.picking .lead .dot { display: none; }
+.agent.picking .pick-box { display: grid; animation: pick-in .16s ease-out; }
+.agent.picked .pick-box { background: var(--accent); border-color: var(--accent); color: var(--accent-text); }
+.agent.picked:not(.selected) { background: color-mix(in srgb, var(--accent-soft) 70%, transparent); }
+.agent.in-range { box-shadow: inset 0 0 0 1.5px color-mix(in srgb, var(--accent) 55%, transparent); }
+.agent.pick-other, .team-head.pick-other { opacity: .45; }
+/* Where a Shift-click carries on from, for a mouse to see. */
+@media (hover: hover) { .agent.pick-last .pick-box { box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 25%, transparent); } }
+.agent.holding .lead .dot { animation: pick-hold .45s linear forwards; }
+@keyframes pick-in { from { transform: scale(.4); opacity: 0; } }
+@keyframes pick-hold { to { transform: scale(1.3); box-shadow: 0 0 0 6px color-mix(in srgb, var(--accent) 30%, transparent); } }
+@media (prefers-reduced-motion: reduce) { .agent.picking .pick-box, .agent.holding .lead .dot { animation: none; } }
+.side-bottom { flex: none; }
+.pick-bar { border-top: 1px solid var(--border); padding: 10px; display: grid; gap: 10px; background: var(--panel); }
+.pick-head { display: flex; align-items: center; gap: 6px; }
+.pick-x { display: grid; place-items: center; width: 36px; height: 36px; border: 0; border-radius: 8px; background: transparent; color: var(--muted); }
+.pick-x:hover { background: var(--accent-soft); color: var(--text); }
+.pick-count { flex: 1; font-weight: 600; font-size: 14px; }
+.pick-count small { font-weight: 400; color: var(--muted); font-size: 12.5px; }
+.pick-all { border: 0; border-radius: 8px; padding: 8px; background: transparent; color: var(--accent); font-size: 13px; font-weight: 600; }
+.pick-all:hover:not(:disabled) { background: var(--accent-soft); }
+.pick-all:disabled { opacity: .4; cursor: default; }
+.pick-acts { display: flex; gap: 8px; }
+.pick-act { flex: 1; display: inline-flex; align-items: center; justify-content: center; gap: 6px; min-height: 44px; font-weight: 600; }
+.pick-act:disabled { opacity: .4; cursor: default; }
+.pick-act.danger { border-color: color-mix(in srgb, var(--err) 40%, var(--border)); }
+.pick-act.danger-fill { background: var(--err); border-color: var(--err); color: var(--on-err); }
+.pick-confirm { font-size: 13px; line-height: 1.45; }
+.pick-purge { font-size: 13px; color: var(--muted); }
 @media (prefers-reduced-motion: reduce) { .dot.working, .dot.starting { animation: none; } }
 
 /* Main */
