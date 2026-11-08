@@ -132,6 +132,12 @@ func run(args []string) error {
 	case "-h", "--help", "help":
 		fmt.Print(usage)
 		return nil
+	case "host-shim":
+		// Not for people: the daemon starts it, for the admin agent.
+		if len(args) != 3 || args[1] != "--root" {
+			return errors.New("usage: psps host-shim --root DIR")
+		}
+		return serveHost(args[2])
 	case "version", "--version":
 		fmt.Println("psps", api.Version)
 		return nil

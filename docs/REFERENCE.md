@@ -176,6 +176,26 @@ HTTPS certificate and decides which devices can reach it.
 For development, `PSPS_HOME=$PWD/.dev` keeps all state under `.dev/` and runs
 the daemon as a plain background process instead of touching launchd.
 
+#### Admin mode
+
+Settings (the gear by the sidebar's title) has **Admin mode**. Turned on, it
+asks for a working directory on the Mac (recent ones first, then what is
+there as you type: Tab completes, ↑↓ moves) and Claude or Codex, and starts
+**Admin**: an agent on the Mac itself, as you, in no isolation and behind no
+fence. It sits above every other agent in the sidebar, in a warning color
+with a `HOST` tag, and its page says where it runs. It can do whatever you
+can, `psps` included, so its approvals start as `default`: the CLI's own
+settings on the Mac decide what it asks first, and it asks here. `/approvals`
+changes that as for any agent. Its process belongs to a shim the daemon
+starts on the Mac (`psps host-shim`, in a session of its own, its log under
+`~/.local/state/psps/host/`), so it outlives a daemon restart as an
+isolation's agents do. Settings shows it while it is on; **Change…** starts
+it over in another directory or with the other CLI, and turning the switch
+off stops it and archives it with its conversation. It is not forked, and an
+archived one is restored only while admin mode is off. The API is
+`GET|PUT|DELETE /v1/admin` (`{"kind": "claude", "dir": "~/src/app"}`) and
+`GET /v1/admin/dirs?path=`.
+
 ### Commands and files in a message
 
 In the web UI, `/` at the start of a message offers commands as you type

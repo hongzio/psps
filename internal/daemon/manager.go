@@ -11,6 +11,8 @@ import (
 	"log"
 	"maps"
 	"net/http"
+	"os"
+	"path/filepath"
 	"regexp"
 	goruntime "runtime"
 	"slices"
@@ -105,6 +107,10 @@ type Manager struct {
 	workRoot, home string
 	// webURL / webErr: what Run managed to serve the web UI on.
 	webURL, webErr string
+	// hostRoot is the host shim's directory, where the admin agent's log
+	// is kept (host.go); "" runs no agent on the Mac.
+	hostRoot string
+	host     hostState
 
 	// services are the credential proxies; creds is where their secrets
 	// live. tunnelPort maps a proxy's port to the one opened inside the
@@ -215,6 +221,7 @@ func NewManager(ctx context.Context, st *store.Store, cli Containers, fence Fenc
 		mailBuckets: map[string]*proxy.TokenBucket{}, cronWake: make(chan struct{}, 1),
 		teamsDue: map[string]bool{}, teamWake: make(chan struct{}, 1), evaluating: map[string]bool{}, dueSince: map[string]time.Time{}, dueTold: map[string]bool{}, busy: map[string]map[string]bool{},
 		jobWake: make(chan struct{}, 1), jobWaiters: map[string]chan struct{}{}, jobHooks: map[string]func(store.Job){}}
+	m.cli = hostCLI{Containers: cli, m: m}
 	m.loops.Add(1)
 	go func() {
 		defer m.loops.Done()
@@ -382,6 +389,9 @@ func (m *Manager) launchEnv(id string) ([]string, []proxy.MCPServer) {
 // none holds the isolation's lock meanwhile, so what replaces or kills a
 // container that does not answer is not kept waiting behind them.
 func (m *Manager) ensureIsolation(ctx context.Context, id string) (*shim.Client, error) {
+	if id == store.HostIsolation {
+		return m.ensureHost(ctx)
+	}
 	st := m.isoLock(id)
 	st.mu.Lock()
 	for st.waiting != nil {
@@ -1116,10 +1126,11 @@ func (m *Manager) view(a store.Agent, inbox, crons, todos int) api.Agent {
 	r, ok := m.runtimes[a.ID]
 	m.mu.Unlock()
 	if !ok {
-		return api.Agent{Agent: a, Isolation: m.isoName(a.IsolationID), Inbox: inbox, Crons: crons, Todos: todos}
+		return api.Agent{Agent: a, Isolation: m.isoName(a.IsolationID), Inbox: inbox, Crons: crons, Todos: todos, Host: a.IsolationID == store.HostIsolation}
 	}
 	live, st, problem := r.shown()
-	return api.Agent{Agent: live, Isolation: m.isoName(live.IsolationID), State: st, Problem: problem, Inbox: inbox, Crons: crons, Todos: todos}
+	return api.Agent{Agent: live, Isolation: m.isoName(live.IsolationID), State: st, Problem: problem, Inbox: inbox, Crons: crons, Todos: todos,
+		Host: live.IsolationID == store.HostIsolation}
 }
 
 // viewOf is a as view has it, counting what it shows of a alone.
@@ -1369,6 +1380,15 @@ func (m *Manager) Restore(ctx context.Context, id string) (api.Agent, error) {
 	if a.ArchivedAt == nil {
 		return api.Agent{}, httpError{http.StatusConflict, fmt.Errorf("agent %s is not archived", a.ID)}
 	}
+	if a.IsolationID == store.HostIsolation {
+		live, err := m.adminAgents()
+		if err != nil {
+			return api.Agent{}, err
+		}
+		if slices.ContainsFunc(live, func(b store.Agent) bool { return b.Line != a.Line }) {
+			return api.Agent{}, httpError{http.StatusConflict, errors.New("another admin agent runs on the Mac; turn admin mode off in Settings first")}
+		}
+	}
 	fallback, err := m.newAgentHandle()
 	if err != nil {
 		return api.Agent{}, err
@@ -1421,6 +1441,9 @@ func (m *Manager) Fork(ctx context.Context, id string) (api.Agent, error) {
 func (m *Manager) fork(ctx context.Context, id, via string) (api.Agent, error) {
 	from, err := m.storedAgent(id)
 	if err != nil {
+		return api.Agent{}, err
+	}
+	if err := notOnHost(from, "forked"); err != nil {
 		return api.Agent{}, err
 	}
 	session := from.SessionID
@@ -1537,7 +1560,12 @@ func (m *Manager) DeleteAgent(ctx context.Context, idOrPrefix string, purge bool
 			return err
 		}
 	}
-	if _, err := m.cli.Sync(ctx, iso.Container, shimproto.SyncRequest{Remove: []string{isolation.AgentStateDir(iso.Container, a.ID)}}); err != nil {
+	if iso.ID == store.HostIsolation {
+		// The host shim keeps its log on the Mac, where the daemon is.
+		if err := os.RemoveAll(filepath.Join(m.hostRoot, "agents", a.ID)); err != nil {
+			return err
+		}
+	} else if _, err := m.cli.Sync(ctx, iso.Container, shimproto.SyncRequest{Remove: []string{isolation.AgentStateDir(iso.Container, a.ID)}}); err != nil {
 		return err
 	}
 	if err := m.store.DeleteAgent(a.ID); err != nil {

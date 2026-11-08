@@ -14,6 +14,8 @@ import (
 
 	"github.com/hongzio/psps/internal/driver"
 	"github.com/hongzio/psps/internal/event"
+	"github.com/hongzio/psps/internal/isolation"
+	"github.com/hongzio/psps/internal/proxy"
 	"github.com/hongzio/psps/internal/shim"
 	"github.com/hongzio/psps/internal/shimproto"
 	"github.com/hongzio/psps/internal/store"
@@ -403,14 +405,21 @@ func (r *runtime) kickLocked() {
 	r.restartWhenIdle = false
 	if st.Queued > 0 && !r.starting && !r.stopping && fenced {
 		r.starting = true
-		env, mcp := r.m.launchEnv(r.agent.IsolationID)
-		env = append(env, r.m.mailEnv(r.agent)...)
-		env = append(env, r.m.cronEnv(r.agent)...)
-		env = append(env, r.m.teamEnv(r.agent)...)
-		env = append(env, r.m.controlEnv(r.agent)...)
-		env = append(env, r.m.jobEnv(r.agent)...)
-		env = append(env, r.m.awsEnv(r.agent)...)
-		shares, _ := r.m.mountsFor(r.agent.IsolationID)
+		// On the Mac the agent has the user's own environment and psps
+		// itself; what an isolation is given to reach psps it needs not.
+		var env []string
+		var mcp []proxy.MCPServer
+		var shares []isolation.Mount
+		if r.agent.IsolationID != store.HostIsolation {
+			env, mcp = r.m.launchEnv(r.agent.IsolationID)
+			env = append(env, r.m.mailEnv(r.agent)...)
+			env = append(env, r.m.cronEnv(r.agent)...)
+			env = append(env, r.m.teamEnv(r.agent)...)
+			env = append(env, r.m.controlEnv(r.agent)...)
+			env = append(env, r.m.jobEnv(r.agent)...)
+			env = append(env, r.m.awsEnv(r.agent)...)
+			shares, _ = r.m.mountsFor(r.agent.IsolationID)
+		}
 		if d, ok := r.drv.(driver.Rooted); ok {
 			var roots []string
 			for _, s := range shares {

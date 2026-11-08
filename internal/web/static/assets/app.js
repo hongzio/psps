@@ -1187,7 +1187,8 @@ function renderSidebar() {
   if (!el) return
   if (S.sorting) { S.sidebarStale = true; return }
   S.sidebarStale = false
-  const live = S.agents.filter((a) => !a.archived_at)
+  const live = S.agents.filter((a) => !a.archived_at && !a.host)
+  const admins = S.agents.filter((a) => !a.archived_at && a.host)
   const archived = S.agents.filter((a) => a.archived_at)
   const row = (a) => {
     const live = a.archived_at ? 'idle' : a.state?.status || 'idle'
@@ -1240,6 +1241,7 @@ function renderSidebar() {
       h('button', { class: 'add-divider', title: 'Add a divider at the bottom; hold it to move it', 'aria-label': 'Add a divider', onclick: addDivider },
         icon('separator-horizontal')),
       h('button', { class: 'brand-settings', title: 'Settings', 'aria-label': 'Settings', onclick: openSettings }, icon('settings'))),
+    ...admins.map(adminRow),
     h('button', { class: 'new-agent' + (S.view === 'new' ? ' active' : ''), onclick: () => show('new') }, '+ New agent'),
     h('div', { class: 'agent-list' },
       sortable('live', liveRows(live, row)),
@@ -2027,8 +2029,10 @@ function renderTopbar() {
   const working = st === 'working'
   // replaceChildren turns null into the text "null"; keep only nodes.
   slot.replaceChildren(...[
-    topbar(agentTitle(a), `${a.kind} · ${a.isolation} · ${shownID(a)}` + (a.team ? ` · team ${a.team}` : '') + (forkedFrom(a) ? ` · fork of ${forkedFrom(a)}` : ''),
+    topbar(agentTitle(a), a.host ? `${a.kind} · on the Mac · ${tildeHome(a.workdir)}`
+      : `${a.kind} · ${a.isolation} · ${shownID(a)}` + (a.team ? ` · team ${a.team}` : '') + (forkedFrom(a) ? ` · fork of ${forkedFrom(a)}` : ''),
       h('span', { class: 'chip ' + st }, st),
+      a.host ? h('span', { class: 'chip host', title: 'It runs on this Mac, outside every isolation' }, icon('monitor'), 'host') : null,
       h('div', { class: 'actions' },
         working ? h('button', { class: 'btn stop', onclick: () => guarded(() => api('POST', `/v1/agents/${a.id}/interrupt`)) }, icon('square'), h('span', { class: 'label' }, ' Stop')) : null,
         h('button', { class: 'btn ghost', title: 'Its mail: what it was sent and what it wrote', onclick: () => openMail(a) },
@@ -2038,7 +2042,7 @@ function renderTopbar() {
         a.archived_at ? null : h('button', { class: 'btn ghost', title: 'TODO: prompts put aside to send it later', onclick: () => openTodos(a) },
           icon('list-todo'), h('span', { class: 'label' }, ' TODO'), a.todos ? h('span', { class: 'badge' }, String(a.todos)) : null),
         h('button', { class: 'btn ghost', title: 'Name, ID and team', onclick: () => editAgent(a) }, icon('pencil'), h('span', { class: 'label' }, ' Edit')),
-        h('button', {
+        a.host ? null : h('button', {
           class: 'btn ghost', title: 'Fork: a new agent in its directory that knows its conversation so far', onclick: async () => {
             if (!await ask({
               title: `Fork "${agentTitle(a)}"?`,
@@ -2091,6 +2095,8 @@ function renderTopbar() {
         }, icon('trash-2'), h('span', { class: 'label' }, ' Delete')) : null,
         a.archived_at ? null : h('button', { class: 'btn ghost', title: 'Archive (x)', onclick: () => askArchive(a) },
           icon('archive'), h('span', { class: 'label' }, ' Archive')))),
+    a.host && !a.archived_at ? h('div', { class: 'banner host-banner' }, icon('triangle-alert'),
+      ' Runs on this Mac as you, outside every isolation: it can read and change whatever you can.') : null,
     a.problem ? h('div', { class: 'banner' }, a.problem) : null,
   ].filter(Boolean))
   fitTopbar()
@@ -3449,39 +3455,44 @@ function rememberDir(iso, dir) {
   } catch {}
 }
 
-function dirCompleter(input, isoName) {
+// o, for directories elsewhere than an isolation (the Mac's, for the
+// admin agent): list(typed) answers as /dirs does, recents() are the
+// directories offered first, recentTitle says what they are, missing is
+// said when nothing is there, onAccept hears of each one taken.
+function dirCompleter(input, isoName, o = {}) {
   const box = h('div', { class: 'complete below', role: 'listbox', hidden: true })
   let items = [], active = 0, seq = 0, timer = null
   const close = () => { box.hidden = true; items = []; seq++ }
-  let recent = null
+  let recent = new Set()
+  const list = o.list || ((typed) => api('GET', `/v1/isolations/${encodeURIComponent(isoName())}/dirs?path=${encodeURIComponent(typed)}`))
+  const recents = o.recents || (() => { const r = recentDir(isoName()); return r ? [r] : [] })
   const draw = (note) => {
     box.replaceChildren(...items.map((d, i) => h('div', {
       class: 'complete-item dir' + (i === active ? ' active' : ''), role: 'option', 'aria-selected': String(i === active),
       onmousedown: (e) => { e.preventDefault(); active = i; accept() },
     }, h('span', { class: 'ci-name' }, d),
-      d === recent ? h('span', { class: 'ci-tag', title: 'The directory last given for an agent in this isolation' }, 'recent') : null)),
+      recent.has(d) ? h('span', { class: 'ci-tag', title: o.recentTitle || 'The directory last given for an agent in this isolation' }, 'recent') : null)),
     ...(note ? [h('div', { class: 'complete-note' }, note)] : []))
     box.hidden = !items.length && !note
     box.querySelector('.active')?.scrollIntoView({ block: 'nearest' })
   }
   const ask = async () => {
-    const iso = isoName()
-    if (!iso || document.activeElement !== input) return close()
+    if ((!o.list && !isoName()) || document.activeElement !== input) return close()
     const my = ++seq
     const typed = input.value
     try {
-      const d = await api('GET', `/v1/isolations/${encodeURIComponent(iso)}/dirs?path=${encodeURIComponent(typed)}`)
+      const d = await list(typed)
       if (my !== seq) return
       const tilde = (p) => (typed.trim() === '' || typed.trim().startsWith('~')) && (p + '/').startsWith(d.home + '/') ? '~' + p.slice(d.home.length) : p
       items = d.dirs.map(tilde)
-      // The last one given in this isolation leads, while what is typed
-      // could still become it.
-      recent = recentDir(iso)
+      // The ones last given lead, while what is typed could still become
+      // them.
       const t = typed.trim()
-      if (recent && recent !== t && recent.startsWith(t)) items = [recent, ...items.filter((p) => p !== recent)]
-      else recent = null
+      const lead = recents().filter((r) => r !== t && r !== t.replace(/\/$/, '') && r.startsWith(t))
+      recent = new Set(lead)
+      items = [...lead, ...items.filter((p) => !recent.has(p) && !recent.has(p.replace(/\/$/, '')))]
       active = 0
-      draw(items.length ? null : 'No such directory here: it is made when the agent is.')
+      draw(items.length ? null : (o.missing || 'No such directory here: it is made when the agent is.'))
     } catch (e) {
       if (my !== seq) return
       items = []
@@ -3493,6 +3504,7 @@ function dirCompleter(input, isoName) {
     if (!items[active]) return false
     input.value = items[active]
     input.setSelectionRange(input.value.length, input.value.length)
+    o.onAccept?.()
     later()
     return true
   }
@@ -3513,9 +3525,11 @@ function dirCompleter(input, isoName) {
         return
       case 'Escape':
         e.preventDefault()
+        e.stopPropagation()
         close()
     }
   })
+  input.addEventListener('input', () => o.onAccept?.())
   return h('div', { class: 'with-complete' }, input, box)
 }
 
@@ -5451,8 +5465,141 @@ function openSettings() {
     title: 'Settings', cancel: 'Close',
     extra: h('div', { class: 'settings-list' },
       h('div', { class: 'setting' }, h('span', { class: 'setting-name' }, 'Theme'), seg),
-      h('p', { class: 'note' }, 'Kept in this browser.')),
+      h('p', { class: 'note' }, 'Kept in this browser.'),
+      h('hr', { class: 'settings-rule' }),
+      adminSetting()),
   })
+}
+
+// ---- Admin mode: an agent on the Mac itself, outside every isolation.
+
+// tildeHome writes a path on the Mac under its home as ~.
+function tildeHome(p) {
+  const home = S.adminHome
+  return home && p && (p + '/').startsWith(home + '/') ? '~' + p.slice(home.length) : p
+}
+
+// adminSetting is admin mode's part of Settings: its switch and, while it
+// is on, what its agent is, read from the daemon as Settings opens.
+function adminSetting() {
+  const sw = h('button', { type: 'button', class: 'switch', role: 'switch', 'aria-checked': 'false', 'aria-label': 'Admin mode', disabled: true })
+  const detail = h('div', { class: 'admin-detail', hidden: true })
+  const box = h('div', { class: 'admin-setting' },
+    h('div', { class: 'setting admin-head' },
+      h('div', { class: 'admin-text' },
+        h('div', { class: 'setting-name' }, 'Admin mode'),
+        h('div', { class: 'note' }, 'Run Claude or Codex on this Mac, outside every isolation, as you.')),
+      sw),
+    detail)
+  let cur = null
+  const closeSettings = () => box.closest('dialog')?.close('cancel')
+  const draw = () => {
+    sw.disabled = false
+    sw.classList.toggle('on', !!cur.on)
+    sw.setAttribute('aria-checked', String(!!cur.on))
+    detail.hidden = !cur.on
+    if (!cur.on) return detail.replaceChildren()
+    const a = agentById(cur.agent)
+    const st = a ? (a.state?.status || 'idle') : 'starting'
+    detail.replaceChildren(
+      h('dl', { class: 'admin-card' },
+        h('dt', null, 'Provider'), h('dd', null, cur.kind === 'codex' ? 'Codex' : 'Claude'),
+        h('dt', null, 'Directory'), h('dd', { class: 'mono' }, tildeHome(cur.dir)),
+        h('dt', null, 'State'), h('dd', null, h('span', { class: 'chip ' + st }, st))),
+      h('div', { class: 'admin-actions' },
+        h('button', { type: 'button', class: 'btn small', onclick: (e) => { e.preventDefault(); closeSettings(); openAdminSetup(cur) } }, 'Change…'),
+        h('button', { type: 'button', class: 'btn small', onclick: (e) => { e.preventDefault(); closeSettings(); select(cur.agent) } }, 'Open Admin')),
+      h('p', { class: 'note' }, 'Turning it off stops Admin and archives it. Changing the directory or provider starts a new session.'))
+  }
+  sw.addEventListener('click', async (e) => {
+    e.preventDefault()
+    if (!cur) return
+    if (!cur.on) { closeSettings(); openAdminSetup(cur); return }
+    closeSettings()
+    if (!await ask({
+      title: 'Turn admin mode off?',
+      body: 'Admin stops, whatever it is doing, and is archived with its conversation. Turn it on again for a new one.',
+      ok: 'Turn off', danger: true,
+    })) return
+    await guarded(async () => {
+      await api('DELETE', '/v1/admin')
+      if (S.sel === cur.agent) S.sel = null
+      toast('Admin mode is off')
+      await refreshAgents()
+      render()
+    })
+  })
+  api('GET', '/v1/admin').then((v) => { cur = v; S.adminHome = v.home; draw() }).catch(() => {
+    detail.hidden = false
+    detail.replaceChildren(h('p', { class: 'form-error' }, "Can't read admin mode from the daemon."))
+  })
+  return box
+}
+
+// openAdminSetup asks where admin's agent works and which CLI it is, and
+// starts it: admin mode is on once it has.
+function openAdminSetup(cur) {
+  S.adminHome = cur.home
+  const recents = (cur.recent || []).map(tildeHome)
+  let kind = cur.on ? cur.kind : 'claude'
+  const dir = h('input', {
+    id: 'admin-dir', class: 'dialog-input mono', placeholder: '~/path/to/project', autocomplete: 'off', autocapitalize: 'off', spellcheck: 'false',
+    value: cur.on ? tildeHome(cur.dir) : (recents[0] || ''),
+  })
+  const cmd = h('div', { class: 'dialog-cmd admin-cmd', 'aria-label': 'What runs' })
+  const drawCmd = () => { cmd.textContent = `cd ${dir.value.trim() || '~'} && ${kind}` }
+  const field = dirCompleter(dir, () => '', {
+    list: (typed) => api('GET', `/v1/admin/dirs?path=${encodeURIComponent(typed)}`),
+    recents: () => recents,
+    recentTitle: 'An admin agent worked here before',
+    missing: 'No such directory on this Mac.',
+    onAccept: drawCmd,
+  })
+  const provs = h('div', { class: 'admin-provs', role: 'radiogroup', 'aria-label': 'Provider' })
+  const drawProvs = () => provs.replaceChildren(...[['claude', 'Claude'], ['codex', 'Codex']].map(([k, label]) => h('button', {
+    type: 'button', role: 'radio', 'aria-checked': String(k === kind), class: 'admin-prov' + (k === kind ? ' on' : ''),
+    onclick: (e) => { e.preventDefault(); kind = k; drawProvs(); drawCmd() },
+  }, h('span', { class: 'radio' }), h('span', { class: 'prov-text' }, h('span', { class: 'prov-name' }, label), h('span', { class: 'prov-cmd' }, k)))))
+  drawProvs()
+  drawCmd()
+  ask({
+    title: cur.on ? 'Change admin agent' : 'Admin agent',
+    body: 'An agent on this Mac itself, not in an isolation. It sits at the top of the sidebar while admin mode is on.',
+    wide: true,
+    extra: h('div', { class: 'admin-form' },
+      h('label', { class: 'dialog-field', for: 'admin-dir' }, 'Working directory'),
+      field,
+      h('p', { class: 'field-hint' }, 'Tab completes · ↑↓ to move · directories on this Mac'),
+      h('span', { class: 'dialog-field' }, 'Provider'),
+      provs,
+      h('div', { class: 'admin-warn' }, icon('triangle-alert'),
+        h('span', null, 'No isolation around it: it can read and change any file you can, and reach every isolation through psps. It asks before acting as your own settings for the CLI say.')),
+      cmd),
+    ok: cur.on ? 'Start over' : 'Start admin agent',
+    onOk: async () => {
+      if (!dir.value.trim()) throw new Error('Pick a working directory.')
+      const v = await api('PUT', '/v1/admin', { kind, dir: dir.value.trim() })
+      toast(cur.on ? 'Admin started over' : 'Admin mode is on')
+      await refreshAgents()
+      select(v.agent)
+    },
+  })
+  queueMicrotask(() => { dir.focus(); dir.setSelectionRange(dir.value.length, dir.value.length) })
+}
+
+// adminRow is the admin agent in the sidebar, above every other: a row of
+// its own, no team's, in no order but first.
+function adminRow(a) {
+  const st = a.state?.status || 'idle'
+  const meta = a.problem ? h('span', { class: 'problem' }, icon('triangle-alert'), ' ' + a.problem)
+    : `${st} · ${a.kind} · ${tildeHome(a.workdir)}`
+  return h('button', {
+    class: 'agent admin-row' + (a.id === S.sel && S.view === 'agent' ? ' selected' : ''),
+    'data-line': a.line || a.id, onclick: () => select(a.id), title: 'Admin: runs on this Mac, outside every isolation',
+  }, h('span', { class: 'admin-icon' }, icon('shield')),
+    h('span', { class: 'name' }, agentTitle(a), S.unread.has(a.id) ? h('span', { class: 'unread', 'aria-label': 'turn ended, not opened since' }) : null),
+    h('span', { class: 'host-tag' }, 'HOST'),
+    h('span', { class: 'meta' }, meta))
 }
 
 // stepAgent opens the agent by from the open one in the sidebar's live list,

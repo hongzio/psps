@@ -264,6 +264,26 @@ func (m *Manager) Handler() http.Handler {
 		v, err := m.Dirs(r.Context(), r.PathValue("name"), r.URL.Query().Get("path"))
 		reply(w, v, err)
 	})
+	mux.HandleFunc("GET /v1/admin", func(w http.ResponseWriter, r *http.Request) {
+		v, err := m.Admin()
+		reply(w, v, err)
+	})
+	mux.HandleFunc("PUT /v1/admin", func(w http.ResponseWriter, r *http.Request) {
+		var req api.SetAdmin
+		if !decode(w, r, &req) {
+			return
+		}
+		v, err := m.SetAdmin(r.Context(), req)
+		reply(w, v, err)
+	})
+	mux.HandleFunc("DELETE /v1/admin", func(w http.ResponseWriter, r *http.Request) {
+		v, err := m.StopAdmin(r.Context())
+		reply(w, v, err)
+	})
+	mux.HandleFunc("GET /v1/admin/dirs", func(w http.ResponseWriter, r *http.Request) {
+		v, err := m.HostDirs(r.URL.Query().Get("path"))
+		reply(w, v, err)
+	})
 	mux.HandleFunc("GET /v1/agents/{id}/files", func(w http.ResponseWriter, r *http.Request) {
 		v, err := m.Files(r.Context(), r.PathValue("id"))
 		reply(w, v, err)

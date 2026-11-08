@@ -10,6 +10,7 @@ import (
 	"net"
 	"net/http"
 	"os"
+	"path/filepath"
 	"syscall"
 	"time"
 
@@ -69,6 +70,7 @@ func Run(ctx context.Context, p paths.Paths, logger *log.Logger) error {
 	// its state directory, so a second daemon (a dev one) cannot drop them.
 	m := NewManager(ctx, st, cli, pf.Client{Socket: pf.SocketPath, Owner: p.State}, logger)
 	m.SetProxies(services.Registry(), p.CredStore())
+	m.hostRoot = filepath.Join(p.State, "host")
 	if err := m.migrateEnvAccounts(); err != nil {
 		logger.Printf("moving tokens from isolation environments into accounts: %v", err)
 	}
