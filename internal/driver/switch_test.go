@@ -148,3 +148,37 @@ func TestClaudeWithAnUnreadCommandLineIsReplaced(t *testing.T) {
 		t.Fatalf("stale %v", d.State().Stale)
 	}
 }
+
+// One started in default is told auto or ask while it runs; back to
+// default it waits for a new process, as no mode psps names is the
+// settings' own.
+func TestClaudeStartedInDefaultSwitchesToAutoWhileItRuns(t *testing.T) {
+	tp := &tape{}
+	d := newClaude("a1", "", Options{Approvals: ApprovalsDefault})
+	d.Observe(tp.startedWith(d))
+	d.SetOptions(Options{Approvals: ApprovalsAuto})
+	if d.State().Stale {
+		t.Fatal("stale for auto, which it switches to")
+	}
+	var id string
+	for _, l := range d.Next() {
+		d.Observe(tp.in(string(l)))
+		for k, v := range modeRequests(t, [][]byte{l}) {
+			if v != "auto" {
+				t.Fatalf("mode %q", v)
+			}
+			id = k
+		}
+	}
+	if id == "" {
+		t.Fatal("auto was not asked for")
+	}
+	d.Observe(tp.out(`{"type":"control_response","response":{"subtype":"success","request_id":"` + id + `"}}`))
+	if d.running.Approvals != ApprovalsAuto || d.State().Stale {
+		t.Fatalf("running %+v, stale %v", d.running, d.State().Stale)
+	}
+	d.SetOptions(Options{Approvals: ApprovalsDefault})
+	if !d.State().Stale || len(modeRequests(t, d.Next())) != 0 {
+		t.Fatalf("back to default: stale %v", d.State().Stale)
+	}
+}
