@@ -5,6 +5,7 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
@@ -158,4 +159,64 @@ func TestHostDirs(t *testing.T) {
 	if d, err := hostDir("~/work/psps/"); err != nil || d != home+"/work/psps" {
 		t.Fatalf("hostDir: %q, %v", d, err)
 	}
+}
+
+// Admin mode's CLI can log in with a shared account, given as an
+// isolation's would be; another account alone keeps the conversation.
+func TestAdminUsesASharedAccount(t *testing.T) {
+	was := api.AccountKinds
+	api.AccountKinds = append(slices.Clone(was), api.AccountKind{Name: "test-codex", Tool: driver.Codex, Env: "PSPS_TEST_VAR"})
+	t.Cleanup(func() { api.AccountKinds = was })
+
+	e := newTestEnv(t)
+	ctx := context.Background()
+	m, stop := e.daemon()
+	defer stop()
+	e.hostShim(m)
+	withCreds(t, m)
+	dir := t.TempDir()
+	for name, kind := range map[string]string{"work": "test-codex", "sub": "claude-token"} {
+		secret := "sk-ant-oat01-x"
+		if kind == "test-codex" {
+			secret = "v1"
+		}
+		if _, err := m.PutAccount(name, api.PutAccount{Kind: kind, Secret: secret}, true); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	if _, err := m.SetAdmin(ctx, api.SetAdmin{Kind: driver.Codex, Dir: dir, Account: "sub"}); err == nil {
+		t.Fatal("codex took a Claude account")
+	}
+	if _, err := m.SetAdmin(ctx, api.SetAdmin{Kind: driver.Codex, Dir: dir, Account: "nobody"}); err == nil {
+		t.Fatal("an account that is not there was taken")
+	}
+	v, err := m.SetAdmin(ctx, api.SetAdmin{Kind: driver.Codex, Dir: dir, Account: "work"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if v.Account != "work" {
+		t.Fatalf("admin: %+v", v)
+	}
+	m.SetOptions(v.Agent, driver.Options{Approvals: driver.ApprovalsNever})
+	m.Send(v.Agent, "env")
+	e.waitFor("the account on the Mac", func() bool { return e.hasAssistant(v.Agent, "echo: env=v1") })
+	e.waitFor("idle", func() bool { return status(m, v.Agent) == event.StatusIdle })
+	if as, _ := m.Accounts(); !slices.ContainsFunc(as, func(a api.Account) bool {
+		return a.Name == "work" && slices.Equal(a.UsedBy, []string{"Admin (the Mac)"})
+	}) {
+		t.Fatalf("accounts: %+v", as)
+	}
+
+	// Back to the Mac's own login: the same agent, restarted without it.
+	v2, err := m.SetAdmin(ctx, api.SetAdmin{Kind: driver.Codex, Dir: dir})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if v2.Agent != v.Agent || v2.Account != "" {
+		t.Fatalf("another account started it over: %+v", v2)
+	}
+	e.waitFor("the agent restarted", func() bool { ag, _ := m.Agent(v.Agent); return !ag.State.Alive })
+	m.Send(v.Agent, "env")
+	e.waitFor("no account", func() bool { return e.hasAssistant(v.Agent, "echo: env=") })
 }

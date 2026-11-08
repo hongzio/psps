@@ -186,11 +186,16 @@ fence. It sits above every other agent in the sidebar, in a warning color
 with a `HOST` tag, and its page says where it runs. It can do whatever you
 can, `psps` included, so its approvals start as `default`: the CLI's own
 settings on the Mac decide what it asks first, and it asks here. `/approvals`
-changes that as for any agent. Its process belongs to a shim the daemon
+changes that as for any agent. Its CLI logs in with a shared account from
+Accounts, picked in the same dialog (a Claude token or API key; Codex has
+none to share), or with its own login on the Mac: the Keychain, or what a
+login shell sets, which `~/.zshrc` is not, since it is not read. Another
+account alone keeps the conversation and restarts the CLI with it when idle;
+the account lists Admin among what uses it. Its process belongs to a shim the daemon
 starts on the Mac (`psps host-shim`, in a session of its own, its log under
 `~/.local/state/psps/host/`), so it outlives a daemon restart as an
 isolation's agents do. Settings shows it while it is on; **Change…** starts
-it over in another directory or with the other CLI, and turning the switch
+it over in another directory or with the other CLI, or changes its account, and turning the switch
 off stops it and archives it with its conversation. It is not forked, and an
 archived one is restored only while admin mode is off. The API is
 `GET|PUT|DELETE /v1/admin` (`{"kind": "claude", "dir": "~/src/app"}`) and

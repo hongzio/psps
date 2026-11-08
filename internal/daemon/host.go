@@ -300,6 +300,9 @@ func (m *Manager) Admin() (api.Admin, error) {
 	}
 	a := as[0]
 	v.On, v.Agent, v.Kind, v.Dir = true, a.ID, a.Kind, a.Workdir
+	if used, err := m.store.AccountsUsed(store.HostIsolation); err == nil {
+		v.Account = used[a.Kind]
+	}
 	return v, nil
 }
 
@@ -344,18 +347,31 @@ func (m *Manager) SetAdmin(ctx context.Context, req api.SetAdmin) (api.Admin, er
 	if err != nil {
 		return api.Admin{}, badRequest(err)
 	}
+	if err := m.adminAccountFits(req.Kind, req.Account); err != nil {
+		return api.Admin{}, err
+	}
 	m.host.admin.Lock()
 	defer m.host.admin.Unlock()
 	live, err := m.adminAgents()
 	if err != nil {
 		return api.Admin{}, err
 	}
-	if len(live) == 1 && live[0].Kind == req.Kind && live[0].Workdir == dir {
-		m.noteAdminDir(dir)
-		return m.Admin()
-	}
 	if err := m.store.EnsureHostIsolation(); err != nil {
 		return api.Admin{}, fmt.Errorf("the host's row: %w", err)
+	}
+	changed, err := m.useAdminAccount(req.Kind, req.Account)
+	if err != nil {
+		return api.Admin{}, err
+	}
+	if len(live) == 1 && live[0].Kind == req.Kind && live[0].Workdir == dir {
+		// Only the account, if anything: the same conversation goes on, its
+		// CLI restarted with the account at its next idle moment.
+		if changed {
+			m.cliChanged(store.HostIsolation, req.Kind)
+		}
+		m.noteAdminDir(dir)
+		m.pokeChanges()
+		return m.Admin()
 	}
 	// The shim first: a Mac that cannot run it leaves admin mode as it was.
 	if _, err := m.ensureHost(ctx); err != nil {
@@ -396,6 +412,47 @@ func (m *Manager) SetAdmin(ctx context.Context, req api.SetAdmin) (api.Admin, er
 	}
 	m.pokeChanges()
 	return m.Admin()
+}
+
+// adminAccountFits refuses an account the CLI cannot use: one not there,
+// or one of the other CLI's kind.
+func (m *Manager) adminAccountFits(kind driver.Kind, account string) error {
+	if account == "" {
+		return nil
+	}
+	a, err := m.store.Account(account)
+	if err != nil {
+		return badRequest(fmt.Errorf("account %s: %w", account, err))
+	}
+	k, ok := api.AccountKindNamed(a.Kind)
+	if !ok || k.Tool != kind {
+		return badRequest(fmt.Errorf("account %s is a %s, which %s cannot use", account, a.Kind, kind))
+	}
+	if _, err := m.accountSecret(account); err != nil {
+		return badRequest(err)
+	}
+	return nil
+}
+
+// useAdminAccount links the host's CLI to the account ("" unlinks it, for
+// the CLI's own login on the Mac), saying whether that changed anything.
+func (m *Manager) useAdminAccount(kind driver.Kind, account string) (bool, error) {
+	used, err := m.store.AccountsUsed(store.HostIsolation)
+	if err != nil {
+		return false, err
+	}
+	if used[kind] == account {
+		return false, nil
+	}
+	if err := m.store.UseAccount(store.HostIsolation, kind, account); err != nil {
+		return false, err
+	}
+	if account == "" {
+		m.log.Printf("admin: %s uses its own login on the Mac", kind)
+	} else {
+		m.log.Printf("admin: %s uses account %s", kind, account)
+	}
+	return true, nil
 }
 
 // StopAdmin turns admin mode off: its agent is stopped and archived, its

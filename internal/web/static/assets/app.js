@@ -5505,11 +5505,12 @@ function adminSetting() {
       h('dl', { class: 'admin-card' },
         h('dt', null, 'Provider'), h('dd', null, cur.kind === 'codex' ? 'Codex' : 'Claude'),
         h('dt', null, 'Directory'), h('dd', { class: 'mono' }, tildeHome(cur.dir)),
+        h('dt', null, 'Account'), h('dd', null, cur.account ? h('span', { class: 'mono' }, cur.account) : "This Mac's login"),
         h('dt', null, 'State'), h('dd', null, h('span', { class: 'chip ' + st }, st))),
       h('div', { class: 'admin-actions' },
         h('button', { type: 'button', class: 'btn small', onclick: (e) => { e.preventDefault(); closeSettings(); openAdminSetup(cur) } }, 'Change…'),
         h('button', { type: 'button', class: 'btn small', onclick: (e) => { e.preventDefault(); closeSettings(); select(cur.agent) } }, 'Open Admin')),
-      h('p', { class: 'note' }, 'Turning it off stops Admin and archives it. Changing the directory or provider starts a new session.'))
+      h('p', { class: 'note' }, 'Turning it off stops Admin and archives it. Changing the directory or provider starts a new session; another account keeps it.'))
   }
   sw.addEventListener('click', async (e) => {
     e.preventDefault()
@@ -5556,10 +5557,35 @@ function openAdminSetup(cur) {
     onAccept: drawCmd,
   })
   const provs = h('div', { class: 'admin-provs', role: 'radiogroup', 'aria-label': 'Provider' })
-  const drawProvs = () => provs.replaceChildren(...[['claude', 'Claude'], ['codex', 'Codex']].map(([k, label]) => h('button', {
+  let drawProvs = () => provs.replaceChildren(...[['claude', 'Claude'], ['codex', 'Codex']].map(([k, label]) => h('button', {
     type: 'button', role: 'radio', 'aria-checked': String(k === kind), class: 'admin-prov' + (k === kind ? ' on' : ''),
     onclick: (e) => { e.preventDefault(); kind = k; drawProvs(); drawCmd() },
   }, h('span', { class: 'radio' }), h('span', { class: 'prov-text' }, h('span', { class: 'prov-name' }, label), h('span', { class: 'prov-cmd' }, k)))))
+  // The account its CLI logs in with: a shared one from Accounts, or the
+  // CLI's own login on the Mac (the Keychain, or what a login shell sets).
+  let accounts = null
+  let account = cur.on ? (cur.account || '') : ''
+  const accts = h('div', { class: 'admin-provs', role: 'radiogroup', 'aria-label': 'Account' })
+  const acctHint = h('p', { class: 'field-hint' })
+  const drawAccts = () => {
+    const mine = (accounts || []).filter((a) => a.tool === kind)
+    if (!mine.some((a) => a.name === account)) account = ''
+    const opt = (name, label, sub, bad) => h('button', {
+      type: 'button', role: 'radio', 'aria-checked': String(name === account), class: 'admin-prov' + (name === account ? ' on' : ''),
+      disabled: !!bad, title: bad || '',
+      onclick: (e) => { e.preventDefault(); account = name; drawAccts() },
+    }, h('span', { class: 'radio' }), h('span', { class: 'prov-text' }, h('span', { class: 'prov-name' + (name ? ' mono' : '') }, label), h('span', { class: 'prov-cmd' }, sub)))
+    accts.replaceChildren(
+      opt('', "This Mac's login", `${kind}'s own`),
+      ...mine.map((a) => opt(a.name, a.name, a.kind, a.secret_error)))
+    acctHint.textContent = accounts === null ? 'Reading accounts…'
+      : mine.length ? 'A shared account from Settings › Accounts, or the login the CLI has on this Mac.'
+      : kind === 'codex' ? 'Codex has no shared accounts (a ChatGPT login cannot be shared): it uses its login on this Mac.'
+      : 'No Claude account in Settings › Accounts yet: it uses its login on this Mac.'
+  }
+  const drawKind = drawProvs
+  drawProvs = () => { drawKind(); drawAccts() }
+  api('GET', '/v1/accounts').then((v) => { accounts = v || []; drawAccts() }).catch(() => { accounts = []; drawAccts() })
   drawProvs()
   drawCmd()
   ask({
@@ -5572,14 +5598,18 @@ function openAdminSetup(cur) {
       h('p', { class: 'field-hint' }, 'Tab completes · ↑↓ to move · directories on this Mac'),
       h('span', { class: 'dialog-field' }, 'Provider'),
       provs,
+      h('span', { class: 'dialog-field' }, 'Account'),
+      accts,
+      acctHint,
       h('div', { class: 'admin-warn' }, icon('triangle-alert'),
         h('span', null, 'No isolation around it: it can read and change any file you can, and reach every isolation through psps. It asks before acting as your own settings for the CLI say.')),
       cmd),
-    ok: cur.on ? 'Start over' : 'Start admin agent',
+    ok: cur.on ? 'Apply' : 'Start admin agent',
     onOk: async () => {
       if (!dir.value.trim()) throw new Error('Pick a working directory.')
-      const v = await api('PUT', '/v1/admin', { kind, dir: dir.value.trim() })
-      toast(cur.on ? 'Admin started over' : 'Admin mode is on')
+      const v = await api('PUT', '/v1/admin', { kind, dir: dir.value.trim(), account })
+      toast(!cur.on ? 'Admin mode is on' : v.agent !== cur.agent ? 'Admin started over'
+        : (v.account || '') !== (cur.account || '') ? 'Admin restarts with the account when idle' : 'Admin is as it was')
       await refreshAgents()
       select(v.agent)
     },
