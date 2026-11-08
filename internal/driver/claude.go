@@ -793,7 +793,7 @@ func (c *claude) observeOut(rec shimproto.Record, m clMessage) []event.Event {
 				msg = "claude turn failed (" + m.Subtype + ")"
 			}
 			if strings.Contains(msg, "Not logged in") || strings.Contains(msg, "authenticate") {
-				msg += "; run `psps iso login <isolation> claude`"
+				msg += "; " + c.loginHint(Claude)
 			}
 			c.errText = msg
 			evs = append(evs, c.text(rec, event.KindError, "", msg))

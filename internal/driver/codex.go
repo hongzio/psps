@@ -585,7 +585,10 @@ func (c *codex) response(rec shimproto.Record, method string, m rpcMsg) []event.
 		json.Unmarshal(m.Result, &r)
 		if r.RequiresOpenaiAuth && (len(r.Account) == 0 || string(r.Account) == "null") {
 			c.phase, c.starting = cxNoAuth, false
-			c.errText = "codex is not logged in in this isolation; run `psps iso login <isolation> codex`"
+			c.errText = "codex is not logged in in this isolation; " + c.loginHint(Codex)
+			if c.host {
+				c.errText = "codex is not logged in; " + c.loginHint(Codex)
+			}
 			return nil
 		}
 		c.phase = cxNeedThread

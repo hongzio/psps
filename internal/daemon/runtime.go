@@ -99,6 +99,9 @@ func (m *Manager) newRuntime(a store.Agent) (*runtime, error) {
 		return nil, err
 	}
 	drv.ForkFrom(a.ForkOf)
+	if a.IsolationID == store.HostIsolation {
+		drv.OnHost()
+	}
 	outbox, err := m.store.Pending(a.ID)
 	if err != nil {
 		return nil, err
@@ -166,6 +169,9 @@ func (r *runtime) session() error {
 		return err
 	}
 	drv.ForkFrom(r.agent.ForkOf)
+	if r.agent.IsolationID == store.HostIsolation {
+		drv.OnHost()
+	}
 	r.mu.Lock()
 	r.client, r.att, r.drv = client, att, drv
 	r.lastSeen, r.starting, r.stopping = 0, false, false
