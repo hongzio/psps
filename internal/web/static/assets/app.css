@@ -993,6 +993,10 @@ a.btn { display: inline-flex; align-items: center; color: var(--text); text-deco
 .inbox .chip { font-size: 11px; }
 .chip.waiting { color: var(--accent); background: var(--accent-soft); }
 .chip.discarded { color: var(--faint); }
+.inbox h4 { margin: 12px 0 4px; font-size: 12.5px; color: var(--muted); font-weight: 600; }
+.inbox .mail.watch.stalled { border-color: color-mix(in srgb, var(--warn) 50%, var(--border)); }
+.btn.ghost.warn, .btn.ghost.warn .icon { color: var(--warn); }
+.msg-receipt { background: var(--panel); border: 1px solid var(--border); }
 .mail-lead { margin: 4px 0 0; color: var(--muted); font-size: 14px; }
 .mail-lead + .btn { margin-top: 10px; }
 .btn .badge { margin-left: 6px; min-width: 18px; padding: 0 5px; border-radius: 9px; background: var(--accent); color: var(--accent-text); font-size: 11px; line-height: 18px; text-align: center; }

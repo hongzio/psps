@@ -103,6 +103,40 @@ type Agent struct {
 	Leads *TeamBrief `json:"leads,omitempty"`
 	// Host: it is the admin agent, on the Mac itself, in no isolation.
 	Host bool `json:"host,omitempty"`
+	// Watching is how many of its watches are open: it waits to hear what
+	// came of what it sent. WatchedBy are those that wait on it, by the ID
+	// they go by. WatchStalled is how many of either are stalled: the work
+	// went with a process, and waits for the operator to resume it.
+	Watching     int      `json:"watching,omitempty"`
+	WatchedBy    []string `json:"watched_by,omitempty"`
+	WatchStalled int      `json:"watch_stalled,omitempty"`
+}
+
+// Watch is an open watch, as the operator and its sender see it: who
+// waits on whom, and where the target is. State is "waiting" (it has not
+// read the message), "reading" (it works on it), "background" (its turn
+// ended with tasks in the background) or "stalled" (its process ended with
+// them, and it waits for the operator to resume it).
+type Watch struct {
+	store.Watch
+	SenderID        string        `json:"sender_id,omitempty"`
+	TargetID        string        `json:"target_id,omitempty"`
+	TargetName      string        `json:"target_name,omitempty"`
+	TargetIsolation string        `json:"target_isolation,omitempty"`
+	State           string        `json:"state"`
+	TargetStatus    event.Status  `json:"target_status,omitempty"`
+	Background      int           `json:"background,omitempty"`
+	Tasks           []driver.Task `json:"tasks,omitempty"`
+	// LastAnswer is the end of the last thing the target said in its
+	// turn so far, or its last turn.
+	LastAnswer   string     `json:"last_answer,omitempty"`
+	LastActivity *time.Time `json:"last_activity,omitempty"`
+}
+
+// AgentWatches are an agent's open watches (Sent) and those on it.
+type AgentWatches struct {
+	Sent     []Watch `json:"sent"`
+	Received []Watch `json:"received"`
 }
 
 // Admin is admin mode: on while an admin agent runs on the Mac itself, in

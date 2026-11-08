@@ -1027,6 +1027,20 @@ as that agent:
   printed comes back as text, ending in `[psps: exit N]` where N is not 0.
   `{"command": ...}` as JSON still works and still answers JSON. `team.show`
   with `?format=text` answers as `psps team show` prints it.
+- **It hears what came of what it writes.** What it sends (`agent.send`)
+  or makes an agent on (`agent.new`) is watched, unless it says
+  `?watch=none`: once the agent has finished with it (its turn ended, and it
+  runs nothing in the background), stopped, or waits for your approval,
+  psps tells the sender so, with the agent's last answer, as a message of
+  its own once the sender is idle, as a lead hears its team's news. So it
+  waits without polling, and its waiting outlives its process. A turn that
+  ends with tasks in the background is told once; `?watch=turn` tells at the
+  end of the turn that reads it; `&minutes=N` also tells once if the agent
+  is still at work after N minutes of psps running. Nothing is resumed for
+  it: an agent whose process ended with its background tasks is stalled
+  until you resume it, and one stopped is yours to resume too. The web shows
+  who waits on whom on both agents' top bars, and drops a watch for you. An
+  agent has at most 20 open.
 - **It has few made at once, and writes within mail's budget.** `--max-live`
   (3) agents made through it (`agent.new`, `agent.fork`, restoring one) by
   the isolation's agents are live at once, and what they write through it

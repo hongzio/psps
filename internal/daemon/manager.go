@@ -159,8 +159,10 @@ type Manager struct {
 	// dueSince: since when a team's round has been over with no eval
 	// (evalnow.go); dueTold, that the log said so.
 	dueSince map[string]time.Time
-	dueTold  map[string]bool
-	busy     map[string]map[string]bool
+	// watchTick is when watchClocks last counted the watches' time.
+	watchTick time.Time
+	dueTold   map[string]bool
+	busy      map[string]map[string]bool
 	// controlMu keeps counting the agents made through the control service
 	// and making one from crossing another such pair.
 	controlMu sync.Mutex
@@ -988,61 +990,68 @@ func (m *Manager) CreateAgent(ctx context.Context, req api.CreateAgent) (store.A
 // own: the lead that makes it, its turn limit, and the agent that makes it
 // through the control service.
 func (m *Manager) createAgent(ctx context.Context, req api.CreateAgent, own store.Agent) (store.Agent, error) {
+	a, _, err := m.createAgentWatched(ctx, req, own, nil)
+	return a, err
+}
+
+// createAgentWatched is createAgent, with a watch on its prompt if w is
+// not nil (watches.go).
+func (m *Manager) createAgentWatched(ctx context.Context, req api.CreateAgent, own store.Agent, w *store.Watch) (store.Agent, watched, error) {
 	name := nameFrom(req.Prompt)
 	if strings.TrimSpace(req.Name) != "" {
 		var err error
 		if name, err = agentName(req.Name); err != nil {
-			return store.Agent{}, err
+			return store.Agent{}, watched{}, err
 		}
 	}
 	handle, err := agentHandle(req.Handle)
 	if err != nil {
-		return store.Agent{}, err
+		return store.Agent{}, watched{}, err
 	}
 	if req.Isolation == "" {
-		return store.Agent{}, errors.New("an isolation is required")
+		return store.Agent{}, watched{}, errors.New("an isolation is required")
 	}
 	if err := req.Options.Check(); err != nil {
-		return store.Agent{}, badRequest(err)
+		return store.Agent{}, watched{}, badRequest(err)
 	}
 	if strings.TrimSpace(req.Team) != "" {
 		if _, err := teamName(req.Team); err != nil {
-			return store.Agent{}, err
+			return store.Agent{}, watched{}, err
 		}
 	}
 	var ownDir string
 	if strings.TrimSpace(req.Workdir) != "" {
 		if ownDir, err = m.isoPath(req.Workdir); err != nil {
-			return store.Agent{}, badRequest(fmt.Errorf("working directory: %w", err))
+			return store.Agent{}, watched{}, badRequest(fmt.Errorf("working directory: %w", err))
 		}
 	}
 	iso, err := m.isolationNamed(req.Isolation)
 	if err != nil {
-		return store.Agent{}, err
+		return store.Agent{}, watched{}, err
 	}
 	// Taken is said before a clone, not after; storing it checks again.
 	if err := m.store.RefFree(handle); err != nil {
-		return store.Agent{}, err
+		return store.Agent{}, watched{}, err
 	}
 	picked := handle == ""
 	if picked {
 		if handle, err = m.newAgentHandle(); err != nil {
-			return store.Agent{}, err
+			return store.Agent{}, watched{}, err
 		}
 	}
 	id, err := m.newAgentID()
 	if err != nil {
-		return store.Agent{}, err
+		return store.Agent{}, watched{}, err
 	}
 	drv, err := driver.New(req.Kind, id, "", req.Options)
 	if err != nil {
-		return store.Agent{}, err
+		return store.Agent{}, watched{}, err
 	}
 	if _, err := m.ensureIsolation(ctx, iso.ID); err != nil {
-		return store.Agent{}, err
+		return store.Agent{}, watched{}, err
 	}
 	if ok, why := m.fenceOK(iso.ID); !ok {
-		return store.Agent{}, fmt.Errorf("isolation %s has no verified network fence: %s", iso.Name, why)
+		return store.Agent{}, watched{}, fmt.Errorf("isolation %s has no verified network fence: %s", iso.Name, why)
 	}
 	workdir := m.workRoot + "/" + id
 	if ownDir != "" {
@@ -1050,15 +1059,15 @@ func (m *Manager) createAgent(ctx context.Context, req api.CreateAgent, own stor
 	}
 	if req.Repo != "" {
 		if _, err := m.cli.RunAsAgent(ctx, iso.Container, "git", "clone", "--", req.Repo, workdir); err != nil {
-			return store.Agent{}, fmt.Errorf("clone: %w", err)
+			return store.Agent{}, watched{}, fmt.Errorf("clone: %w", err)
 		}
 	} else if _, err := m.cli.RunAsAgent(ctx, iso.Container, "mkdir", "-p", workdir); err != nil {
-		return store.Agent{}, err
+		return store.Agent{}, watched{}, err
 	}
 	a := store.Agent{ID: id, Handle: handle, Name: name, Kind: req.Kind, IsolationID: iso.ID, Workdir: workdir, Repo: req.Repo,
 		Options: req.Options, SessionID: drv.State().SessionID, CreatedAt: time.Now().UTC(), MadeBy: own.MadeBy, TurnMinutes: own.TurnMinutes, MadeVia: own.MadeVia}
 	if a, err = m.storeNamed(a, picked); err != nil {
-		return store.Agent{}, err
+		return store.Agent{}, watched{}, err
 	}
 	// The agent is made by now; a team it could not join is no reason to
 	// say it was not.
@@ -1070,12 +1079,13 @@ func (m *Manager) createAgent(ctx context.Context, req api.CreateAgent, own stor
 	}
 	r, err := m.ensureRuntime(a)
 	if err != nil {
-		return a, err
+		return a, watched{}, err
 	}
 	if strings.TrimSpace(req.Prompt) == "" {
-		return a, nil
+		return a, watched{}, nil
 	}
-	return a, r.send(req.Prompt)
+	wd, err := r.sendWatched(req.Prompt, w)
+	return a, wd, err
 }
 
 func (m *Manager) Agents() ([]api.Agent, error) {
@@ -1118,6 +1128,9 @@ func (m *Manager) Agents() ([]api.Agent, error) {
 	if err := m.withRuns(out); err != nil {
 		return nil, err
 	}
+	if err := m.withWatches(out); err != nil {
+		return nil, err
+	}
 	sortAgents(out)
 	orderAgents(out, order, teams)
 	return out, nil
@@ -1155,6 +1168,9 @@ func (m *Manager) viewOf(a store.Agent) (api.Agent, error) {
 		return v[0], err
 	}
 	if err := m.withIcons(v); err != nil {
+		return v[0], err
+	}
+	if err := m.withWatches(v); err != nil {
 		return v[0], err
 	}
 	return v[0], m.withRuns(v)
@@ -1330,6 +1346,7 @@ func (m *Manager) Archive(ctx context.Context, id string) error {
 	m.mu.Lock()
 	delete(m.runtimes, r.agent.ID)
 	m.mu.Unlock()
+	m.watchesGone(r.agent, "was archived")
 	return nil
 }
 
@@ -1367,6 +1384,7 @@ func (m *Manager) Renew(ctx context.Context, id string) (store.Agent, error) {
 	delete(m.runtimes, old.ID)
 	m.mu.Unlock()
 	m.log.Printf("agent %s: renewed as %s", old.ID, a.ID)
+	m.watchesGone(old, fmt.Sprintf("started over as a new session (%s), which does not know of it,", a.ID))
 	_, err = m.ensureRuntime(a)
 	return a, err
 }
@@ -1421,6 +1439,11 @@ func (m *Manager) Restore(ctx context.Context, id string) (api.Agent, error) {
 	if r != nil {
 		r.stop(ctx)
 		m.log.Printf("agent %s: archived as %s was restored", replaced, a.ID)
+	}
+	if replaced != "" {
+		if old, err := m.store.Agent(replaced); err == nil {
+			m.watchesGone(old, "was archived, as another session of its line was restored,")
+		}
 	}
 	m.log.Printf("agent %s: restored", a.ID)
 	if _, err := m.ensureRuntime(a); err != nil {

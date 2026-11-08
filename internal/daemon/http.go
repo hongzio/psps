@@ -325,6 +325,18 @@ func (m *Manager) Handler() http.Handler {
 		v, err := m.Inbox(r.PathValue("id"))
 		reply(w, v, err)
 	})
+	mux.HandleFunc("GET /v1/agents/{id}/watches", func(w http.ResponseWriter, r *http.Request) {
+		v, err := m.AgentWatches(r.PathValue("id"))
+		reply(w, v, err)
+	})
+	mux.HandleFunc("DELETE /v1/watches/{watch}", func(w http.ResponseWriter, r *http.Request) {
+		id, err := strconv.ParseInt(r.PathValue("watch"), 10, 64)
+		if err != nil {
+			reply(w, nil, badRequest(fmt.Errorf("%q is not a watch number", r.PathValue("watch"))))
+			return
+		}
+		reply(w, nil, m.DropWatch(id))
+	})
 	mux.HandleFunc("GET /v1/agents/{id}/mail", func(w http.ResponseWriter, r *http.Request) {
 		v, err := m.Mail(r.PathValue("id"))
 		reply(w, v, err)

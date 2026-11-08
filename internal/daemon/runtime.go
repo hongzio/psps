@@ -79,6 +79,11 @@ type runtime struct {
 	overtime  overtime
 	// spent is what was last kept of what it spent (store.PutSpent).
 	spent store.Spent
+	// receipts is how many receipts of its watches wait for it: all of
+	// them go in one message whenever it is free (watches.go).
+	receipts int
+	// seenAt is the time of the last record of its log it read.
+	seenAt time.Time
 }
 
 // overtime is where an agent's turn stopped at its limit is: asked to stop
@@ -126,9 +131,13 @@ func (m *Manager) newRuntime(a store.Agent) (*runtime, error) {
 	if err != nil {
 		return nil, err
 	}
+	receipts, err := m.store.ReceiptsWaiting(a.ID)
+	if err != nil {
+		return nil, err
+	}
 	ctx, cancel := context.WithCancel(m.ctx)
 	return &runtime{m: m, ctx: ctx, cancel: cancel, agent: a, drv: drv, outbox: outbox,
-		decisions: map[string]decision{}, inbox: inbox, crons: crons, compacted: compacted, news: news, spent: spent[a.ID]}, nil
+		decisions: map[string]decision{}, inbox: inbox, crons: crons, compacted: compacted, news: news, spent: spent[a.ID], receipts: receipts}, nil
 }
 
 func (r *runtime) loop() {
@@ -202,12 +211,18 @@ func (r *runtime) observe(rec shimproto.Record, liveAfter int64) {
 		return
 	}
 	r.lastSeen = rec.Seq
-	was := r.drv.State().Status
+	r.seenAt = rec.Time
+	prev := r.drv.State()
+	was := prev.Status
 	evs := r.drv.Observe(rec)
 	// Not on a replay: what happened then was told then.
 	live := rec.Seq > r.agent.LastSrc
 	var ended event.Status
 	waited := ""
+	started := false
+	// cut: a turn that ended was stopped, which its status (idle) does
+	// not say.
+	cut := false
 
 	cur := was
 	for _, e := range evs {
@@ -223,6 +238,8 @@ func (r *runtime) observe(rec shimproto.Record, liveAfter int64) {
 			}
 		case event.KindApprovalDone:
 			r.waits = ""
+		case event.KindTurnEnd:
+			cut = cut || e.Text == "interrupted"
 		case event.KindStatus:
 			from := cur
 			cur = e.Status
@@ -230,6 +247,7 @@ func (r *runtime) observe(rec shimproto.Record, liveAfter int64) {
 			switch {
 			case e.Status == event.StatusWorking && !inTurn:
 				r.turnSince, r.answer = rec.Time, ""
+				started = true
 			case inTurn && (e.Status == event.StatusIdle || e.Status == event.StatusError || e.Status == event.StatusInterrupted):
 				r.waits = ""
 				if live {
@@ -239,6 +257,7 @@ func (r *runtime) observe(rec shimproto.Record, liveAfter int64) {
 		}
 	}
 
+	var read []int64
 	for _, e := range evs {
 		switch e.Kind {
 		case event.KindUser:
@@ -246,7 +265,10 @@ func (r *runtime) observe(rec shimproto.Record, liveAfter int64) {
 				if err := r.m.store.DeletePending(r.outbox[0].ID); err != nil {
 					r.m.log.Printf("agent %s: outbox: %v", r.agent.ID, err)
 				}
+				read = append(read, r.outbox[0].ID)
 				r.outbox = r.outbox[1:]
+			} else if live {
+				read = append(read, 0)
 			}
 		case event.KindApprovalDone:
 			delete(r.decisions, e.Approval.ID)
@@ -306,6 +328,22 @@ func (r *runtime) observe(rec shimproto.Record, liveAfter int64) {
 		r.stopping = false
 	}
 
+	// What its watchers hear of (watches.go): what it read, a turn that
+	// began, and, live, a turn that ended, an approval it waits for, or
+	// its process that ended taking tasks in the background with it.
+	if len(read) > 0 {
+		r.watchReadLocked(rec.Seq, read)
+	}
+	if live && started {
+		r.watchTurnStartLocked(rec.Seq)
+	}
+	lost := 0
+	if rec.Dir == shimproto.DirSys && rec.Sys != nil && (rec.Sys.Kind == shimproto.SysExited || rec.Sys.Kind == shimproto.SysLost) {
+		lost = prev.Background
+	}
+	if live && (ended != "" || waited != "" || lost > 0) {
+		r.watchJudgeLocked(ended, cut, waited, lost, rec.Time)
+	}
 	if ended != "" || waited != "" {
 		r.teamTurnLocked(ended, waited, rec.Time)
 	}
@@ -378,6 +416,10 @@ func (r *runtime) kickLocked() {
 	}
 	if fenced && r.news > 0 && r.freeLocked(st) {
 		r.deliverNewsLocked()
+		st = r.drv.State()
+	}
+	if fenced && r.receipts > 0 && r.freeLocked(st) {
+		r.deliverReceiptsLocked()
 		st = r.drv.State()
 	}
 	if fenced && r.mailDueLocked(st) {
@@ -476,22 +518,8 @@ func (r *runtime) send(text string) error {
 }
 
 func (r *runtime) sendLocked(text string) error {
-	// Before catch-up lastSeen trails the log; LastSrc is the furthest this
-	// daemon's store has read, which keeps an old identical message in the
-	// replay from being mistaken for this one.
-	after := max(r.lastSeen, r.agent.LastSrc)
-	id, err := r.m.store.AddPending(r.agent.ID, text, after)
-	if err != nil {
-		return err
-	}
-	r.outbox = append(r.outbox, store.Pending{ID: id, Text: text, After: after})
-	r.noteBusyLocked()
-	r.nameLocked(text)
-	if r.caughtUp {
-		r.drv.Send(text)
-		r.kickLocked()
-	}
-	return nil
+	_, err := r.sendWatchedLocked(text, nil)
+	return err
 }
 
 // rewind takes the agent back to before the user message at log Seq src and
