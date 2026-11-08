@@ -210,17 +210,17 @@ func TestWatchWithoutAMessageWithMinutesAndArchived(t *testing.T) {
 	}
 	e.waitFor("mate at work", func() bool { return status(m, mate.ID) == event.StatusWorking })
 	t0 := time.Now()
-	m.watchClocks(t0)
-	m.watchClocks(t0.Add(time.Hour)) // asleep: counts as 30s
+	m.clocks(t0)
+	m.clocks(t0.Add(time.Hour)) // asleep: counts as 30s
 	if wt, _ := m.store.Watch(sent.Watch); wt.Elapsed != int64(2*teamStep/time.Second) || wt.Noting("deadline") {
 		t.Fatalf("%+v", wt)
 	}
-	m.watchClocks(t0.Add(time.Hour + 30*time.Second))
+	m.clocks(t0.Add(time.Hour + 30*time.Second))
 	e.waitFor("the deadline's receipt", func() bool { return len(receipts(e, boss.ID)) == 2 })
 	if r := receipts(e, boss.ID)[1]; !strings.Contains(r, "is still at work on it after 1 minutes") {
 		t.Fatalf("%s", r)
 	}
-	m.watchClocks(t0.Add(time.Hour + time.Minute))
+	m.clocks(t0.Add(time.Hour + time.Minute))
 	if wt, _ := m.store.Watch(sent.Watch); wt.DoneAt != nil {
 		t.Fatal("the deadline ended the watch")
 	}

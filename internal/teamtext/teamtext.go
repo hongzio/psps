@@ -98,6 +98,16 @@ func Run(out io.Writer, run api.TeamRun, now time.Time) error {
 		if a.Waits != "" {
 			status += ": " + a.Waits
 		}
+		switch {
+		case a.Stalled > 0:
+			status += fmt.Sprintf(", stalled (its process ended with %d in the background; the operator resumes it)", a.Stalled)
+		case a.InBackground:
+			status += fmt.Sprintf(", at work on %d in the background", a.Background)
+		case a.Background > 0 && a.Released:
+			status += fmt.Sprintf(", released, %d in the background", a.Background)
+		case a.Background > 0:
+			status += fmt.Sprintf(", %d in the background", a.Background)
+		}
 		fmt.Fprintf(tw, "  %s\t%s\t%s\t%s\t%s\t%s\n", a.ID, a.Role, a.Kind, status, turn, Tokens(a.Spent.New()))
 	}
 	if run.Archived > 0 {

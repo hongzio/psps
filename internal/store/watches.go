@@ -352,3 +352,62 @@ func handOverWatches(tx *sql.Tx, next, old string) error {
 	}
 	return nil
 }
+
+// A TeamWait is how psps holds a lead's agent's turns that end with tasks
+// still in the background (internal/daemon, leads.go): under WatchSettle,
+// unless its lead released it, it counts as at work until a turn of it
+// ends with none, and its lead hears of the first such turn alone, then of
+// the one that ends it, with what it said between. Under WatchTurn each
+// turn's end is news, whatever runs in the background.
+type TeamWait struct {
+	Agent string `json:"agent"`
+	Mode  string `json:"mode"`
+	// Noted: its lead heard that a turn ended with tasks in the background.
+	Noted bool `json:"noted,omitempty"`
+	// Released: it counts as done for now, though its tasks run on, as its
+	// lead asked or its turn's limit passed, until a turn of it ends with
+	// nothing in the background.
+	Released bool `json:"released,omitempty"`
+	// Stalled is how many tasks its process took with it as it ended out
+	// of a turn: the work is not done, and the operator resumes it.
+	Stalled int `json:"stalled,omitempty"`
+	// Elapsed is the seconds the daemon has run while it waited on its
+	// background tasks, against its turn's limit.
+	Elapsed int64 `json:"elapsed,omitempty"`
+	// Answers are its last answers of the turns its lead did not hear of.
+	Answers []string `json:"answers,omitempty"`
+}
+
+const teamWaitSchema = `
+CREATE TABLE IF NOT EXISTS team_waits (
+	agent    TEXT PRIMARY KEY REFERENCES agents(id),
+	mode     TEXT NOT NULL DEFAULT 'settle',
+	noted    INTEGER NOT NULL DEFAULT 0,
+	released INTEGER NOT NULL DEFAULT 0,
+	stalled  INTEGER NOT NULL DEFAULT 0,
+	elapsed  INTEGER NOT NULL DEFAULT 0,
+	answers  TEXT NOT NULL DEFAULT '[]'
+);
+`
+
+// TeamWaitOf is agent's, WatchSettle and nothing else if it has none yet.
+func (s *Store) TeamWaitOf(agent string) (TeamWait, error) {
+	w := TeamWait{Agent: agent, Mode: WatchSettle}
+	var answers string
+	err := s.db.QueryRow(`SELECT mode, noted, released, stalled, elapsed, answers FROM team_waits WHERE agent = ?`, agent).
+		Scan(&w.Mode, &w.Noted, &w.Released, &w.Stalled, &w.Elapsed, &answers)
+	if errors.Is(err, sql.ErrNoRows) {
+		return w, nil
+	}
+	json.Unmarshal([]byte(answers), &w.Answers)
+	return w, err
+}
+
+// PutTeamWait keeps w.
+func (s *Store) PutTeamWait(w TeamWait) error {
+	_, err := s.db.Exec(`INSERT INTO team_waits (agent, mode, noted, released, stalled, elapsed, answers) VALUES (?, ?, ?, ?, ?, ?, ?)
+		ON CONFLICT (agent) DO UPDATE SET mode = excluded.mode, noted = excluded.noted, released = excluded.released, stalled = excluded.stalled,
+		elapsed = excluded.elapsed, answers = excluded.answers`,
+		w.Agent, w.Mode, w.Noted, w.Released, w.Stalled, w.Elapsed, answersJSON(w.Answers))
+	return err
+}

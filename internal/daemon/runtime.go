@@ -84,6 +84,9 @@ type runtime struct {
 	receipts int
 	// seenAt is the time of the last record of its log it read.
 	seenAt time.Time
+	// tw is how its turns that end with tasks in the background are held,
+	// as a lead's agent (store.TeamWait).
+	tw store.TeamWait
 }
 
 // overtime is where an agent's turn stopped at its limit is: asked to stop
@@ -135,10 +138,20 @@ func (m *Manager) newRuntime(a store.Agent) (*runtime, error) {
 	if err != nil {
 		return nil, err
 	}
+	tw := store.TeamWait{Agent: a.ID, Mode: store.WatchSettle}
+	if a.MadeBy != "" {
+		if tw, err = m.store.TeamWaitOf(a.ID); err != nil {
+			return nil, err
+		}
+	}
 	ctx, cancel := context.WithCancel(m.ctx)
 	return &runtime{m: m, ctx: ctx, cancel: cancel, agent: a, drv: drv, outbox: outbox,
-		decisions: map[string]decision{}, inbox: inbox, crons: crons, compacted: compacted, news: news, spent: spent[a.ID], receipts: receipts}, nil
+		decisions: map[string]decision{}, inbox: inbox, crons: crons, compacted: compacted, news: news, spent: spent[a.ID], receipts: receipts, tw: tw}, nil
 }
+
+// wrapDriver, if set, wraps each attachment's driver: tests give an agent
+// what their fake CLI cannot do, as tasks in the background.
+var wrapDriver func(agent string, d driver.Driver) driver.Driver
 
 func (r *runtime) loop() {
 	backoff := time.Second
@@ -180,6 +193,9 @@ func (r *runtime) session() error {
 	drv.ForkFrom(r.agent.ForkOf)
 	if r.agent.IsolationID == store.HostIsolation {
 		drv.OnHost()
+	}
+	if wrapDriver != nil {
+		drv = wrapDriver(r.agent.ID, drv)
 	}
 	r.mu.Lock()
 	r.client, r.att, r.drv = client, att, drv
@@ -343,6 +359,9 @@ func (r *runtime) observe(rec shimproto.Record, liveAfter int64) {
 	}
 	if live && (ended != "" || waited != "" || lost > 0) {
 		r.watchJudgeLocked(ended, cut, waited, lost, rec.Time)
+	}
+	if live && ended == "" && lost > 0 {
+		r.teamLostLocked(lost)
 	}
 	if ended != "" || waited != "" {
 		r.teamTurnLocked(ended, waited, rec.Time)
@@ -738,7 +757,7 @@ func (r *runtime) stop(ctx context.Context) {
 	}
 	r.cancel()
 	if r.agent.MadeBy != "" {
-		r.m.setChildBusy(r.agent.MadeBy, r.agent.ID, false)
+		r.m.setChildBusy(r.agent.MadeBy, r.agent.ID, false, false)
 	}
 }
 

@@ -825,7 +825,15 @@ say the run is paused.
 psps tells the lead, as a message of its own whenever it is idle:
 
 - when a turn of one of its agents ends, with its last answer, and when one
-  waits for you to approve something;
+  waits for you to approve something. A turn that ends with tasks still
+  running in the background (Claude's background shells and subagents)
+  leaves its agent at work until a turn of it ends with none: the lead hears
+  of the first such turn and of the last, with what the agent said between,
+  and no round ends meanwhile. The lead may count the agent done at once
+  (`release`), or hear of each of its turns (`?watch=turn` as it makes it or
+  writes to it); past its turn limit it counts as done, its tasks running
+  on. One whose process ended with its tasks still running is stalled: it
+  stays at work until you resume it, and psps says nothing of it;
 - when a turn runs past its limit (`--turn-minutes`, 60 by default, or the
   lead's for one agent): psps stops it, asks for a final report, and the
   report is the news;

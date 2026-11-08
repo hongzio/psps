@@ -321,6 +321,30 @@ type TeamAgent struct {
 	Waits string `json:"waits,omitempty"`
 	// Answer is its last answer, in the view of it alone.
 	Answer string `json:"answer,omitempty"`
+	// Watch is how its turns that end with tasks in the background are
+	// held: "settle", at work until a turn ends with none, or "turn".
+	// Background is how many it runs; InBackground, that it counts as at
+	// work for them; Released, that its lead (or its turn's limit) counted
+	// it done though they run on; Stalled, how many its process took with
+	// it as it ended, waiting for the operator to resume it.
+	Watch        string `json:"watch,omitempty"`
+	Background   int    `json:"background,omitempty"`
+	InBackground bool   `json:"in_background,omitempty"`
+	Released     bool   `json:"released,omitempty"`
+	Stalled      int    `json:"stalled,omitempty"`
+}
+
+// TeamRelease is what a lead's agent was at as its lead released it.
+type TeamRelease struct {
+	ID         string        `json:"id"`
+	Background int           `json:"background,omitempty"`
+	Tasks      []driver.Task `json:"tasks,omitempty"`
+	Stalled    int           `json:"stalled,omitempty"`
+	// Answers are its last answers of the turns its lead did not hear
+	// of, oldest first; LastAnswer the end of the last thing it said.
+	Answers    []string `json:"answers,omitempty"`
+	LastAnswer string   `json:"last_answer,omitempty"`
+	Note       string   `json:"note"`
 }
 
 // TeamAgentNew is an agent a lead makes.

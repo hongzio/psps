@@ -539,6 +539,9 @@ func (m *Manager) teamAgent(a store.Agent, sp store.Spent, answer bool) api.Team
 	if answer {
 		v.Answer = said
 	}
+	r.mu.Lock()
+	v.Watch, v.Background, v.InBackground, v.Released, v.Stalled = r.tw.Mode, st.Background, r.inBackgroundLocked(st), r.tw.Released, r.tw.Stalled
+	r.mu.Unlock()
 	return v
 }
 
@@ -597,7 +600,11 @@ func (m *Manager) runDoing(l store.Lead) string {
 		return "running the eval"
 	}
 	if n := m.childrenBusy(l.Line); n > 0 {
-		return fmt.Sprintf("%d of the lead's agents at work", n)
+		s := fmt.Sprintf("%d of the lead's agents at work", n)
+		if bg := m.childrenInBackground(l.Line); bg > 0 {
+			s += fmt.Sprintf(", %d of them on tasks in the background", bg)
+		}
+		return s
 	}
 	if r := m.lineRuntime(l.Line); r != nil {
 		if _, st, _ := r.shown(); st.Status == event.StatusWorking || st.Status == event.StatusBlocked {
@@ -753,7 +760,7 @@ func (m *Manager) RunTeams() {
 		case <-tick.C:
 			m.turnLimits(time.Now())
 			m.watchDue(time.Now())
-			m.watchClocks(time.Now())
+			m.clocks(time.Now())
 			if leads, err := m.store.Leads(); err == nil {
 				m.mu.Lock()
 				for _, l := range leads {
@@ -859,25 +866,48 @@ func (m *Manager) stopRunLocked(l store.Lead, why string) {
 	go m.teamNewsChanged(l.Team)
 }
 
-// childrenBusy is how many agents line made are at work, or about to be.
+// childrenBusy is how many agents line made are at work, or about to be:
+// in a turn, or on tasks in the background after one (store.TeamWait).
 func (m *Manager) childrenBusy(line string) int {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return len(m.busy[line]) + len(m.background[line])
+}
+
+// childrenInTurns is how many agents line made are in a turn, or about to
+// be: those whose news is yet to come. One on tasks in the background
+// told its lead so, and holds back no news of the others.
+func (m *Manager) childrenInTurns(line string) int {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	return len(m.busy[line])
 }
 
-// setChildBusy keeps whether an agent lead made is at work.
-func (m *Manager) setChildBusy(lead, agent string, busy bool) {
+// childrenInBackground is how many agents line made count as at work for
+// their tasks in the background.
+func (m *Manager) childrenInBackground(line string) int {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	if !busy {
-		delete(m.busy[lead], agent)
-		return
+	return len(m.background[line])
+}
+
+// setChildBusy keeps whether an agent lead made is at work: in a turn
+// (busy), or on tasks in the background after one (background).
+func (m *Manager) setChildBusy(lead, agent string, busy, background bool) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	set := func(in map[string]map[string]bool, on bool) {
+		if !on {
+			delete(in[lead], agent)
+			return
+		}
+		if in[lead] == nil {
+			in[lead] = map[string]bool{}
+		}
+		in[lead][agent] = true
 	}
-	if m.busy[lead] == nil {
-		m.busy[lead] = map[string]bool{}
-	}
-	m.busy[lead][agent] = true
+	set(m.busy, busy)
+	set(m.background, background && !busy)
 }
 
 // lineRuntime is the live session of line, if it has one.
@@ -1491,18 +1521,162 @@ func (r *runtime) teamTurnLocked(ended event.Status, waited string, at time.Time
 	if st.Usage != nil {
 		spent = st.Usage.Spent
 	}
-	body := fmt.Sprintf("%s ended its turn: %s%s. It has used %s tokens.%s", who, how, took, tokens(spent.New()), note)
-	if r.answer != "" {
-		body += "\nIts last answer:\n\n" + tail(r.answer, newsAnswer)
-	} else {
-		body += " It said nothing."
-	}
 	// The round is not evaluated before its news is there to be held.
 	if err := r.m.store.SetLeadDirty(l.Team, true); err != nil {
 		r.m.log.Printf("team %s: %v", l.Team, err)
 	}
+	defer r.m.teamChanged(l.Team)
+	tw := &r.tw
+	tw.Stalled = 0
+	// A turn that ends idle with tasks in the background leaves it at work
+	// (store.TeamWait): its lead hears of the first such turn, and of the
+	// one that ends with none, what it said between with it.
+	if ended == event.StatusIdle && note == "" && st.Background > 0 && tw.Mode != store.WatchTurn && !tw.Released {
+		if tw.Noted {
+			if r.answer != "" {
+				tw.Answers = append(tw.Answers, tail(r.answer, earlierAnswer))
+				if len(tw.Answers) > earlierAnswers {
+					tw.Answers = tw.Answers[len(tw.Answers)-earlierAnswers:]
+				}
+			}
+			r.putTeamWaitLocked()
+			return
+		}
+		tw.Noted = true
+		r.putTeamWaitLocked()
+		body := fmt.Sprintf("%s ended its turn: %s%s, but runs %s in the background (%s). It counts as at work until a turn of it ends with none, so the round goes on; you hear of it again then, with what it said between. To count it done now, its tasks running on, POST $PSPS_TEAM_URL/agents/%s/release. It has used %s tokens.",
+			who, how, took, tasks(st.Background), taskNames(st.Tasks), shownID(r.agent), tokens(spent.New()))
+		r.teamNewsLocked(l, body+lastAnswer(r.answer))
+		return
+	}
+	body := fmt.Sprintf("%s ended its turn: %s%s. It has used %s tokens.%s", who, how, took, tokens(spent.New()), note)
+	if st.Background > 0 {
+		body += fmt.Sprintf(" It still runs %s in the background (%s).", tasks(st.Background), taskNames(st.Tasks))
+	}
+	body += lastAnswer(r.answer)
+	if len(tw.Answers) > 0 {
+		body += "\n\nWhat it said at the end of its turns before, while its tasks ran in the background, oldest first:"
+		for _, a := range tw.Answers {
+			body += "\n\n---\n\n" + a
+		}
+	}
+	// A turn that ends with nothing in the background, or not idle, ends
+	// what it was at; one released, or stopped at its limit, with tasks in
+	// the background stays released.
+	released := (tw.Released || note != "") && st.Background > 0 && ended == event.StatusIdle
+	*tw = store.TeamWait{Agent: tw.Agent, Mode: tw.Mode, Released: released}
+	r.putTeamWaitLocked()
 	r.teamNewsLocked(l, body)
+}
+
+// lastAnswer is a turn's last answer as news carries it.
+func lastAnswer(answer string) string {
+	if answer == "" {
+		return " It said nothing."
+	}
+	return "\nIts last answer:\n\n" + tail(answer, newsAnswer)
+}
+
+func (r *runtime) putTeamWaitLocked() {
+	if err := r.m.store.PutTeamWait(r.tw); err != nil {
+		r.m.log.Printf("agent %s: team wait: %v", r.agent.ID, err)
+	}
+}
+
+// teamLostLocked follows the agent's process ending, out of a turn, with
+// lost tasks in the background: under WatchSettle the work is not done,
+// and it stays at work, stalled, until the operator resumes it. Its lead
+// hears nothing: nothing came of it.
+func (r *runtime) teamLostLocked(lost int) {
+	if r.agent.MadeBy == "" || r.tw.Mode == store.WatchTurn || r.tw.Released {
+		return
+	}
+	r.tw.Stalled = lost
+	r.putTeamWaitLocked()
+	r.m.log.Printf("agent %s: stalled: its process ended with %d task(s) in the background", r.agent.ID, lost)
+	if l, err := r.m.store.LeadOfLine(r.agent.MadeBy); err == nil {
+		r.m.teamChanged(l.Team)
+	}
+}
+
+// teamMode sets how the agent's turns that end with tasks in the
+// background are held, for what its lead sends it now: what it was at
+// before is over.
+func (r *runtime) teamMode(mode string) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.tw = store.TeamWait{Agent: r.agent.ID, Mode: mode, Stalled: r.tw.Stalled}
+	r.putTeamWaitLocked()
+	r.noteBusyLocked()
+}
+
+// teamRelease counts the agent done for now, though tasks of its run on
+// in the background, as its lead asks: what it said since its lead last
+// heard of it, and what runs. It resumes nothing.
+func (r *runtime) teamRelease() (api.TeamRelease, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	st := r.drv.State()
+	if !r.inBackgroundLocked(st) {
+		return api.TeamRelease{}, httpError{http.StatusConflict, fmt.Errorf("team: %s is not held for tasks in the background; there is nothing to release", shownID(r.agent))}
+	}
+	v := api.TeamRelease{ID: shownID(r.agent), Background: st.Background, Tasks: st.Tasks, Stalled: r.tw.Stalled, Answers: r.tw.Answers}
+	if r.answer != "" {
+		v.LastAnswer = tail(r.answer, newsAnswer)
+	}
+	r.tw.Released, r.tw.Stalled = true, 0
+	r.putTeamWaitLocked()
+	r.noteBusyLocked()
+	v.Note = "It counts as done now. Its tasks in the background run on; you hear of each of its turns as it ends, until one ends with none."
+	if v.Stalled > 0 {
+		v.Note = "It counts as done now. Its process ended taking its tasks with it, and psps does not resume it: your operator does, or a message of yours gives it new work."
+	}
+	r.m.log.Printf("agent %s: released by its lead", r.agent.ID)
+	return v, nil
+}
+
+// teamWaitClocks counts the time its agents wait on tasks in the
+// background against their turns' limits: one past it counts as done, its
+// tasks running on, and its lead hears so. A stalled one does not count:
+// it waits for the operator.
+func (m *Manager) teamWaitClocks(step time.Duration) {
+	m.mu.Lock()
+	var rs []*runtime
+	for _, r := range m.runtimes {
+		if r.agent.MadeBy != "" {
+			rs = append(rs, r)
+		}
+	}
+	m.mu.Unlock()
+	for _, r := range rs {
+		r.teamWaitClock(step)
+	}
+}
+
+func (r *runtime) teamWaitClock(step time.Duration) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	st := r.drv.State()
+	if !r.caughtUp || st.Status != event.StatusIdle || r.tw.Stalled > 0 || !r.inBackgroundLocked(st) || r.agent.TurnMinutes <= 0 {
+		return
+	}
+	r.tw.Elapsed += int64(step / time.Second)
+	if r.tw.Elapsed < int64(r.agent.TurnMinutes)*60 {
+		r.putTeamWaitLocked()
+		return
+	}
+	r.tw.Released = true
+	r.putTeamWaitLocked()
+	r.noteBusyLocked()
+	l, err := r.m.store.LeadOfLine(r.agent.MadeBy)
+	if err != nil {
+		return
+	}
+	who := fmt.Sprintf("%s (%q, %s)", shownID(r.agent), r.agent.Name, r.agent.Kind)
+	r.teamNewsLocked(l, fmt.Sprintf("%s still runs %s in the background (%s) %d minutes after its turn ended, its turn's limit; psps counts it as done for the round. Its tasks run on, and you hear of each of its turns as it ends.",
+		who, tasks(st.Background), taskNames(st.Tasks), r.agent.TurnMinutes)+lastAnswer(r.answer))
 	r.m.teamChanged(l.Team)
+	r.m.log.Printf("agent %s: past its limit on tasks in the background; counted done", r.agent.ID)
 }
 
 func (r *runtime) teamNewsLocked(l store.Lead, body string) {
@@ -1536,7 +1710,7 @@ func (r *runtime) deliverNewsLocked() {
 		r.news = 0
 		return
 	}
-	if l.Settings.HasEval() && l.Stopped == "" && ((l.Dirty && r.m.childrenBusy(l.Line) > 0) || r.m.evalRunning(l.Team)) {
+	if l.Settings.HasEval() && l.Stopped == "" && ((l.Dirty && r.m.childrenInTurns(l.Line) > 0) || r.m.evalRunning(l.Team)) {
 		return
 	}
 	if on, err := r.m.teamOn(r.agent.IsolationID); err != nil || !on {
@@ -1595,14 +1769,22 @@ func (r *runtime) keepSpentLocked() {
 }
 
 // noteBusyLocked tells the agent's lead whether it is at work, or about
-// to be.
+// to be: in a turn, or on tasks in the background after one.
 func (r *runtime) noteBusyLocked() {
 	if r.agent.MadeBy == "" {
 		return
 	}
 	st := r.drv.State()
 	busy := st.Status == event.StatusWorking || st.Status == event.StatusBlocked || st.Queued > 0 || len(r.outbox) > 0 || r.starting
-	r.m.setChildBusy(r.agent.MadeBy, r.agent.ID, busy)
+	r.m.setChildBusy(r.agent.MadeBy, r.agent.ID, busy, r.inBackgroundLocked(st))
+}
+
+// inBackgroundLocked is whether the agent counts as at work for tasks in
+// the background: under WatchSettle, not released, it runs some, or its
+// process ended taking some with it.
+func (r *runtime) inBackgroundLocked(st driver.State) bool {
+	tw := r.tw
+	return tw.Mode != store.WatchTurn && !tw.Released && (tw.Stalled > 0 || st.Background > 0)
 }
 
 // free is freeLocked, taking the lock.

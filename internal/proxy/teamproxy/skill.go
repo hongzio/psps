@@ -63,6 +63,21 @@ within or after the turn it is in.
     The profile is in work_profiler/notes.md; start from its third finding.
     MSG
 
+An agent whose turn ends with tasks still running in the background (a long
+run, a wait on a lock) is at work until a turn of it ends with none: you hear
+of the first such turn, then of the one that ends it, with what it said
+between, and the round goes on meanwhile. Past its turn's limit it counts as
+done. If you need not wait for them, count it done now, its tasks running on
+(the answer has what it said since, and what runs):
+
+    curl -sS -X POST "$PSPS_TEAM_URL/agents/ID/release"
+
+To hear of each of its turns as it ends instead, whatever runs in the
+background, make it or write to it with ?watch=turn; ?watch=settle, the
+default, holds them again. An agent whose process ended taking its tasks
+with it is stalled: it stays at work, and only your operator resumes it, or a
+message of yours with new work.
+
 Stop its turn, or archive it (its process ends and its history stays; an
 archived agent no longer counts as live):
 
@@ -81,8 +96,9 @@ psps tells you of your team in a message that starts with a line like
 
     [psps team news for you as lead of team "lab": 2 items. ...]
 
-when an agent of yours ends a turn (with its last answer), waits for your
-operator to approve something, or is stopped at its turn limit; when the eval
+when an agent of yours ends a turn (with its last answer; one that ends with
+tasks in the background, as above), waits for your operator to approve
+something, or is stopped at its turn limit; when the eval
 has run; when nothing of your team runs any more; when psps stops the run;
 and when your operator resumes it.
 The news of your agents' turns waits while others of them still work, so you
