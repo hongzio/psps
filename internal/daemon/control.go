@@ -1,12 +1,14 @@
 package daemon
 
 import (
+	"bytes"
 	"cmp"
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
+	"mime"
 	"net/http"
 	"os/exec"
 	"strconv"
@@ -23,6 +25,7 @@ import (
 	"github.com/hongzio/psps/internal/proxy/cronproxy"
 	"github.com/hongzio/psps/internal/proxy/mailproxy"
 	"github.com/hongzio/psps/internal/store"
+	"github.com/hongzio/psps/internal/teamtext"
 )
 
 // The control service (internal/proxy/controlproxy): some of what the
@@ -224,6 +227,99 @@ func controlJSON(r *http.Request, v any, example string) error {
 		return badRequest(fmt.Errorf("control: the body is JSON, as %s: %v", example, err))
 	}
 	return nil
+}
+
+// textFormat is whether r asks for text, with ?format=text, rather than
+// JSON, ?format=json or no format.
+func textFormat(r *http.Request) (bool, error) {
+	switch f := r.URL.Query().Get("format"); f {
+	case "", "json":
+		return false, nil
+	case "text":
+		return true, nil
+	default:
+		return false, badRequest(fmt.Errorf(`control: ?format is "text" or "json", not %q`, f))
+	}
+}
+
+// replyAs replies with v or err as JSON, or, where the caller asked for
+// text, err as a line of text.
+func replyAs(w http.ResponseWriter, text bool, v any, err error) {
+	if !text || err == nil {
+		reply(w, v, err)
+		return
+	}
+	code := http.StatusInternalServerError
+	var he httpError
+	switch {
+	case errors.As(err, &he):
+		code = he.code
+	case errors.Is(err, store.ErrNotFound):
+		code = http.StatusNotFound
+	}
+	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+	w.WriteHeader(code)
+	io.WriteString(w, "psps: "+err.Error()+"\n")
+}
+
+// execRequest reads what iso.exec is to run: JSON, {"command": ...}, as
+// before, or the body itself as the script, a shell's, with dir and
+// seconds in the query, so it needs no quoting. JSON is a body sent as
+// application/json, or one that reads as {"command": ...} with no other
+// type said. text is whether the reply is to be text: for a script, unless
+// ?format=json; for JSON, if ?format=text.
+func execRequest(r *http.Request) (req controlRun, text bool, err error) {
+	format := r.URL.Query().Get("format")
+	if format != "" && format != "text" && format != "json" {
+		return req, false, badRequest(fmt.Errorf(`control: ?format is "text" or "json", not %q`, format))
+	}
+	body, err := io.ReadAll(io.LimitReader(r.Body, controlMax+4096+1))
+	if err != nil {
+		return req, format == "text", badRequest(errors.New("control: the body could not be read"))
+	}
+	if len(body) > controlMax+4096 {
+		return req, format == "text", httpError{http.StatusRequestEntityTooLarge, fmt.Errorf("control: a body is at most %d bytes; put the rest in a file in the isolation and run that", controlMax)}
+	}
+	ct, _, _ := mime.ParseMediaType(r.Header.Get("Content-Type"))
+	asJSON := ct == "application/json"
+	if !asJSON && ct != "text/plain" && bytes.HasPrefix(bytes.TrimSpace(body), []byte("{")) {
+		d := json.NewDecoder(bytes.NewReader(body))
+		d.DisallowUnknownFields()
+		var probe controlRun
+		asJSON = d.Decode(&probe) == nil && probe.Command != ""
+	}
+	if asJSON {
+		r.Body = io.NopCloser(bytes.NewReader(body))
+		err := controlJSON(r, &req, `{"command": "..."}, or the script itself as the body`)
+		return req, format == "text", err
+	}
+	text = format != "json"
+	q := r.URL.Query()
+	req.Command, req.Dir = string(body), q.Get("dir")
+	if s := q.Get("seconds"); s != "" {
+		if req.Seconds, err = strconv.Atoi(s); err != nil {
+			return req, text, badRequest(fmt.Errorf("control: ?seconds is a whole number of seconds, not %q", s))
+		}
+	}
+	return req, text, nil
+}
+
+// execText is what a command printed, as a text reply says it, ending in a
+// newline: a line before it if its start was cut, and one after it with its
+// exit code if that is not 0.
+func execText(v api.ControlExec) string {
+	var b strings.Builder
+	if v.Cut {
+		fmt.Fprintf(&b, "[psps: only the last %d KiB of what it printed]\n", controlRunOutput>>10)
+	}
+	b.WriteString(v.Output)
+	if v.Output != "" && !strings.HasSuffix(v.Output, "\n") {
+		b.WriteString("\n")
+	}
+	if v.Exit != 0 {
+		fmt.Fprintf(&b, "[psps: exit %d]\n", v.Exit)
+	}
+	return b.String()
 }
 
 // controlNew is an agent as an agent makes it. Approvals is there to be
@@ -951,13 +1047,19 @@ func (m *Manager) controlRoutes(mux *http.ServeMux, iso string) {
 	})
 
 	route("POST /isolations/{name}/exec", "iso.exec", func(w http.ResponseWriter, r *http.Request, c controlCall) {
-		var req controlRun
-		if err := controlJSON(r, &req, `{"command": "..."}`); err != nil {
-			reply(w, nil, err)
+		req, text, err := execRequest(r)
+		if err != nil {
+			replyAs(w, text, nil, err)
 			return
 		}
 		v, err := m.controlExec(r.Context(), c, r.PathValue("name"), req)
-		reply(w, v, err)
+		if err != nil || !text {
+			replyAs(w, text, v, err)
+			return
+		}
+		w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+		w.Header().Set("X-Exit-Code", strconv.Itoa(v.Exit))
+		io.WriteString(w, execText(v))
 	})
 
 	route("GET /teams", "team.ls", func(w http.ResponseWriter, r *http.Request, c controlCall) {
@@ -993,16 +1095,28 @@ func (m *Manager) controlRoutes(mux *http.ServeMux, iso string) {
 		reply(w, out, nil)
 	})
 	route("GET /teams/{team}/run", "team.show", func(w http.ResponseWriter, r *http.Request, c controlCall) {
+		text, err := textFormat(r)
+		if err != nil {
+			reply(w, nil, err)
+			return
+		}
 		t, _, lead, err := m.controlTeam(c, r.PathValue("team"))
 		if err == nil && !lead {
 			err = httpError{http.StatusNotFound, fmt.Errorf("control: team %q has no lead you reach", t.Name)}
 		}
 		if err != nil {
-			reply(w, nil, err)
+			replyAs(w, text, nil, err)
 			return
 		}
 		v, err := m.TeamRun(t.ID)
-		reply(w, leadsView(v), err)
+		if err != nil || !text {
+			replyAs(w, text, leadsView(v), err)
+			return
+		}
+		var b strings.Builder
+		teamtext.Run(&b, leadsView(v), time.Now())
+		w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+		io.WriteString(w, b.String())
 	})
 	route("POST /teams", "team.new", func(w http.ResponseWriter, r *http.Request, c controlCall) {
 		var req api.PutTeam

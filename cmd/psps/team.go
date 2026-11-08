@@ -5,7 +5,6 @@ import (
 	"errors"
 	"flag"
 	"fmt"
-	"math"
 	"os"
 	"strconv"
 	"strings"
@@ -14,6 +13,7 @@ import (
 
 	"github.com/hongzio/psps/internal/api"
 	"github.com/hongzio/psps/internal/paths"
+	"github.com/hongzio/psps/internal/teamtext"
 )
 
 // teamCmd manages teams, the sidebar's named groups of live agents, and
@@ -67,7 +67,7 @@ func teamCmd(p paths.Paths, args []string) error {
 		for _, t := range order.Teams {
 			run := "-"
 			if t.Run != nil {
-				run = t.Run.Status + "; " + spentOf(t.Run.Spent, t.Run.Budget)
+				run = t.Run.Status + "; " + teamtext.Spent(t.Run.Spent, t.Run.Budget)
 				if t.Run.Best != nil {
 					run += fmt.Sprintf("; best %g", *t.Run.Best)
 				}
@@ -185,7 +185,7 @@ func teamCmd(p paths.Paths, args []string) error {
 		if run.TeamsOff != "" {
 			fmt.Printf("Its isolation has no teams, so the run is paused until:\n  psps iso expose %s team\n", run.TeamsOff)
 		}
-		return printRun(run)
+		return teamtext.Run(os.Stdout, run, time.Now())
 
 	case "show":
 		asJSON := fs.Bool("json", false, "print the run as JSON")
@@ -202,7 +202,7 @@ func teamCmd(p paths.Paths, args []string) error {
 			enc.SetIndent("", "  ")
 			return enc.Encode(run)
 		}
-		return printRun(run)
+		return teamtext.Run(os.Stdout, run, time.Now())
 
 	case "eval":
 		if len(args) != 2 {
@@ -410,82 +410,6 @@ Elsewhere
   (psps env help control).
 `
 
-// printRun shows a team's run.
-func printRun(run api.TeamRun) error {
-	s := run.Settings
-	fmt.Printf("team %q, led by %s since %s: %s\n", run.Team.Name, run.Lead, run.Since.Local().Format("Jan 2 15:04"), run.Status)
-	fmt.Printf("  spent  %s (%s more read from cache)\n", spentOf(run.Spent.New(), s.Budget), tokenCount(run.Spent.Cached))
-	fmt.Printf("  terms  %d live at most, turns of %dm, nothing new past %d%% of a plan window\n", s.MaxLive, s.TurnMinutes, s.PlanCeiling)
-	for _, w := range run.Plan {
-		fmt.Printf("  plan   %s %s %.0f%%\n", w.Kind, w.Window, w.Percent)
-	}
-	if s.EvalJob != "" {
-		fmt.Printf("  eval   a job of runner %s, on a copy of %s, patience %d", s.EvalJob, s.EvalDir, s.Patience)
-		if s.Target != nil {
-			fmt.Printf(", target %g", *s.Target)
-		}
-		fmt.Println()
-	} else if s.Eval == "" {
-		fmt.Println("  eval   none")
-	} else {
-		where := "in " + s.EvalDir
-		if run.EvalIsolation != "" {
-			where = "in isolation " + run.EvalIsolation + ", on a copy of " + s.EvalDir
-		}
-		fmt.Printf("  eval   %s (%s, %dm at most), patience %d", s.Eval, where, s.EvalMinutes, s.Patience)
-		if s.Target != nil {
-			fmt.Printf(", target %g", *s.Target)
-		}
-		if s.EvalSetBy != "" {
-			fmt.Printf("; set by agent %s, through control", s.EvalSetBy)
-		}
-		fmt.Println()
-	}
-	if line := evalNowLine(run.Eval, run.Team.Name); line != "" {
-		fmt.Println(line)
-	}
-	for _, e := range run.Evals {
-		score := "no score"
-		if e.Score != nil {
-			score = shortScore(*e.Score)
-		} else if e.NotRun {
-			score = "not run"
-		}
-		fmt.Printf("  #%-4d %s  %-10s %s, %s\n", e.ID, e.At.Local().Format("Jan 2 15:04"), score, e.Why, e.Took.Round(time.Second))
-	}
-	if n := len(run.Evals); n > 0 && run.Evals[n-1].Score == nil && run.Evals[n-1].Output != "" {
-		e := run.Evals[n-1]
-		fmt.Printf("  the end of #%d's output:\n", e.ID)
-		for _, l := range strings.Split(e.Output, "\n") {
-			fmt.Println("    " + l)
-		}
-	}
-	if run.Best != nil {
-		fmt.Printf("  best   %s at #%d; %d since without a new one\n", shortScore(*run.Best.Score), run.Best.ID, run.Stale)
-	}
-	if len(run.Agents) == 0 {
-		fmt.Printf("  agents none live (%d archived)\n", run.Archived)
-		return nil
-	}
-	tw := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
-	fmt.Fprintln(tw, "  ID\tROLE\tKIND\tSTATUS\tTURN\tSPENT")
-	for _, a := range run.Agents {
-		turn := "-"
-		if a.TurnSince != nil {
-			turn = fmt.Sprintf("%s of %dm", time.Since(*a.TurnSince).Round(time.Minute), a.TurnMinutes)
-		}
-		status := string(a.Status)
-		if a.Waits != "" {
-			status += ": " + a.Waits
-		}
-		fmt.Fprintf(tw, "  %s\t%s\t%s\t%s\t%s\t%s\n", a.ID, a.Role, a.Kind, status, turn, tokenCount(a.Spent.New()))
-	}
-	if run.Archived > 0 {
-		fmt.Fprintf(tw, "  (%d archived)\n", run.Archived)
-	}
-	return tw.Flush()
-}
-
 // parseTokens reads a budget: 5000000, 5M, 800k, or none (0).
 func parseTokens(s string) (int64, error) {
 	t := strings.TrimSpace(strings.ToLower(s))
@@ -506,92 +430,9 @@ func parseTokens(s string) (int64, error) {
 	return int64(v * mult), nil
 }
 
-// spentOf is spent tokens, of budget if there is one.
-func spentOf(spent, budget int64) string {
-	if budget <= 0 {
-		return tokenCount(spent) + " tokens, no budget"
-	}
-	return fmt.Sprintf("%s of %s tokens", tokenCount(spent), tokenCount(budget))
-}
-
-// tokenCount is n as people read it: 950, 12.3k, 4.1M.
-func tokenCount(n int64) string {
-	switch {
-	case n >= 1_000_000:
-		return strconv.FormatFloat(float64(n)/1e6, 'f', 1, 64) + "M"
-	case n >= 1_000:
-		return strconv.FormatFloat(float64(n)/1e3, 'f', 1, 64) + "k"
-	}
-	return strconv.FormatInt(n, 10)
-}
-
 func orLine(a api.Agent) string {
 	if a.Line != "" {
 		return a.Line
 	}
 	return a.ID
-}
-
-// shortScore is a score as a person reads it: two decimals at most.
-func shortScore(v float64) string {
-	return strconv.FormatFloat(math.Round(v*100)/100, 'f', -1, 64)
-}
-
-// evalNowLine is what the run's eval is doing now, for team show; "" for
-// a team without one.
-func evalNowLine(ev *api.EvalNow, team string) string {
-	if ev == nil {
-		return ""
-	}
-	took := func(d time.Duration) string { return d.Round(time.Second).String() }
-	usual := ""
-	if ev.Usual > 0 {
-		usual = " (usually ~" + took(ev.Usual) + ")"
-	}
-	on := ""
-	switch {
-	case ev.Runner != "":
-		on = " on runner " + ev.Runner
-	case ev.Isolation != "":
-		on = " in isolation " + ev.Isolation
-	}
-	job := ""
-	if ev.Job != "" {
-		job = "\n         job " + ev.Job + " (psps job show " + ev.Job + "; psps team stop-eval stops it)"
-	}
-	switch ev.State {
-	case "running":
-		return fmt.Sprintf("  now    #%d running%s for %s%s, as %s%s", ev.Number, on, took(time.Since(ev.Since)), usual, ev.Why, job)
-	case "queued":
-		place := ""
-		if ev.Place > 0 {
-			place = fmt.Sprintf(", %s in line", ordinal(ev.Place))
-		}
-		return fmt.Sprintf("  now    #%d queued%s%s, as %s%s", ev.Number, on, place, ev.Why, job)
-	case "waiting":
-		return fmt.Sprintf("  now    no eval; the next when the round ends (%s)", ev.Waiting)
-	case "due":
-		d := time.Since(ev.Since)
-		if d < time.Minute {
-			return "  now    the round ended; the eval is starting"
-		}
-		return fmt.Sprintf("  now    no eval, though the round ended %s ago: psps team eval %q runs one", took(d), team)
-	case "idle":
-		return "  now    no eval; nothing changed since the last"
-	}
-	return ""
-}
-
-func ordinal(n int) string {
-	switch {
-	case n%100 >= 11 && n%100 <= 13:
-		return fmt.Sprintf("%dth", n)
-	case n%10 == 1:
-		return fmt.Sprintf("%dst", n)
-	case n%10 == 2:
-		return fmt.Sprintf("%dnd", n)
-	case n%10 == 3:
-		return fmt.Sprintf("%drd", n)
-	}
-	return fmt.Sprintf("%dth", n)
 }
