@@ -8,8 +8,8 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"strings"
 	"slices"
+	"strings"
 	"testing"
 	"time"
 
@@ -713,5 +713,48 @@ func TestEventsTailStartsAtAUserMessage(t *testing.T) {
 		if err != nil || !slices.Equal(ids(evs), c.want) || earlier != c.earlier {
 			t.Errorf("before %d, limit %d: %v, earlier %v, %v; want %v, earlier %v", c.before, c.limit, ids(evs), earlier, err, c.want, c.earlier)
 		}
+	}
+}
+
+func TestLastMessageAt(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "psps.db")
+	s, err := Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now().UTC().Truncate(time.Second)
+	s.PutIsolation(Isolation{ID: "dev", Name: "dev", Container: "c", Image: "i", CreatedAt: now})
+	if err := s.CreateAgent(Agent{ID: "a1", Name: "x", Kind: driver.Codex, IsolationID: "dev", Workdir: "/w", CreatedAt: now}); err != nil {
+		t.Fatal(err)
+	}
+	if a, _ := s.Agent("a1"); a.LastMessageAt != nil {
+		t.Fatalf("no message yet, last message at %v", a.LastMessageAt)
+	}
+	t1, t2, t3 := now.Add(time.Minute), now.Add(2*time.Minute), now.Add(3*time.Minute)
+	s.Commit("a1", 1, []event.Event{
+		{Agent: "a1", Src: 1, Time: t1, Kind: event.KindUser, Text: "hi"},
+		{Agent: "a1", Src: 1, Time: t2, Kind: event.KindStatus, Status: event.StatusWorking},
+	})
+	s.Commit("a1", 2, []event.Event{
+		{Agent: "a1", Src: 2, Time: t3, Kind: event.KindDelta, Text: "he", Ephemeral: true},
+		{Agent: "a1", Src: 2, Time: t2, Kind: event.KindAssistant, Text: "hello"},
+	})
+	// What is not a message moves it not.
+	s.Commit("a1", 3, []event.Event{{Agent: "a1", Src: 3, Time: t3, Kind: event.KindStatus, Status: event.StatusIdle}})
+	if a, _ := s.Agent("a1"); a.LastMessageAt == nil || !a.LastMessageAt.Equal(t2) {
+		t.Fatalf("last message at %v, want %v", a.LastMessageAt, t2)
+	}
+
+	// A store from before the column has it from the conversations.
+	if _, err := s.db.Exec(`ALTER TABLE agents DROP COLUMN last_message_at`); err != nil {
+		t.Fatal(err)
+	}
+	s.Close()
+	if s, err = Open(path); err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	if a, _ := s.Agent("a1"); a.LastMessageAt == nil || !a.LastMessageAt.Equal(t2) {
+		t.Fatalf("migrated: last message at %v, want %v", a.LastMessageAt, t2)
 	}
 }

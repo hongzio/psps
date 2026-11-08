@@ -92,6 +92,9 @@ type Agent struct {
 	MadeVia string `json:"made_via,omitempty"`
 	// LastSrc is the newest shim log Seq whose events are committed.
 	LastSrc int64 `json:"-"`
+	// LastMessageAt is when the last message to or from it was, if any
+	// was: the sidebar says how long ago.
+	LastMessageAt *time.Time `json:"last_message_at,omitempty"`
 }
 
 type Store struct {
@@ -215,6 +218,7 @@ var added = []struct{ table, column, def string }{
 	{"crons", "compact", "INTEGER NOT NULL DEFAULT 0"},
 	{"crons", "compacted_at", "TEXT"},
 	{"team_leads", "compact", "TEXT NOT NULL DEFAULT ''"},
+	{"agents", "last_message_at", "TEXT"},
 }
 
 func hasColumn(db interface {
@@ -240,6 +244,10 @@ func migrate(db *sql.DB) error {
 	if err != nil {
 		return err
 	}
+	hadLastMessage, err := hasColumn(db, "agents", "last_message_at")
+	if err != nil {
+		return err
+	}
 	for _, a := range added {
 		have, err := hasColumn(db, a.table, a.column)
 		if err != nil {
@@ -255,6 +263,13 @@ func migrate(db *sql.DB) error {
 	// its output is psps's refusal alone, from its start.
 	if !hadNotRun {
 		if _, err := db.Exec(`UPDATE team_evals SET not_run = 1 WHERE score IS NULL AND (output LIKE 'isolation % cannot run the eval: %' OR output LIKE 'isolation % has no verified network fence: %')`); err != nil {
+			return err
+		}
+	}
+	// Agents from before last_message_at have it from their conversations.
+	if !hadLastMessage {
+		if _, err := db.Exec(`UPDATE agents SET last_message_at = (SELECT json_extract(body, '$.time') FROM events
+			WHERE agent = agents.id AND json_extract(body, '$.kind') IN ('user', 'assistant') ORDER BY id DESC LIMIT 1)`); err != nil {
 			return err
 		}
 	}
@@ -641,14 +656,14 @@ func (s *Store) AgentByHandle(handle string) (Agent, error) {
 	return scanAgent(s.db.QueryRow(`SELECT `+agentCols+` FROM agents WHERE handle = ?`, handle))
 }
 
-const agentCols = `id, COALESCE(handle, ''), name, kind, isolation, workdir, repo, options, session_id, last_src, created_at, archived_at, parked, COALESCE(line, id), was_handle, forked_from, fork_of, made_by, turn_minutes, made_via`
+const agentCols = `id, COALESCE(handle, ''), name, kind, isolation, workdir, repo, options, session_id, last_src, created_at, archived_at, parked, COALESCE(line, id), was_handle, forked_from, fork_of, made_by, turn_minutes, made_via, last_message_at`
 
 func scanAgent(row interface{ Scan(...any) error }) (Agent, error) {
 	var a Agent
 	var kind, opts, created string
-	var archived sql.NullString
+	var archived, lastMessage sql.NullString
 	err := row.Scan(&a.ID, &a.Handle, &a.Name, &kind, &a.IsolationID, &a.Workdir, &a.Repo, &opts, &a.SessionID,
-		&a.LastSrc, &created, &archived, &a.Parked, &a.Line, &a.Was, &a.ForkedFrom, &a.ForkOf, &a.MadeBy, &a.TurnMinutes, &a.MadeVia)
+		&a.LastSrc, &created, &archived, &a.Parked, &a.Line, &a.Was, &a.ForkedFrom, &a.ForkOf, &a.MadeBy, &a.TurnMinutes, &a.MadeVia, &lastMessage)
 	if errors.Is(err, sql.ErrNoRows) {
 		return a, ErrNotFound
 	}
@@ -658,6 +673,11 @@ func scanAgent(row interface{ Scan(...any) error }) (Agent, error) {
 	if archived.Valid {
 		t := parseTS(archived.String)
 		a.ArchivedAt = &t
+	}
+	if lastMessage.Valid {
+		if t := parseTS(lastMessage.String); !t.IsZero() {
+			a.LastMessageAt = &t
+		}
 	}
 	return a, err
 }
@@ -808,6 +828,7 @@ func (s *Store) Commit(agentID string, src int64, evs []event.Event) ([]event.Ev
 		return nil, err
 	}
 	out := make([]event.Event, 0, len(evs))
+	var message time.Time
 	for _, e := range evs {
 		if e.Ephemeral {
 			continue
@@ -818,12 +839,26 @@ func (s *Store) Commit(agentID string, src int64, evs []event.Event) ([]event.Ev
 		if _, err := tx.Exec(`INSERT INTO events (agent, id, src, body) VALUES (?, ?, ?, ?)`, agentID, e.ID, e.Src, string(b)); err != nil {
 			return nil, err
 		}
+		if IsMessage(e) && !e.Time.IsZero() {
+			message = e.Time
+		}
 		out = append(out, e)
+	}
+	if !message.IsZero() {
+		if _, err := tx.Exec(`UPDATE agents SET last_message_at = ? WHERE id = ?`, ts(message), agentID); err != nil {
+			return nil, err
+		}
 	}
 	if _, err := tx.Exec(`UPDATE agents SET last_src = ? WHERE id = ? AND last_src < ?`, src, agentID, src); err != nil {
 		return nil, err
 	}
 	return out, tx.Commit()
+}
+
+// IsMessage: e is a message to or from the agent, what its last message
+// time counts.
+func IsMessage(e event.Event) bool {
+	return !e.Ephemeral && (e.Kind == event.KindUser || e.Kind == event.KindAssistant)
 }
 
 // CopyEvents puts the conversation of agent from in front of agent to's,
