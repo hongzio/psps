@@ -997,6 +997,11 @@ as that agent:
   when the caller runs under auto or never, in another when you also gave
   the exposure `--approvals auto`. Reaching an isolation this way is reaching
   its files and services, an eval isolation's grader and data among them.
+  The script can be the request's body itself, as text, with `dir` and
+  `seconds` in the query, so it needs no quoting or encoding; then what it
+  printed comes back as text, ending in `[psps: exit N]` where N is not 0.
+  `{"command": ...}` as JSON still works and still answers JSON. `team.show`
+  with `?format=text` answers as `psps team show` prints it.
 - **It has few made at once, and writes within mail's budget.** `--max-live`
   (3) agents made through it (`agent.new`, `agent.fork`, restoring one) by
   the isolation's agents are live at once, and what they write through it

@@ -4,6 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"net/http"
+	"net/http/httptest"
+	"net/url"
 	"path/filepath"
 	"slices"
 	"strings"
@@ -331,6 +333,18 @@ func TestControlSetsATeamsEvalToRunWhereItMayRunCommands(t *testing.T) {
 		t.Fatalf("kept where it may no longer run commands: %d %s", code, out)
 	}
 
+	// It reads the run as text, as psps team show prints it.
+	code, out = mailAs(t, m, helper.IsolationID, helper.ID, "GET", "/control/teams/lab/run?format=text", "")
+	if code != 200 || !strings.HasPrefix(out, `team "lab", led by `) || !strings.Contains(out, "  eval   sh /home/agent/grader/run.sh (in isolation ev2") || strings.HasPrefix(out, "{") {
+		t.Fatalf("as text: %d %s", code, out)
+	}
+	if code, out := mailAs(t, m, helper.IsolationID, helper.ID, "GET", "/control/teams/lab/run?format=yaml", ""); code != http.StatusBadRequest {
+		t.Fatalf("an unknown format: %d %s", code, out)
+	}
+	if code, out := mailAs(t, m, helper.IsolationID, helper.ID, "GET", "/control/teams/nope/run?format=text", ""); code != http.StatusNotFound || !strings.HasPrefix(out, "psps: ") {
+		t.Fatalf("an error, as text: %d %s", code, out)
+	}
+
 	// Changed by the operator, it is theirs again.
 	if run, err = m.SetLead(ctx, "lab", api.PutLead{Agent: "boss", Eval: ptr("make score")}); err != nil || run.Settings.EvalSetBy != "" {
 		t.Fatalf("%+v %v", run.Settings, err)
@@ -384,6 +398,52 @@ func TestControlRunsACommandWhereAnAgentItMadeWouldRunUnderAuto(t *testing.T) {
 	if code != 200 || v.Exit != 0 || !v.Cut || len(v.Output) != 64<<10 {
 		t.Fatalf("%d %d %v", code, len(v.Output), v.Cut)
 	}
+	// The body itself as the script: no quoting, dir and seconds in the
+	// query, and what it printed back as text, its exit code after it.
+	script := func(from store.Agent, iso, query, ctype, body string) (int, string, http.Header) {
+		t.Helper()
+		tok, err := m.store.MailToken(from.ID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		req := httptest.NewRequest("POST", "/a/"+tok+"/control/isolations/"+iso+"/exec"+query, strings.NewReader(body))
+		if ctype != "" {
+			req.Header.Set("Content-Type", ctype)
+		}
+		rec := httptest.NewRecorder()
+		m.mailHandler(from.IsolationID).ServeHTTP(rec, req)
+		return rec.Code, rec.Body.String(), rec.Header()
+	}
+	sh := "n=$(printf '%s\\n' \"a b\" 'c' | wc -l)\necho \"lines: $((n+0))\" \"it's\"\nsed -n '1p' <<'X'\n{\"first\": 1}\nX\npwd\nexit 4\n"
+	code, text, h := script(boss, "dev", "?dir="+url.QueryEscape(dir)+"&seconds=30", "", sh)
+	if code != 200 || !strings.HasPrefix(h.Get("Content-Type"), "text/plain") || h.Get("X-Exit-Code") != "4" ||
+		text != "lines: 2 it's\n{\"first\": 1}\n"+dir+"\n[psps: exit 4]\n" {
+		t.Fatalf("a script: %d %q %v", code, text, h)
+	}
+	if code, text, _ := script(boss, "dev", "?dir="+url.QueryEscape(dir), "text/plain", `{ echo grouped; }`); code != 200 || text != "grouped\n" {
+		t.Fatalf("a script that starts with {, said to be text: %d %q", code, text)
+	}
+	if code, text, _ := script(boss, "dev", "", "", `{"command": "echo json", "dir": "`+dir+`"}`); code != 200 || !strings.HasPrefix(text, "{") || !strings.Contains(text, `"output":"json"`) {
+		t.Fatalf("JSON with no type said: %d %q", code, text)
+	}
+	if code, text, _ := script(boss, "dev", "?format=text", "application/json", `{"command": "echo hi; exit 2", "dir": "`+dir+`"}`); code != 200 || text != "hi\n[psps: exit 2]\n" {
+		t.Fatalf("JSON asking for text: %d %q", code, text)
+	}
+	if code, text, _ := script(boss, "dev", "?format=json&dir="+url.QueryEscape(dir), "", "echo hi"); code != 200 || !strings.Contains(text, `"output":"hi"`) {
+		t.Fatalf("a script asking for JSON: %d %q", code, text)
+	}
+	if code, text, _ := script(boss, "dev", "?dir="+url.QueryEscape(dir), "", "head -c 70000 /dev/zero | tr '\\0' a"); code != 200 || !strings.HasPrefix(text, "[psps: only the last 64 KiB of what it printed]\n") {
+		t.Fatalf("cut: %d %.80q", code, text)
+	}
+	for _, q := range []string{"?seconds=x", "?seconds=601", "?dir=rel", "?format=yaml"} {
+		if code, text, _ := script(boss, "dev", q, "", "true"); code != http.StatusBadRequest {
+			t.Fatalf("%s: %d %q", q, code, text)
+		}
+	}
+	if code, text, _ := script(asker, "dev", "?dir="+url.QueryEscape(dir), "", "true"); code != http.StatusForbidden || !strings.HasPrefix(text, "psps: control: ") || !strings.Contains(text, "yours ask") {
+		t.Fatalf("refused, as text: %d %q", code, text)
+	}
+
 	for _, req := range []map[string]any{{"command": " "}, {"command": "true", "seconds": 601}, {"command": "true", "dir": "rel"}} {
 		if code, _, out := run(boss, "dev", req); code != http.StatusBadRequest {
 			t.Fatalf("%v: %d %s", req, code, out)

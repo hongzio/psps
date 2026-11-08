@@ -87,16 +87,27 @@ at most 20 set by agents, none coming more often than every five minutes.`,
 	"iso.services": `Which services an isolation you reach has:
 
     curl -sS "$PSPS_CONTROL_URL/isolations/NAME/services"`,
-	"iso.exec": `Run a shell command in an isolation you reach, as its agent user, in its
+	"iso.exec": `Run a shell script in an isolation you reach, as its agent user, in its
 home or dir, and read what it printed (stdout and stderr together, its last
-64 KiB) and its exit code:
+64 KiB) and its exit code. Send the script itself as the body, as it is, with
+no quoting or encoding; what it printed comes back as text, with a last line
+"[psps: exit N]" when its exit code is not 0 (and in the X-Exit-Code header):
 
-    curl -sS "$PSPS_CONTROL_URL/isolations/NAME/exec" --json @- <<'EXEC'
-    {"command": "git -C ~/work/repo branch -a", "dir": "~", "seconds": 60}
+    curl -sS "$PSPS_CONTROL_URL/isolations/NAME/exec?dir=~/work/repo&seconds=60" \
+      -H 'Content-Type: text/plain' --data-binary @- <<'EXEC'
+    git branch -a
+    grep -n "^## Round" NOTES.md | tail -3
+    sed -n '1,20p' PLAN.md
     EXEC
+
+Or, as JSON, which comes back as {"output", "exit", "cut"} (add ?format=text
+for text):
+
+    curl -sS "$PSPS_CONTROL_URL/isolations/NAME/exec" --json '{"command": "git branch -a", "dir": "~"}'
 
 - seconds: how long it may run, 60 when left out, 600 at most; then it is
   ended, exit 124.
+- A script is at most 64 KiB; put a longer one in a file there and run that.
 - It runs only where an agent you made would run under auto: in this
   isolation when yours are auto or never, in another when your operator also
   gave this isolation's agents auto there (elsewhere_approvals).
@@ -105,9 +116,11 @@ home or dir, and read what it printed (stdout and stderr together, its last
 	"team.ls": `The teams that have an agent you reach, or none:
 
     curl -sS "$PSPS_CONTROL_URL/teams"`,
-	"team.show": `A team's run, where you reach its lead: spending, scores, the lead's agents:
+	"team.show": `A team's run, where you reach its lead: spending, scores, the lead's agents.
+As text, as its operator's psps team show prints it, or as JSON without
+?format=text:
 
-    curl -sS "$PSPS_CONTROL_URL/teams/TEAM/run"`,
+    curl -sS "$PSPS_CONTROL_URL/teams/TEAM/run?format=text"`,
 	"team.new": `Make a team:
 
     curl -sS "$PSPS_CONTROL_URL/teams" --json '{"name": "lab"}'`,
