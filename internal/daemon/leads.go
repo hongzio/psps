@@ -229,6 +229,9 @@ func (m *Manager) leadTerms(was store.LeadSettings, req api.PutLead, lead store.
 	setInt(&s.TurnMinutes, req.TurnMinutes)
 	setInt(&s.EvalMinutes, req.EvalMinutes)
 	setInt(&s.Patience, req.Patience)
+	if req.CompactFirst != nil {
+		s.CompactFirst = *req.CompactFirst
+	}
 	// An eval is a command or a job of a runner's: one set is the other
 	// gone, and both at once is neither.
 	if req.Eval != nil && req.EvalJob != nil && strings.TrimSpace(*req.Eval) != "" && strings.TrimSpace(*req.EvalJob) != "" {
@@ -1111,7 +1114,12 @@ func (m *Manager) runEval(run store.EvalRun) {
 		score = "not run: " + err.Error()
 	}
 	m.log.Printf("team %s: eval #%d: %s", l.Team, e.ID, score)
-	if err := m.store.AddTeamNews(l.Team, msg); err != nil {
+	add := m.store.AddTeamNews
+	if why == whyRound && !e.NotRun && l.Settings.CompactFirst {
+		// The lead's conversation is compacted before it hears the round.
+		add = m.store.AddTeamNewsCompacting
+	}
+	if err := add(l.Team, msg); err != nil {
 		m.log.Printf("team %s: %v", l.Team, err)
 	}
 	if stop != "" {
@@ -1721,8 +1729,25 @@ func (r *runtime) deliverNewsLocked() {
 		return
 	}
 	after := max(r.lastSeen, r.agent.LastSrc)
+	// A round's score asked to come after /compact: that goes first, and
+	// the news the next time the lead is free.
+	state, _ := r.m.store.LeadCompact(l.Team)
+	if state == store.LeadCompactDue && l.Settings.CompactFirst {
+		p, err := r.m.store.SendLeadCompact(l.Team, r.agent.ID, after)
+		if err != nil {
+			r.m.log.Printf("agent %s: team news: %v", r.agent.ID, err)
+			return
+		}
+		r.outbox = append(r.outbox, p)
+		r.drv.Send(p.Text)
+		r.m.log.Printf("agent %s: /compact sent before team %s's round news", r.agent.ID, l.Team)
+		return
+	}
 	p, err := r.m.store.DeliverTeamNews(l.Team, r.agent.ID, after, func(news []string) string {
 		head := fmt.Sprintf("[psps team news for you as lead of team %q: %d item(s). Your operator may not be watching.]", t.Name, len(news))
+		if state == store.LeadCompactSent {
+			head += "\n(psps compacted your conversation (/compact) just before this, as your operator asks before a round's score.)"
+		}
 		if len(news) == 1 {
 			return head + "\n\n" + news[0]
 		}
