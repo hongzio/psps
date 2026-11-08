@@ -601,6 +601,9 @@ func (m *Manager) runDoing(l store.Lead) string {
 	switch {
 	case m.evalRunning(l.Team):
 		return "running the eval"
+	case !m.reconciled.Load():
+		// Its agents are not all back: what they do is not known yet.
+		return "psps is starting, and has not brought the team back yet"
 	}
 	if n := m.childrenBusy(l.Line); n > 0 {
 		s := fmt.Sprintf("%d of the lead's agents at work", n)
@@ -610,8 +613,11 @@ func (m *Manager) runDoing(l store.Lead) string {
 		return s
 	}
 	if r := m.lineRuntime(l.Line); r != nil {
-		if _, st, _ := r.shown(); st.Status == event.StatusWorking || st.Status == event.StatusBlocked {
+		switch _, st, _ := r.shown(); st.Status {
+		case event.StatusWorking, event.StatusBlocked:
 			return "the lead is at work"
+		case event.StatusStarting:
+			return "the lead is starting"
 		}
 		return "the lead is idle, and nothing of its runs"
 	}
@@ -621,9 +627,6 @@ func (m *Manager) runDoing(l store.Lead) string {
 		return a.ArchivedAt == nil && cmp.Or(a.Line, a.ID) == l.Line
 	}) {
 		return "the lead is archived"
-	}
-	if !m.reconciled.Load() {
-		return "psps is starting, and has not brought the lead back yet"
 	}
 	return "the lead has no session: psps could not start it (the daemon's log says why)"
 }
@@ -1804,13 +1807,17 @@ func (r *runtime) keepSpentLocked() {
 }
 
 // noteBusyLocked tells the agent's lead whether it is at work, or about
-// to be: in a turn, or on tasks in the background after one.
+// to be: in a turn, or on tasks in the background after one. Until its
+// runtime has read its log (psps starting, or its shim reconnecting) that
+// is not known, and it counts as at work, so no round ends on what the
+// driver last knew; unless a problem keeps it from coming back.
 func (r *runtime) noteBusyLocked() {
 	if r.agent.MadeBy == "" {
 		return
 	}
 	st := r.drv.State()
-	busy := st.Status == event.StatusWorking || st.Status == event.StatusBlocked || st.Queued > 0 || len(r.outbox) > 0 || r.starting
+	busy := st.Status == event.StatusWorking || st.Status == event.StatusBlocked || st.Queued > 0 || len(r.outbox) > 0 || r.starting ||
+		(!r.caughtUp && r.problem == "")
 	r.m.setChildBusy(r.agent.MadeBy, r.agent.ID, busy, r.inBackgroundLocked(st))
 }
 
