@@ -61,6 +61,9 @@ func Run(out io.Writer, run api.TeamRun, now time.Time) error {
 		}
 		fmt.Fprintln(w)
 	}
+	if s.CompactFirst {
+		fmt.Fprintln(w, "  news   the lead's conversation is compacted before it hears a round's score")
+	}
 	if line := EvalNow(run.Eval, run.Team.Name, now); line != "" {
 		fmt.Fprintln(w, line)
 	}

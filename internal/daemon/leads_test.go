@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -377,6 +378,59 @@ func TestARoundEndsWithTheEvalAndARunWithoutProgressStops(t *testing.T) {
 	e.waitFor("the eval after the reset", func() bool { r, _ := m.TeamRun("lab"); return len(r.Evals) == 4 })
 	if run, _ = m.TeamRun("lab"); run.Best == nil || run.Best.ID != 4 || *run.Best.Score != 1.2 || run.Stopped != "" {
 		t.Fatalf("%+v", run)
+	}
+}
+
+// A lead whose run compacts first has /compact sent once a round's eval
+// ended, and hears the round's score after it; an eval it asks for comes
+// as it is.
+func TestALeadThatCompactsFirstHearsTheRoundAfterCompact(t *testing.T) {
+	fakeTimeout(t)
+	e := newTestEnv(t)
+	m, stop := e.daemon()
+	defer stop()
+	dir := t.TempDir()
+	os.WriteFile(filepath.Join(dir, "score"), []byte("SCORE: 2\n"), 0o644)
+	boss, team := withTeams(t, e, m, api.PutLead{Budget: ptr(int64(1_000_000)), Eval: ptr("cat score"), EvalDir: ptr(dir), CompactFirst: ptr(true)})
+	if run, _ := m.TeamRun("lab"); !run.Settings.CompactFirst {
+		t.Fatalf("%+v", run.Settings)
+	}
+	makeAgent(t, m, boss.ID, api.TeamAgentNew{Role: "one", Kind: driver.Codex, Prompt: "hello"})
+	e.waitFor("the turn's news", func() bool { return len(news(e, boss.ID)) == 1 })
+	e.waitFor("the lead idle", func() bool { return free(m, boss.ID) })
+	if slices.Contains(users(e, boss.ID), store.CompactCommand) {
+		t.Fatal("compacted before the round ended")
+	}
+	m.teamCheck(team.ID)
+	e.waitFor("the eval's news", func() bool { return len(news(e, boss.ID)) == 2 })
+	us := users(e, boss.ID)
+	i := slices.Index(us, store.CompactCommand)
+	if i < 0 || i != len(us)-2 || !strings.Contains(us[i+1], "Eval #1 (the round ended)") || !strings.Contains(us[i+1], "psps compacted your conversation (/compact) just before this") {
+		t.Fatalf("no /compact just before the round's score: %q", us)
+	}
+	if st, _ := m.store.LeadCompact(team.ID); st != "" {
+		t.Fatalf("compaction left %q", st)
+	}
+
+	// An eval the lead asks for is no round's end.
+	e.waitFor("the lead idle", func() bool { return free(m, boss.ID) })
+	if code, out := teamAs(t, m, boss.ID, "POST", "/eval", ""); code != http.StatusAccepted {
+		t.Fatalf("%d %s", code, out)
+	}
+	e.waitFor("the asked eval's news", func() bool { return len(news(e, boss.ID)) == 3 })
+	n := 0
+	for _, u := range users(e, boss.ID) {
+		if u == store.CompactCommand {
+			n++
+		}
+	}
+	if n != 1 {
+		t.Fatalf("compacted %d times", n)
+	}
+
+	// Off, a round's score comes as it is.
+	if run, _ := m.SetLead(context.Background(), "lab", api.PutLead{Agent: "boss", CompactFirst: ptr(false)}); run.Settings.CompactFirst {
+		t.Fatal("still compacts first")
 	}
 }
 

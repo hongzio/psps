@@ -132,6 +132,10 @@ func (m *Model) leadForm(g liveGroup, run *api.TeamRun) *form {
 			s.target = strconv.FormatFloat(*t.Target, 'g', -1, 64)
 		}
 	}
+	compact := selectField("Before a round's score", []string{"tell the lead as it is", "compact its conversation first"}, "/compact before the lead hears the round's end and score")
+	if run != nil && run.Settings.CompactFirst {
+		compact.idx = 1
+	}
 	fields := []*field{
 		lead,
 		text("Budget", "none", "tokens sent anew and written by the lead and its agents, as 5M or 800k; none leaves only the plan ceiling", s.budget),
@@ -144,6 +148,7 @@ func (m *Model) leadForm(g liveGroup, run *api.TeamRun) *form {
 		text("Eval limit", "20", "minutes the eval may run", num(s.evalMin)),
 		text("Target", "none", "a score that ends the run once reached", s.target),
 		text("Patience", "3", "evals in a row without a new best that end the run", num(s.patience)),
+		compact,
 		selectField("Teams in its isolation", []string{"turn on if off", "leave as they are"}, "the lead acts only where its isolation has the team service"),
 	}
 	fields[0].focus(true)
@@ -228,7 +233,9 @@ func (m *Model) saveLead() tea.Cmd {
 		p.err = err.Error()
 		return nil
 	}
-	turnOn := fs[11].idx == 0
+	compactFirst := fs[11].idx == 1
+	req.CompactFirst = &compactFirst
+	turnOn := fs[12].idx == 0
 	p.busy, p.err = true, ""
 	return func() tea.Msg {
 		ctx, cancel := context.WithTimeout(context.Background(), time.Minute)

@@ -1965,6 +1965,9 @@ async function editTeam(t) {
     }
   }
   lead.addEventListener('change', shown)
+  const compactBox = h('input', { type: 'checkbox', checked: !!st.compact_first })
+  const compactFirst = h('label', { class: 'check lead-teams', title: "psps sends the lead /compact once the round's eval has ended, and the round's news and score after it" },
+    compactBox, h('span', null, "Compact before a round's result: the lead's conversation is compacted (/compact) before it hears the round's end and score"))
   shown()
   // terms are the form as the daemon takes them; a term left empty keeps
   // what it was, or its default.
@@ -1978,6 +1981,7 @@ async function editTeam(t) {
       const v = el.value.trim()
       if (!v) continue
       if (!/^\d+$/.test(v)) throw new Error(`${what} is a whole number, not "${v}".`)
+    compactFirst,
       req[k] = Number(v)
     }
     req.eval = evalCmd.value.trim()
@@ -2019,6 +2023,7 @@ async function editTeam(t) {
           await guarded(async () => {
             await api('PUT', `/v1/teams/${enc(t.id)}/lead`, { agent: run.lead })
             toast(`Team "${t.name}" runs again`)
+    req.compact_first = compactBox.checked
             await refreshAgents()
           })
         },

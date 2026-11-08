@@ -774,6 +774,7 @@ psps team lead lab tara                    # tara leads team lab (it joins it)
 psps team lead lab tara --budget 5M        # within 5M tokens
 psps team lead lab tara --eval 'make bench | tail -1' --eval-dir ~/work/app --patience 3
 psps team lead lab tara --eval-iso grader  # the eval runs in grader, on a copy
+psps team lead lab tara --compact-first    # /compact the lead before it hears a round's score
 psps agent send tara '/psps-team Build what SPEC.md describes.'   # the work, for the team
 psps team show lab                         # spending, scores, the lead's agents
 psps team eval lab                         # run the eval now
@@ -957,6 +958,12 @@ evals before count no more toward the patience, so a run out of it can always
 go on; one stopped by its budget or its target cannot while that still
 holds: give it a larger budget, or a higher target or none (`--no-target`),
 in the same `psps team lead` (or the dialog), which resumes it.
+
+With `--compact-first` (in the web's dialog, "Compact before a round's
+result"; `--compact-first=false` to stop), psps sends the lead `/compact`
+once a round's eval has ended, and the round's news, its score with it, the
+next time the lead is free, saying it was compacted. An eval the lead or you
+ask for comes as it is.
 
 Besides, at most `--max-live` agents of the lead's are live at once (3), and
 none is made on a plan once a window of that plan is used past

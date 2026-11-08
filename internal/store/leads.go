@@ -101,6 +101,9 @@ type LeadSettings struct {
 	// evals in a row without a new best end it.
 	Target   *float64 `json:"target,omitempty"`
 	Patience int      `json:"patience"`
+	// CompactFirst has psps compact the lead's conversation (/compact)
+	// before it hears a round's score, with the round's other news.
+	CompactFirst bool `json:"compact_first,omitempty"`
 }
 
 // HasEval is whether the run has an eval at all: a command, or a job of a
@@ -243,6 +246,65 @@ func (s *Store) SetLeadDirty(team string, dirty bool) error {
 	return err
 }
 
+// Lead compactions (team_leads.compact): a round's score is waiting and
+// is to go after /compact (LeadCompactDue), or /compact went and the news
+// goes once the lead is free (LeadCompactSent); "" is neither.
+const (
+	LeadCompactDue  = "due"
+	LeadCompactSent = "sent"
+)
+
+// AddTeamNewsCompacting puts body in team's lead's waiting news, to go
+// after /compact (LeadCompactDue), in one transaction: news delivered
+// meanwhile goes with it or before both.
+func (s *Store) AddTeamNewsCompacting(team, body string) error {
+	tx, err := s.db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	if _, err := tx.Exec(`INSERT INTO team_news (team, body, created_at) VALUES (?, ?, ?)`, team, body, ts(time.Now())); err != nil {
+		return err
+	}
+	if _, err := tx.Exec(`UPDATE team_leads SET compact = ? WHERE team = ?`, LeadCompactDue, team); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
+// LeadCompact is where team's lead is with compacting before news.
+func (s *Store) LeadCompact(team string) (string, error) {
+	var state string
+	err := s.db.QueryRow(`SELECT compact FROM team_leads WHERE team = ?`, team).Scan(&state)
+	if errors.Is(err, sql.ErrNoRows) {
+		return "", fmt.Errorf("team %s has no lead: %w", team, ErrNotFound)
+	}
+	return state, err
+}
+
+// SendLeadCompact puts /compact in agent's outbox, the lead of team, in
+// one transaction with recording it went: its news goes after it.
+func (s *Store) SendLeadCompact(team, agent string, after int64) (Pending, error) {
+	tx, err := s.db.Begin()
+	if err != nil {
+		return Pending{}, err
+	}
+	defer tx.Rollback()
+	now := ts(time.Now())
+	if _, err := tx.Exec(`UPDATE team_leads SET compact = ? WHERE team = ?`, LeadCompactSent, team); err != nil {
+		return Pending{}, err
+	}
+	res, err := tx.Exec(`INSERT INTO outbox (agent, text, after, created_at) VALUES (?, ?, ?, ?)`, agent, CompactCommand, after, now)
+	if err != nil {
+		return Pending{}, err
+	}
+	p := Pending{Text: CompactCommand, After: after}
+	if p.ID, err = res.LastInsertId(); err != nil {
+		return Pending{}, err
+	}
+	return p, tx.Commit()
+}
+
 // AddTeamNews puts something psps tells team's lead in its waiting news.
 func (s *Store) AddTeamNews(team, body string) error {
 	_, err := s.db.Exec(`INSERT INTO team_news (team, body, created_at) VALUES (?, ?, ?)`, team, body, ts(time.Now()))
@@ -290,6 +352,10 @@ func (s *Store) DeliverTeamNews(team, agent string, after int64, frame func(news
 	}
 	now := ts(time.Now())
 	if _, err := tx.Exec(`UPDATE team_news SET delivered_at = ? WHERE id IN (?`+strings.Repeat(", ?", len(ids)-1)+`)`, append([]any{now}, ids...)...); err != nil {
+		return Pending{}, err
+	}
+	// What was to be compacted before is delivered.
+	if _, err := tx.Exec(`UPDATE team_leads SET compact = '' WHERE team = ?`, team); err != nil {
 		return Pending{}, err
 	}
 	text := frame(news)

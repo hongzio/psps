@@ -122,6 +122,7 @@ func teamCmd(p paths.Paths, args []string) error {
 		target := fs.String("target", "", "a score that ends the run once reached")
 		noTarget := fs.Bool("no-target", false, "no target")
 		patience := fs.Int("patience", 0, "evals in a row without a new best that end the run (default 3)")
+		compactFirst := fs.Bool("compact-first", false, "compact the lead's conversation (/compact) before it hears a round's score; --compact-first=false to stop")
 		pos := parse(fs, args[1:])
 		if *clear {
 			if len(pos) != 1 {
@@ -155,6 +156,9 @@ func teamCmd(p paths.Paths, args []string) error {
 			if set[f.name] {
 				*f.to = f.from
 			}
+		}
+		if set["compact-first"] {
+			req.CompactFirst = compactFirst
 		}
 		if set["eval"] {
 			req.Eval = eval

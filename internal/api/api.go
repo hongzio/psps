@@ -267,6 +267,9 @@ type PutLead struct {
 	Target   *float64 `json:"target,omitempty"`
 	NoTarget bool     `json:"no_target,omitempty"`
 	Patience *int     `json:"patience,omitempty"`
+	// CompactFirst: the lead's conversation is compacted before it hears
+	// a round's score.
+	CompactFirst *bool `json:"compact_first,omitempty"`
 }
 
 // TeamRun is a team with a lead, as its operator and its lead see it.
