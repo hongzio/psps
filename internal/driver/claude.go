@@ -141,10 +141,13 @@ func clRunning(argv []string) (Options, bool) {
 
 // switchable is whether the agent's options differ from the running ones
 // in an approvals mode alone that the process can be told, and has not
-// refused.
+// refused. One started in default (claude's own settings, a mode of their
+// choosing) is told ask or auto as well, which claude 2.1.319 takes; back
+// to default it restarts, since no mode psps names is the settings' own.
 func (c *claude) switchable() bool {
 	r, o := c.running, c.opts
 	_, from := clModes[r.approvals()]
+	from = from || r.approvals() == ApprovalsDefault
 	_, to := clModes[o.approvals()]
 	return r.Model == o.Model && r.Effort == o.Effort && from && to && c.refused != o.approvals()
 }
