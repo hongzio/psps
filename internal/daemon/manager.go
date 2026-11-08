@@ -334,6 +334,9 @@ func (m *Manager) isolationNamed(name string) (store.Isolation, error) {
 // isoName is what the isolation with that ID is called now, for what is
 // said to people; the ID itself once it is gone.
 func (m *Manager) isoName(id string) string {
+	if id == store.HostIsolation {
+		return "Admin (the Mac)"
+	}
 	if iso, err := m.store.Isolation(id); err == nil {
 		return iso.Name
 	}

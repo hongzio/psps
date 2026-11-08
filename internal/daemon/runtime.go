@@ -412,11 +412,16 @@ func (r *runtime) kickLocked() {
 	if st.Queued > 0 && !r.starting && !r.stopping && fenced {
 		r.starting = true
 		// On the Mac the agent has the user's own environment and psps
-		// itself; what an isolation is given to reach psps it needs not.
+		// itself; what an isolation is given to reach psps it needs not,
+		// only an account.
 		var env []string
 		var mcp []proxy.MCPServer
 		var shares []isolation.Mount
-		if r.agent.IsolationID != store.HostIsolation {
+		if r.agent.IsolationID == store.HostIsolation {
+			// A shared account, if admin mode was given one; else the
+			// CLI's own login on the Mac.
+			env = r.m.accountEnv(store.HostIsolation)
+		} else {
 			env, mcp = r.m.launchEnv(r.agent.IsolationID)
 			env = append(env, r.m.mailEnv(r.agent)...)
 			env = append(env, r.m.cronEnv(r.agent)...)

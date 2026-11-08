@@ -108,21 +108,26 @@ type Agent struct {
 // Admin is admin mode: on while an admin agent runs on the Mac itself, in
 // no isolation, as the user. Kind and Dir are its; Recent are the
 // directories admin agents were started in, the latest first; Home is what
-// ~ stands for on the Mac.
+// ~ stands for on the Mac. Account is the shared account its CLI uses,
+// empty for the CLI's own login on the Mac.
 type Admin struct {
-	On     bool        `json:"on"`
-	Agent  string      `json:"agent,omitempty"`
-	Kind   driver.Kind `json:"kind,omitempty"`
-	Dir    string      `json:"dir,omitempty"`
-	Recent []string    `json:"recent"`
-	Home   string      `json:"home"`
+	On      bool        `json:"on"`
+	Agent   string      `json:"agent,omitempty"`
+	Kind    driver.Kind `json:"kind,omitempty"`
+	Dir     string      `json:"dir,omitempty"`
+	Account string      `json:"account,omitempty"`
+	Recent  []string    `json:"recent"`
+	Home    string      `json:"home"`
 }
 
 // SetAdmin turns admin mode on, or starts its agent over in another
-// directory or with the other CLI.
+// directory or with the other CLI. Account is a shared account for the
+// CLI to use; empty, its own login on the Mac. Another account alone
+// keeps the conversation and restarts the CLI with it.
 type SetAdmin struct {
-	Kind driver.Kind `json:"kind"`
-	Dir  string      `json:"dir"`
+	Kind    driver.Kind `json:"kind"`
+	Dir     string      `json:"dir"`
+	Account string      `json:"account,omitempty"`
 }
 
 // AgentOrder is a sidebar list's lines, from the top.
