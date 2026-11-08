@@ -386,6 +386,7 @@ func (r *runtime) observe(rec shimproto.Record, liveAfter int64) {
 // log: it re-applies what the user asked for that the log does not show yet.
 func (r *runtime) catchUpLocked() {
 	r.caughtUp = true
+	defer r.noteBusyLocked()
 	r.keepSpentLocked()
 	for _, m := range r.outbox {
 		// A rewind the log already shows (or one no longer possible)
@@ -527,6 +528,9 @@ func (r *runtime) setProblem(err error) {
 	}
 	changed := msg != r.problem
 	r.problem = msg
+	if changed {
+		r.noteBusyLocked()
+	}
 	r.mu.Unlock()
 	if changed && msg != "" {
 		r.m.hub.publish(event.Event{Agent: r.agent.ID, Time: time.Now().UTC(), Kind: event.KindNotice,

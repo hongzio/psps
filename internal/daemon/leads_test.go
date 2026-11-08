@@ -3,6 +3,7 @@ package daemon
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"os"
@@ -451,7 +452,7 @@ func TestALeadWithoutARuntimeIsArchivedOnlyWhenItIs(t *testing.T) {
 	delete(m.runtimes, boss.ID)
 	m.mu.Unlock()
 	m.reconciled.Store(false)
-	if got := status(); got != "psps is starting, and has not brought the lead back yet" {
+	if got := status(); got != "psps is starting, and has not brought the team back yet" {
 		t.Fatal(got)
 	}
 	m.reconciled.Store(true)
@@ -467,6 +468,58 @@ func TestALeadWithoutARuntimeIsArchivedOnlyWhenItIs(t *testing.T) {
 	if got := status(); got != "the lead is archived" {
 		t.Fatal(got)
 	}
+}
+
+// An agent a lead made that has not read its log since psps started (or
+// its shim came back) counts as at work: no round ends on what its driver
+// last knew, though its lead is back and idle.
+func TestAnAgentNotBackYetHoldsTheRound(t *testing.T) {
+	fakeTimeout(t)
+	e := newTestEnv(t)
+	m, stop := e.daemon()
+	defer stop()
+	dir := t.TempDir()
+	os.WriteFile(filepath.Join(dir, "score"), []byte("SCORE: 1\n"), 0o644)
+	boss, team := withTeams(t, e, m, api.PutLead{Budget: ptr(int64(1_000_000)), Eval: ptr("cat score"), EvalDir: ptr(dir)})
+	a := makeAgent(t, m, boss.ID, api.TeamAgentNew{Role: "one", Kind: driver.Codex, Prompt: "hello"})
+	e.waitFor("the turn's news", func() bool { return len(news(e, boss.ID)) == 1 })
+	e.waitFor("the lead idle", func() bool { return free(m, boss.ID) && m.childrenBusy(boss.ID) == 0 })
+
+	r, err := m.runtime(a.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	r.mu.Lock()
+	r.caughtUp = false
+	r.noteBusyLocked()
+	r.mu.Unlock()
+	if n := m.childrenBusy(boss.ID); n != 1 {
+		t.Fatalf("%d at work", n)
+	}
+	if run, _ := m.TeamRun("lab"); run.Status != "1 of the lead's agents at work" {
+		t.Fatal(run.Status)
+	}
+	m.teamCheck(team.ID)
+	time.Sleep(200 * time.Millisecond)
+	if run, _ := m.TeamRun("lab"); len(run.Evals) != 0 || m.evalRunning(team.ID) {
+		t.Fatalf("a round ended on an agent not back: %+v", run.Evals)
+	}
+
+	// A problem keeps it from coming back: it holds the round no more.
+	r.setProblem(errors.New("its isolation is down"))
+	if n := m.childrenBusy(boss.ID); n != 0 {
+		t.Fatalf("%d at work with a problem", n)
+	}
+	r.setProblem(nil)
+	// Back, it is what its log says.
+	r.mu.Lock()
+	r.catchUpLocked()
+	r.mu.Unlock()
+	if n := m.childrenBusy(boss.ID); n != 0 {
+		t.Fatalf("%d at work once back", n)
+	}
+	m.teamCheck(team.ID)
+	e.waitFor("the round's eval", func() bool { run, _ := m.TeamRun("lab"); return len(run.Evals) == 1 })
 }
 
 // A round's next step, which its lead starts once it hears the last one

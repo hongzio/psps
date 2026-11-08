@@ -258,8 +258,16 @@ func (m *Manager) Reconcile() error {
 	}
 	for _, a := range agents {
 		if a.ArchivedAt == nil {
+			// An agent a lead made is at work until its runtime has read
+			// its log, so no round ends on its lead's coming back first.
+			if a.MadeBy != "" {
+				m.setChildBusy(a.MadeBy, a.ID, true, false)
+			}
 			if _, err := m.ensureRuntime(a); err != nil {
 				m.log.Printf("agent %s: %v", a.ID, err)
+				if a.MadeBy != "" {
+					m.setChildBusy(a.MadeBy, a.ID, false, false)
+				}
 			}
 		}
 	}
