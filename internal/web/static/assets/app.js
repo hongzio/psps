@@ -88,6 +88,13 @@ const S = {
   // it, but once it is let go.
   sorting: false,
   sidebarStale: false,
+  // Agents picked in the sidebar, to archive, restore or delete at once:
+  // null, or the group they are of (live or archived: never both), the
+  // IDs picked, the one last pressed and whether that press picked it or
+  // let it go, which a Shift-click carries on. picking is a press on a
+  // status icon going on, which the sidebar is not redrawn under.
+  pick: null,
+  picking: false,
   drawer: false,
   convos: new Map(),
   drafts: new Map(),
@@ -1193,7 +1200,7 @@ function togglePark(a) {
 function renderSidebar() {
   const el = document.getElementById('sidebar')
   if (!el) return
-  if (S.sorting) { S.sidebarStale = true; return }
+  if (S.sorting || S.picking) { S.sidebarStale = true; return }
   S.sidebarStale = false
   const live = S.agents.filter((a) => !a.archived_at && !a.host)
   const admins = S.agents.filter((a) => !a.archived_at && a.host)
@@ -1204,11 +1211,7 @@ function renderSidebar() {
     // An idle agent's dot parks it, a parked one's takes it back: it is
     // idle and wants a look again, as it does once it next does anything.
     const togglable = !a.archived_at && live === 'idle'
-    const dot = h('span', {
-      class: 'dot ' + st + (togglable ? ' toggle' : ''), role: togglable ? 'button' : 'img', 'aria-label': st,
-      title: !togglable ? st : st === 'parked' ? 'parked: needs no look; tap to make it idle' : 'idle: wants a look; tap to park it',
-    })
-    if (togglable) dot.addEventListener('click', (e) => { e.stopPropagation(); togglePark(a) })
+    const dot = pickLead(a, st, togglable)
     const meta = a.problem ? h('span', { class: 'problem' }, icon('triangle-alert'), ' ' + a.problem)
       : [`${shownID(a)} · ${a.isolation}`, a.inbox ? [' · ', icon('mail'), ` ${a.inbox}`] : null]
     // What it runs beside its turn, as icons alone at the line's end.
@@ -1222,7 +1225,7 @@ function renderSidebar() {
       : a.made_via ? h('span', { class: 'mark', title: `Made by agent ${maker ? shownID(maker) : a.made_via}, through the control service` }, icon('corner-down-right')) : null
     return h('button', {
       class: 'agent' + (a.id === S.sel && S.view === 'agent' ? ' selected' : '') + (a.archived_at ? ' archived' : ''),
-      'data-line': a.line || a.id, onclick: () => select(a.id),
+      'data-line': a.line || a.id, 'data-agent': a.id, 'data-group': a.archived_at ? 'archived' : 'live', onclick: () => select(a.id),
     }, dot, S.unread.has(a.id)
       ? h('span', { class: 'name with-unread' }, h('span', { class: 'title' }, mark, agentTitle(a)), h('span', { class: 'unread', title: 'Its turn ended; not opened since', 'aria-label': 'turn ended, not opened since' }))
       : h('span', { class: 'name' }, mark, agentTitle(a)),
@@ -1256,13 +1259,290 @@ function renderSidebar() {
       h('button', { class: 'fold', onclick: () => { S.showArchived = !S.showArchived; renderSidebar() } },
         icon(S.showArchived ? 'chevron-down' : 'chevron-right'), ` Archived (${archived.length})`),
       S.showArchived ? h('div', { class: 'archived-list' }, archivedRows()) : null),
-    h('div', { class: 'side-foot' },
-      h('button', { class: S.view === 'isolations' ? 'active' : '', onclick: () => show('isolations') }, icon('box'), ' Isolations'),
-      h('button', { class: S.view === 'services' ? 'active' : '', onclick: () => show('services') }, icon('key-round'), ' Services'),
-      h('button', { class: S.view === 'setup' ? 'active' : '', onclick: () => show('setup') }, icon('user-round'), ' Accounts')),
+    h('div', { class: 'side-bottom' }),
   )
   if (scrolled) el.querySelector('.agent-list').scrollTop = scrolled
+  // What was picked and is out of sight now, folded away or gone, is let go.
+  if (S.pick) {
+    const shown = new Set(pickIDs(S.pick.group))
+    for (const id of S.pick.sel) if (!shown.has(id)) S.pick.sel.delete(id)
+    if (!shown.has(S.pick.last)) S.pick.last = null
+  }
+  paintPick()
   placeIconPick()
+}
+
+function sideFoot() {
+  return h('div', { class: 'side-foot' },
+    h('button', { class: S.view === 'isolations' ? 'active' : '', onclick: () => show('isolations') }, icon('box'), ' Isolations'),
+    h('button', { class: S.view === 'services' ? 'active' : '', onclick: () => show('services') }, icon('key-round'), ' Services'),
+    h('button', { class: S.view === 'setup' ? 'active' : '', onclick: () => show('setup') }, icon('user-round'), ' Accounts'))
+}
+
+// ---- Picking agents in the sidebar, to archive, restore or delete them at
+// once. A long press on a row's status icon starts it: the row is picked,
+// and the icons of its group (the live agents, or the archived) become
+// boxes. Dragging on from the press, up or down, does to every row it
+// passes what the press did to its own, picking or letting go; a row the
+// drag goes back over is as it was. Once picking, a press on a box does
+// this at once, and a Shift-click carries the last press on from its row
+// to the clicked one. A press on the other group's icon moves the picking
+// there, what was picked let go. Rows are picked by their icon alone; the
+// row opens its agent as ever. Esc or the bar's x stops.
+
+// pickLead is a row's status icon, with the box it becomes, in a cell a
+// finger can find: a tap on an idle or parked agent's parks it or takes it
+// back, a long press starts picking.
+function pickLead(a, st, togglable) {
+  const dot = h('span', {
+    class: 'dot ' + st + (togglable ? ' toggle' : ''), role: togglable ? 'button' : 'img', 'aria-label': st,
+    title: (!togglable ? st : st === 'parked' ? 'parked: needs no look; tap to make it idle' : 'idle: wants a look; tap to park it') + ' · hold to pick',
+  })
+  const box = h('span', { class: 'pick-box' + (a.archived_at ? '' : ' ' + st), title: 'Click to pick · drag or Shift-click for a range' }, icon('check'))
+  const lead = h('span', { class: 'lead' }, dot, box)
+  lead.addEventListener('pointerdown', (e) => pickDown(e, a))
+  lead.addEventListener('click', (e) => {
+    const row = lead.closest('.agent')
+    if (S.pick?.group === row?.dataset.group) { e.preventDefault(); e.stopPropagation(); return }
+    if (togglable) { e.stopPropagation(); togglePark(a) }
+  })
+  return lead
+}
+
+// pickIDs are the agents of the group whose rows are in the sidebar, top
+// to bottom: those a range runs over.
+const pickIDs = (group) => [...document.querySelectorAll(`#sidebar .agent[data-group="${group}"]`)].map((r) => r.dataset.agent)
+
+// The press going on: where it started, the long press's timer, and once
+// it ranges, over which rows (ids), from which (anchor) to which (cur),
+// picking or letting go (on), over what was picked before it (before).
+let pickPress = null
+// The click a range's press ends in, on whichever row it was let go, is
+// not a click: the next one is swallowed, unless another press comes first.
+let pickSwallow = false
+
+function pickDown(e, a) {
+  if (e.button !== 0) return
+  const row = e.currentTarget.closest('.agent'), group = row?.dataset.group
+  if (!group) return
+  // Not the row's: the sortable list's own long press moves it.
+  e.stopPropagation()
+  e.preventDefault()
+  pickRelease()
+  const P = S.pick
+  if (P && P.group === group) {
+    if (e.shiftKey && e.pointerType === 'mouse' && P.last) {
+      const ids = pickIDs(group), from = ids.indexOf(P.last), to = ids.indexOf(a.id)
+      if (from >= 0 && to >= 0) {
+        pickApply(ids, from, to, P.lastOn, new Set(P.sel))
+        P.last = a.id
+        paintPick()
+        return
+      }
+    }
+    pickPress = { id: e.pointerId, x: e.clientX, y0: e.clientY, group }
+    S.picking = true
+    pickRange(a.id)
+    return
+  }
+  pickPress = { id: e.pointerId, x: e.clientX, y0: e.clientY, group, agent: a.id }
+  S.picking = true
+  pickPress.timer = setTimeout(() => {
+    pickPress.timer = null
+    navigator.vibrate?.(10)
+    S.pick = { group, sel: new Set(), last: null, lastOn: true, confirm: false, purge: false }
+    pickRange(a.id)
+  }, 450)
+  paintPick()
+}
+
+// pickRange starts a range at the agent's row: it is picked, or let go if
+// it was, and so is each row the press is dragged over.
+function pickRange(id) {
+  const P = S.pick, ids = pickIDs(P.group), at = ids.indexOf(id)
+  if (at < 0) return
+  const on = !P.sel.has(id)
+  pickPress.range = { ids, anchor: at, cur: at, on, before: new Set(P.sel) }
+  P.last = id
+  P.lastOn = on
+  pickApply(ids, at, at, on, pickPress.range.before)
+  pickPress.frame = requestAnimationFrame(pickScroll)
+  paintPick()
+}
+
+function pickApply(ids, from, to, on, before) {
+  const sel = new Set(before)
+  for (let i = Math.min(from, to); i <= Math.max(from, to); i++) on ? sel.add(ids[i]) : sel.delete(ids[i])
+  S.pick.sel = sel
+  S.pick.confirm = false
+}
+
+// pickOver ranges to the row of its group at the press's height, however
+// far the finger strays sideways or a team's rows are set in.
+function pickOver(y) {
+  const r = pickPress?.range
+  if (!r) return
+  const row = [...document.querySelectorAll(`#sidebar .agent[data-group="${pickPress.group}"]`)].find((el) => {
+    const b = el.getBoundingClientRect()
+    return y >= b.top && y < b.bottom
+  })
+  if (!row) return
+  const at = r.ids.indexOf(row.dataset.agent)
+  if (at < 0 || at === r.cur) return
+  r.cur = at
+  pickApply(r.ids, r.anchor, at, r.on, r.before)
+  paintPick()
+}
+
+// Held near the list's top or bottom edge, the list scrolls, and the range
+// goes on over what comes into view.
+function pickScroll() {
+  if (!pickPress?.range) return
+  const list = document.querySelector('#sidebar .agent-list')
+  if (list && pickPress.y != null) {
+    const b = list.getBoundingClientRect(), edge = 40
+    const step = pickPress.y < b.top + edge ? -8 : pickPress.y > b.bottom - edge ? 8 : 0
+    if (step) { list.scrollTop += step; pickOver(Math.min(Math.max(pickPress.y, b.top + 1), b.bottom - 1)) }
+  }
+  pickPress.frame = requestAnimationFrame(pickScroll)
+}
+
+// pickRelease ends the press: a long press let go before its time is a tap.
+function pickRelease() {
+  if (!pickPress) return
+  clearTimeout(pickPress.timer)
+  cancelAnimationFrame(pickPress.frame)
+  if (pickPress.range) pickSwallow = true
+  pickPress = null
+  S.picking = false
+  if (S.sidebarStale) renderSidebar()
+  else paintPick()
+}
+
+addEventListener('pointermove', (e) => {
+  if (!pickPress || e.pointerId !== pickPress.id) return
+  pickPress.y = e.clientY
+  // Moved before the long press is up: it scrolls, or was nothing.
+  if (pickPress.timer) { if (Math.hypot(e.clientX - pickPress.x, e.clientY - pickPress.y0) > 8) pickRelease(); return }
+  pickOver(e.clientY)
+})
+addEventListener('pointerup', (e) => { if (pickPress && e.pointerId === pickPress.id) pickRelease() })
+addEventListener('pointercancel', (e) => { if (pickPress && e.pointerId === pickPress.id) pickRelease() })
+// A range is not scrolled with, nor given the long press's menu.
+addEventListener('touchmove', (e) => { if (pickPress?.range) e.preventDefault() }, { passive: false })
+addEventListener('contextmenu', (e) => { if (pickPress) e.preventDefault() })
+document.addEventListener('pointerdown', () => { pickSwallow = false }, true)
+document.addEventListener('click', (e) => {
+  if (!pickSwallow) return
+  pickSwallow = false
+  e.preventDefault()
+  e.stopPropagation()
+}, true)
+
+// paintPick shows what is picked on the rows as they are, and the bar for
+// it at the sidebar's foot, without drawing the list anew under a press.
+function paintPick() {
+  const P = S.pick, r = pickPress?.range
+  for (const row of document.querySelectorAll('#sidebar .agent[data-group]')) {
+    const id = row.dataset.agent, on = !!P && P.group === row.dataset.group
+    const at = r && on ? r.ids.indexOf(id) : -1
+    row.classList.toggle('picking', on)
+    row.classList.toggle('pick-other', !!P && !on)
+    row.classList.toggle('picked', on && P.sel.has(id))
+    row.classList.toggle('pick-last', on && P.last === id)
+    row.classList.toggle('in-range', at >= 0 && at >= Math.min(r.anchor, r.cur) && at <= Math.max(r.anchor, r.cur))
+    row.classList.toggle('holding', !!pickPress?.timer && pickPress.agent === id)
+  }
+  // The heads of the other group's folds fade with its rows.
+  for (const head of document.querySelectorAll('#sidebar .line-head')) head.classList.toggle('pick-other', P?.group === 'live')
+  for (const head of document.querySelectorAll('#sidebar .team-head')) head.classList.toggle('pick-other', P?.group === 'archived')
+  document.querySelector('#sidebar .side-bottom')?.replaceChildren(P ? pickBar() : sideFoot())
+}
+
+function stopPicking() {
+  S.pick = null
+  paintPick()
+}
+
+function pickBar() {
+  const P = S.pick, n = P.sel.size, archived = P.group === 'archived'
+  const ids = pickIDs(P.group), all = ids.length > 0 && ids.every((id) => P.sel.has(id))
+  const head = h('div', { class: 'pick-head' },
+    h('button', { class: 'pick-x', title: 'Stop picking (Esc)', 'aria-label': 'Stop picking', onclick: stopPicking }, icon('x')),
+    h('span', { class: 'pick-count', 'aria-live': 'polite' }, `${n} picked`, h('small', null, archived ? ' in Archived' : ' in Active')),
+    h('button', {
+      class: 'pick-all', disabled: !ids.length || P.busy,
+      onclick: () => { P.sel = all ? new Set() : new Set(ids); P.confirm = false; paintPick() },
+    }, all ? 'None' : 'All'))
+  const act = (cls, ic, label, onclick, disabled = !n) =>
+    h('button', { class: 'btn pick-act ' + cls, disabled: disabled || P.busy, onclick }, icon(ic), ' ' + label)
+  if (!archived) return h('div', { class: 'pick-bar' }, head, h('div', { class: 'pick-acts' }, act('primary', 'archive', 'Archive', pickArchive)))
+  if (P.confirm) {
+    const purge = h('input', { type: 'checkbox', checked: P.purge, onchange: () => { P.purge = purge.checked } })
+    return h('div', { class: 'pick-bar' }, head,
+      h('div', { class: 'pick-confirm' }, `Delete ${n} archived session${n === 1 ? '' : 's'}? Their history and logs are removed. This cannot be undone.`),
+      h('label', { class: 'check pick-purge' }, purge, 'Also remove their workspaces and session transcripts'),
+      h('div', { class: 'pick-acts' },
+        h('button', { class: 'btn pick-act', disabled: P.busy, onclick: () => { P.confirm = false; paintPick() } }, 'Cancel'),
+        act('danger-fill', 'trash-2', 'Delete', pickDelete)))
+  }
+  return h('div', { class: 'pick-bar' }, head, h('div', { class: 'pick-acts' },
+    act('', 'archive-restore', 'Restore', pickRestore),
+    act('danger', 'trash-2', 'Delete', () => { P.confirm = true; paintPick() })))
+}
+
+// pickDo does to each picked agent in turn, and says how it went: it goes
+// on past one that fails, and says why the first did. An agent open among
+// them that is no longer in the list it was in (gone) is closed.
+async function pickDo(fn, did, gone) {
+  const P = S.pick, ids = [...P.sel]
+  P.busy = true
+  paintPick()
+  let done = 0, failed = 0, why = ''
+  for (const id of ids) {
+    try { await fn(id); done++ } catch (x) {
+      if (x instanceof Unauthorized) { S.authed = false; render(); return }
+      failed++
+      why ||= x.message
+    }
+  }
+  S.pick = null
+  if (gone && ids.includes(S.sel)) S.sel = null
+  toast(failed ? `${did} ${done} of ${ids.length}; ${failed} failed: ${why}` : `${did} ${done}`, !!failed)
+  await guarded(refreshAgents)
+  render()
+}
+
+function pickArchive() {
+  return pickDo((id) => api('POST', `/v1/agents/${enc(id)}/archive`), 'Archived', true)
+}
+
+// A line carries on as one session: restoring two of a line's would leave
+// the first archived again by the second, and restoring one whose line has
+// a live session archives that one.
+async function pickRestore() {
+  const picked = [...S.pick.sel].map(agentById).filter(Boolean)
+  const lines = new Map()
+  for (const a of picked) lines.set(a.line || a.id, [...(lines.get(a.line || a.id) || []), a])
+  const twice = [...lines.values()].filter((ss) => ss.length > 1)
+  if (twice.length) {
+    // Named as its folded line is in the sidebar.
+    const named = (a) => document.querySelector(`#sidebar .line-group[data-line="${CSS.escape(a.line)}"] .line-head .name`)?.textContent || shownID(a)
+    toast(`Pick one session of each line to restore: ${twice.map((ss) => `${ss.length} of ${named(ss[0])}`).join(', ')}`, true)
+    return
+  }
+  const taking = picked.filter((a) => S.agents.some((o) => !o.archived_at && o.line && o.line === a.line))
+  if (taking.length && !await ask({
+    title: `Restore ${picked.length} session${picked.length === 1 ? '' : 's'}?`,
+    body: `${taking.length === 1 ? 'One takes' : `${taking.length} take`} the place of the session on ${taking.length === 1 ? 'its line' : 'their lines'} now, which is archived; its crons and waiting mail move over.`,
+    ok: 'Restore',
+  })) return
+  await pickDo((id) => api('POST', `/v1/agents/${enc(id)}/restore`), 'Restored')
+}
+
+function pickDelete() {
+  const purge = S.pick.purge
+  return pickDo((id) => api('DELETE', `/v1/agents/${enc(id)}` + (purge ? '?purge=1' : '')), purge ? 'Deleted, with workspaces,' : 'Deleted', true)
 }
 
 // ---- A line's icon
@@ -5728,6 +6008,7 @@ document.addEventListener('keydown', (e) => {
   const t = e.target
   if (e.key === 'Escape' && !e.isComposing && closeIconPick(true)) { e.preventDefault(); return }
   if (e.key === 'Escape' && !e.isComposing && closeTasks()) { e.preventDefault(); return }
+  if (e.key === 'Escape' && !e.isComposing && S.pick && !document.querySelector('dialog[open]')) { e.preventDefault(); stopPicking(); return }
   // Esc leaves the message box, or a field of the new agent's form, once
   // nothing in it (a completion) took it: the shortcuts work again.
   if (e.key === 'Escape' && !e.defaultPrevented && !e.isComposing &&
