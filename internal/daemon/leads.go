@@ -615,7 +615,17 @@ func (m *Manager) runDoing(l store.Lead) string {
 		}
 		return "the lead is idle, and nothing of its runs"
 	}
-	return "the lead is archived"
+	// No runtime is not yet one while psps starts, or one it could not
+	// start: only a line with no live session is archived.
+	if agents, err := m.store.Agents(); err == nil && !slices.ContainsFunc(agents, func(a store.Agent) bool {
+		return a.ArchivedAt == nil && cmp.Or(a.Line, a.ID) == l.Line
+	}) {
+		return "the lead is archived"
+	}
+	if !m.reconciled.Load() {
+		return "psps is starting, and has not brought the lead back yet"
+	}
+	return "the lead has no session: psps could not start it (the daemon's log says why)"
 }
 
 // --- spending and plan windows ----------------------------------------------
