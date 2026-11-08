@@ -434,6 +434,41 @@ func TestALeadThatCompactsFirstHearsTheRoundAfterCompact(t *testing.T) {
 	}
 }
 
+// A lead with no runtime is archived only when its line has no live
+// session: while psps starts it is not back yet, and one psps could not
+// start has no session.
+func TestALeadWithoutARuntimeIsArchivedOnlyWhenItIs(t *testing.T) {
+	e := newTestEnv(t)
+	m, stop := e.daemon()
+	defer stop()
+	boss, _ := withTeams(t, e, m, api.PutLead{Budget: ptr(int64(1_000_000))})
+	status := func() string { r, _ := m.TeamRun("lab"); return r.Status }
+	if got := status(); got != "the lead is idle, and nothing of its runs" {
+		t.Fatal(got)
+	}
+	m.mu.Lock()
+	r := m.runtimes[boss.ID]
+	delete(m.runtimes, boss.ID)
+	m.mu.Unlock()
+	m.reconciled.Store(false)
+	if got := status(); got != "psps is starting, and has not brought the lead back yet" {
+		t.Fatal(got)
+	}
+	m.reconciled.Store(true)
+	if got := status(); !strings.HasPrefix(got, "the lead has no session") {
+		t.Fatal(got)
+	}
+	m.mu.Lock()
+	m.runtimes[boss.ID] = r
+	m.mu.Unlock()
+	if err := m.Archive(context.Background(), boss.ID); err != nil {
+		t.Fatal(err)
+	}
+	if got := status(); got != "the lead is archived" {
+		t.Fatal(got)
+	}
+}
+
 // A round's next step, which its lead starts once it hears the last one
 // ended, is the same round: no eval scores the work between the two.
 func TestARoundGoesOnWhileItsLeadStartsTheNextStep(t *testing.T) {

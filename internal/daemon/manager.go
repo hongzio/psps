@@ -19,6 +19,7 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 	"unicode"
 
@@ -95,6 +96,9 @@ type Manager struct {
 	store *store.Store
 	cli   Containers
 	fence Fence
+	// reconciled: Reconcile has given every live agent a runtime, as it
+	// does after the API is up; until then a live agent may have none.
+	reconciled atomic.Bool
 	// hostAddrs and bridgeOf read the Mac's interfaces for the fence
 	// measurement; tests replace them.
 	hostAddrs func() ([]pf.HostAddr, error)
@@ -259,6 +263,7 @@ func (m *Manager) Reconcile() error {
 			}
 		}
 	}
+	m.reconciled.Store(true)
 	m.resumeEvals()
 	return nil
 }
