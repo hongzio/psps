@@ -525,10 +525,10 @@ func (m *Manager) watchesGone(a store.Agent, gone string) {
 	m.pokeChanges()
 }
 
-// watchClocks counts the time the daemon runs on the watches with minutes
-// to wait, and tells their senders once they are past. A gap longer than
-// two steps is the Mac asleep or the daemon stopped, and counts as two.
-func (m *Manager) watchClocks(now time.Time) {
+// clocks counts the time the daemon runs, for what waits on time it runs
+// (watchClocks, teamWaitClocks). A gap longer than two steps is the Mac
+// asleep or the daemon stopped, and counts as two.
+func (m *Manager) clocks(now time.Time) {
 	m.mu.Lock()
 	last := m.watchTick
 	m.watchTick = now
@@ -537,6 +537,13 @@ func (m *Manager) watchClocks(now time.Time) {
 		return
 	}
 	step := min(now.Sub(last), 2*teamStep)
+	m.watchClocks(step)
+	m.teamWaitClocks(step)
+}
+
+// watchClocks counts step on the watches with minutes to wait, and tells
+// their senders once they are past.
+func (m *Manager) watchClocks(step time.Duration) {
 	ws, err := m.store.OpenWatches()
 	if err != nil {
 		return

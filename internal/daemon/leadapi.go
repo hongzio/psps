@@ -87,7 +87,12 @@ func (m *Manager) teamRoutes(mux *http.ServeMux, iso string) {
 			reply(w, nil, badRequest(fmt.Errorf(`team: the body is JSON, as {"role": "profiler", "kind": "claude", "prompt": "..."}: %v`, err)))
 			return
 		}
-		v, err := m.leadMake(r.Context(), a, l, req)
+		mode, err := teamWatchQuery(r)
+		if err != nil {
+			reply(w, nil, err)
+			return
+		}
+		v, err := m.leadMake(r.Context(), a, l, req, mode)
 		if err == nil {
 			w.Header().Set("Content-Type", "application/json")
 			w.WriteHeader(http.StatusCreated)
@@ -112,6 +117,11 @@ func (m *Manager) teamRoutes(mux *http.ServeMux, iso string) {
 		if !ok {
 			return
 		}
+		mode, err := teamWatchQuery(r)
+		if err != nil {
+			reply(w, nil, err)
+			return
+		}
 		body, err := io.ReadAll(io.LimitReader(r.Body, leadPromptMax+1))
 		switch {
 		case err != nil:
@@ -121,7 +131,7 @@ func (m *Manager) teamRoutes(mux *http.ServeMux, iso string) {
 		case !utf8.Valid(body) || strings.TrimSpace(string(body)) == "":
 			err = badRequest(errors.New("team: the body is the message, in UTF-8, and it is empty"))
 		default:
-			err = m.leadSend(lead, l, r.PathValue("id"), string(body))
+			err = m.leadSend(lead, l, r.PathValue("id"), string(body), mode)
 		}
 		if err == nil {
 			w.Header().Set("Content-Type", "application/json")
@@ -130,6 +140,24 @@ func (m *Manager) teamRoutes(mux *http.ServeMux, iso string) {
 			return
 		}
 		reply(w, nil, err)
+	})
+	mux.HandleFunc("POST /a/{token}/team/agents/{id}/release", func(w http.ResponseWriter, r *http.Request) {
+		_, l, ok := lead(w, r)
+		if !ok {
+			return
+		}
+		a, err := m.leadsAgent(l, r.PathValue("id"), true)
+		var v api.TeamRelease
+		if err == nil {
+			var rt *runtime
+			if rt, err = m.runtime(a.ID); err == nil {
+				v, err = rt.teamRelease()
+			}
+		}
+		if err == nil {
+			m.teamChanged(l.Team)
+		}
+		reply(w, v, err)
 	})
 	mux.HandleFunc("POST /a/{token}/team/agents/{id}/interrupt", func(w http.ResponseWriter, r *http.Request) {
 		_, l, ok := lead(w, r)
@@ -203,7 +231,7 @@ func (m *Manager) leadsAgent(l store.Lead, id string, live bool) (store.Agent, e
 
 // leadMake makes an agent of lead's own in its team, within its
 // operator's terms.
-func (m *Manager) leadMake(ctx context.Context, lead store.Agent, l store.Lead, req api.TeamAgentNew) (api.TeamAgent, error) {
+func (m *Manager) leadMake(ctx context.Context, lead store.Agent, l store.Lead, req api.TeamAgentNew, mode string) (api.TeamAgent, error) {
 	role, err := agentName(req.Role)
 	if err != nil {
 		return api.TeamAgent{}, badRequest(errors.New(`team: say what the agent is for, as its "role"`))
@@ -281,11 +309,14 @@ func (m *Manager) leadMake(ctx context.Context, lead store.Agent, l store.Lead, 
 		return api.TeamAgent{}, err
 	}
 	m.log.Printf("team %s: %s made %s (%s)", l.Team, l.Line, a.ID, role)
+	if rt, err := m.runtime(a.ID); err == nil {
+		rt.teamMode(mode)
+	}
 	return m.teamAgent(a, store.Spent{}, false), nil
 }
 
 // leadSend writes text to the agent of l's that id names, as l's message.
-func (m *Manager) leadSend(lead store.Agent, l store.Lead, id, text string) error {
+func (m *Manager) leadSend(lead store.Agent, l store.Lead, id, text, mode string) error {
 	a, err := m.leadsAgent(l, id, true)
 	if err != nil {
 		return err
@@ -300,7 +331,25 @@ func (m *Manager) leadSend(lead store.Agent, l store.Lead, id, text string) erro
 	if used := teamSpent(l, agents, spent).New(); overBudget(l, used) {
 		return httpError{http.StatusTooManyRequests, fmt.Errorf("team: the team has used its budget, %s of %s tokens", tokens(used), tokens(l.Settings.Budget))}
 	}
-	return m.Send(a.ID, fmt.Sprintf("[psps team: from your lead %s]\n\n%s", shownID(lead), text))
+	rt, err := m.runtime(a.ID)
+	if err != nil {
+		return err
+	}
+	rt.teamMode(mode)
+	return rt.send(fmt.Sprintf("[psps team: from your lead %s]\n\n%s", shownID(lead), text))
+}
+
+// teamWatchQuery is how a lead asks its agent's turns that end with tasks
+// in the background to be held, with ?watch=: settle unless it says turn.
+func teamWatchQuery(r *http.Request) (string, error) {
+	switch mode := strings.TrimSpace(r.URL.Query().Get("watch")); mode {
+	case "", store.WatchSettle:
+		return store.WatchSettle, nil
+	case store.WatchTurn:
+		return mode, nil
+	default:
+		return "", badRequest(fmt.Errorf(`team: watch is "settle" (the default: it is at work until a turn of it ends with nothing in the background) or "turn" (each turn's end is news), not %q`, mode))
+	}
 }
 
 // roleSlug is a role as the start of an agent's ID.
