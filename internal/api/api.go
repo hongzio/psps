@@ -101,6 +101,28 @@ type Agent struct {
 	Icon *store.Icon `json:"icon,omitempty"`
 	// Leads is the run of the team it leads, if it leads one.
 	Leads *TeamBrief `json:"leads,omitempty"`
+	// Host: it is the admin agent, on the Mac itself, in no isolation.
+	Host bool `json:"host,omitempty"`
+}
+
+// Admin is admin mode: on while an admin agent runs on the Mac itself, in
+// no isolation, as the user. Kind and Dir are its; Recent are the
+// directories admin agents were started in, the latest first; Home is what
+// ~ stands for on the Mac.
+type Admin struct {
+	On     bool        `json:"on"`
+	Agent  string      `json:"agent,omitempty"`
+	Kind   driver.Kind `json:"kind,omitempty"`
+	Dir    string      `json:"dir,omitempty"`
+	Recent []string    `json:"recent"`
+	Home   string      `json:"home"`
+}
+
+// SetAdmin turns admin mode on, or starts its agent over in another
+// directory or with the other CLI.
+type SetAdmin struct {
+	Kind driver.Kind `json:"kind"`
+	Dir  string      `json:"dir"`
 }
 
 // AgentOrder is a sidebar list's lines, from the top.

@@ -398,13 +398,13 @@ func (s *Store) Isolation(id string) (Isolation, error) {
 	return scanIsolation(s.db.QueryRow(`SELECT `+isolationCols+` FROM isolations WHERE id = ?`, id))
 }
 
-// IsolationNamed is the isolation people call name.
+// IsolationNamed is the isolation people call name: never the host's row.
 func (s *Store) IsolationNamed(name string) (Isolation, error) {
-	return scanIsolation(s.db.QueryRow(`SELECT `+isolationCols+` FROM isolations WHERE name = ?`, name))
+	return scanIsolation(s.db.QueryRow(`SELECT `+isolationCols+` FROM isolations WHERE name = ? AND id != ?`, name, HostIsolation))
 }
 
 func (s *Store) Isolations() ([]Isolation, error) {
-	rows, err := s.db.Query(`SELECT ` + isolationCols + ` FROM isolations ORDER BY name`)
+	rows, err := s.db.Query(`SELECT `+isolationCols+` FROM isolations WHERE id != ? ORDER BY name`, HostIsolation)
 	if err != nil {
 		return nil, err
 	}
