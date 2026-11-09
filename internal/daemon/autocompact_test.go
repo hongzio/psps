@@ -2,6 +2,7 @@ package daemon
 
 import (
 	"context"
+	"net/http"
 	"slices"
 	"testing"
 	"time"
@@ -9,6 +10,7 @@ import (
 	"github.com/hongzio/psps/internal/api"
 	"github.com/hongzio/psps/internal/driver"
 	"github.com/hongzio/psps/internal/event"
+	"github.com/hongzio/psps/internal/store"
 )
 
 func TestAutocompactSettings(t *testing.T) {
@@ -87,4 +89,44 @@ func TestAutocompactCompactsAQuietAgentOnce(t *testing.T) {
 	e.waitFor("the second /compact", func() bool {
 		return slices.Equal(users(e, a.ID), []string{"hi", "/compact", "again", "/compact"})
 	})
+}
+
+// An agent in an open watch, watched or watching, is not compacted: a
+// watch with no message waits for its target's next turn, which /compact
+// would be. Once the watch is done, both are.
+func TestAutocompactLeavesWatchesAlone(t *testing.T) {
+	e, m, boss, mate, ctl, stop := watchEnv(t)
+	defer stop()
+	for _, a := range []store.Agent{boss, mate} {
+		if err := m.Send(a.ID, "hi"); err != nil {
+			t.Fatal(err)
+		}
+		e.waitFor("the first turn", func() bool { return e.hasAssistant(a.ID, "echo: hi") })
+		e.waitFor("idle", func() bool { return status(m, a.ID) == event.StatusIdle })
+	}
+	if code, out := ctl(boss, "POST", "/agents/mate/watch", ""); code != http.StatusCreated {
+		t.Fatalf("%d %s", code, out)
+	}
+	if _, err := m.SetAutocompact(api.Autocompact{On: true, Minutes: 10}); err != nil {
+		t.Fatal(err)
+	}
+	m.autocompactTick(time.Now().Add(time.Hour))
+	time.Sleep(100 * time.Millisecond)
+	for _, a := range []store.Agent{boss, mate} {
+		if got := users(e, a.ID); !slices.Equal(got, []string{"hi"}) {
+			t.Fatalf("%s: turns %q", a.ID, got)
+		}
+	}
+
+	if err := m.Send(mate.ID, "from the operator"); err != nil {
+		t.Fatal(err)
+	}
+	e.waitFor("the receipt", func() bool { return len(receipts(e, boss.ID)) == 1 })
+	for _, a := range []store.Agent{boss, mate} {
+		e.waitFor("idle", func() bool { return status(m, a.ID) == event.StatusIdle })
+	}
+	m.autocompactTick(time.Now().Add(time.Hour))
+	for _, a := range []store.Agent{boss, mate} {
+		e.waitFor(a.ID+"'s /compact", func() bool { u := users(e, a.ID); return u[len(u)-1] == "/compact" })
+	}
 }

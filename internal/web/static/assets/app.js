@@ -5969,7 +5969,7 @@ function autocompactSetting() {
     detail.hidden = !cur.on
     if (document.activeElement !== min) min.value = cur.minutes
     note.replaceChildren('psps looks at every agent once a minute. One that is idle and whose last message is ', String(cur.minutes),
-      ' minutes old gets ', h('code', null, '/compact'), ', unless its last message was /compact already. Agents a team lead made are left to their lead.')
+      ' minutes old gets ', h('code', null, '/compact'), ', unless its last message was /compact already. Agents a team lead made, and those in an open watch, are left alone.')
   }
   const save = async (next) => {
     err.hidden = true
