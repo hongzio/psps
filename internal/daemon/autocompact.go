@@ -16,7 +16,8 @@ import (
 // is the operator's number of minutes old, as if the operator had typed
 // it, unless its last request was /compact already: one compaction per
 // quiet spell. Agents a team's lead made are left to their lead, whose
-// turns' ends they report to.
+// turns' ends they report to, and agents in an open watch, either side of
+// it, to the watch.
 
 const (
 	autocompactKey     = "autocompact"
@@ -108,6 +109,15 @@ func (r *runtime) autocompact(now time.Time, quiet time.Duration) {
 		return
 	}
 	if ok, _ := r.m.fenceOK(a.IsolationID); !ok {
+		return
+	}
+	// Watched, its /compact would be taken for the work watched (a watch
+	// with no message waits for its next turn; a stalled one, for it to go
+	// on); watching, it is in the middle of work, waiting to hear of it.
+	if on, err := r.m.store.WatchesOn(a.ID); err != nil || len(on) > 0 {
+		return
+	}
+	if by, err := r.m.store.WatchesBy(a.ID); err != nil || len(by) > 0 {
 		return
 	}
 	last, ok, err := r.m.store.LastUserText(a.ID)
