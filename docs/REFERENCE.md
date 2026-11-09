@@ -187,7 +187,9 @@ last request was `/compact` already is left alone until it has another
 message, so a quiet agent is compacted once. Agents a team's lead made are
 left to their lead, and an agent in an open watch, watched or watching, to
 the watch: its `/compact` would be taken for the work watched. That turn does not unpark a parked agent, mark it
-unread, or send its next auto todo. The API is `GET|PUT /v1/autocompact`
+unread, or send its next auto todo. No `/compact`, yours or autocompact's,
+counts as a message: the sidebar's age of an agent's last message, and the
+minutes autocompact waits, are from the one before it. The API is `GET|PUT /v1/autocompact`
 (`{"on": true, "minutes": 30}`).
 
 #### Admin mode

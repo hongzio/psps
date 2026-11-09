@@ -14,6 +14,7 @@ import (
 	"fmt"
 	"math"
 	"os"
+	"strings"
 	"time"
 
 	_ "modernc.org/sqlite"
@@ -269,10 +270,20 @@ func migrate(db *sql.DB) error {
 			return err
 		}
 	}
-	// Agents from before last_message_at have it from their conversations.
-	if !hadLastMessage {
+	// Agents from before last_message_at have it from their conversations,
+	// as do those from before it left /compact out (IsMessage).
+	var skipsCompact int
+	if err := db.QueryRow(`SELECT COUNT(*) FROM meta WHERE key = ?`, lastMessageSkipsCompact).Scan(&skipsCompact); err != nil {
+		return err
+	}
+	if !hadLastMessage || skipsCompact == 0 {
 		if _, err := db.Exec(`UPDATE agents SET last_message_at = (SELECT json_extract(body, '$.time') FROM events
-			WHERE agent = agents.id AND json_extract(body, '$.kind') IN ('user', 'assistant') ORDER BY id DESC LIMIT 1)`); err != nil {
+			WHERE agent = agents.id AND json_extract(body, '$.kind') IN ('user', 'assistant')
+			AND NOT (json_extract(body, '$.kind') = 'user' AND trim(COALESCE(json_extract(body, '$.text'), '')) = ?)
+			ORDER BY id DESC LIMIT 1)`, CompactCommand); err != nil {
+			return err
+		}
+		if _, err := db.Exec(`INSERT INTO meta (key, value) VALUES (?, '1') ON CONFLICT(key) DO NOTHING`, lastMessageSkipsCompact); err != nil {
 			return err
 		}
 	}
@@ -859,10 +870,18 @@ func (s *Store) Commit(agentID string, src int64, evs []event.Event) ([]event.Ev
 }
 
 // IsMessage: e is a message to or from the agent, what its last message
-// time counts.
+// time counts. /compact is none: it tidies the conversation, says nothing
+// in it.
 func IsMessage(e event.Event) bool {
+	if e.Kind == event.KindUser && strings.TrimSpace(e.Text) == CompactCommand {
+		return false
+	}
 	return !e.Ephemeral && (e.Kind == event.KindUser || e.Kind == event.KindAssistant)
 }
+
+// lastMessageSkipsCompact is the meta key that says last_message_at was
+// worked out again once IsMessage left /compact out.
+const lastMessageSkipsCompact = "last_message_skips_compact"
 
 // CopyEvents puts the conversation of agent from in front of agent to's,
 // which has none yet: a fork's history, as its session starts as a copy.
