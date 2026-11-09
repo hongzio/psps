@@ -948,6 +948,17 @@ func (s *Store) Event(agentID string, id int64) (event.Event, error) {
 	return e, json.Unmarshal([]byte(body), &e)
 }
 
+// LastUserText is the text of the last message that reached agentID, its
+// last request; ok is false when none has.
+func (s *Store) LastUserText(agentID string) (text string, ok bool, err error) {
+	err = s.db.QueryRow(`SELECT COALESCE(json_extract(body, '$.text'), '') FROM events
+		WHERE agent = ? AND json_extract(body, '$.kind') = ? ORDER BY id DESC LIMIT 1`, agentID, event.KindUser).Scan(&text)
+	if errors.Is(err, sql.ErrNoRows) {
+		return "", false, nil
+	}
+	return text, err == nil, err
+}
+
 // Events returns stored events with ID > after, oldest first.
 func (s *Store) Events(agentID string, after int64, limit int) ([]event.Event, error) {
 	if limit <= 0 {

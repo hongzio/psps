@@ -1295,6 +1295,10 @@ kbd {
 
 .settings-rule { width: 100%; margin: 0; border: 0; border-top: 1px solid var(--border); }
 .admin-setting { display: grid; gap: 12px; }
+.autocompact-detail { display: grid; gap: 8px; padding: 12px; border: 1px solid var(--border); border-radius: var(--radius); background: var(--bg); }
+.autocompact-detail[hidden] { display: none; }
+.autocompact-when { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.autocompact-when .dialog-input { width: 5.5em; flex: none; padding: 7px 9px; background: var(--panel); }
 .admin-setting .admin-head { flex-wrap: nowrap; align-items: flex-start; }
 .admin-setting .admin-text { min-width: 0; }
 .admin-setting .admin-text .note { margin-top: 2px; }
