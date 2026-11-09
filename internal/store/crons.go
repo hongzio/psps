@@ -4,6 +4,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 )
 
@@ -281,7 +282,9 @@ func (s *Store) WaitingCrons(agent string) (int, error) {
 //
 // A cron that compacts first, whose run has not yet, has /compact go to the
 // outbox in text's place, and records it (compacting true): its message is
-// sent by a later SendCron, once the agent is free again.
+// sent by a later SendCron, once the agent is free again. One whose agent's
+// last request was /compact already sends its message straight away: that
+// would be compacting twice over.
 func (s *Store) SendCron(id int64, text string, after int64, at time.Time, next *time.Time) (p Pending, compacting bool, err error) {
 	tx, err := s.db.Begin()
 	if err != nil {
@@ -300,6 +303,13 @@ func (s *Store) SendCron(id int64, text string, after int64, at time.Time, next 
 	}
 	now := cts(at)
 	compacting = compact && !compacted.Valid
+	if compacting {
+		last, _, err := lastUserText(tx, agent)
+		if err != nil {
+			return Pending{}, false, err
+		}
+		compacting = strings.TrimSpace(last) != CompactCommand
+	}
 	var q string
 	var args []any
 	switch {

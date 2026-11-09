@@ -765,7 +765,9 @@ A cron that compacts first (`--compact`, the web's Compact first, `"compact":
 true`) sends the agent `/compact` as each run goes, and its message only once
 the agent is idle after it, ahead of mail, todos and other crons, so nothing
 comes between the two. A run that comes due while its message waits on the
-`/compact` is folded into it. `--set N --no-compact` turns it off.
+`/compact` is folded into it. A run due when the agent's last request was
+`/compact` already (yours, autocompact's) sends its message straight away.
+`--set N --no-compact` turns it off.
 
 ```sh
 psps agent cron <id> --add @daily --compact "go over yesterday's alerts"

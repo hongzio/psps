@@ -328,3 +328,40 @@ func TestACronThatCompactsFirst(t *testing.T) {
 		t.Fatalf("turns %q", got)
 	}
 }
+
+// A cron that compacts first, due when its agent's last request was
+// /compact already, sends its message straight away: no second /compact.
+func TestACronThatCompactsFirstAfterACompact(t *testing.T) {
+	e := newTestEnv(t)
+	m, stop := e.daemon()
+	defer stop()
+	a, _ := m.CreateAgent(context.Background(), api.CreateAgent{Isolation: "dev", Kind: driver.Codex, Prompt: "hi"})
+	e.waitFor("the first turn", func() bool { return e.hasAssistant(a.ID, "echo: hi") })
+	e.waitFor("idle", func() bool { return status(m, a.ID) == event.StatusIdle })
+	if _, err := m.Message(a.ID, "/compact"); err != nil {
+		t.Fatal(err)
+	}
+	e.waitFor("the /compact", func() bool { return slices.Equal(users(e, a.ID), []string{"hi", "/compact"}) })
+	e.waitFor("idle", func() bool { return status(m, a.ID) == event.StatusIdle })
+
+	c, err := m.AddCron(a.ID, api.PutCron{Schedule: ptr("@every 5m"), Prompt: ptr("tick"), Compact: ptr(true)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	m.cronTick(*c.NextAt)
+	e.waitFor("the cron's message", func() bool { return e.hasAssistant(a.ID, "echo: "+cronLetter(c)) })
+	if got := users(e, a.ID); !slices.Equal(got, []string{"hi", "/compact", cronLetter(c)}) {
+		t.Fatalf("turns %q", got)
+	}
+	if c = cronOf(t, m, a.ID, c.ID); c.CompactedAt != nil || c.LastResult != "sent" || c.SentAt == nil {
+		t.Fatalf("%+v", c)
+	}
+
+	// Its next run, after a message of its own, compacts first again.
+	e.waitFor("idle", func() bool { return status(m, a.ID) == event.StatusIdle })
+	m.cronTick(*c.NextAt)
+	e.waitFor("the second run", func() bool { return len(users(e, a.ID)) == 5 })
+	if got := users(e, a.ID); !slices.Equal(got, []string{"hi", "/compact", cronLetter(c), "/compact", cronLetter(c)}) {
+		t.Fatalf("turns %q", got)
+	}
+}
