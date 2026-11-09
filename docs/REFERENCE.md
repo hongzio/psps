@@ -982,8 +982,9 @@ in the same `psps team lead` (or the dialog), which resumes it.
 With `--compact-first` (in the web's dialog, "Compact before a round's
 result"; `--compact-first=false` to stop), psps sends the lead `/compact`
 once a round's eval has ended, and the round's news, its score with it, the
-next time the lead is free, saying it was compacted. An eval the lead or you
-ask for comes as it is.
+next time the lead is free, saying it was compacted. A lead whose last
+request was `/compact` already (yours, autocompact's) hears it straight away,
+with no second one. An eval the lead or you ask for comes as it is.
 
 With `--approver AGENT` (in the web's dialog, "Round approval": Approver,
 and Mode for `--approve-mode`), each round is put to AGENT before its eval:

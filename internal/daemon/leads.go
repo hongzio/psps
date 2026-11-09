@@ -1808,6 +1808,15 @@ func (r *runtime) deliverNewsLocked() {
 	// A round's score asked to come after /compact: that goes first, and
 	// the news the next time the lead is free.
 	state, _ := r.m.store.LeadCompact(l.Team)
+	// A lead whose last request was /compact already, its conversation
+	// compacted since its last message, is not compacted twice over: the
+	// news goes now, as after a /compact of psps's.
+	if state == store.LeadCompactDue && l.Settings.CompactFirst {
+		if last, _, err := r.m.store.LastUserText(r.agent.ID); err == nil && strings.TrimSpace(last) == store.CompactCommand {
+			state = store.LeadCompactSent
+			r.m.log.Printf("agent %s: team %s's round news without /compact: its last request was /compact", r.agent.ID, l.Team)
+		}
+	}
 	if state == store.LeadCompactDue && l.Settings.CompactFirst {
 		p, err := r.m.store.SendLeadCompact(l.Team, r.agent.ID, after)
 		if err != nil {
