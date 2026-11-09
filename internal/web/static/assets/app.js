@@ -1069,9 +1069,9 @@ function route() {
   if (!(S.view === 'setup' && S.setupSel?.kind === 'new')) S.acctDraft = { name: '', kind: null, secret: '' }
   if (S.view === 'isolations' && S.isoTab === 'logins' && was !== 'isolations') S.clis = {}
   render()
-  // A new agent's form starts at its ID; not on a phone, where the
-  // keyboard would cover the form.
-  if (S.view === 'new' && was !== 'new' && !coarse) document.getElementById('new-handle')?.focus()
+  // A new agent's form starts at its first message, the rest being as last
+  // time; not on a phone, where the keyboard would cover the form.
+  if (S.view === 'new' && was !== 'new' && !coarse) document.getElementById('new-prompt')?.focus()
   if (S.view !== 'agent') guarded(refreshIsolations)
   if (S.view === 'services') guarded(refreshServices)
   document.getElementById('main')?.querySelector('.page')?.scrollTo?.(0, 0)
@@ -3963,16 +3963,32 @@ function dirCompleter(input, isoName, o = {}) {
   return h('div', { class: 'with-complete' }, input, box)
 }
 
+// The isolation, agent and working directory the last new agent was made
+// with, offered for the next. A convenience of this browser only.
+function lastNewAgent() {
+  try { return JSON.parse(localStorage.getItem('psps.lastNewAgent') || '{}') || {} } catch { return {} }
+}
+
+function rememberNewAgent(last) {
+  try { localStorage.setItem('psps.lastNewAgent', JSON.stringify(last)) } catch {}
+}
+
 function newAgentView() {
-  let kind = 'claude'
+  const last = lastNewAgent()
+  let kind = last.kind === 'codex' ? 'codex' : 'claude'
   const err = h('p', { class: 'form-error' })
   const iso = dropdown([], { label: 'Isolation' })
+  // The last one is chosen once it is in the list, unless another was
+  // chosen first.
+  let wantIso = last.isolation || null
+  iso.addEventListener('change', () => { wantIso = null })
   const noIso = h('p', { class: 'form-error' }, 'There is no isolation yet. ',
     navLink('#/isolations/' + NEW, null, 'Create one'), ' first.')
   // The list may arrive after the form is drawn; refill it in place so
   // what is already chosen survives.
   const fillIsos = () => {
     iso.setOptions(S.isolations.map((i) => i.name))
+    if (wantIso && S.isolations.some((i) => i.name === wantIso)) { iso.value = wantIso; wantIso = null }
     noIso.hidden = S.isolations.length > 0
   }
   fillIsos()
@@ -3982,6 +3998,7 @@ function newAgentView() {
   team.className = ''
   team.placeholder = 'optional; in none otherwise'
   const workdir = h('input', { placeholder: 'optional; ~/work/<its ID> otherwise', autocomplete: 'off', autocapitalize: 'off', spellcheck: 'false' })
+  workdir.value = typeof last.workdir === 'string' ? last.workdir : ''
   const effort = dropdown([], { label: 'Effort' })
   const model = h('input', { placeholder: "optional; the CLI's default otherwise" })
   const approvals = dropdown([
@@ -3997,6 +4014,7 @@ function newAgentView() {
     h('button', { type: 'button', class: k === kind ? 'on' : '', onclick: () => { kind = k; drawSeg(); fillEfforts() } }, k === 'codex' ? 'Codex' : 'Claude')))
   drawSeg()
   const prompt = h('textarea', {
+    id: 'new-prompt',
     placeholder: 'optional; it waits for your first message otherwise',
     title: coarse ? null : 'Enter creates · Shift+Enter adds a line',
   })
@@ -4015,6 +4033,7 @@ function newAgentView() {
         options: { effort: effort.value || undefined, model: model.value.trim() || undefined, approvals: approvals.value },
       })
       if (workdir.value.trim()) rememberDir(iso.value, workdir.value.trim())
+      rememberNewAgent({ isolation: iso.value, kind, workdir: workdir.value.trim() })
       await refreshAgents()
       select(a.id)
       // Without a first message it waits for one.
