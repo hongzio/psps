@@ -753,8 +753,34 @@ func TestLastMessageAt(t *testing.T) {
 	if s, err = Open(path); err != nil {
 		t.Fatal(err)
 	}
-	defer s.Close()
 	if a, _ := s.Agent("a1"); a.LastMessageAt == nil || !a.LastMessageAt.Equal(t2) {
 		t.Fatalf("migrated: last message at %v, want %v", a.LastMessageAt, t2)
+	}
+
+	// /compact is no message: it moves it not.
+	t4 := now.Add(4 * time.Minute)
+	s.Commit("a1", 4, []event.Event{{Agent: "a1", Src: 4, Time: t4, Kind: event.KindUser, Text: "/compact"}})
+	if a, _ := s.Agent("a1"); a.LastMessageAt == nil || !a.LastMessageAt.Equal(t2) {
+		t.Fatalf("after /compact: last message at %v, want %v", a.LastMessageAt, t2)
+	}
+
+	// A store from before that, moved by a /compact, has it worked out
+	// again, once.
+	if _, err := s.db.Exec(`UPDATE agents SET last_message_at = ?`, ts(t4)); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.db.Exec(`DELETE FROM meta WHERE key = ?`, lastMessageSkipsCompact); err != nil {
+		t.Fatal(err)
+	}
+	s.Close()
+	if s, err = Open(path); err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	if a, _ := s.Agent("a1"); a.LastMessageAt == nil || !a.LastMessageAt.Equal(t2) {
+		t.Fatalf("worked out again: last message at %v, want %v", a.LastMessageAt, t2)
+	}
+	if _, ok, _ := s.Meta(lastMessageSkipsCompact); !ok {
+		t.Fatal("not noted as done")
 	}
 }
