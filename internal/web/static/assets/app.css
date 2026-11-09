@@ -1299,6 +1299,12 @@ kbd {
 .autocompact-detail[hidden] { display: none; }
 .autocompact-when { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
 .autocompact-when .dialog-input { width: 5.5em; flex: none; padding: 7px 9px; background: var(--panel); }
+.autocompact-foot { display: flex; align-items: center; justify-content: space-between; gap: 8px 12px; flex-wrap: wrap; }
+.autocompact-foot[hidden] { display: none; }
+.autocompact-said { color: var(--muted); font-size: 13px; }
+.autocompact-said.pending { color: var(--warn); }
+.autocompact-actions { display: flex; gap: 8px; margin-left: auto; }
+.autocompact-actions .btn[hidden] { display: none; }
 .admin-setting .admin-head { flex-wrap: nowrap; align-items: flex-start; }
 .admin-setting .admin-text { min-width: 0; }
 .admin-setting .admin-text .note { margin-top: 2px; }
