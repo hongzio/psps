@@ -238,6 +238,12 @@ body.resizing { cursor: col-resize; user-select: none; -webkit-user-select: none
 .dialog-field > .dropdown { min-width: 0; }
 .field-hint { color: var(--faint); font-size: 12px; font-weight: 400; }
 .dialog p.field-hint { margin-top: 10px; font-size: 12px; }
+.lead-approval { margin-top: 22px; padding-top: 16px; border-top: 1px solid var(--border); }
+.lead-approval h4 { margin: 0; font-size: 13px; font-weight: 600; letter-spacing: .02em; text-transform: uppercase; color: var(--muted); }
+.dialog .lead-approval > p.field-hint { margin-top: 4px; }
+.lead-approval .segmented { justify-self: start; }
+.lead-approval .segmented button { font-weight: 500; }
+.lead-approval [hidden] { display: none; }
 .lead-teams { margin-top: 14px; align-items: flex-start; font-size: 13px; }
 .lead-teams input { margin-top: 3px; }
 .lead-run { display: grid; gap: 4px; margin-top: 14px; padding: 10px 12px; border: 1px solid var(--border); border-radius: 8px; font-size: 13px; color: var(--muted); }

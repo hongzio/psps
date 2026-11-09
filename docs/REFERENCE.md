@@ -967,11 +967,12 @@ once a round's eval has ended, and the round's news, its score with it, the
 next time the lead is free, saying it was compacted. An eval the lead or you
 ask for comes as it is.
 
-With `--approver AGENT` (in the web's dialog, "Round's approver"), each
-round is put to AGENT before its eval: a live agent that is neither the lead
-nor one of its own, in an isolation with teams on so it can answer. psps tells
-it, whenever it is free, what the lead heard of the round since the last eval,
-the lead's last answer and the scores so far. Under `--approve-mode gate` (the
+With `--approver AGENT` (in the web's dialog, "Round approval": Approver,
+and Mode for `--approve-mode`), each round is put to AGENT before its eval:
+a live agent that is neither the lead nor one of its own, in an isolation
+with teams on so it can answer. psps tells it, whenever it is free, what the
+lead heard of the round since the last eval, the lead's last answer and the
+scores so far. Under `--approve-mode gate` (the
 default) the eval waits for its verdict, given with
 `POST $PSPS_TEAM_URL/approvals/ID` `{"verdict": "approve"|"reject", "note": ...}`:
 an approval runs the eval, the note going to the lead with the score; a

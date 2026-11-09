@@ -1975,13 +1975,30 @@ async function editTeam(t) {
   const approver = dropdown([{ value: '', label: 'None' }, ...approverGone,
     ...S.agents.filter((a) => !a.archived_at && !a.made_by).map((a) => ({ value: a.id, label: `${shownID(a)} · ${agentTitle(a)} · ${a.isolation}` }))],
   { value: approverNow?.id || approverGone[0]?.value || '', label: 'Approver' })
-  const approveMode = dropdown([{ value: 'gate', label: 'The eval waits for its verdict' }, { value: 'notify', label: 'The eval runs; it is only told' }],
-    { value: st.approve_mode || 'gate', label: 'Approval' })
-  const approval = h('div', { class: 'lead-grid' },
-    h('label', { class: 'dialog-field' }, "Round's approver", approver,
-      h('span', { class: 'field-hint' }, 'Each round is put to this agent, not the lead nor one of its own, before its eval; it answers on its team service (teams on in its isolation), or you decide here. No deadline: the round waits.')),
-    h('label', { class: 'dialog-field' }, 'Approval', approveMode,
-      h('span', { class: 'field-hint' }, 'Gate: an approval runs the eval, a rejection sends the round back to the lead, using no patience. Notify: it looks after.')))
+  // The mode matters only with an approver, so it shows only then, with
+  // what the mode chosen does.
+  let approveMode = st.approve_mode || 'gate'
+  const modes = [['gate', 'Gate', 'The eval waits for its verdict. An approval runs it; a rejection sends the round back to the lead, using no patience. No deadline.'],
+    ['notify', 'Notify', 'The eval runs as usual; the approver is only told of the round and its score.']]
+  const modeSeg = h('div', { class: 'segmented', role: 'radiogroup', 'aria-label': 'Mode' })
+  const modeHint = h('span', { class: 'field-hint' })
+  const approverHint = h('span', { class: 'field-hint' }, 'Not the lead nor one of its own. It answers on its team service (teams on in its isolation), or you decide here.')
+  const modeField = h('div', { class: 'dialog-field' }, h('span', null, 'Mode'), modeSeg, modeHint)
+  const drawMode = () => {
+    modeSeg.replaceChildren(...modes.map(([v, label]) => h('button', {
+      type: 'button', role: 'radio', 'aria-checked': String(v === approveMode), class: v === approveMode ? 'on' : '',
+      onclick: () => { approveMode = v; drawMode(); modeSeg.querySelector('.on')?.focus() },
+    }, label)))
+    modeHint.textContent = modes.find(([v]) => v === approveMode)[2]
+    approverHint.hidden = modeField.hidden = !approver.value
+  }
+  approver.addEventListener('change', drawMode)
+  drawMode()
+  const approval = h('section', { class: 'lead-approval' },
+    h('h4', null, 'Round approval'),
+    h('p', { class: 'field-hint' }, 'Each round goes to an approver before its eval runs.'),
+    h('label', { class: 'dialog-field' }, 'Approver', approver, approverHint),
+    modeField)
   const turnOn = h('input', { type: 'checkbox', checked: true })
   const offIn = h('span')
   const teamsOff = h('label', { class: 'check lead-teams', hidden: true }, turnOn, h('span', null, 'Turn teams on in ', offIn,
@@ -2040,7 +2057,7 @@ async function editTeam(t) {
     else throw new Error(`The target is a number, not "${tv}".`)
     req.compact_first = compactBox.checked
     req.approver = approver.value
-    req.approve_mode = approveMode.value
+    req.approve_mode = approveMode
     return req
   }
   const before = run ? JSON.stringify(asked()) : null
