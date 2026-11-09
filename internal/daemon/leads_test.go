@@ -435,6 +435,42 @@ func TestALeadThatCompactsFirstHearsTheRoundAfterCompact(t *testing.T) {
 	}
 }
 
+// A lead whose run compacts first, whose last request was /compact
+// already, hears the round's score straight away: no second /compact.
+func TestALeadThatCompactsFirstAfterACompact(t *testing.T) {
+	fakeTimeout(t)
+	e := newTestEnv(t)
+	m, stop := e.daemon()
+	defer stop()
+	dir := t.TempDir()
+	os.WriteFile(filepath.Join(dir, "score"), []byte("SCORE: 2\n"), 0o644)
+	boss, team := withTeams(t, e, m, api.PutLead{Budget: ptr(int64(1_000_000)), Eval: ptr("cat score"), EvalDir: ptr(dir), CompactFirst: ptr(true)})
+	makeAgent(t, m, boss.ID, api.TeamAgentNew{Role: "one", Kind: driver.Codex, Prompt: "hello"})
+	e.waitFor("the turn's news", func() bool { return len(news(e, boss.ID)) == 1 })
+	e.waitFor("the lead idle", func() bool { return free(m, boss.ID) })
+	if _, err := m.Message(boss.ID, store.CompactCommand); err != nil {
+		t.Fatal(err)
+	}
+	e.waitFor("the operator's /compact", func() bool { us := users(e, boss.ID); return us[len(us)-1] == store.CompactCommand })
+	e.waitFor("the lead idle", func() bool { return free(m, boss.ID) })
+
+	m.teamCheck(team.ID)
+	e.waitFor("the eval's news", func() bool { return len(news(e, boss.ID)) == 2 })
+	us := users(e, boss.ID)
+	n := 0
+	for _, u := range us {
+		if u == store.CompactCommand {
+			n++
+		}
+	}
+	if n != 1 || us[len(us)-2] != store.CompactCommand || !strings.Contains(us[len(us)-1], "Eval #1 (the round ended)") {
+		t.Fatalf("compacted %d times: %q", n, us)
+	}
+	if st, _ := m.store.LeadCompact(team.ID); st != "" {
+		t.Fatalf("compaction left %q", st)
+	}
+}
+
 // A lead with no runtime is archived only when its line has no live
 // session: while psps starts it is not back yet, and one psps could not
 // start has no session.
