@@ -176,9 +176,22 @@ HTTPS certificate and decides which devices can reach it.
 For development, `PSPS_HOME=$PWD/.dev` keeps all state under `.dev/` and runs
 the daemon as a plain background process instead of touching launchd.
 
+#### Autocompact
+
+Settings (the gear by the sidebar's title) has **Autocompact**, kept in the
+daemon. Turned on, it takes a number of minutes (30 at first): once a
+minute psps looks at every live agent, and sends `/compact` to one that is
+idle, with nothing on its way to it and nothing in the background, whose
+last message is that many minutes old, as if you had typed it. One whose
+last request was `/compact` already is left alone until it has another
+message, so a quiet agent is compacted once. Agents a team's lead made are
+left to their lead. That turn does not unpark a parked agent, mark it
+unread, or send its next auto todo. The API is `GET|PUT /v1/autocompact`
+(`{"on": true, "minutes": 30}`).
+
 #### Admin mode
 
-Settings (the gear by the sidebar's title) has **Admin mode**. Turned on, it
+Settings (the gear by the sidebar's title) also has **Admin mode**. Turned on, it
 asks for a working directory on the Mac (recent ones first, then what is
 there as you type: Tab completes, ↑↓ moves) and Claude or Codex, and starts
 **Admin**: an agent on the Mac itself, as you, in no isolation and behind no

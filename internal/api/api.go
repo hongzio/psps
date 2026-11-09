@@ -110,6 +110,17 @@ type Agent struct {
 	Watching     int      `json:"watching,omitempty"`
 	WatchedBy    []string `json:"watched_by,omitempty"`
 	WatchStalled int      `json:"watch_stalled,omitempty"`
+	// Compacting: the turn it is in is autocompact's /compact, not work:
+	// its end is no turn of the operator's to look at.
+	Compacting bool `json:"compacting,omitempty"`
+}
+
+// Autocompact is autocompact: while on, psps sends /compact to an agent
+// that is free and whose last message is Minutes old, unless that last
+// request was /compact already.
+type Autocompact struct {
+	On      bool `json:"on"`
+	Minutes int  `json:"minutes"`
 }
 
 // Watch is an open watch, as the operator and its sender see it: who

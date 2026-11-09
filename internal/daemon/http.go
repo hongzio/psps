@@ -280,6 +280,18 @@ func (m *Manager) Handler() http.Handler {
 		v, err := m.StopAdmin(r.Context())
 		reply(w, v, err)
 	})
+	mux.HandleFunc("GET /v1/autocompact", func(w http.ResponseWriter, r *http.Request) {
+		v, err := m.Autocompact()
+		reply(w, v, err)
+	})
+	mux.HandleFunc("PUT /v1/autocompact", func(w http.ResponseWriter, r *http.Request) {
+		var req api.Autocompact
+		if !decode(w, r, &req) {
+			return
+		}
+		v, err := m.SetAutocompact(req)
+		reply(w, v, err)
+	})
 	mux.HandleFunc("GET /v1/admin/dirs", func(w http.ResponseWriter, r *http.Request) {
 		v, err := m.HostDirs(r.URL.Query().Get("path"))
 		reply(w, v, err)

@@ -90,6 +90,10 @@ type runtime struct {
 	// tw is how its turns that end with tasks in the background are held,
 	// as a lead's agent (store.TeamWait).
 	tw store.TeamWait
+	// autoCompact: autocompact sent it /compact, and the turn that runs it
+	// has not ended yet (autocompact.go). That turn unparks it not, nor
+	// makes its oldest auto todo due.
+	autoCompact bool
 }
 
 // overtime is where an agent's turn stopped at its limit is: asked to stop
@@ -243,6 +247,8 @@ func (r *runtime) observe(rec shimproto.Record, liveAfter int64) {
 	var ended event.Status
 	waited := ""
 	started := false
+	// turnOver: a turn ended, replayed or not.
+	turnOver := false
 	// cut: a turn that ended was stopped, which its status (idle) does
 	// not say.
 	cut := false
@@ -273,6 +279,7 @@ func (r *runtime) observe(rec shimproto.Record, liveAfter int64) {
 				started = true
 			case inTurn && (e.Status == event.StatusIdle || e.Status == event.StatusError || e.Status == event.StatusInterrupted):
 				r.waits = ""
+				turnOver = true
 				if live {
 					ended = e.Status
 				}
@@ -299,7 +306,7 @@ func (r *runtime) observe(rec shimproto.Record, liveAfter int64) {
 			switch e.Status {
 			case event.StatusIdle:
 				// Not on a replay: what was due then is not now.
-				if was == event.StatusWorking && rec.Seq > r.agent.LastSrc {
+				if was == event.StatusWorking && rec.Seq > r.agent.LastSrc && !r.autoCompact {
 					r.todoDue = true
 				}
 			case event.StatusStarting:
@@ -308,7 +315,7 @@ func (r *runtime) observe(rec shimproto.Record, liveAfter int64) {
 			}
 			// Something new (a turn, an approval, a failure) wants a look
 			// again. A record replayed from before does not.
-			if r.agent.Parked && rec.Seq > r.agent.LastSrc && e.Status != event.StatusIdle && e.Status != event.StatusStarting {
+			if r.agent.Parked && !r.autoCompact && rec.Seq > r.agent.LastSrc && e.Status != event.StatusIdle && e.Status != event.StatusStarting {
 				if err := r.m.store.SetParked(r.agent.ID, false); err != nil {
 					r.m.log.Printf("agent %s: unpark: %v", r.agent.ID, err)
 				} else {
@@ -316,6 +323,10 @@ func (r *runtime) observe(rec shimproto.Record, liveAfter int64) {
 				}
 			}
 		}
+	}
+
+	if turnOver {
+		r.autoCompact = false
 	}
 
 	persist := false

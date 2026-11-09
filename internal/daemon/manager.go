@@ -1162,7 +1162,7 @@ func (m *Manager) view(a store.Agent, inbox, crons, todos int) api.Agent {
 	}
 	live, st, problem := r.shown()
 	return api.Agent{Agent: live, Isolation: m.isoName(live.IsolationID), State: st, Problem: problem, Inbox: inbox, Crons: crons, Todos: todos,
-		Host: live.IsolationID == store.HostIsolation}
+		Host: live.IsolationID == store.HostIsolation, Compacting: r.compacting()}
 }
 
 // viewOf is a as view has it, counting what it shows of a alone.

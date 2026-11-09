@@ -998,11 +998,12 @@ function setHash(hash) {
 function noteTurns() {
   const before = S.unread.size, changed = []
   for (const a of S.agents) {
-    const st = a.archived_at ? 'archived' : a.state?.status || 'idle'
+    // Autocompact's /compact is no turn to look at: its end marks none.
+    const st = a.archived_at ? 'archived' : a.compacting && a.state?.status === 'working' ? 'compacting' : a.state?.status || 'idle'
     const was = S.lastStatus.get(a.id)
     S.lastStatus.set(a.id, st)
     if (was === 'working' && st === 'idle' && !(S.view === 'agent' && S.sel === a.id) && !a.parked) { S.unread.add(a.id); changed.push(a.id) }
-    else if (S.unread.has(a.id) && (st !== 'idle' || a.parked)) { S.unread.delete(a.id); changed.push(a.id) }
+    else if (S.unread.has(a.id) && ((st !== 'idle' && st !== 'compacting') || a.parked)) { S.unread.delete(a.id); changed.push(a.id) }
   }
   for (const id of S.unread) if (!agentById(id)) { S.unread.delete(id); changed.push(id) }
   if (changed.length) saveUnread()
@@ -5933,8 +5934,71 @@ function openSettings() {
       h('div', { class: 'setting' }, h('span', { class: 'setting-name' }, 'Theme'), seg),
       h('p', { class: 'note' }, 'Kept in this browser.'),
       h('hr', { class: 'settings-rule' }),
+      autocompactSetting(),
+      h('hr', { class: 'settings-rule' }),
       adminSetting()),
   })
+}
+
+// autocompactSetting is autocompact's part of Settings: its switch and,
+// while it is on, after how many minutes, read from the daemon as Settings
+// opens and saved there as either changes.
+function autocompactSetting() {
+  const sw = h('button', { type: 'button', class: 'switch', role: 'switch', 'aria-checked': 'false', 'aria-label': 'Autocompact', disabled: true })
+  const min = h('input', {
+    id: 'autocompact-minutes', class: 'dialog-input', type: 'number', min: '1', step: '1', inputmode: 'numeric',
+    'aria-describedby': 'autocompact-note',
+  })
+  const note = h('p', { id: 'autocompact-note', class: 'note' })
+  const err = h('p', { class: 'form-error', role: 'alert', hidden: true })
+  const detail = h('div', { class: 'autocompact-detail', hidden: true },
+    h('label', { class: 'autocompact-when', for: 'autocompact-minutes' }, h('span', null, 'After'), min, h('span', null, 'minutes since its last message')),
+    note, err)
+  const box = h('div', { class: 'admin-setting' },
+    h('div', { class: 'setting admin-head' },
+      h('div', { class: 'admin-text' },
+        h('div', { class: 'setting-name' }, 'Autocompact'),
+        h('div', { class: 'note' }, 'Send /compact to an agent that has been quiet for a while.')),
+      sw),
+    detail)
+  let cur = null
+  const draw = () => {
+    sw.disabled = false
+    sw.classList.toggle('on', cur.on)
+    sw.setAttribute('aria-checked', String(cur.on))
+    detail.hidden = !cur.on
+    if (document.activeElement !== min) min.value = cur.minutes
+    note.replaceChildren('psps looks at every agent once a minute. One that is idle and whose last message is ', String(cur.minutes),
+      ' minutes old gets ', h('code', null, '/compact'), ', unless its last message was /compact already. Agents a team lead made are left to their lead.')
+  }
+  const save = async (next) => {
+    err.hidden = true
+    try {
+      cur = await api('PUT', '/v1/autocompact', next)
+      draw()
+    } catch (e) {
+      err.textContent = e.message
+      err.hidden = false
+    }
+  }
+  sw.addEventListener('click', (e) => {
+    e.preventDefault()
+    if (cur) save({ on: !cur.on, minutes: cur.minutes })
+  })
+  const takeMinutes = () => {
+    const n = Number(min.value)
+    if (!cur || n === cur.minutes) return
+    if (!Number.isInteger(n) || n < 1) { err.textContent = 'A whole number of minutes, 1 or more.'; err.hidden = false; return }
+    save({ on: cur.on, minutes: n })
+  }
+  min.addEventListener('change', takeMinutes)
+  // Enter in the dialog's form would close it: it saves instead.
+  min.addEventListener('keydown', (e) => { if (e.key === 'Enter' && !e.isComposing) { e.preventDefault(); takeMinutes() } })
+  api('GET', '/v1/autocompact').then((v) => { cur = v; draw() }).catch(() => {
+    detail.hidden = false
+    detail.replaceChildren(h('p', { class: 'form-error' }, "Can't read autocompact from the daemon."))
+  })
+  return box
 }
 
 // ---- Admin mode: an agent on the Mac itself, outside every isolation.
