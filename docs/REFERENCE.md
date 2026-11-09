@@ -179,7 +179,8 @@ the daemon as a plain background process instead of touching launchd.
 #### Autocompact
 
 Settings (the gear by the sidebar's title) has **Autocompact**, kept in the
-daemon. Turned on, it takes a number of minutes (30 at first): once a
+daemon. Turned on, it takes a number of minutes (30 at first); neither
+counts until **Apply** (Revert, or closing Settings, drops them). Once a
 minute psps looks at every live agent, and sends `/compact` to one that is
 idle, with nothing on its way to it and nothing in the background, whose
 last message is that many minutes old, as if you had typed it. One whose

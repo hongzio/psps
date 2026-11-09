@@ -5942,7 +5942,8 @@ function openSettings() {
 
 // autocompactSetting is autocompact's part of Settings: its switch and,
 // while it is on, after how many minutes, read from the daemon as Settings
-// opens and saved there as either changes.
+// opens. Both are a draft until Apply saves them; Revert, or closing
+// Settings, drops it.
 function autocompactSetting() {
   const sw = h('button', { type: 'button', class: 'switch', role: 'switch', 'aria-checked': 'false', 'aria-label': 'Autocompact', disabled: true })
   const min = h('input', {
@@ -5950,51 +5951,78 @@ function autocompactSetting() {
     'aria-describedby': 'autocompact-note',
   })
   const note = h('p', { id: 'autocompact-note', class: 'note' })
-  const err = h('p', { class: 'form-error', role: 'alert', hidden: true })
   const detail = h('div', { class: 'autocompact-detail', hidden: true },
     h('label', { class: 'autocompact-when', for: 'autocompact-minutes' }, h('span', null, 'After'), min, h('span', null, 'minutes since its last message')),
-    note, err)
+    note)
+  const said = h('span', { class: 'autocompact-said', role: 'status' })
+  const err = h('p', { class: 'form-error', role: 'alert', hidden: true })
+  const revert = h('button', { type: 'button', class: 'btn small', hidden: true }, 'Revert')
+  const apply = h('button', { type: 'button', class: 'btn small primary', disabled: true }, 'Apply')
+  const foot = h('div', { class: 'autocompact-foot', hidden: true }, said, h('div', { class: 'autocompact-actions' }, revert, apply))
   const box = h('div', { class: 'admin-setting' },
     h('div', { class: 'setting admin-head' },
       h('div', { class: 'admin-text' },
         h('div', { class: 'setting-name' }, 'Autocompact'),
         h('div', { class: 'note' }, 'Send /compact to an agent that has been quiet for a while.')),
       sw),
-    detail)
-  let cur = null
+    detail, foot, err)
+  // cur is what the daemon has; draft what Settings shows, minutes as typed.
+  let cur = null, draft = null, saving = false
+  const typed = () => Number(draft.minutes)
+  const valid = () => Number.isInteger(typed()) && typed() >= 1
+  const dirty = () => draft.on !== cur.on || (draft.on && typed() !== cur.minutes)
+  const words = (v) => v.on ? `On, after ${v.minutes} minute${v.minutes === 1 ? '' : 's'}` : 'Off'
   const draw = () => {
-    sw.disabled = false
-    sw.classList.toggle('on', cur.on)
-    sw.setAttribute('aria-checked', String(cur.on))
-    detail.hidden = !cur.on
-    if (document.activeElement !== min) min.value = cur.minutes
-    note.replaceChildren('psps looks at every agent once a minute. One that is idle and whose last message is ', String(cur.minutes),
+    sw.disabled = saving
+    sw.classList.toggle('on', draft.on)
+    sw.setAttribute('aria-checked', String(draft.on))
+    detail.hidden = !draft.on
+    if (document.activeElement !== min) min.value = draft.minutes
+    note.replaceChildren('psps looks at every agent once a minute. One that is idle and whose last message is ', valid() ? String(typed()) : 'that many',
       ' minutes old gets ', h('code', null, '/compact'), ', unless its last message was /compact already. Agents a team lead made, and those in an open watch, are left alone.')
+    const d = dirty()
+    foot.hidden = false
+    said.classList.toggle('pending', d)
+    said.textContent = d ? `Not applied yet. Now: ${words(cur)}.` : `Applied: ${words(cur)}.`
+    revert.hidden = !d
+    apply.disabled = !d || saving || (draft.on && !valid())
   }
-  const save = async (next) => {
+  const take = async () => {
+    if (!cur || !dirty() || saving) return
+    if (draft.on && !valid()) { err.textContent = 'A whole number of minutes, 1 or more.'; err.hidden = false; return }
     err.hidden = true
+    saving = true
+    draw()
     try {
-      cur = await api('PUT', '/v1/autocompact', next)
-      draw()
+      cur = await api('PUT', '/v1/autocompact', { on: draft.on, minutes: draft.on ? typed() : cur.minutes })
+      draft = { ...cur }
+      toast(`Autocompact: ${words(cur)}`)
     } catch (e) {
       err.textContent = e.message
       err.hidden = false
     }
+    saving = false
+    draw()
   }
   sw.addEventListener('click', (e) => {
     e.preventDefault()
-    if (cur) save({ on: !cur.on, minutes: cur.minutes })
+    if (!draft) return
+    draft.on = !draft.on
+    err.hidden = true
+    draw()
   })
-  const takeMinutes = () => {
-    const n = Number(min.value)
-    if (!cur || n === cur.minutes) return
-    if (!Number.isInteger(n) || n < 1) { err.textContent = 'A whole number of minutes, 1 or more.'; err.hidden = false; return }
-    save({ on: cur.on, minutes: n })
-  }
-  min.addEventListener('change', takeMinutes)
-  // Enter in the dialog's form would close it: it saves instead.
-  min.addEventListener('keydown', (e) => { if (e.key === 'Enter' && !e.isComposing) { e.preventDefault(); takeMinutes() } })
-  api('GET', '/v1/autocompact').then((v) => { cur = v; draw() }).catch(() => {
+  min.addEventListener('input', () => { if (draft) { draft.minutes = min.value; err.hidden = true; draw() } })
+  // Enter in the dialog's form would close it: it applies instead.
+  min.addEventListener('keydown', (e) => { if (e.key === 'Enter' && !e.isComposing) { e.preventDefault(); take() } })
+  apply.addEventListener('click', (e) => { e.preventDefault(); take() })
+  revert.addEventListener('click', (e) => {
+    e.preventDefault()
+    draft = { ...cur }
+    min.value = cur.minutes
+    err.hidden = true
+    draw()
+  })
+  api('GET', '/v1/autocompact').then((v) => { cur = v; draft = { ...v }; draw() }).catch(() => {
     detail.hidden = false
     detail.replaceChildren(h('p', { class: 'form-error' }, "Can't read autocompact from the daemon."))
   })
