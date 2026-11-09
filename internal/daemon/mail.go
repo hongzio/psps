@@ -186,6 +186,7 @@ func (m *Manager) mailHandler(iso string) http.Handler {
 	})
 	m.cronRoutes(mux, iso)
 	m.teamRoutes(mux, iso)
+	m.approverRoutes(mux, iso)
 	m.controlRoutes(mux, iso)
 	m.jobRoutes(mux, iso)
 	m.awsRoutes(mux, iso)

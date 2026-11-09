@@ -121,6 +121,11 @@ func (m *Manager) evalNow(l store.Lead, evals []store.Eval) *api.EvalNow {
 	if l.Stopped != "" || !l.Settings.HasEval() {
 		return v
 	}
+	if r, ok := m.pendingReview(l); ok {
+		v.State, v.Since, v.Why = "approval", r.AskedAt, r.Why
+		v.Waiting, _ = m.approverShown(r.Approver)
+		return v
+	}
 	m.mu.Lock()
 	since, due := m.dueSince[l.Team]
 	m.mu.Unlock()

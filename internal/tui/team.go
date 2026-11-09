@@ -23,8 +23,11 @@ type teamPage struct {
 	// none; isos their isolations. evalIsos are the isolations the eval's
 	// isolation field's options name, "" for the lead's own.
 	leads, isos, evalIsos []string
-	busy                  bool
-	err                   string
+	// approvers are the agents the Approver field's options stand for,
+	// "" for none.
+	approvers []string
+	busy      bool
+	err       string
 }
 
 type teamRunMsg struct {
@@ -136,6 +139,26 @@ func (m *Model) leadForm(g liveGroup, run *api.TeamRun) *form {
 	if run != nil && run.Settings.CompactFirst {
 		compact.idx = 1
 	}
+	// An approver is any live agent no lead made; the lead itself is
+	// refused on saving.
+	p.approvers = []string{""}
+	approverIn := []string{"none"}
+	approverPick := 0
+	for _, a := range m.agents {
+		if a.ArchivedAt != nil || a.MadeBy != "" {
+			continue
+		}
+		if run != nil && run.Settings.Approver != "" && (a.Line == run.Settings.Approver || a.ID == run.Settings.Approver) {
+			approverPick = len(approverIn)
+		}
+		p.approvers, approverIn = append(p.approvers, a.ID), append(approverIn, fmt.Sprintf("%s (%s, %s)", shownID(a), title(a), a.Isolation))
+	}
+	approver := selectField("Approver", approverIn, "an agent each round is put to before its eval: not the lead, nor one of its own")
+	approver.idx = approverPick
+	approveMode := selectField("Approval", []string{"the eval waits for its verdict", "the eval runs; it is only told"}, "gate: an approval runs the eval, a rejection sends the round back to the lead; notify: it looks after")
+	if run != nil && run.Settings.ApproveMode == "notify" {
+		approveMode.idx = 1
+	}
 	fields := []*field{
 		lead,
 		text("Budget", "none", "tokens sent anew and written by the lead and its agents, as 5M or 800k; none leaves only the plan ceiling", s.budget),
@@ -149,6 +172,8 @@ func (m *Model) leadForm(g liveGroup, run *api.TeamRun) *form {
 		text("Target", "none", "a score that ends the run once reached", s.target),
 		text("Patience", "3", "evals in a row without a new best that end the run", num(s.patience)),
 		compact,
+		approver,
+		approveMode,
 		selectField("Teams in its isolation", []string{"turn on if off", "leave as they are"}, "the lead acts only where its isolation has the team service"),
 	}
 	fields[0].focus(true)
@@ -235,7 +260,11 @@ func (m *Model) saveLead() tea.Cmd {
 	}
 	compactFirst := fs[11].idx == 1
 	req.CompactFirst = &compactFirst
-	turnOn := fs[12].idx == 0
+	approverID := p.approvers[fs[12].idx]
+	req.Approver = &approverID
+	mode := []string{"gate", "notify"}[fs[13].idx]
+	req.ApproveMode = &mode
+	turnOn := fs[14].idx == 0
 	p.busy, p.err = true, ""
 	return func() tea.Msg {
 		ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
@@ -368,6 +397,9 @@ func (m *Model) renderTeam(w int) string {
 		}
 		if r.Best != nil {
 			line(fmt.Sprintf("best %g at #%d; %d since without a new one", *r.Best.Score, r.Best.ID, r.Stale))
+		}
+		if rv := r.Review; rv != nil {
+			line(fmt.Sprintf("review #%d waits %s for %s (psps team approve|reject %q)", rv.ID, time.Since(rv.AskedAt).Round(time.Minute), r.Approver, p.name))
 		}
 		for _, a := range r.Agents {
 			s := fmt.Sprintf("%s %s (%s, %s) %s", "↳", a.ID, a.Role, a.Kind, a.Status)

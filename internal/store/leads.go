@@ -104,7 +104,15 @@ type LeadSettings struct {
 	// CompactFirst has psps compact the lead's conversation (/compact)
 	// before it hears a round's score, with the round's other news.
 	CompactFirst bool `json:"compact_first,omitempty"`
+	// Approver is the line a round is put to (store.Review), "" for none:
+	// under ApproveMode ApproveGate the round's eval waits for its verdict,
+	// under ApproveNotify it is only told. Only the operator sets it.
+	Approver    string `json:"approver,omitempty"`
+	ApproveMode string `json:"approve_mode,omitempty"`
 }
+
+// Gated is whether a round's eval waits for the approver's verdict.
+func (s LeadSettings) Gated() bool { return s.Approver != "" && s.ApproveMode == ApproveGate }
 
 // HasEval is whether the run has an eval at all: a command, or a job of a
 // runner.

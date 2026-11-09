@@ -478,6 +478,14 @@ func (m *Manager) Handler() http.Handler {
 	mux.HandleFunc("DELETE /v1/teams/{team}/eval", func(w http.ResponseWriter, r *http.Request) {
 		reply(w, nil, m.StopEval(r.PathValue("team")))
 	})
+	mux.HandleFunc("POST /v1/teams/{team}/review", func(w http.ResponseWriter, r *http.Request) {
+		var req api.PostReview
+		if !decode(w, r, &req) {
+			return
+		}
+		v, err := m.DecideTeamReview(r.PathValue("team"), req)
+		reply(w, v, err)
+	})
 	mux.HandleFunc("DELETE /v1/teams/{team}/best", func(w http.ResponseWriter, r *http.Request) {
 		reply(w, nil, m.ResetBest(r.PathValue("team")))
 	})
@@ -557,7 +565,7 @@ func reply(w http.ResponseWriter, v any, err error) {
 			code = he.code
 		case errors.Is(err, store.ErrNotFound):
 			code = http.StatusNotFound
-		case errors.Is(err, store.ErrExists):
+		case errors.Is(err, store.ErrExists), errors.Is(err, store.ErrConflict):
 			code = http.StatusConflict
 		}
 		w.WriteHeader(code)

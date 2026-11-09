@@ -82,6 +82,9 @@ type runtime struct {
 	// receipts is how many receipts of its watches wait for it: all of
 	// them go in one message whenever it is free (watches.go).
 	receipts int
+	// reviews is how many asks wait for it as a team's approver: all of
+	// them go in one message whenever it is free (reviews.go).
+	reviews int
 	// seenAt is the time of the last record of its log it read.
 	seenAt time.Time
 	// tw is how its turns that end with tasks in the background are held,
@@ -138,6 +141,10 @@ func (m *Manager) newRuntime(a store.Agent) (*runtime, error) {
 	if err != nil {
 		return nil, err
 	}
+	reviews, err := m.store.ReviewsWaiting(cmp.Or(a.Line, a.ID))
+	if err != nil {
+		return nil, err
+	}
 	tw := store.TeamWait{Agent: a.ID, Mode: store.WatchSettle}
 	if a.MadeBy != "" {
 		if tw, err = m.store.TeamWaitOf(a.ID); err != nil {
@@ -146,7 +153,7 @@ func (m *Manager) newRuntime(a store.Agent) (*runtime, error) {
 	}
 	ctx, cancel := context.WithCancel(m.ctx)
 	return &runtime{m: m, ctx: ctx, cancel: cancel, agent: a, drv: drv, outbox: outbox,
-		decisions: map[string]decision{}, inbox: inbox, crons: crons, compacted: compacted, news: news, spent: spent[a.ID], receipts: receipts, tw: tw}, nil
+		decisions: map[string]decision{}, inbox: inbox, crons: crons, compacted: compacted, news: news, spent: spent[a.ID], receipts: receipts, reviews: reviews, tw: tw}, nil
 }
 
 // wrapDriver, if set, wraps each attachment's driver: tests give an agent
@@ -444,6 +451,10 @@ func (r *runtime) kickLocked() {
 	}
 	if fenced && r.receipts > 0 && r.freeLocked(st) {
 		r.deliverReceiptsLocked()
+		st = r.drv.State()
+	}
+	if fenced && r.reviews > 0 && r.freeLocked(st) {
+		r.deliverReviewsLocked()
 		st = r.drv.State()
 	}
 	if fenced && r.mailDueLocked(st) {

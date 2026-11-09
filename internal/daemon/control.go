@@ -256,6 +256,8 @@ func replyAs(w http.ResponseWriter, text bool, v any, err error) {
 		code = he.code
 	case errors.Is(err, store.ErrNotFound):
 		code = http.StatusNotFound
+	case errors.Is(err, store.ErrConflict):
+		code = http.StatusConflict
 	}
 	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
 	w.WriteHeader(code)
