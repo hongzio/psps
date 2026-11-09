@@ -1968,6 +1968,20 @@ async function editTeam(t) {
   const compactBox = h('input', { type: 'checkbox', checked: !!st.compact_first })
   const compactFirst = h('label', { class: 'check lead-teams', title: "psps sends the lead /compact once the round's eval has ended, and the round's news and score after it" },
     compactBox, h('span', null, "Compact before a round's result: the lead's conversation is compacted (/compact) before it hears the round's end and score"))
+  // The approver: any live agent no lead made; the lead itself is refused
+  // on saving. Only the operator sets it.
+  const approverNow = st.approver ? S.agents.find((a) => !a.archived_at && (a.line || a.id) === st.approver) : null
+  const approverGone = st.approver && !approverNow ? [{ value: st.approver, label: `${run.approver || st.approver} (not live)` }] : []
+  const approver = dropdown([{ value: '', label: 'None' }, ...approverGone,
+    ...S.agents.filter((a) => !a.archived_at && !a.made_by).map((a) => ({ value: a.id, label: `${shownID(a)} · ${agentTitle(a)} · ${a.isolation}` }))],
+  { value: approverNow?.id || approverGone[0]?.value || '', label: 'Approver' })
+  const approveMode = dropdown([{ value: 'gate', label: 'The eval waits for its verdict' }, { value: 'notify', label: 'The eval runs; it is only told' }],
+    { value: st.approve_mode || 'gate', label: 'Approval' })
+  const approval = h('div', { class: 'lead-grid' },
+    h('label', { class: 'dialog-field' }, "Round's approver", approver,
+      h('span', { class: 'field-hint' }, 'Each round is put to this agent, not the lead nor one of its own, before its eval; it answers on its team service (teams on in its isolation), or you decide here. No deadline: the round waits.')),
+    h('label', { class: 'dialog-field' }, 'Approval', approveMode,
+      h('span', { class: 'field-hint' }, 'Gate: an approval runs the eval, a rejection sends the round back to the lead, using no patience. Notify: it looks after.')))
   const turnOn = h('input', { type: 'checkbox', checked: true })
   const offIn = h('span')
   const teamsOff = h('label', { class: 'check lead-teams', hidden: true }, turnOn, h('span', null, 'Turn teams on in ', offIn,
@@ -1982,6 +1996,7 @@ async function editTeam(t) {
     h('div', { class: 'lead-grid' },
       field('Eval directory', evalDir), field('Eval limit (min)', evalMin), field('Target', target, 'ends the run once reached'), field('Patience (evals)', patience, 'without a new best, end the run')),
     compactFirst,
+    approval,
     teamsOff)
   let off = null
   const shown = async () => {
@@ -2024,11 +2039,38 @@ async function editTeam(t) {
     else if (Number.isFinite(Number(tv))) req.target = Number(tv)
     else throw new Error(`The target is a number, not "${tv}".`)
     req.compact_first = compactBox.checked
+    req.approver = approver.value
+    req.approve_mode = approveMode.value
     return req
   }
   const before = run ? JSON.stringify(asked()) : null
+  // A round waiting for the approver: the operator may decide in its place.
+  const decide = (verdict) => async (e) => {
+    e.target.closest('dialog').close('cancel')
+    const note = h('textarea', { class: 'dialog-input', rows: 4, placeholder: verdict === 'reject' ? 'What is wrong with the round; the lead hears it' : 'Optional; the lead hears it with the score' })
+    await ask({
+      title: `${verdict === 'reject' ? 'Reject' : 'Approve'} review #${run.review.id}?`,
+      body: verdict === 'reject' ? `No eval runs and no patience is used; the lead hears your note. The round goes to ${run.approver} again once a turn of the lead's agents ends after this.`
+        : 'The eval runs now, and the lead hears your note with its score.',
+      fields: [h('label', { class: 'dialog-field' }, 'Note', note)],
+      ok: verdict === 'reject' ? 'Reject' : 'Approve', danger: verdict === 'reject',
+      onOk: async () => {
+        if (verdict === 'reject' && !note.value.trim()) throw new Error('Say why the round is rejected: the lead hears it.')
+        await api('POST', `/v1/teams/${enc(t.id)}/review`, { verdict, note: note.value.trim() })
+        toast(`Team "${t.name}": review #${run.review.id} ${verdict === 'reject' ? 'rejected' : 'approved'}`)
+      },
+    })
+    await guarded(refreshAgents)
+  }
+  const reviewView = run?.review && h('div', { class: 'lead-review' },
+    h('div', null, h('strong', null, `Review #${run.review.id}: `),
+      `the round waits for ${run.approver}${run.approver_live ? '' : ' (no live session)'} to approve its eval, since ${agoShort(run.review.asked_at)}, as ${run.review.why}.`),
+    h('div', { class: 'lead-actions' },
+      h('button', { type: 'button', class: 'btn small primary', onclick: decide('approve') }, 'Approve'),
+      h('button', { type: 'button', class: 'btn small danger', onclick: decide('reject') }, 'Reject')))
   const runView = run && h('div', { class: 'lead-run' + (run.stopped ? ' stopped' : '') },
     h('div', null, h('strong', null, `${run.lead} leads it: `), run.status),
+    reviewView || null,
     h('div', null, `Spent ${tokens(run.spent.input + run.spent.output)}` + (run.settings.budget ? ` of ${tokens(run.settings.budget)} tokens` : ' tokens, no budget') +
       (run.best ? ` · best ${score2(run.best.score)} at eval #${run.best.id}, ${run.stale} since without a new one` : '')),
     h('div', { class: 'lead-actions' },
@@ -2145,6 +2187,10 @@ function evalState(run) {
   }
   if (ev.state === 'queued') {
     return { tone: 'live', mark: 'ring', text: `Eval #${ev.number} queued${on}` + (ev.place ? ` · ${nth(ev.place)} in line` : '') }
+  }
+  if (ev.state === 'approval') {
+    const el = Date.now() - new Date(ev.since).getTime()
+    return { tone: 'live', mark: 'ring', text: `Round waits for ${ev.waiting}'s approval · ${evClock(el)}` }
   }
   if (ev.state === 'due') {
     const el = Date.now() - new Date(ev.since).getTime()

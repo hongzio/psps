@@ -24,6 +24,9 @@ import (
 
 var ErrNotFound = errors.New("not found")
 
+// ErrConflict refuses what the state now does not allow.
+var ErrConflict = errors.New("conflict")
+
 type Isolation struct {
 	// ID is what an isolation is to psps, for good: every row that belongs
 	// to it names it by ID, and its container, network and volumes are
@@ -159,7 +162,7 @@ func Open(path string) (*Store, error) {
 	// One writer is all SQLite allows anyway; a single connection turns
 	// contention into queueing instead of SQLITE_BUSY.
 	db.SetMaxOpenConns(1)
-	if _, err := db.Exec(schema + envSchema + accountSchema + mailSchema + cronSchema + todoSchema + orderSchema + teamSchema + leadSchema + jobSchema + iconSchema + watchSchema + teamWaitSchema); err != nil {
+	if _, err := db.Exec(schema + envSchema + accountSchema + mailSchema + cronSchema + todoSchema + orderSchema + teamSchema + leadSchema + reviewSchema + jobSchema + iconSchema + watchSchema + teamWaitSchema); err != nil {
 		db.Close()
 		return nil, fmt.Errorf("store: schema: %w", err)
 	}

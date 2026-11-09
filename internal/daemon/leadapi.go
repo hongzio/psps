@@ -186,12 +186,12 @@ func (m *Manager) teamRoutes(mux *http.ServeMux, iso string) {
 		if !ok {
 			return
 		}
-		err := m.startEval(l, "you asked")
+		said, err := m.leadEval(l)
 		if err == nil {
 			w.Header().Set("Content-Type", "application/json")
 			w.WriteHeader(http.StatusAccepted)
 		}
-		reply(w, map[string]string{"eval": "running; its result comes to you as news"}, err)
+		reply(w, map[string]string{"eval": said}, err)
 	})
 }
 

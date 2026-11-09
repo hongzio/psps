@@ -205,6 +205,8 @@ type TeamBrief struct {
 //   - running: it runs (Started), as a job of Runner or in Isolation
 //   - queued: its job waits on Runner, Place in line
 //   - waiting: the round goes on (Waiting says on what); its end runs one
+//   - approval: the round ended and waits for Waiting's verdict, asked at
+//     Since (as Why)
 //   - due: the round ended at Since and no eval has started; a minute of
 //     that is something wrong
 //   - idle: nothing has changed since the last eval
@@ -270,6 +272,17 @@ type PutLead struct {
 	// CompactFirst: the lead's conversation is compacted before it hears
 	// a round's score.
 	CompactFirst *bool `json:"compact_first,omitempty"`
+	// Approver names the agent a round is put to, "" for none;
+	// ApproveMode is store.ApproveGate (the default) or ApproveNotify.
+	Approver    *string `json:"approver,omitempty"`
+	ApproveMode *string `json:"approve_mode,omitempty"`
+}
+
+// PostReview is the verdict on a team's round waiting for its approver:
+// store.VerdictApprove or VerdictReject, with a note for the lead.
+type PostReview struct {
+	Verdict string `json:"verdict"`
+	Note    string `json:"note,omitempty"`
 }
 
 // TeamRun is a team with a lead, as its operator and its lead see it.
@@ -298,6 +311,13 @@ type TeamRun struct {
 	Evals []store.Eval `json:"evals"`
 	Best  *store.Eval  `json:"best,omitempty"`
 	Stale int          `json:"stale"`
+	// Approver is the approver as it goes by now, ApproverLive whether it
+	// has a live session; Review is the round waiting for its verdict,
+	// Reviews the latest, oldest first.
+	Approver     string         `json:"approver,omitempty"`
+	ApproverLive bool           `json:"approver_live,omitempty"`
+	Review       *store.Review  `json:"review,omitempty"`
+	Reviews      []store.Review `json:"reviews,omitempty"`
 	// Agents are the lead's live agents; Archived counts the rest.
 	Agents   []TeamAgent `json:"agents"`
 	Archived int         `json:"archived"`

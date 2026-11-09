@@ -116,6 +116,14 @@ no round, so no eval runs on what you changed in it until you ask for one.
 The first eval after your operator sets or changes it comes after the next
 round.
 
+Your operator may name an approver: another agent each round is put to
+before its eval. Then the news says the round went to it, and the eval runs
+once it approves, its note coming to you with the score. If it rejects the
+round, no eval runs, no patience is used, and you hear why: act on it, and the
+round goes to the approver again once a turn of your agents ends after that.
+An eval you ask for goes to the approver first too. There is no deadline, and
+the approver is not yours to steer: end your turn and wait for the news.
+
 So do not poll and do not wait in a loop: end your turn, and the next news wakes
 you. Their answers come to you; they need not mail you.
 

@@ -1179,7 +1179,7 @@ func TestATeamsLeadAndTermsAreSetOnItsPage(t *testing.T) {
 		t.Fatalf("still on the page: %+v", h.m.teamPage)
 	}
 	got := strings.Join(h.be.teams, " | ")
-	if !strings.Contains(got, `lead t-lab {"agent":"aaaa","budget":5000000,"eval":"make bench","eval_isolation":"","no_target":true,"compact_first":false}`) {
+	if !strings.Contains(got, `lead t-lab {"agent":"aaaa","budget":5000000,"eval":"make bench","eval_isolation":"","no_target":true,"compact_first":false,"approver":"","approve_mode":"gate"}`) {
 		t.Fatalf("teams %s", got)
 	}
 	// Its isolation had no teams: they were turned on.

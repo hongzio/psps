@@ -243,6 +243,7 @@ body.resizing { cursor: col-resize; user-select: none; -webkit-user-select: none
 .lead-run { display: grid; gap: 4px; margin-top: 14px; padding: 10px 12px; border: 1px solid var(--border); border-radius: 8px; font-size: 13px; color: var(--muted); }
 .lead-run strong { color: var(--text); font-weight: 600; }
 .lead-run.stopped { border-color: color-mix(in srgb, var(--warn) 50%, var(--border)); }
+.lead-review { display: grid; gap: 6px; margin: 4px 0; padding: 8px 10px; border-radius: 6px; background: color-mix(in srgb, var(--warn) 10%, transparent); color: var(--text); }
 .lead-evals { display: flex; flex-wrap: wrap; gap: 4px 10px; font-variant-numeric: tabular-nums; }
 .lead-actions { display: flex; gap: 8px; margin-top: 4px; }
 .lead-actions:empty { display: none; }

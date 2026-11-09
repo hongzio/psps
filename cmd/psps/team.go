@@ -20,7 +20,7 @@ import (
 // their leads. An agent joins one with `psps agent team`.
 func teamCmd(p paths.Paths, args []string) error {
 	if len(args) == 0 {
-		return errors.New("usage: psps team ls|new|rename|rm|lead|show|eval|stop-eval|reset-best|resume  (psps team help: how teams work)")
+		return errors.New("usage: psps team ls|new|rename|rm|lead|show|eval|stop-eval|approve|reject|reset-best|resume  (psps team help: how teams work)")
 	}
 	switch args[0] {
 	case "help", "-h", "--help":
@@ -123,6 +123,8 @@ func teamCmd(p paths.Paths, args []string) error {
 		noTarget := fs.Bool("no-target", false, "no target")
 		patience := fs.Int("patience", 0, "evals in a row without a new best that end the run (default 3)")
 		compactFirst := fs.Bool("compact-first", false, "compact the lead's conversation (/compact) before it hears a round's score; --compact-first=false to stop")
+		approver := fs.String("approver", "", "an agent, not the lead nor one of its own, that each round is put to before its eval; - for none")
+		approveMode := fs.String("approve-mode", "", "gate: the round's eval waits for the approver's verdict (the default); notify: it runs, and the approver is told")
 		pos := parse(fs, args[1:])
 		if *clear {
 			if len(pos) != 1 {
@@ -159,6 +161,13 @@ func teamCmd(p paths.Paths, args []string) error {
 		}
 		if set["compact-first"] {
 			req.CompactFirst = compactFirst
+		}
+		if set["approver"] {
+			name := strings.TrimPrefix(*approver, "-")
+			req.Approver = &name
+		}
+		if set["approve-mode"] {
+			req.ApproveMode = approveMode
 		}
 		if set["eval"] {
 			req.Eval = eval
@@ -228,6 +237,22 @@ func teamCmd(p paths.Paths, args []string) error {
 		fmt.Println("the eval's job is stopped; the eval counts as not run, and the lead hears so")
 		return nil
 
+	case "approve", "reject":
+		pos := parse(fs, args[1:])
+		if len(pos) < 1 || (args[0] == "reject" && len(pos) < 2) {
+			return fmt.Errorf("usage: psps team %s TEAM %s", args[0], map[string]string{"approve": "[NOTE...]", "reject": "NOTE..."}[args[0]])
+		}
+		r, err := c.DecideReview(ctx, pos[0], api.PostReview{Verdict: args[0], Note: strings.Join(pos[1:], " ")})
+		if err != nil {
+			return err
+		}
+		if args[0] == "approve" {
+			fmt.Printf("review #%d approved: the eval runs, and the lead hears so with its score\n", r.ID)
+		} else {
+			fmt.Printf("review #%d rejected: no eval runs, and the lead hears why\n", r.ID)
+		}
+		return nil
+
 	case "reset-best":
 		if len(args) != 2 {
 			return errors.New("usage: psps team reset-best TEAM")
@@ -279,6 +304,8 @@ Commands
                                     scores, the lead's agents
   psps team eval TEAM               run the eval now; the score goes to the lead
   psps team stop-eval TEAM          stop the eval under way (a runner's job); it counts as not run
+  psps team approve TEAM [NOTE...]  the round waiting for its approver: its eval runs
+  psps team reject TEAM NOTE...     the round waiting for its approver: no eval; the lead hears why
   psps team reset-best TEAM         the evals so far count for no best; the next scored is it
   psps team resume TEAM             a run psps stopped goes on
 
@@ -363,6 +390,25 @@ The eval
   eval comes after the next round, or with psps team eval. The README's Teams
   section has a grader to start from.
 
+A round's approval
+
+  With --approver AGENT, each round is put to AGENT (not the lead, nor an
+  agent the lead made) before its eval. psps tells it, whenever it is free,
+  what the lead heard of the round since the last eval, the lead's last
+  answer and the scores so far. Under --approve-mode gate (the default) the
+  eval waits for its verdict, which it gives on its own team service
+  (POST $PSPS_TEAM_URL/approvals/ID, so teams are on in its isolation): an
+  approval runs the eval, its note going to the lead with the score; a
+  rejection runs none, uses no patience, and tells the lead why, and the
+  round goes to the approver again once a turn of the lead's agents ends
+  after it. An eval the lead asks for waits the same way; yours (psps team
+  eval) does not, and takes the place of one waiting. There is no deadline:
+  the round waits, across restarts, and psps team show says for whom and how
+  long. You decide in its place with psps team approve|reject TEAM. Under
+  --approve-mode notify the eval runs as ever and the approver is only told.
+  Only you set the approver: --approver - takes it off, and changing it
+  withdraws what waited for the one before.
+
 Terms: psps team lead TEAM AGENT [flags]
 
   --budget N          tokens the lead and its agents may use from now on, sent
@@ -380,6 +426,8 @@ Terms: psps team lead TEAM AGENT [flags]
                       the eval, above; --eval-iso - runs it in the lead's own
   --target X          a score that ends the run once reached (--no-target: none)
   --patience N        evals in a row without a new best that end the run (3)
+  --approver AGENT|-  an agent each round is put to before its eval, below
+  --approve-mode gate|notify
 
   Run it again to change them: what you leave out stays. Naming another agent
   moves the lead and keeps the terms, with spending counted from then.

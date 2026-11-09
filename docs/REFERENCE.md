@@ -775,6 +775,8 @@ psps team lead lab tara --budget 5M        # within 5M tokens
 psps team lead lab tara --eval 'make bench | tail -1' --eval-dir ~/work/app --patience 3
 psps team lead lab tara --eval-iso grader  # the eval runs in grader, on a copy
 psps team lead lab tara --compact-first    # /compact the lead before it hears a round's score
+psps team lead lab tara --approver vera    # vera approves each round before its eval
+psps team approve lab 'looks sound'        # or: psps team reject lab 'why'
 psps agent send tara '/psps-team Build what SPEC.md describes.'   # the work, for the team
 psps team show lab                         # spending, scores, the lead's agents
 psps team eval lab                         # run the eval now
@@ -964,6 +966,25 @@ result"; `--compact-first=false` to stop), psps sends the lead `/compact`
 once a round's eval has ended, and the round's news, its score with it, the
 next time the lead is free, saying it was compacted. An eval the lead or you
 ask for comes as it is.
+
+With `--approver AGENT` (in the web's dialog, "Round's approver"), each
+round is put to AGENT before its eval: a live agent that is neither the lead
+nor one of its own, in an isolation with teams on so it can answer. psps tells
+it, whenever it is free, what the lead heard of the round since the last eval,
+the lead's last answer and the scores so far. Under `--approve-mode gate` (the
+default) the eval waits for its verdict, given with
+`POST $PSPS_TEAM_URL/approvals/ID` `{"verdict": "approve"|"reject", "note": ...}`:
+an approval runs the eval, the note going to the lead with the score; a
+rejection runs none, uses no patience and tells the lead why, and the round
+goes to the approver again once a turn of the lead's agents ends after it. An
+eval the lead asks for waits the same way; yours does not, and takes the place
+of one waiting. There is no deadline, as the Mac may be off for hours: the
+round waits, and `psps team show` says for whom and since when. Decide in its
+place with `psps team approve TEAM [NOTE]` or `psps team reject TEAM NOTE`, or
+the dialog's buttons. Under `--approve-mode notify` the eval runs as ever and
+the approver is only told, to look at the round after. Only you set the
+approver (`--approver -` takes it off); changing it withdraws what waited for
+the one before.
 
 Besides, at most `--max-live` agents of the lead's are live at once (3), and
 none is made on a plan once a window of that plan is used past

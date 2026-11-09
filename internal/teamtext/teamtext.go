@@ -64,8 +64,29 @@ func Run(out io.Writer, run api.TeamRun, now time.Time) error {
 	if s.CompactFirst {
 		fmt.Fprintln(w, "  news   the lead's conversation is compacted before it hears a round's score")
 	}
+	if s.Approver != "" {
+		who := run.Approver
+		if !run.ApproverLive {
+			who += " (no live session)"
+		}
+		if s.ApproveMode == "notify" {
+			fmt.Fprintf(w, "  review %s is told of each round; the eval runs as ever\n", who)
+		} else {
+			fmt.Fprintf(w, "  review %s approves each round before its eval\n", who)
+		}
+	}
 	if line := EvalNow(run.Eval, run.Team.Name, now); line != "" {
 		fmt.Fprintln(w, line)
+	}
+	for _, r := range run.Reviews {
+		if r.Mode != "gate" || r.Verdict == "" {
+			continue
+		}
+		note := ""
+		if r.Note != "" {
+			note = ": " + firstLine(r.Note, 80)
+		}
+		fmt.Fprintf(w, "  r#%-3d %s  %-10s by %s, as %s%s\n", r.ID, r.AskedAt.Local().Format("Jan 2 15:04"), r.Verdict, r.By, r.Why, note)
 	}
 	for _, e := range run.Evals {
 		score := "no score"
@@ -179,6 +200,8 @@ func EvalNow(ev *api.EvalNow, team string, now time.Time) string {
 		return fmt.Sprintf("  now    #%d queued%s%s, as %s%s", ev.Number, on, place, ev.Why, job)
 	case "waiting":
 		return fmt.Sprintf("  now    no eval; the next when the round ends (%s)", ev.Waiting)
+	case "approval":
+		return fmt.Sprintf("  now    no eval; the round waits %s for %s to approve it, as %s (psps team approve|reject %q decides in its place)", took(now.Sub(ev.Since)), ev.Waiting, ev.Why, team)
 	case "due":
 		d := now.Sub(ev.Since)
 		if d < time.Minute {
@@ -189,6 +212,15 @@ func EvalNow(ev *api.EvalNow, team string, now time.Time) string {
 		return "  now    no eval; nothing changed since the last"
 	}
 	return ""
+}
+
+// firstLine is s's first line, cut to n runes.
+func firstLine(s string, n int) string {
+	s, _, _ = strings.Cut(s, "\n")
+	if r := []rune(s); len(r) > n {
+		return string(r[:n]) + "…"
+	}
+	return s
 }
 
 func ordinal(n int) string {

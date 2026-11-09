@@ -325,6 +325,14 @@ func (c *Client) ResetBest(ctx context.Context, team string) error {
 	return c.do(ctx, "DELETE", "/v1/teams/"+url.PathEscape(team)+"/best", nil, nil)
 }
 
+// DecideReview gives the round of team waiting for its approver the
+// operator's verdict.
+func (c *Client) DecideReview(ctx context.Context, team string, req api.PostReview) (store.Review, error) {
+	var v store.Review
+	err := c.do(ctx, "POST", "/v1/teams/"+url.PathEscape(team)+"/review", req, &v)
+	return v, err
+}
+
 // Jobs are the jobs psps keeps, newest first; with live, those that have
 // not ended.
 func (c *Client) Jobs(ctx context.Context, live bool) ([]api.Job, error) {

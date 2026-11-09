@@ -124,6 +124,17 @@ func (m *Manager) SetLead(ctx context.Context, teamRef string, req api.PutLead) 
 	if evalChanged(was, l.Settings) {
 		l.Dirty = false
 	}
+	// Another approver, or none, or another mode: what waited for the one
+	// before is looked at anew.
+	if approverChanged(was, l.Settings) {
+		withdrew, err := m.withdrawReviewsLocked(t.ID, "your operator changed the team's approver")
+		if err != nil {
+			return api.TeamRun{}, err
+		}
+		if withdrew && !evalChanged(was, l.Settings) {
+			l.Dirty = true
+		}
+	}
 	if l.Settings.Budget == 0 && perUse != "" {
 		return api.TeamRun{}, badRequest(fmt.Errorf("without a budget only the plan ceiling holds a lead back, and %s; give it a budget (`--budget 5M`)", perUse))
 	}
@@ -232,6 +243,9 @@ func (m *Manager) leadTerms(was store.LeadSettings, req api.PutLead, lead store.
 	if req.CompactFirst != nil {
 		s.CompactFirst = *req.CompactFirst
 	}
+	if err := m.approverTerms(&s, req, lead); err != nil {
+		return s, err
+	}
 	// An eval is a command or a job of a runner's: one set is the other
 	// gone, and both at once is neither.
 	if req.Eval != nil && req.EvalJob != nil && strings.TrimSpace(*req.Eval) != "" && strings.TrimSpace(*req.EvalJob) != "" {
@@ -335,6 +349,9 @@ func (m *Manager) ClearLead(teamRef string) error {
 	}
 	m.teamMu.Lock()
 	defer m.teamMu.Unlock()
+	if _, err := m.withdrawReviewsLocked(t.ID, "your operator took the team's lead off"); err != nil {
+		return err
+	}
 	return m.store.DeleteLead(t.ID)
 }
 
@@ -360,7 +377,14 @@ func (m *Manager) EvalTeam(teamRef string) error {
 	if err != nil {
 		return err
 	}
+	m.teamMu.Lock()
 	l, err := m.store.Lead(t.ID)
+	if err == nil {
+		// The operator's eval is not the approver's to hold: what waited
+		// for it is scored by this one.
+		_, err = m.withdrawReviewsLocked(t.ID, "your operator had the eval run")
+	}
+	m.teamMu.Unlock()
 	if err != nil {
 		return err
 	}
@@ -485,6 +509,20 @@ func (m *Manager) teamRun(t store.Team, l store.Lead) (api.TeamRun, error) {
 	if l.Settings.EvalIsolation != "" {
 		run.EvalIsolation = m.isoName(l.Settings.EvalIsolation)
 	}
+	if l.Settings.Approver != "" {
+		run.Approver, run.ApproverLive = m.approverShown(l.Settings.Approver)
+	}
+	if r, ok := m.pendingReview(l); ok {
+		run.Review = &r
+	}
+	reviews, err := m.store.Reviews(t.ID, 5)
+	if err != nil {
+		return api.TeamRun{}, err
+	}
+	for _, r := range reviews {
+		r.Body = ""
+		run.Reviews = append(run.Reviews, r)
+	}
 	for _, e := range evals[max(len(evals)-10, 0):] {
 		run.Evals = append(run.Evals, cutEval(e))
 	}
@@ -551,6 +589,11 @@ func (m *Manager) teamAgent(a store.Agent, sp store.Spent, answer bool) api.Team
 // leadsView is run as its lead sees it: without the output of the evals
 // whose output is the operator's alone.
 func leadsView(run api.TeamRun) api.TeamRun {
+	if run.Review != nil {
+		r := *run.Review
+		r.Body = ""
+		run.Review = &r
+	}
 	for i := range run.Evals {
 		if run.Evals[i].Private {
 			run.Evals[i].Output = ""
@@ -575,10 +618,14 @@ func (m *Manager) runStatus(l store.Lead) string {
 	if l.Stopped != "" {
 		return "stopped: " + l.Stopped
 	}
-	if iso := m.teamsOff(l); iso != "" {
-		return "paused, as teams are off in " + iso + "; " + m.runDoing(l)
+	doing := m.runDoing(l)
+	if w := m.reviewWaiting(l); w != "" {
+		doing = w + "; " + doing
 	}
-	return m.runDoing(l)
+	if iso := m.teamsOff(l); iso != "" {
+		return "paused, as teams are off in " + iso + "; " + doing
+	}
+	return doing
 }
 
 // teamsOff is the name of the isolation of l's lead while it has no team
@@ -819,6 +866,10 @@ func (m *Manager) teamCheck(team string) {
 	if !l.Settings.HasEval() || m.evalRunning(team) || m.childrenBusy(l.Line) > 0 {
 		return
 	}
+	// A round put to its approver waits for its verdict.
+	if _, ok := m.pendingReview(l); ok {
+		return
+	}
 	// A round is over once its lead has heard of it and started nothing
 	// more: its news delivered, its turn on it ended, and none of its agents
 	// at work. Until then the lead may go on with the round's next step, one
@@ -836,8 +887,20 @@ func (m *Manager) teamCheck(team string) {
 		}
 	}
 	if l.Dirty {
+		if l.Settings.Gated() {
+			if _, err := m.askReviewLocked(l, whyRound); err != nil {
+				m.log.Printf("team %s: review: %v", team, err)
+				return
+			}
+			who, _ := m.approverShown(l.Settings.Approver)
+			m.store.AddTeamNews(team, fmt.Sprintf("The round ended. Your operator has %s approve each round before its eval: psps put it to %s, and the eval runs once %s approves. If it rejects the round, you hear why. Until then nothing is scored; wait for it.", who, who, who))
+			go m.teamNewsChanged(team)
+			return
+		}
 		if err := m.startEval(l, whyRound); err != nil {
 			m.log.Printf("team %s: eval: %v", team, err)
+		} else if l.Settings.Approver != "" {
+			m.askReviewLocked(l, whyRound)
 		}
 		return
 	}
