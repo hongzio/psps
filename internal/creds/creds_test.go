@@ -278,3 +278,36 @@ func TestAKeyOfTheWrongSizeIsRefused(t *testing.T) {
 		t.Fatal(r)
 	}
 }
+
+func TestRenameMovesTheSectionAndRefusesATakenName(t *testing.T) {
+	s := newStore(t)
+	if err := s.Rename("git", "work", "job"); err != nil {
+		t.Fatalf("renaming with no file: %v", err)
+	}
+	s.Write("datadog", "prod", map[string]string{"api_key": "AAA", "app_key": "BBB"})
+	s.Write("datadog", "stage", map[string]string{"api_key": "CCC", "app_key": "DDD"})
+	if err := s.Rename("datadog", "prod", "live"); err != nil {
+		t.Fatal(err)
+	}
+	// Sealed under the section's name, it opens under the new one.
+	got, err := s.Read("datadog", "live")
+	if err != nil || got["api_key"] != "AAA" || got["app_key"] != "BBB" {
+		t.Fatalf("live = %v %v", got, err)
+	}
+	if _, err := s.Read("datadog", "prod"); err == nil {
+		t.Fatal("prod is still there")
+	}
+	b, _ := os.ReadFile(s.Path)
+	if i, j := strings.Index(string(b), "[datadog live]"), strings.Index(string(b), "[datadog stage]"); i < 0 || j < i {
+		t.Fatalf("the section moved from where it stood:\n%s", b)
+	}
+	if r := reason(t, s.Rename("datadog", "live", "stage")); !strings.Contains(r, "[datadog stage]") || !strings.Contains(r, "--clear") {
+		t.Fatalf("reason = %s", r)
+	}
+	if got, _ := s.Read("datadog", "stage"); got["api_key"] != "CCC" {
+		t.Fatalf("a refused rename changed stage: %v", got)
+	}
+	if err := s.Rename("datadog", "nothing", "else"); err != nil {
+		t.Fatalf("renaming a section that is not there: %v", err)
+	}
+}

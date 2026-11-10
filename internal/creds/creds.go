@@ -263,6 +263,44 @@ func (s *Store) Write(service, env string, values map[string]string) error {
 	})
 }
 
+// Rename moves the section of env to the name to, where it stood in the
+// file. One for to already there (a secret left by a removed env) is
+// refused, not taken over or replaced. Without a file, or a section, there
+// is nothing to move.
+func (s *Store) Rename(service, env, to string) error {
+	err := s.update(false, func(f *file) error {
+		from, name := section(service, env), section(service, to)
+		if _, ok := f.sections[name]; ok {
+			return &Denied{fmt.Sprintf("%s already has a [%s] section, a secret left by an env that was removed; `psps env secret %s %s --clear` deletes it", s.Path, name, service, to)}
+		}
+		vals, ok := f.sections[from]
+		if !ok {
+			return nil
+		}
+		f.sections[name], f.keys[name] = vals, f.keys[from]
+		delete(f.sections, from)
+		delete(f.keys, from)
+		// The order may still name a section deleted before; the section
+		// is written once, where the moved one stood.
+		order := f.order[:0]
+		for _, n := range f.order {
+			switch n {
+			case name:
+				continue
+			case from:
+				n = name
+			}
+			order = append(order, n)
+		}
+		f.order = order
+		return nil
+	})
+	if errors.Is(err, os.ErrNotExist) {
+		return nil
+	}
+	return err
+}
+
 // update applies change to the file under its lock and writes it back with
 // every value sealed, so any write also seals what was left in plain text.
 // Without create, a missing file stays missing (os.ErrNotExist).

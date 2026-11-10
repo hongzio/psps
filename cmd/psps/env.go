@@ -28,7 +28,7 @@ import (
 
 func envCmd(p paths.Paths, args []string) error {
 	if len(args) == 0 {
-		return errors.New("usage: psps env ls|add|edit|rm|secret|encrypt|choices|check ...  (psps env help SERVICE for its flags)")
+		return errors.New("usage: psps env ls|add|edit|rename|rm|secret|encrypt|choices|check ...  (psps env help SERVICE for its flags)")
 	}
 	reg := services.Registry()
 	if args[0] == "help" {
@@ -131,6 +131,23 @@ func envCmd(p paths.Paths, args []string) error {
 			fmt.Printf("exposed to %s; the Mac listens for it as defined now\n", strings.Join(e.ExposedTo, ", "))
 		} else if len(e.ExposedTo) > 0 {
 			fmt.Printf("exposed to %s; their proxies use the new definition now\n", strings.Join(e.ExposedTo, ", "))
+		}
+		return nil
+
+	case "rename":
+		if len(args) != 4 {
+			return errors.New("usage: psps env rename SERVICE NAME NEW-NAME")
+		}
+		e, err := c.RenameEnv(ctx, args[1], args[2], args[3])
+		if err != nil {
+			return err
+		}
+		for _, w := range e.Warnings {
+			fmt.Fprintln(os.Stderr, "warning:", w)
+		}
+		fmt.Printf("renamed %s/%s to %s/%s\n", args[1], args[2], e.Service, e.Name)
+		if len(e.ExposedTo) > 0 {
+			fmt.Printf("exposed to %s under the new name; their proxies use it now, and their agents pick it up once their turn ends\n", strings.Join(e.ExposedTo, ", "))
 		}
 		return nil
 

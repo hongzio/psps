@@ -367,6 +367,17 @@ type Deleter interface {
 	Deleted(env string) error
 }
 
+// FixedName is a service whose env's name is part of what it is (a
+// skill's is its folder's and its SKILL.md's): FixedName says why it
+// cannot be renamed.
+//
+// Every other service's env is renamed with everything that names it (see
+// store.RenameEnv); what its proxy serves is rebuilt, so names the
+// isolation sees (a variable's suffix, a mount's folder) change with it.
+type FixedName interface {
+	FixedName() string
+}
+
 // Forwarder is a service that makes ports of the isolation's reachable from
 // the Mac (port): the daemon listens on the Mac's 127.0.0.1 and connects
 // what it accepts, through the tunnel, to the isolation's own loopback.

@@ -838,6 +838,11 @@ type Login struct {
 	Expires  time.Time `json:"expires"`
 }
 
+// EnvRename is an env's new name (POST /v1/envs/{service}/{name}/rename).
+type EnvRename struct {
+	Name string `json:"name"`
+}
+
 // LoginFinish carries the address the browser landed on, or its query.
 type LoginFinish struct {
 	Callback string `json:"callback"`

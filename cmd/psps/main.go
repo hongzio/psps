@@ -59,6 +59,7 @@ const usage = `psps — run coding agents in isolated containers
 
   psps env ls [SERVICE]         environments a credential proxy can serve
   psps env add|edit SERVICE NAME [flags]   (psps env help SERVICE lists them)
+  psps env rename SERVICE NAME NEW-NAME   its secret and every isolation exposing it follow
   psps env rm SERVICE NAME [--force]
   psps env secret SERVICE NAME [--clear]   prompts; or one line per field on stdin
   psps env choices SERVICE NAME FIELD   what a field can list, looked up with the env's credential (git: repos)

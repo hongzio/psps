@@ -211,6 +211,85 @@ func (s *Store) DeleteEnv(service, name string, force bool) error {
 	return tx.Commit()
 }
 
+// RenameEnv gives an env a new name, and everything that names it the new
+// one in the same transaction: the isolations exposing it (their list, in
+// place, and their default), their tokens for it, and for a job runner the
+// jobs of it and the team evals that are its jobs. It returns the
+// isolations exposing it, by ID.
+func (s *Store) RenameEnv(service, name, to string) ([]string, error) {
+	tx, err := s.db.Begin()
+	if err != nil {
+		return nil, err
+	}
+	defer tx.Rollback()
+	var n int
+	tx.QueryRow(`SELECT COUNT(*) FROM envs WHERE service = ? AND name = ?`, service, to).Scan(&n)
+	if n > 0 {
+		return nil, fmt.Errorf("%s env %s already exists: %w", service, to, ErrExists)
+	}
+	res, err := tx.Exec(`UPDATE envs SET name = ?, updated_at = ? WHERE service = ? AND name = ?`, to, ts(time.Now().UTC()), service, name)
+	if err != nil {
+		return nil, err
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		return nil, fmt.Errorf("no %s env named %s: %w", service, name, ErrNotFound)
+	}
+	rows, err := tx.Query(`SELECT DISTINCT x.isolation, x.envs, x.default_env FROM exposures x, json_each(x.envs) j
+		WHERE x.service = ? AND j.value = ? ORDER BY x.isolation`, service, name)
+	if err != nil {
+		return nil, err
+	}
+	type hit struct {
+		iso, def string
+		envs     []string
+	}
+	var hits []hit
+	for rows.Next() {
+		var h hit
+		var envs string
+		rows.Scan(&h.iso, &envs, &h.def)
+		json.Unmarshal([]byte(envs), &h.envs)
+		hits = append(hits, h)
+	}
+	rows.Close()
+	var isos []string
+	for _, h := range hits {
+		isos = append(isos, h.iso)
+		for i, n := range h.envs {
+			if n == name {
+				h.envs[i] = to
+			}
+		}
+		if h.def == name {
+			h.def = to
+		}
+		b, _ := json.Marshal(h.envs)
+		if _, err := tx.Exec(`UPDATE exposures SET envs = ?, default_env = ? WHERE isolation = ? AND service = ?`,
+			string(b), h.def, h.iso, service); err != nil {
+			return nil, err
+		}
+	}
+	// A default that names it while the list does not, left from before,
+	// follows too.
+	if _, err := tx.Exec(`UPDATE exposures SET default_env = ? WHERE service = ? AND default_env = ?`, to, service, name); err != nil {
+		return nil, err
+	}
+	if _, err := tx.Exec(`UPDATE tokens SET env = ? WHERE service = ? AND env = ?`, to, service, name); err != nil {
+		return nil, err
+	}
+	// "job" is jobproxy.Name, which imports this package.
+	if service == "job" {
+		if _, err := tx.Exec(`UPDATE jobs SET runner = ? WHERE runner = ?`, to, name); err != nil {
+			return nil, err
+		}
+		if _, err := tx.Exec(`UPDATE team_leads SET settings = json_set(settings, '$.eval_job', ?)
+			WHERE json_extract(settings, '$.eval_job') = ?`, to, name); err != nil {
+			return nil, err
+		}
+	}
+	return isos, tx.Commit()
+}
+
 func nonNil(s []string) []string {
 	if s == nil {
 		return []string{}
