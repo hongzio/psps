@@ -97,7 +97,9 @@ const S = {
   picking: false,
   drawer: false,
   convos: new Map(),
-  drafts: new Map(),
+  // What is typed to each agent and not yet sent, kept in this browser so
+  // that another agent, another page or a reload does not lose it.
+  drafts: new Map((() => { try { const v = JSON.parse(localStorage.getItem('psps.drafts') || '{}'); return v && typeof v === 'object' ? Object.entries(v).filter(([, t]) => typeof t === 'string' && t) : [] } catch { return [] } })()),
   // What is picked and typed for a question an agent asks, by its ID.
   answering: {},
   es: null,
@@ -1007,15 +1009,29 @@ function noteTurns() {
   }
   for (const id of S.unread) if (!agentById(id)) { S.unread.delete(id); changed.push(id) }
   if (changed.length) saveUnread()
+  let gone = false
+  for (const id of S.drafts.keys()) if (!agentById(id)) { S.drafts.delete(id); gone = true }
+  if (gone) saveDrafts()
 }
 
 function saveUnread() {
   try { localStorage.setItem('psps.unread', JSON.stringify([...S.unread])) } catch {}
 }
 
+// setDraft keeps what is typed to an agent, as it is typed; an empty one is
+// dropped.
+function setDraft(id, text) {
+  if (text) S.drafts.set(id, text)
+  else if (!S.drafts.delete(id)) return
+  saveDrafts()
+}
+
+function saveDrafts() {
+  try { localStorage.setItem('psps.drafts', JSON.stringify(Object.fromEntries(S.drafts))) } catch {}
+}
+
 function select(id, closeDrawer = true) {
   if (S.unread.delete(id)) saveUnread()
-  if (S.sel && S.sel !== id) S.drafts.set(S.sel, document.querySelector('.composer textarea')?.value || '')
   if (S.sel !== id) S.edit = null
   S.sel = id
   S.view = 'agent'
@@ -2759,7 +2775,7 @@ async function openTodos(a) {
     const ta = S.sel === a.id ? document.querySelector('.composer textarea') : null
     const cur = ta ? ta.value : S.drafts.get(a.id) || ''
     const next = cur.trim() ? cur.replace(/\s+$/, '') + '\n\n' + t.text : t.text
-    S.drafts.set(a.id, next)
+    setDraft(a.id, next)
     if (ta) {
       ta.value = next
       ta.dispatchEvent(new Event('input'))
@@ -3640,13 +3656,13 @@ function composer(a) {
     const text = ta.value.trim()
     if (!text) return
     ta.value = ''
-    S.drafts.set(a.id, '')
+    setDraft(a.id, '')
     grow()
     await send(text)
     // Its first message names it; show that now, not at the next poll.
     if (!agentById(a.id)?.name) await guarded(refreshAgents)
   }
-  ta.addEventListener('input', grow)
+  ta.addEventListener('input', () => { setDraft(a.id, ta.value); grow() })
   const done = completer(a, ta, submit)
   ta.addEventListener('keydown', (e) => {
     if (done.key(e)) return
@@ -3684,7 +3700,7 @@ function sendButton(a, ta, submit) {
     if (!text) { ta.focus(); return }
     await api('POST', `/v1/agents/${enc(a.id)}/todos`, { text, auto })
     ta.value = ''
-    S.drafts.set(a.id, '')
+    setDraft(a.id, '')
     ta.dispatchEvent(new Event('input'))
     toast(auto ? 'Put aside in TODO, sent when a turn ends' : 'Put aside in TODO')
     guarded(refreshAgents)
