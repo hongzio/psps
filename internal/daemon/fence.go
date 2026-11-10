@@ -301,6 +301,21 @@ var (
 	fenceSettleStep  = 250 * time.Millisecond
 )
 
+// egressTargets are public addresses the fence lets through, tried with it
+// to tell an isolation with no internet at all from one whose resolver
+// alone fails.
+var egressTargets = []string{"1.1.1.1:443", "8.8.8.8:443"}
+
+// egress is whether the isolation got an answer from any egress target.
+func egress(tcp map[string]string) bool {
+	for _, t := range egressTargets {
+		if out := tcp[t]; out == "open" || out == "refused" {
+			return true
+		}
+	}
+	return false
+}
+
 // measureFence tries every address the Mac holds, from inside the isolation,
 // against a listener that accepts on all of them.
 func (m *Manager) measureFence(ctx context.Context, iso store.Isolation, bridge string) fenceResult {
@@ -352,7 +367,7 @@ func (m *Manager) measureFence(ctx context.Context, iso store.Isolation, bridge 
 	}
 	sort.Strings(targets)
 
-	res, err := m.cli.Probe(ctx, iso.Container, targets)
+	res, err := m.cli.Probe(ctx, iso.Container, append(append([]string(nil), targets...), egressTargets...))
 	if err != nil {
 		return fenceFailed("could not measure the fence: " + err.Error())
 	}
@@ -375,9 +390,23 @@ func (m *Manager) measureFence(ctx context.Context, iso store.Isolation, bridge 
 		// Nothing left the isolation, so nothing was learned: not a leak,
 		// and not a pass either. The next round measures again.
 		r.why = "waiting to measure the fence: " + strings.Join(unmeasured, ", ")
+	case !egress(res.TCP):
+		// The fence holds, but nothing gets out at all: not a resolver to
+		// set, the Mac's NAT for the network (macOS InternetSharing, which
+		// can wedge while a network is made).
+		var tried []string
+		for _, t := range egressTargets {
+			tried = append(tried, t+" ("+res.TCP[t]+")")
+		}
+		dns := "DNS works"
+		if res.Resolve != "ok" {
+			dns = "DNS failed too: " + res.Resolve
+		}
+		r.ok, r.why = true, fmt.Sprintf("verified, but the isolation has no internet: %s; %s. If the Mac itself is online, its NAT for this network "+
+			"(macOS InternetSharing) is not passing traffic: `container system stop && container system start` brings it back, restarting every isolation", strings.Join(tried, ", "), dns)
 	case res.Resolve != "ok":
 		r.ok, r.why = true, "verified, but DNS failed: "+res.Resolve+
-			" (behind a local DNS proxy on the Mac, like Cloudflare WARP, set dns in ~/.config/psps/config.toml)"
+			" (the internet is reachable, so the resolver is the trouble: behind a local DNS proxy on the Mac, like Cloudflare WARP, set dns in ~/.config/psps/config.toml)"
 	default:
 		r.ok, r.why = true, "verified"
 	}

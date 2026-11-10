@@ -156,6 +156,9 @@ type fakeContainers struct {
 	// held containers cannot be started: the host is still down.
 	held map[string]bool
 	leak bool // the fence lets the probe through
+	// offline is an isolation that reaches nothing outside: its NAT is
+	// wedged, its resolver with it.
+	offline bool
 	// probed is what each fence measurement tried, in order.
 	probed [][]string
 	// unsent makes link-local targets fail inside the isolation, as they do
@@ -316,9 +319,19 @@ func (f *fakeContainers) Probe(_ context.Context, _ string, targets []string) (i
 	f.mu.Unlock()
 	r := isolation.ProbeResult{Resolve: "ok", TCP: map[string]string{}}
 	f.mu.Lock()
-	unsent := f.unsent
+	unsent, offline := f.unsent, f.offline
 	f.mu.Unlock()
+	if offline {
+		r.Resolve = "lookup example.com on 8.8.8.8:53: dial udp 8.8.8.8:53: i/o timeout"
+	}
 	for _, t := range targets {
+		if slices.Contains(egressTargets, t) {
+			r.TCP[t] = "open"
+			if offline {
+				r.TCP[t] = "blocked"
+			}
+			continue
+		}
 		if strings.HasPrefix(t, "127.0.0.1:") {
 			// The isolation's own loopback, where the tunnel listens:
 			// the test's isolation end runs on this Mac's.
@@ -1283,6 +1296,30 @@ func TestAProbeThatNeverLeftIsNeitherAPassNorALeak(t *testing.T) {
 }
 
 func fenceVerdict(r fenceResult) (bool, string) { return r.ok, r.why }
+
+// An isolation that reaches nothing outside is told apart from one whose
+// resolver alone fails: the fence holds either way, and the fix differs.
+func TestNoInternetAtAllIsNotTakenForADNSSetting(t *testing.T) {
+	e := newTestEnv(t)
+	ctx := context.Background()
+	m, stop := e.daemon()
+	defer stop()
+	iso, _ := e.st.Isolation(testIsoID)
+	e.fc.mu.Lock()
+	e.fc.offline = true
+	e.fc.mu.Unlock()
+	ok, why := fenceVerdict(m.verifyFence(ctx, iso))
+	if !ok || !strings.Contains(why, "no internet") || !strings.Contains(why, "1.1.1.1:443 (blocked)") ||
+		!strings.Contains(why, "DNS failed too") || !strings.Contains(why, "container system stop") || strings.Contains(why, "WARP") {
+		t.Fatalf("%v %q", ok, why)
+	}
+	e.fc.mu.Lock()
+	e.fc.offline = false
+	e.fc.mu.Unlock()
+	if ok, why := fenceVerdict(m.verifyFence(ctx, iso)); !ok || why != "verified" {
+		t.Fatalf("once it is online again: %v %q", ok, why)
+	}
+}
 
 // A mode the drivers do not know would run as never, unattended; the daemon
 // refuses it on the way in instead.
