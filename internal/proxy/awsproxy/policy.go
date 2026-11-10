@@ -352,21 +352,20 @@ func (a Allowlist) Policy() (Policy, error) {
 	}
 	if len(queues) > 0 {
 		const batch = "arn:aws:batch:*:*:"
-		var queueRes []string
+		var res []string
 		for _, q := range queues {
-			queueRes = append(queueRes, batch+"job-queue/"+q)
+			res = append(res, batch+"job-queue/"+q)
 		}
-		res := append([]string{}, queueRes...)
-		var defRes []string
 		for _, d := range defs {
-			defRes = append(defRes, batch+"job-definition/"+d, batch+"job-definition/"+d+":*")
+			res = append(res, batch+"job-definition/"+d, batch+"job-definition/"+d+":*")
 		}
-		res = append(res, defRes...)
-		allow("BatchSubmit", []string{"batch:SubmitJob"}, append(res, batch+"job/*"))
 		// A SubmitJob that carries tags is checked for TagResource on the
-		// job queue and the job definition too (by name and by revision).
-		allow("BatchSubmitTags", []string{"batch:TagResource"}, append(append([]string{}, queueRes...), defRes...))
-		allow("BatchJobs", []string{"batch:CancelJob", "batch:TerminateJob", "batch:TagResource"}, []string{batch + "job/*"})
+		// job queue and the job definition too (by name and by revision),
+		// and tagging a job is TagResource on job/*: one statement grants
+		// both actions on all of them, so each queue and definition is
+		// written once, where two would keep a few under STS's limit.
+		allow("BatchSubmit", []string{"batch:SubmitJob", "batch:TagResource"}, append(res, batch+"job/*"))
+		allow("BatchJobs", []string{"batch:CancelJob", "batch:TerminateJob"}, []string{batch + "job/*"})
 		allow("BatchReads", []string{"batch:DescribeJobs", "batch:ListJobs", "batch:DescribeJobQueues", "batch:DescribeJobDefinitions"}, []string{"*"})
 	}
 	if len(groups) > 0 {

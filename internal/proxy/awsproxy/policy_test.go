@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"reflect"
 	"slices"
+	"sort"
 	"strings"
 	"testing"
 )
@@ -284,8 +285,11 @@ func TestASubmissionIsPinnedToTheNamedQueuesAndDefinitions(t *testing.T) {
 	// job together: the queue and the definition are what pin it, so
 	// neither may be a wildcard, and every revision of a definition is in.
 	s := batchStatements(t, Allowlist{BatchQueues: []string{"mtlab-eval", "mtlab-dev"}, BatchDefinitions: []string{"mtlab-replay-dev"}})
+	// A tagged submission checks TagResource on the queue and the
+	// definition (by name and by revision) as well, so it rides in the
+	// same statement, which also names the job.
 	sub := s["BatchSubmit"]
-	if !reflect.DeepEqual(sub.Action, []string{"batch:SubmitJob"}) {
+	if !reflect.DeepEqual(sub.Action, []string{"batch:SubmitJob", "batch:TagResource"}) {
 		t.Fatalf("actions = %v", sub.Action)
 	}
 	want := []string{
@@ -303,25 +307,60 @@ func TestASubmissionIsPinnedToTheNamedQueuesAndDefinitions(t *testing.T) {
 	}
 	// The job actions and reads are in statements of their own, so the
 	// breadth they need never reaches SubmitJob.
-	if !reflect.DeepEqual(s["BatchJobs"].Resource, []string{"arn:aws:batch:*:*:job/*"}) || slices.Contains(s["BatchJobs"].Action, "batch:SubmitJob") {
+	if !reflect.DeepEqual(s["BatchJobs"].Resource, []string{"arn:aws:batch:*:*:job/*"}) ||
+		!reflect.DeepEqual(s["BatchJobs"].Action, []string{"batch:CancelJob", "batch:TerminateJob"}) {
 		t.Fatalf("job actions = %+v", s["BatchJobs"])
 	}
 	if slices.Contains(s["BatchReads"].Action, "batch:SubmitJob") || !slices.Contains(s["BatchReads"].Action, "batch:DescribeJobs") {
 		t.Fatalf("reads = %+v", s["BatchReads"])
 	}
-	// A tagged submission checks TagResource on the queue and the
-	// definition (by name and by revision), and on nothing wider.
-	tags := s["BatchSubmitTags"]
-	if !reflect.DeepEqual(tags.Action, []string{"batch:TagResource"}) ||
-		!reflect.DeepEqual(tags.Resource, []string{
-			"arn:aws:batch:*:*:job-queue/mtlab-dev", "arn:aws:batch:*:*:job-queue/mtlab-eval",
-			"arn:aws:batch:*:*:job-definition/mtlab-replay-dev", "arn:aws:batch:*:*:job-definition/mtlab-replay-dev:*",
-		}) {
-		t.Fatalf("submit tags = %+v", tags)
-	}
 	// Nothing else rides along: no S3, no SSM.
-	if len(s) != 4 {
+	if len(s) != 3 {
 		t.Fatalf("statements = %v", s)
+	}
+}
+
+func TestBatchGrantsEachActionOnWhatItDidBefore(t *testing.T) {
+	// The queues and definitions are written once, not once for SubmitJob
+	// and again for TagResource; what is allowed on what is unchanged.
+	s := batchStatements(t, Allowlist{BatchQueues: []string{"q"}, BatchDefinitions: []string{"d"}})
+	got := map[string][]string{}
+	for _, st := range s {
+		for _, a := range st.Action {
+			got[a] = append(got[a], st.Resource...)
+		}
+	}
+	for a := range got {
+		sort.Strings(got[a])
+	}
+	const b = "arn:aws:batch:*:*:"
+	want := map[string][]string{
+		"batch:SubmitJob":    {b + "job-definition/d", b + "job-definition/d:*", b + "job-queue/q", b + "job/*"},
+		"batch:TagResource":  {b + "job-definition/d", b + "job-definition/d:*", b + "job-queue/q", b + "job/*"},
+		"batch:CancelJob":    {b + "job/*"},
+		"batch:TerminateJob": {b + "job/*"},
+		"batch:DescribeJobs": {"*"}, "batch:ListJobs": {"*"},
+		"batch:DescribeJobQueues": {"*"}, "batch:DescribeJobDefinitions": {"*"},
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("grants = %v", got)
+	}
+}
+
+func TestFourQueuesAndDefinitionsWithBucketsAndLogsFit(t *testing.T) {
+	// An env serving two kinds of jobs, a dev and an eval queue each: under
+	// STS's 2048 characters.
+	n := []string{"axis-tre-eval-mt-dev", "axis-tre-eval-mt-eval", "axis-tre-eval-sim-dev", "axis-tre-eval-sim-eval"}
+	p, err := Allowlist{
+		Buckets:     []string{"axis-tre-eval-data=read", "axis-tre-eval-work"},
+		BatchQueues: n, BatchDefinitions: n,
+		LogGroups: []string{"/axis-tre-eval/mt", "/axis-tre-eval/sim"},
+	}.Policy()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if size := len(p.JSON()); size > PolicyLimit {
+		t.Fatalf("%d characters", size)
 	}
 }
 
