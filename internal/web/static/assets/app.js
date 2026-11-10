@@ -4967,7 +4967,11 @@ function envConfig(s, cfg) {
 }
 
 function envForm(s, e) {
-  const name = e ? null : h('input', { placeholder: 'letters, digits, - and _', autocomplete: 'off' })
+  // Editing, the name is there to change too: the env is renamed, and its
+  // secret and the isolations exposing it follow.
+  const name = h('input', { placeholder: 'letters, digits, - and _', autocomplete: 'off', value: e ? e.name : '' })
+  // The name it has on the Mac, once a save has renamed it and then failed.
+  let was = e?.name
   // A service whose choices are looked up with its credential (git's
   // repositories) takes the secret here, first: the lookup needs it.
   const lookups = []
@@ -4986,7 +4990,7 @@ function envForm(s, e) {
   const lookupRequest = (f) => {
     const set = ctl ? ctl.patch(f.key).set : {}
     return {
-      env: e ? e.name : undefined,
+      env: e ? was : undefined,
       set: Object.fromEntries((f.lookup_with || []).filter((k) => k in set).map((k) => [k, set[k]])),
       secret: Object.fromEntries(secrets.map(({ f, el }) => [f, el.value.trim()]).filter(([, v]) => v)),
     }
@@ -5003,16 +5007,30 @@ function envForm(s, e) {
   const save = h('button', { class: 'btn primary' }, 'Save')
   save.addEventListener('click', async () => {
     err.textContent = ''
-    const n = e ? e.name : name.value.trim()
+    const n = name.value.trim()
     if (!n) { err.textContent = 'A name is required.'; return }
-    if (s.replaces && e?.exposed_to?.length && !await ask({
+    const renamed = e && n !== was
+    if (renamed && e.exposed_to?.length && !await ask({
+      title: `Rename ${s.name}/${was} to ${n}?`,
+      body: `${e.exposed_to.join(', ')} serve it under the new name from now on; agents there pick it up once their turn ends.`
+        + (s.replaces ? ' Their containers are replaced: running agents end and start again on their next message.' : ''),
+      ok: 'Rename',
+    })) return
+    if (!renamed && s.replaces && e?.exposed_to?.length && !await ask({
       title: `Restart ${e.exposed_to.join(', ')} with it?`,
       body: 'A changed folder is mounted only when the VM starts, so the container of each isolation that has it is replaced: running agents end and start again on their next message.',
       ok: 'Save and restart',
     })) return
     const secret = Object.fromEntries(secrets.map(({ f, el }) => [f, el.value.trim()]))
     try {
-      const v = await api(e ? 'PATCH' : 'POST', envPath(s.name, n), ctl.patch())
+      // The definition first, under the name it has: one it refuses is
+      // not renamed either.
+      let v = await api(e ? 'PATCH' : 'POST', envPath(s.name, e ? was : n), ctl.patch())
+      if (renamed) {
+        const r = await api('POST', envPath(s.name, was) + '/rename', { name: n })
+        v = { ...r, warnings: [...(v.warnings || []), ...(r.warnings || [])] }
+        was = n
+      }
       if (Object.values(secret).some(Boolean)) await api('PUT', envPath(s.name, n) + '/secret', secret)
       S.openForm = null
       toast([`${s.name}/${n} saved`, ...(v.warnings || [])].join(' — '))
@@ -5024,7 +5042,8 @@ function envForm(s, e) {
     }
   })
   const form = h('div', { class: 'subform' },
-    name ? h('div', { class: 'field' }, h('label', null, 'name'), name, h('span', { class: 'hint' }, 'what isolations expose')) : null,
+    h('div', { class: 'field' }, h('label', null, 'name'), name,
+      h('span', { class: 'hint' }, e ? 'what isolations expose; changing it renames the env, and its secret and exposures follow' : 'what isolations expose')),
     secrets.map(({ f, el }) => h('div', { class: 'field' }, h('label', null, f), el,
       h('span', { class: 'hint' }, 'Stored encrypted in the Mac’s credentials file, never shown again. The proxy uses it; the isolation never sees it.'))),
     ctl.rows, err,

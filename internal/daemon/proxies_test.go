@@ -19,6 +19,7 @@ import (
 	"github.com/hongzio/psps/internal/isolation"
 	"github.com/hongzio/psps/internal/proxy"
 	"github.com/hongzio/psps/internal/proxy/awsproxy"
+	"github.com/hongzio/psps/internal/proxy/skillproxy"
 	"github.com/hongzio/psps/internal/shimproto"
 	"github.com/hongzio/psps/internal/store"
 )
@@ -443,6 +444,53 @@ func TestARenamedIsolationsProxiesServeItUnderItsNewName(t *testing.T) {
 	}
 	if env := strings.Join(m.isolationEnv(testIsoID), "\n"); !strings.Contains(env, "ECHO_TOKEN="+toks["prod"]) {
 		t.Fatalf("the agents' token changed: %s", env)
+	}
+}
+
+// A renamed env is served under its new name by the isolations exposing
+// it, with its definition and their tokens for it; a skill's is refused.
+func TestARenamedEnvIsServedUnderItsNewName(t *testing.T) {
+	e := newTestEnv(t)
+	ctx := context.Background()
+	m, stop := e.daemon()
+	defer stop()
+	port := freePort(t)
+	m.SetProxies(proxy.NewRegistry(echoService{}, skillproxy.Service{Dir: t.TempDir()}), creds.TestStore(filepath.Join(t.TempDir(), "credentials")))
+	m.tunnelPort = func(int) int { return port }
+	if _, err := m.PutEnv(ctx, "echo", "prod", proxy.Patch{Set: map[string]any{"greeting": "hi"}}, true); err != nil {
+		t.Fatal(err)
+	}
+	m.PutEnv(ctx, "echo", "stage", proxy.Patch{}, true)
+	if _, err := m.Expose(ctx, "dev", "echo", api.Expose{Envs: []string{"prod"}}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := m.ensureIsolation(ctx, testIsoID); err != nil {
+		t.Fatal(err)
+	}
+	e.waitFor("the tunnel", func() bool { return m.tunnelStatus(testIsoID) == "up" })
+	toks, _ := e.st.Tokens(testIsoID, "echo")
+
+	if _, err := m.RenameEnv(ctx, "echo", "prod", "stage"); err == nil {
+		t.Fatal("renamed onto a name taken")
+	}
+	if _, err := m.RenameEnv(ctx, "echo", "prod", "no good"); err == nil {
+		t.Fatal("renamed to a name no env can have")
+	}
+	v, err := m.RenameEnv(ctx, "echo", "prod", "live")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if v.Name != "live" || len(v.ExposedTo) != 1 || v.ExposedTo[0] != "dev" {
+		t.Fatalf("view = %+v", v)
+	}
+	if got := ask(t, port, "ping"); got != "hi ping from dev" {
+		t.Fatalf("reply = %q", got)
+	}
+	if env := strings.Join(m.isolationEnv(testIsoID), "\n"); !strings.Contains(env, "ECHO_TOKEN="+toks["prod"]) {
+		t.Fatalf("the agents' token changed: %s", env)
+	}
+	if _, err := m.RenameEnv(ctx, "skill", "mine", "yours"); err == nil || !strings.Contains(err.Error(), "SKILL.md") {
+		t.Fatalf("a skill was renamed: %v", err)
 	}
 }
 

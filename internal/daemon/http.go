@@ -160,6 +160,14 @@ func (m *Manager) Handler() http.Handler {
 	mux.HandleFunc("DELETE /v1/envs/{service}/{name}", func(w http.ResponseWriter, r *http.Request) {
 		reply(w, nil, m.DeleteEnv(r.Context(), r.PathValue("service"), r.PathValue("name"), r.URL.Query().Get("force") == "1"))
 	})
+	mux.HandleFunc("POST /v1/envs/{service}/{name}/rename", func(w http.ResponseWriter, r *http.Request) {
+		var req api.EnvRename
+		if !decode(w, r, &req) {
+			return
+		}
+		v, err := m.RenameEnv(r.Context(), r.PathValue("service"), r.PathValue("name"), req.Name)
+		reply(w, v, err)
+	})
 	mux.HandleFunc("PUT /v1/envs/{service}/{name}/secret", func(w http.ResponseWriter, r *http.Request) {
 		var v map[string]string
 		if !decode(w, r, &v) {

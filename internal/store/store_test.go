@@ -784,3 +784,70 @@ func TestLastMessageAt(t *testing.T) {
 		t.Fatal("not noted as done")
 	}
 }
+
+func TestRenameEnvCarriesWhatNamesIt(t *testing.T) {
+	s := open(t)
+	now := time.Now()
+	for _, n := range []string{"dev", "ci"} {
+		if err := s.PutIsolation(Isolation{ID: n, Name: n, Container: "gero-" + n, Image: "img", CreatedAt: now}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	s.PutEnv(Env{Service: "datadog", Name: "prod", Config: []byte(`{"site":"datadoghq.com"}`)})
+	s.PutEnv(Env{Service: "datadog", Name: "stage"})
+	s.PutEnv(Env{Service: "pg", Name: "prod"})
+	s.PutExposure(Exposure{IsolationID: "dev", Service: "datadog", Envs: []string{"prod", "stage"}, Default: "prod"})
+	s.PutExposure(Exposure{IsolationID: "ci", Service: "datadog", Envs: []string{"stage"}, Default: "stage"})
+	s.PutExposure(Exposure{IsolationID: "ci", Service: "pg", Envs: []string{"prod"}, Default: "prod"})
+	toks, _ := s.EnsureTokens("dev", "datadog", []string{"prod", "stage"})
+
+	if _, err := s.RenameEnv("datadog", "prod", "stage"); !errors.Is(err, ErrExists) {
+		t.Fatalf("renamed onto a name taken: %v", err)
+	}
+	if _, err := s.RenameEnv("datadog", "gone", "live"); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("renamed an env that is not there: %v", err)
+	}
+	isos, err := s.RenameEnv("datadog", "prod", "live")
+	if err != nil || len(isos) != 1 || isos[0] != "dev" {
+		t.Fatalf("rename: %v %v", isos, err)
+	}
+	if e, err := s.Env("datadog", "live"); err != nil || string(e.Config) != `{"site":"datadoghq.com"}` {
+		t.Fatalf("live = %+v %v", e, err)
+	}
+	if _, err := s.Env("datadog", "prod"); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("prod is still there: %v", err)
+	}
+	// In place in the list, the default following, the token kept.
+	dev, _ := s.Exposure("dev", "datadog")
+	if len(dev.Envs) != 2 || dev.Envs[0] != "live" || dev.Envs[1] != "stage" || dev.Default != "live" {
+		t.Fatalf("dev = %+v", dev)
+	}
+	if got, _ := s.Tokens("dev", "datadog"); got["live"] != toks["prod"] || len(got) != 2 {
+		t.Fatalf("tokens = %v, were %v", got, toks)
+	}
+	// Another service's env of the same name is not touched.
+	if ci, _ := s.Exposure("ci", "pg"); ci.Envs[0] != "prod" || ci.Default != "prod" {
+		t.Fatalf("pg on ci = %+v", ci)
+	}
+
+	// A job runner's jobs and the team evals that are its jobs follow it.
+	s.PutEnv(Env{Service: "job", Name: "sim"})
+	if err := s.PutJob(Job{ID: "j1", Runner: "sim", Isolation: "ci", Caller: CallerOperator, Dir: "/w", Options: "{}", Status: JobQueued, RequestedAt: now}); err != nil {
+		t.Fatal(err)
+	}
+	s.CreateAgent(Agent{ID: "a1", Name: "a1", Kind: driver.Claude, IsolationID: "dev", Workdir: "/w", CreatedAt: now})
+	s.CreateTeam(Team{ID: "t1", Name: "lab", CreatedAt: now})
+	s.SetTeam("a1", "t1")
+	if err := s.PutLead(Lead{Team: "t1", Line: "a1", Settings: LeadSettings{EvalJob: "sim", EvalDir: "/w"}, Since: now}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.RenameEnv("job", "sim", "grader"); err != nil {
+		t.Fatal(err)
+	}
+	if j, _ := s.Job("j1"); j.Runner != "grader" {
+		t.Fatalf("job runner = %q", j.Runner)
+	}
+	if l, _ := s.Lead("t1"); l.Settings.EvalJob != "grader" || l.Settings.EvalDir != "/w" {
+		t.Fatalf("lead settings = %+v", l.Settings)
+	}
+}

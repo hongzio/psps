@@ -492,6 +492,11 @@ func (c *Client) EditEnv(ctx context.Context, service, name string, p proxy.Patc
 	return v, c.do(ctx, "PATCH", envPath(service, name), p, &v)
 }
 
+func (c *Client) RenameEnv(ctx context.Context, service, name, to string) (api.Env, error) {
+	var v api.Env
+	return v, c.do(ctx, "POST", envPath(service, name)+"/rename", api.EnvRename{Name: to}, &v)
+}
+
 func (c *Client) DeleteEnv(ctx context.Context, service, name string, force bool) error {
 	q := ""
 	if force {

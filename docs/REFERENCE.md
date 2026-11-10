@@ -453,8 +453,20 @@ psps env check git work                  # take its credential, ask GitHub who i
 psps iso expose dev git work             # dev now routes owner/repo with that credential
 psps iso services dev
 psps iso unexpose dev git
+psps env rename git work personal        # its secret and every isolation exposing it follow
 psps env help git                        # every flag
 ```
+
+Renaming an env (`psps env rename`, or the name in the web's Edit form)
+moves everything that names it at once: its `[service env]` section in the
+credentials file, each exposing isolation's list and default, their
+workspace tokens (so a planted token keeps working), and for a job runner
+its jobs and the team evals that are its jobs. What the isolation sees by
+the name changes with it, such as Datadog's `DD_API_KEY_<ENV>`; agents pick
+that up once their turn ends. A secret left by a removed env under the new
+name is refused rather than taken over: clear it first. A skill cannot be
+renamed, since its name is the one its SKILL.md gives; add it again under
+the new name.
 
 git with no env (`psps iso expose dev git`) forwards public repositories with
 no credential and refuses the rest. Inside, `GET $GITHUB_API_URL/user/repos`

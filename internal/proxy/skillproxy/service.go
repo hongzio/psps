@@ -339,6 +339,11 @@ func (s Service) Managed() []string {
 	return out
 }
 
+// FixedName: a skill is called what its SKILL.md and its folder say.
+func (Service) FixedName() string {
+	return "a skill's name is the one its SKILL.md gives; add it again under the new name and remove this one"
+}
+
 // Deleted removes the kept skill along with its env.
 func (s Service) Deleted(name string) error {
 	if CheckName(name) != nil {

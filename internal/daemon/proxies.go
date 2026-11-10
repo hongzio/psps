@@ -720,6 +720,70 @@ func (m *Manager) DeleteEnv(ctx context.Context, service, name string, force boo
 	return nil
 }
 
+// RenameEnv gives an env a new name. Its secret moves with it, and the
+// isolations exposing it serve it under the new one: their proxies are
+// rebuilt, and a service's mounts are remounted.
+func (m *Manager) RenameEnv(ctx context.Context, service, name, to string) (api.Env, error) {
+	svc, err := m.registry().Get(service)
+	if err != nil {
+		return api.Env{}, badRequest(err)
+	}
+	if err := proxy.ValidEnvName(to); err != nil {
+		return api.Env{}, badRequest(err)
+	}
+	if f, ok := svc.(proxy.FixedName); ok {
+		return api.Env{}, badRequest(fmt.Errorf("%s env %s cannot be renamed: %s", service, name, f.FixedName()))
+	}
+	cur, err := m.store.Env(service, name)
+	if err != nil {
+		return api.Env{}, err
+	}
+	if to == name {
+		return m.envView(cur), nil
+	}
+	if _, err := m.store.Env(service, to); err == nil {
+		return api.Env{}, httpError{409, fmt.Errorf("%s env %s already exists", service, to)}
+	}
+	// The secret first: a file that cannot take it leaves everything as it
+	// was, and one that took it is put back if the rest fails.
+	_, keeps := creds.Fields[service]
+	moved := keeps && m.creds != nil
+	if moved {
+		if err := m.creds.Rename(service, name, to); err != nil {
+			var d *creds.Denied
+			if errors.As(err, &d) {
+				return api.Env{}, badRequest(err)
+			}
+			return api.Env{}, err
+		}
+	}
+	holders, err := m.store.RenameEnv(service, name, to)
+	if err != nil {
+		if moved {
+			if back := m.creds.Rename(service, to, name); back != nil {
+				m.log.Printf("env rename %s/%s: putting its secret back: %v", service, name, back)
+			}
+		}
+		return api.Env{}, err
+	}
+	m.log.Printf("env %s/%s is %s/%s now", service, name, service, to)
+	var warnings []string
+	if _, ok := svc.(proxy.Forwarder); ok {
+		m.reforward()
+	}
+	if _, ok := svc.(proxy.Mounter); ok {
+		warnings = append(warnings, m.remountAll(ctx, holders)...)
+	}
+	m.servicesChanged(ctx, holders...)
+	e, err := m.store.Env(service, to)
+	if err != nil {
+		return api.Env{}, err
+	}
+	v := m.envView(e)
+	v.Warnings = warnings
+	return v, nil
+}
+
 // SetSecret stores an env's credential, write-only: nothing reads a secret
 // back out through the API. nil values remove it.
 func (m *Manager) SetSecret(service, name string, values map[string]string) error {
