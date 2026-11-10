@@ -415,6 +415,16 @@ dns = ["1.1.1.1", "8.8.8.8"]
 The image build and containers made from then on use them; an existing
 isolation takes them on `psps iso upgrade`.
 
+The fence measurement also tries 1.1.1.1:443 and 8.8.8.8:443, to tell a
+resolver that fails from an isolation with no internet at all. That is not
+a DNS setting: macOS InternetSharing, the NAT behind every container
+network, can wedge while a network is made, leaving the isolation's
+gateway unanswered. `psps iso ls` then says "no internet", and
+`container system stop && container system start` brings it back,
+restarting every isolation (psps recreates them from their volumes; `psps
+iso start NAME` for any left stopped). Killing InternetSharing instead
+drops every network's bridge.
+
 ## Credential proxies
 
 An agent can **use** a credential without being able to **read** it: the
