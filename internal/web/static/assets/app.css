@@ -233,8 +233,9 @@ body.resizing { cursor: col-resize; user-select: none; -webkit-user-select: none
 }
 .team-run:hover { color: var(--muted); }
 .team-run.stopped, .team-run.paused { color: var(--warn); }
-.lead-terms[hidden], .lead-teams[hidden] { display: none; }
+.lead-terms[hidden], .lead-teams[hidden], .lead-terms .dialog-field[hidden] { display: none; }
 .lead-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 0 12px; }
+.lead-grid > .dialog-field { align-content: start; }
 .dialog-field > .dropdown { min-width: 0; }
 .field-hint { color: var(--faint); font-size: 12px; font-weight: 400; }
 .dialog p.field-hint { margin-top: 10px; font-size: 12px; }
