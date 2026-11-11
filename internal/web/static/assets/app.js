@@ -2029,7 +2029,7 @@ async function editTeam(t) {
     noBudget,
     field('Eval', evalCmd, 'A shell command; its last "SCORE: x" line is the score, higher better. In the lead\'s isolation it runs as the agents, who can change it and what it reads.' +
       (st.eval_set_by ? ` Agent ${st.eval_set_by} set it, through control; saved changed, it is yours.` : '')),
-    field('Eval isolation', evalIso, 'Another isolation, with no services but control, scores a copy of the eval directory made for each eval, as a user who can change nothing else there: out of the agents\' reach. Keep the grader and its data there, and take only what is scored from the copy; ~ in the eval is then an empty home, so give the grader\'s path in full. The lead hears only the score. An agent of yours there runs as the grader\'s owner: keep it from what the eval leaves.'),
+    field('Eval isolation', evalIso, 'Another isolation, with no services but control, scores a copy of the eval directory made for each eval, as a user who can change nothing else there: out of the agents\' reach. Keep the evaluator and its data there, and take only what is scored from the copy; ~ in the eval is then an empty home, so give the evaluator\'s path in full. The lead hears only the score. An agent of yours there runs as the evaluator\'s owner: keep it from what the eval leaves.'),
     h('div', { class: 'lead-grid' },
       field('Eval directory', evalDir), field('Eval limit (min)', evalMin), field('Target', target, 'ends the run once reached'), field('Patience (evals)', patience, 'without a new best, end the run')),
     compactFirst,

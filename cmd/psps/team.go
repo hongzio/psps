@@ -376,7 +376,7 @@ The eval
     each eval psps copies --eval-dir from the lead's isolation to /eval/work
     there and runs the eval as a user of its own (uid 1001, its home
     /eval/home, both made anew), who can read but not change the agent user's
-    files. Keep the grader there (psps iso shell ISO) and give its path in
+    files. Keep the evaluator there (psps iso shell ISO) and give its path in
     full. The lead hears the score alone; what the eval printed is yours.
 
   Or, with --eval-job RUNNER in place of --eval, the eval is a job of one of
@@ -388,7 +388,7 @@ The eval
 
   An eval set or changed scores no round that ended before it: its first
   eval comes after the next round, or with psps team eval. The README's Teams
-  section has a grader to start from.
+  section has an evaluator to start from.
 
 A round's approval
 

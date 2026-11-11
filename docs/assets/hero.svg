@@ -82,7 +82,7 @@
 
   <!-- eval -->
   <rect x="664" y="310" width="344" height="134" rx="10" fill="#161b22" stroke="#3d444d"/>
-  <text x="682" y="334" class="mono" font-size="12" fill="#8b949e">eval per round · in a grader isolation</text>
+  <text x="682" y="334" class="mono" font-size="12" fill="#8b949e">eval per round · in an evaluator isolation</text>
   <g fill="#3d444d">
     <rect x="684" y="394" width="24" height="30" rx="3"/>
     <rect x="724" y="382" width="24" height="42" rx="3"/>

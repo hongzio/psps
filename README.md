@@ -117,7 +117,7 @@ script, then walk away.**
 ```sh
 psps iso expose dev team
 psps team lead lab tara --budget 5M \
-     --eval-iso grader --eval 'sh /home/agent/grader/run.sh' --patience 3
+     --eval-iso evaluator --eval 'sh /home/agent/evaluator/run.sh' --patience 3
 psps agent send tara '/psps-team Build what SPEC.md describes.'
 ```
 
@@ -128,7 +128,7 @@ flowchart LR
   LEAD -->|"hires"| A2["codex: tests"]
   LEAD -->|"hires"| A3["claude: docs"]
   A1 & A2 & A3 -->|"turn ends: last answer"| LEAD
-  LEAD -->|"round over"| EVAL["eval in a<br/>grader isolation"]
+  LEAD -->|"round over"| EVAL["eval in an<br/>evaluator isolation"]
   EVAL -->|"SCORE only"| LEAD
   EVAL -.->|"best · target · patience · budget"| STOP(["psps stops the run"])
 ```
@@ -142,8 +142,8 @@ Agent Teams, [arXiv 2610.36848](https://arxiv.org/abs/2610.36848)).
 psps keeps the run within your terms:
 
 - 🎯 **Scored where the agents can't reach.** Each round, psps copies the
-  work into a separate grader isolation and runs your eval there, as a user
-  that can't change the grader. The lead hears only the score.
+  work into a separate evaluator isolation and runs your eval there, as a user
+  that can't change the evaluator. The lead hears only the score.
 - 💸 **Within a budget.** The run stops when the token budget is spent. On a
   subscription, `--plan-ceiling` stops the lead from starting agents once a
   plan window is nearly used up.
@@ -248,8 +248,8 @@ psps iso verify dev                             # check every guarantee, from in
 > **14:00.** A Codex agent takes the refactor and a Claude agent takes the
 > tests. They mail each other about the interface. You don't relay a word.
 >
-> **18:00.** You hand `tara` a spec, a 5M-token budget and a grader. You close
-> the laptop.
+> **18:00.** You hand `tara` a spec, a 5M-token budget and an evaluator. You
+> close the laptop.
 >
 > **08:00 the next day.** `psps team show lab` lists six rounds, the best
 > score after round 4, and how many tokens it spent. Nothing on your Mac was
