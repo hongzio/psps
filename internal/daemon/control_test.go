@@ -271,7 +271,7 @@ func TestControlSetsATeamsEvalToRunWhereItMayRunCommands(t *testing.T) {
 		t.Helper()
 		return mailAs(t, m, from.IsolationID, from.ID, "PUT", "/control/teams/lab/eval", body)
 	}
-	if code, out := set(helper, `{"eval": "sh /home/agent/grader/run.sh", "eval_dir": "/home/agent"}`); code != http.StatusForbidden || !strings.Contains(out, "the lead's working directory") {
+	if code, out := set(helper, `{"eval": "sh /home/agent/evaluator/run.sh", "eval_dir": "/home/agent"}`); code != http.StatusForbidden || !strings.Contains(out, "the lead's working directory") {
 		t.Fatalf("a directory outside the lead's: %d %s", code, out)
 	}
 	if code, out := set(helper, `{"eval": "x", "eval_dir": "`+boss.Workdir+`/../.."}`); code != http.StatusForbidden {
@@ -298,13 +298,13 @@ func TestControlSetsATeamsEvalToRunWhereItMayRunCommands(t *testing.T) {
 	if err := m.store.SetLeadDirty(team.ID, true); err != nil {
 		t.Fatal(err)
 	}
-	code, out := set(helper, `{"eval": "sh /home/agent/grader/run.sh", "eval_dir": "`+boss.Workdir+`/app", "eval_minutes": 5}`)
+	code, out := set(helper, `{"eval": "sh /home/agent/evaluator/run.sh", "eval_dir": "`+boss.Workdir+`/app", "eval_minutes": 5}`)
 	if code != 200 {
 		t.Fatalf("%d %s", code, out)
 	}
 	run, _ := m.TeamRun("lab")
 	s := run.Settings
-	if s.Eval != "sh /home/agent/grader/run.sh" || s.EvalDir != boss.Workdir+"/app" || s.EvalMinutes != 5 || run.EvalIsolation != "ev" ||
+	if s.Eval != "sh /home/agent/evaluator/run.sh" || s.EvalDir != boss.Workdir+"/app" || s.EvalMinutes != 5 || run.EvalIsolation != "ev" ||
 		s.EvalSetBy != "helper in isolation ev" || s.Budget != 1_000_000 || run.Stopped != "the budget is used" {
 		t.Fatalf("%+v", run)
 	}
@@ -323,7 +323,7 @@ func TestControlSetsATeamsEvalToRunWhereItMayRunCommands(t *testing.T) {
 	if code, out := set(helper, `{"eval_minutes": 60}`); code != 200 {
 		t.Fatalf("%d %s", code, out)
 	}
-	if run, _ = m.TeamRun("lab"); run.EvalIsolation != "ev2" || run.Settings.EvalMinutes != 60 || run.Settings.Eval != "sh /home/agent/grader/run.sh" {
+	if run, _ = m.TeamRun("lab"); run.EvalIsolation != "ev2" || run.Settings.EvalMinutes != 60 || run.Settings.Eval != "sh /home/agent/evaluator/run.sh" {
 		t.Fatalf("%+v", run)
 	}
 	if _, err := m.Expose(ctx, "ev", "control", api.Expose{Envs: []string{"grade"}, Settings: proxy.Patch{Set: map[string]any{"approvals": "ask"}}}); err != nil {
@@ -335,7 +335,7 @@ func TestControlSetsATeamsEvalToRunWhereItMayRunCommands(t *testing.T) {
 
 	// It reads the run as text, as psps team show prints it.
 	code, out = mailAs(t, m, helper.IsolationID, helper.ID, "GET", "/control/teams/lab/run?format=text", "")
-	if code != 200 || !strings.HasPrefix(out, `team "lab", led by `) || !strings.Contains(out, "  eval   sh /home/agent/grader/run.sh (in isolation ev2") || strings.HasPrefix(out, "{") {
+	if code != 200 || !strings.HasPrefix(out, `team "lab", led by `) || !strings.Contains(out, "  eval   sh /home/agent/evaluator/run.sh (in isolation ev2") || strings.HasPrefix(out, "{") {
 		t.Fatalf("as text: %d %s", code, out)
 	}
 	if code, out := mailAs(t, m, helper.IsolationID, helper.ID, "GET", "/control/teams/lab/run?format=yaml", ""); code != http.StatusBadRequest {

@@ -110,7 +110,7 @@ func (m *Model) leadForm(g liveGroup, run *api.TeamRun) *form {
 		}
 		p.evalIsos, evalIn = append(p.evalIsos, iso.Name), append(evalIn, iso.Name)
 	}
-	evalIso := selectField("Eval isolation", evalIn, "another, with no services but control, scores a copy of the eval directory as a user who can change nothing else there; keep the grader there (its path in full: ~ is an empty home), take only the work from the copy; the lead hears only the score; an agent of yours there runs as the grader's owner")
+	evalIso := selectField("Eval isolation", evalIn, "another, with no services but control, scores a copy of the eval directory as a user who can change nothing else there; keep the evaluator there (its path in full: ~ is an empty home), take only the work from the copy; the lead hears only the score; an agent of yours there runs as the evaluator's owner")
 	evalIso.idx = evalPick
 	text := func(label, placeholder, hint, value string) *field {
 		f := textField(label, placeholder, hint)

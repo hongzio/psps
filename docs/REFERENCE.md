@@ -814,7 +814,7 @@ psps iso expose dev team                   # dev's agents get a team address
 psps team lead lab tara                    # tara leads team lab (it joins it)
 psps team lead lab tara --budget 5M        # within 5M tokens
 psps team lead lab tara --eval 'make bench | tail -1' --eval-dir ~/work/app --patience 3
-psps team lead lab tara --eval-iso grader  # the eval runs in grader, on a copy
+psps team lead lab tara --eval-iso evaluator # the eval runs in evaluator, on a copy
 psps team lead lab tara --compact-first    # /compact the lead before it hears a round's score
 psps team lead lab tara --approver vera    # vera approves each round before its eval
 psps team approve lab 'looks sound'        # or: psps team reject lab 'why'
@@ -910,17 +910,17 @@ at most (20), in one of two places:
   left running there, copies `--eval-dir` from the lead's isolation to
   `/eval/work`, and runs the eval there as a user of its own (uid 1001, its
   home `/eval/home`, both made anew: `~` in the eval is that empty home, so
-  give the grader's path in full), who can read but not change what you
+  give the evaluator's path in full), who can read but not change what you
   put in the isolation: the agent user's files (`psps iso shell`) and the
   image's. It has the internet, as any isolation does, and not the Mac or
-  the LAN. Keep the grader and its data there, and take only what is
+  the LAN. Keep the evaluator and its data there, and take only what is
   scored from the copy: an eval that runs the copy's own benchmark or tests
   is the agents' to change. Before each eval psps also removes whatever
   that user left anywhere it can write, System V IPC included, so nothing
   passes from one eval to the next. The lead hears only the score: what the
-  eval printed, which what is scored could fill with the grader, is yours
+  eval printed, which what is scored could fill with the evaluator, is yours
   (`psps team show`, the team's dialog and page). A service you turn on
-  there anyway, say aws to record the grader's data, warns that the eval is
+  there anyway, say aws to record the evaluator's data, warns that the eval is
   refused until it is off again; each refused one shows as `not run` and
   counts for no patience.
 
@@ -943,23 +943,23 @@ to score: it shows as `not run`, and counts for no patience. One the daemon
 stopped before it ran, while it readied the eval isolation or copied the
 work, is run again.
 
-A grader for an eval isolation, say `grader`, lives in its agent user's home:
-make it in `psps iso shell grader`, where `~` is `/home/agent` (clone it,
+An evaluator for an eval isolation, say `evaluator`, lives in its agent
+user's home: make it in `psps iso shell evaluator`, where `~` is `/home/agent` (clone it,
 or write it there). The eval user reads and runs it and cannot change it.
 An agent of yours may work there too, to set the isolation up or read the
-results, but it runs as the agent user, the grader's owner: what it reads of
+results, but it runs as the agent user, the evaluator's owner: what it reads of
 what the eval leaves (`/eval`, the output) is the work's to write, so set it
 to read only, by hand. Control is the one service it may have there: its
 address is in each agent's process alone, which the eval's user cannot
 read, so long as the agent does not write it to a file.
-Run with `--eval-iso grader --eval 'sh /home/agent/grader/run.sh'`:
+Run with `--eval-iso evaluator --eval 'sh /home/agent/evaluator/run.sh'`:
 
 ```sh
 #!/bin/sh
-# /home/agent/grader/run.sh. It starts in /eval/work, the copy of --eval-dir;
+# /home/agent/evaluator/run.sh. It starts in /eval/work, the copy of --eval-dir;
 # $HOME is /eval/home, empty.
 set -e
-G=/home/agent/grader                   # yours: the eval reads it, cannot change it
+G=/home/agent/evaluator                # yours: the eval reads it, cannot change it
 npm ci >"$HOME/build.log" 2>&1         # the work's own build, its output kept apart
 pass=0 total=0
 for c in "$G"/cases/*.in; do           # your cases, never the copy's
@@ -971,13 +971,13 @@ echo "SCORE: $((100 * pass / total))"  # last, after all the work printed
 ```
 
 What it measures with (the cases, the expected output, the benchmark) is
-the grader's; only what is measured comes from the copy. The work's build
+the evaluator's; only what is measured comes from the copy. The work's build
 may be the work's own, as it is part of the work. The eval user's `PATH` is
 the image's: a tool you installed in the agent's home (mise,
 `~/.local/bin`) needs its path in full, and with `~` empty each eval fetches
 its caches anew. While the eval runs, the work runs as the same user as the
-grader, so a work bent on it can still reach what the grader writes then
-(`$HOME`, `/tmp`) and what it prints; it cannot reach the grader's files,
+evaluator, so a work bent on it can still reach what the evaluator writes then
+(`$HOME`, `/tmp`) and what it prints; it cannot reach the evaluator's files,
 or anything the next eval starts from.
 
 Either way the eval runs the agents' work, which can print a `SCORE:` line
@@ -1100,7 +1100,7 @@ as that agent:
   only where an agent it made would run under auto: in its own isolation
   when the caller runs under auto or never, in another when you also gave
   the exposure `--approvals auto`. Reaching an isolation this way is reaching
-  its files and services, an eval isolation's grader and data among them.
+  its files and services, an eval isolation's evaluator and data among them.
   The script can be the request's body itself, as text, with `dir` and
   `seconds` in the query, so it needs no quoting or encoding; then what it
   printed comes back as text, ending in `[psps: exit N]` where N is not 0.

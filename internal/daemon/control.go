@@ -1286,7 +1286,7 @@ func (m *Manager) controlRoutes(mux *http.ServeMux, iso string) {
 	})
 	route("PUT /teams/{team}/eval", "team.evalset", func(w http.ResponseWriter, r *http.Request, c controlCall) {
 		var req controlEval
-		if err := controlJSON(r, &req, `{"eval": "sh /home/agent/grader/run.sh", "eval_dir": "...", "eval_minutes": 20}`); err != nil {
+		if err := controlJSON(r, &req, `{"eval": "sh /home/agent/evaluator/run.sh", "eval_dir": "...", "eval_minutes": 20}`); err != nil {
 			reply(w, nil, err)
 			return
 		}

@@ -780,18 +780,18 @@ func TestAnEvalRunsInItsIsolationOnACopyOfTheWork(t *testing.T) {
 
 	// What it prints is the operator's alone: what is scored could print
 	// the eval, or what it reads, for the lead.
-	if _, err := m.SetLead(ctx, "lab", api.PutLead{Agent: "boss", Eval: ptr("printf 'the-%s-says' grader; exit 3")}); err != nil {
+	if _, err := m.SetLead(ctx, "lab", api.PutLead{Agent: "boss", Eval: ptr("printf 'the-%s-says' evaluator; exit 3")}); err != nil {
 		t.Fatal(err)
 	}
 	m.EvalTeam("lab")
 	e.waitFor("the unscored eval's news", func() bool { return len(news(e, boss.ID)) == 2 })
-	if n := news(e, boss.ID)[1]; strings.Contains(n, "the-grader-says") || !strings.Contains(n, "Its output is your operator's alone, as it ran in an isolation of its own. psps says: the eval: exit status 3") {
+	if n := news(e, boss.ID)[1]; strings.Contains(n, "the-evaluator-says") || !strings.Contains(n, "Its output is your operator's alone, as it ran in an isolation of its own. psps says: the eval: exit status 3") {
 		t.Fatal(n)
 	}
-	if _, out := teamAs(t, m, boss.ID, "GET", "", ""); strings.Contains(out, "the-grader-says") || !strings.Contains(out, `"private":true`) {
+	if _, out := teamAs(t, m, boss.ID, "GET", "", ""); strings.Contains(out, "the-evaluator-says") || !strings.Contains(out, `"private":true`) {
 		t.Fatalf("the lead's view: %s", out)
 	}
-	if run, _ := m.TeamRun("lab"); !strings.Contains(run.Evals[1].Output, "the-grader-says") || !run.Evals[1].Private {
+	if run, _ := m.TeamRun("lab"); !strings.Contains(run.Evals[1].Output, "the-evaluator-says") || !run.Evals[1].Private {
 		t.Fatalf("the operator's view: %+v", run.Evals)
 	}
 

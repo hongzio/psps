@@ -123,7 +123,7 @@ func TestMigrationMarksTheEvalsPspsCouldNotRun(t *testing.T) {
 	for _, out := range []string{
 		"isolation sim cannot run the eval: it has the aws service, and an eval isolation has none but control: what is scored could use it",
 		"isolation sim has no verified network fence: not verified yet",
-		"Traceback: the grader cannot run the eval: its own words",
+		"Traceback: the evaluator cannot run the eval: its own words",
 	} {
 		db.Exec(`INSERT INTO team_evals (team, at, took_ms, score, why, output) VALUES ('lab', '2026-11-02T00:00:00Z', 0, NULL, 'the round ended', ?)`, out)
 	}
@@ -143,7 +143,7 @@ func TestMigrationMarksTheEvalsPspsCouldNotRun(t *testing.T) {
 	for _, e := range evals {
 		got = append(got, e.NotRun)
 	}
-	// Only psps's refusal, all of the output, marks one: not a grader's
+	// Only psps's refusal, all of the output, marks one: not an evaluator's
 	// words like it, nor an eval with a score.
 	if fmt.Sprint(got) != "[true true false false]" {
 		t.Fatalf("not run: %v", got)
@@ -841,13 +841,13 @@ func TestRenameEnvCarriesWhatNamesIt(t *testing.T) {
 	if err := s.PutLead(Lead{Team: "t1", Line: "a1", Settings: LeadSettings{EvalJob: "sim", EvalDir: "/w"}, Since: now}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := s.RenameEnv("job", "sim", "grader"); err != nil {
+	if _, err := s.RenameEnv("job", "sim", "evaluator"); err != nil {
 		t.Fatal(err)
 	}
-	if j, _ := s.Job("j1"); j.Runner != "grader" {
+	if j, _ := s.Job("j1"); j.Runner != "evaluator" {
 		t.Fatalf("job runner = %q", j.Runner)
 	}
-	if l, _ := s.Lead("t1"); l.Settings.EvalJob != "grader" || l.Settings.EvalDir != "/w" {
+	if l, _ := s.Lead("t1"); l.Settings.EvalJob != "evaluator" || l.Settings.EvalDir != "/w" {
 		t.Fatalf("lead settings = %+v", l.Settings)
 	}
 }

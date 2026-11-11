@@ -1212,18 +1212,18 @@ func TestATeamsLeadAndTermsAreSetOnItsPage(t *testing.T) {
 	// Without a budget the field is empty, and saved so: none. The eval's
 	// isolation is chosen as it was, another than the lead's.
 	h.be.run.Settings.Budget = 0
-	h.be.run.EvalIsolation = "grader"
-	h.m.isolations = append(h.m.isolations, api.Isolation{Isolation: store.Isolation{Name: "grader", Container: "gero-grader"}})
+	h.be.run.EvalIsolation = "evaluator"
+	h.m.isolations = append(h.m.isolations, api.Isolation{Isolation: store.Isolation{Name: "evaluator", Container: "gero-evaluator"}})
 	h.m.sel = "team:t-lab"
 	h.key("l")
 	if v := h.m.View(); !strings.Contains(v, "spent 0 tokens, no budget") {
 		t.Fatalf("page\n%s", v)
 	}
-	if got := strings.Join(h.m.teamPage.evalIsos, ","); got != ",grader" {
+	if got := strings.Join(h.m.teamPage.evalIsos, ","); got != ",evaluator" {
 		t.Fatalf("eval isolations offered: %q", got)
 	}
 	h.key("ctrl+s")
-	if got := strings.Join(h.be.teams, " | "); !strings.Contains(got, `lead t-lab {"agent":"aaaa","budget":0,`) || !strings.Contains(got, `"eval_isolation":"grader"`) {
+	if got := strings.Join(h.be.teams, " | "); !strings.Contains(got, `lead t-lab {"agent":"aaaa","budget":0,`) || !strings.Contains(got, `"eval_isolation":"evaluator"`) {
 		t.Fatalf("teams %s", got)
 	}
 }

@@ -1459,7 +1459,7 @@ func (m *Manager) readyForEval(ctx context.Context, iso store.Isolation) error {
 // lead in leadIso; "" if it can. What is scored runs there with the
 // internet at hand, so no service whose credentials it could use may be
 // there. Agents may: the operator's own, set to work there by hand, which
-// run as the agent user, the grader's owner, and are the operator's to
+// run as the agent user, the evaluator's owner, and are the operator's to
 // keep from what the eval leaves. So may control, theirs: its address is
 // each agent's own, in its process's environment, which the eval's user
 // cannot read, and nothing of it is in a file there.
