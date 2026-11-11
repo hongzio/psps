@@ -1971,16 +1971,25 @@ async function editTeam(t) {
   }
   const evalIso = dropdown(evalIsos(), { value: run?.eval_isolation || '', label: 'Eval isolation' })
   lead.addEventListener('change', () => evalIso.setOptions(evalIsos()))
+  // The eval is a command or a job of a runner's (a job env), which says
+  // itself where it runs and for how long.
+  if (!S.envs.some((e) => e.service === 'job')) S.envs = await api('GET', '/v1/envs').catch(() => null) || S.envs
+  const runners = S.envs.filter((e) => e.service === 'job')
+  const jobGone = st.eval_job && !runners.some((e) => e.name === st.eval_job) ? [{ value: st.eval_job, label: `${st.eval_job} (no such runner)` }] : []
+  const evalJob = dropdown([{ value: '', label: 'None: a shell command' }, ...jobGone,
+    ...runners.map((e) => ({ value: e.name, label: e.config?.isolation ? `${e.name} · in ${e.config.isolation}` : e.name }))],
+  { value: st.eval_job || '', label: 'Eval job' })
   const evalMin = input(st.eval_minutes, '20', 'numeric')
   const target = input(st.target, 'none', 'decimal')
   const patience = input(st.patience, '3', 'numeric')
   const field = (label, el, hint) => h('label', { class: 'dialog-field' }, label, el, hint ? h('span', { class: 'field-hint' }, hint) : null)
+  const evalMinField = field('Eval limit (min)', evalMin)
   // Without a budget, what holds the run back, and what ends it.
   const noBudget = h('p', { class: 'field-hint' })
   const warn = () => {
     noBudget.hidden = parseTokens(budget.value) !== 0
     noBudget.textContent = "No budget: only the plan ceiling holds the run back, and it counts the account's whole use, yours too; lower it to keep some of the week." +
-      (evalCmd.value.trim() ? '' : ' With no eval either, psps never ends the run or wakes the lead: the team spends while the lead keeps work going, and stands idle once it stops.')
+      (evalCmd.value.trim() || evalJob.value ? '' : ' With no eval either, psps never ends the run or wakes the lead: the team spends while the lead keeps work going, and stands idle once it stops.')
   }
   budget.addEventListener('input', warn)
   evalCmd.addEventListener('input', warn)
@@ -2023,15 +2032,23 @@ async function editTeam(t) {
   const offIn = h('span')
   const teamsOff = h('label', { class: 'check lead-teams', hidden: true }, turnOn, h('span', null, 'Turn teams on in ', offIn,
     ", the lead's isolation: only there does it act. Its agents' processes are replaced when next idle; their sessions are kept."))
+  const evalCmdField = field('Eval', evalCmd, 'A shell command; its last "SCORE: x" line is the score, higher better. In the lead\'s isolation it runs as the agents, who can change it and what it reads.' +
+    (st.eval_set_by ? ` Agent ${st.eval_set_by} set it, through control; saved changed, it is yours.` : ''))
+  const evalIsoField = field('Eval isolation', evalIso, 'Another isolation, with no services but control, scores a copy of the eval directory made for each eval, as a user who can change nothing else there: out of the agents\' reach. Keep the evaluator and its data there, and take only what is scored from the copy; ~ in the eval is then an empty home, so give the evaluator\'s path in full. The lead hears only the score. An agent of yours there runs as the evaluator\'s owner: keep it from what the eval leaves.')
+  // A job's runner has its own isolation and limit, so a command's fields
+  // go while one is chosen.
+  const evalKind = () => { evalCmdField.hidden = evalIsoField.hidden = evalMinField.hidden = !!evalJob.value; warn() }
+  evalJob.addEventListener('change', evalKind)
+  evalKind()
   const terms = h('div', { class: 'lead-terms' },
     h('div', { class: 'lead-grid' },
       field('Budget (tokens)', budget), field('Live at most', maxLive), field('Turn limit (min)', turn), field('Plan ceiling (%)', ceiling)),
     noBudget,
-    field('Eval', evalCmd, 'A shell command; its last "SCORE: x" line is the score, higher better. In the lead\'s isolation it runs as the agents, who can change it and what it reads.' +
-      (st.eval_set_by ? ` Agent ${st.eval_set_by} set it, through control; saved changed, it is yours.` : '')),
-    field('Eval isolation', evalIso, 'Another isolation, with no services but control, scores a copy of the eval directory made for each eval, as a user who can change nothing else there: out of the agents\' reach. Keep the evaluator and its data there, and take only what is scored from the copy; ~ in the eval is then an empty home, so give the evaluator\'s path in full. The lead hears only the score. An agent of yours there runs as the evaluator\'s owner: keep it from what the eval leaves.'),
+    field('Eval job', evalJob, 'A runner (Services, job) the eval is a job of, on a copy of the eval directory: the runner says where it runs and for how long, and its result\'s "score" is the score. The lead hears only the score.'),
+    evalCmdField,
+    evalIsoField,
     h('div', { class: 'lead-grid' },
-      field('Eval directory', evalDir), field('Eval limit (min)', evalMin), field('Target', target, 'ends the run once reached'), field('Patience (evals)', patience, 'without a new best, end the run')),
+      field('Eval directory', evalDir), evalMinField, field('Target', target, 'ends the run once reached'), field('Patience (evals)', patience, 'without a new best, end the run')),
     compactFirst,
     approval,
     teamsOff)
@@ -2068,9 +2085,11 @@ async function editTeam(t) {
       if (!/^\d+$/.test(v)) throw new Error(`${what} is a whole number, not "${v}".`)
       req[k] = Number(v)
     }
-    req.eval = evalCmd.value.trim()
+    // A job, or a command: the one not chosen is sent empty.
+    req.eval_job = evalJob.value
+    req.eval = evalJob.value ? '' : evalCmd.value.trim()
     if (evalDir.value.trim()) req.eval_dir = evalDir.value.trim()
-    req.eval_isolation = evalIso.value
+    req.eval_isolation = evalJob.value ? '' : evalIso.value
     const tv = target.value.trim()
     if (!tv) req.no_target = true
     else if (Number.isFinite(Number(tv))) req.target = Number(tv)
