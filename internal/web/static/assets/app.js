@@ -1310,7 +1310,6 @@ function renderSidebar() {
       S.showArchived ? h('div', { class: 'archived-list' }, archivedRows()) : null),
     h('div', { class: 'side-bottom' }),
   )
-  if (scrolled) el.querySelector('.agent-list').scrollTop = scrolled
   // What was picked and is out of sight now, folded away or gone, is let go.
   if (S.pick) {
     const shown = new Set(pickIDs(S.pick.group))
@@ -1318,6 +1317,10 @@ function renderSidebar() {
     if (!shown.has(S.pick.last)) S.pick.last = null
   }
   paintPick()
+  // Scrolled back once the foot paintPick puts in is there: before, the
+  // list was the foot's height taller, and one scrolled to its end came
+  // back short of it by that much.
+  if (scrolled) el.querySelector('.agent-list').scrollTop = scrolled
   placeIconPick()
 }
 
