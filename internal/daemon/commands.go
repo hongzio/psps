@@ -231,6 +231,36 @@ exit 0`
 // Dirs completes a directory typed in the isolation: the directories in
 // the part up to its last slash whose names begin with the rest. A hidden
 // one is offered once a dot is typed. "" is the home.
+// Models are what kind's CLI said it runs in the isolation, or, before it
+// has there, in another: a new agent's model is picked from them, before it
+// has a process to ask. A model they lack can still be given.
+func (m *Manager) Models(isoName string, kind driver.Kind) (api.Models, error) {
+	if kind != driver.Claude && kind != driver.Codex {
+		return api.Models{}, badRequest(fmt.Errorf("no agent kind %q", kind))
+	}
+	iso, err := m.isolationNamed(isoName)
+	if err != nil {
+		return api.Models{}, err
+	}
+	ms, from, err := m.store.CLIModels(kind, iso.ID)
+	if err != nil {
+		return api.Models{}, err
+	}
+	out := api.Models{Models: []driver.Choice{}}
+	for _, md := range ms {
+		if md.Value != "default" {
+			out.Models = append(out.Models, md)
+		}
+	}
+	if from != "" && from != iso.ID {
+		out.From = from
+		if o, err := m.store.Isolation(from); err == nil {
+			out.From = o.Name
+		}
+	}
+	return out, nil
+}
+
 func (m *Manager) Dirs(ctx context.Context, isoName, typed string) (api.Dirs, error) {
 	iso, err := m.isolationNamed(isoName)
 	if err != nil {

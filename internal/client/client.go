@@ -218,6 +218,12 @@ func (c *Client) Files(ctx context.Context, id string) (api.Files, error) {
 	return v, c.do(ctx, "GET", "/v1/agents/"+url.PathEscape(id)+"/files", nil, &v)
 }
 
+// Models are the models kind's CLI said it runs in an isolation.
+func (c *Client) Models(ctx context.Context, iso string, kind driver.Kind) (api.Models, error) {
+	var v api.Models
+	return v, c.do(ctx, "GET", "/v1/isolations/"+url.PathEscape(iso)+"/models?kind="+url.QueryEscape(string(kind)), nil, &v)
+}
+
 // Dirs completes a directory typed in an isolation.
 func (c *Client) Dirs(ctx context.Context, iso, typed string) (api.Dirs, error) {
 	var v api.Dirs

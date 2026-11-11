@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"slices"
 	"sort"
 	"strings"
 	"sync"
@@ -87,6 +88,9 @@ type runtime struct {
 	reviews int
 	// seenAt is the time of the last record of its log it read.
 	seenAt time.Time
+	// models are the ones its CLI said it runs that were last kept for
+	// a new agent to be offered (keepModelsLocked).
+	models []driver.Choice
 	// tw is how its turns that end with tasks in the background are held,
 	// as a lead's agent (store.TeamWait).
 	tw store.TeamWait
@@ -242,6 +246,7 @@ func (r *runtime) observe(rec shimproto.Record, liveAfter int64) {
 	prev := r.drv.State()
 	was := prev.Status
 	evs := r.drv.Observe(rec)
+	r.keepModelsLocked(rec.Time)
 	// Not on a replay: what happened then was told then.
 	live := rec.Seq > r.agent.LastSrc
 	var ended event.Status
@@ -402,6 +407,20 @@ func (r *runtime) observe(rec shimproto.Record, liveAfter int64) {
 
 // catchUpLocked runs once per attachment, when the driver has seen the whole
 // log: it re-applies what the user asked for that the log does not show yet.
+// keepModelsLocked keeps the models the CLI says it runs, once it says
+// others than were last kept, for a new agent in its isolation to be
+// offered.
+func (r *runtime) keepModelsLocked(at time.Time) {
+	ms := r.drv.Models()
+	if len(ms) == 0 || slices.Equal(ms, r.models) {
+		return
+	}
+	r.models = ms
+	if err := r.m.store.SetCLIModels(r.agent.Kind, r.agent.IsolationID, ms, at); err != nil {
+		r.m.log.Printf("agent %s: models: %v", r.agent.ID, err)
+	}
+}
+
 func (r *runtime) catchUpLocked() {
 	r.caughtUp = true
 	defer r.noteBusyLocked()

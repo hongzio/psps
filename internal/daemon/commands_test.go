@@ -178,3 +178,34 @@ func TestBranch(t *testing.T) {
 		t.Fatalf("branch %q", got)
 	}
 }
+
+// A new agent's model is offered from the ones its CLI last said it runs
+// in the isolation: kept as an agent's process says them, before the new
+// one has a process to ask.
+func TestModelsForANewAgent(t *testing.T) {
+	e := newTestEnv(t)
+	m, stop := e.daemon()
+	defer stop()
+	if ms, err := m.Models("dev", driver.Codex); err != nil || len(ms.Models) != 0 || ms.From != "" {
+		t.Fatalf("before any said: %+v %v", ms, err)
+	}
+	a, _ := m.CreateAgent(context.Background(), api.CreateAgent{Isolation: "dev", Kind: driver.Codex, Prompt: "hi"})
+	e.waitFor("the first turn", func() bool { return e.hasAssistant(a.ID, "echo: hi") })
+	var ms api.Models
+	e.waitFor("the models kept", func() bool {
+		ms, _ = m.Models("dev", driver.Codex)
+		return len(ms.Models) > 0
+	})
+	if len(ms.Models) != 1 || ms.Models[0].Value != "gpt-fake" || ms.Models[0].Description != "Fake · A fake" || ms.From != "" {
+		t.Fatalf("%+v", ms)
+	}
+	if ms, err := m.Models("dev", driver.Claude); err != nil || len(ms.Models) != 0 {
+		t.Fatalf("claude has said none: %+v %v", ms, err)
+	}
+	if _, err := m.Models("dev", "gemini"); err == nil {
+		t.Fatal("no such agent kind, no error")
+	}
+	if _, err := m.Models("nope", driver.Codex); err == nil {
+		t.Fatal("no such isolation, no error")
+	}
+}

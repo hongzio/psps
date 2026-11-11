@@ -87,6 +87,17 @@ func (f *fakeBackend) Dirs(_ context.Context, _, typed string) (api.Dirs, error)
 	return api.Dirs{Parent: "/home/agent/", Dirs: ds, Home: "/home/agent"}, nil
 }
 
+// Models are claude's two in any isolation; codex has said none.
+func (f *fakeBackend) Models(_ context.Context, _ string, kind driver.Kind) (api.Models, error) {
+	if kind != driver.Claude {
+		return api.Models{Models: []driver.Choice{}}, nil
+	}
+	return api.Models{Models: []driver.Choice{
+		{Value: "opus", Description: "Opus 5.5 · most capable"},
+		{Value: "sonnet", Description: "Sonnet 5.5 · fast"},
+	}}, nil
+}
+
 func (f *fakeBackend) CreateAgent(_ context.Context, req api.CreateAgent) (api.Agent, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -1254,5 +1265,46 @@ func TestWhatAnAgentRunsBesideItsTurnIsShownOverTheBoxAndMarkedInTheSidebar(t *t
 	h.send(agentsMsg{agents: h.be.agents})
 	if strings.Contains(ansi.Strip(h.m.View()), "running:") {
 		t.Fatal("the line stays once nothing runs")
+	}
+}
+
+// The model field offers what the agent's CLI last said it runs in the
+// isolation, ↑/↓ fill one in, and one it has not said can be typed.
+func TestNewAgentModelIsOffered(t *testing.T) {
+	h := newHarness(t)
+	h.key("ctrl+n")
+	for range nfModel {
+		h.key("enter")
+	}
+	if v := h.m.View(); !strings.Contains(v, "opus") || !strings.Contains(v, "Sonnet 5.5 · fast") {
+		t.Fatalf("claude's models not offered:\n%s", v)
+	}
+	h.key("down")
+	h.key("down")
+	if got := h.m.newForm.fields[nfModel].value(); got != "sonnet" {
+		t.Fatalf("picked %q", got)
+	}
+	h.key("ctrl+s")
+	if len(h.be.created) != 1 || h.be.created[0].Options.Model != "sonnet" {
+		t.Fatalf("created = %+v", h.be.created)
+	}
+}
+
+// Codex, which has said none, is typed instead.
+func TestNewAgentModelUnsaidIsTyped(t *testing.T) {
+	h := newHarness(t)
+	h.key("ctrl+n")
+	h.key("enter")
+	h.key(" ") // codex
+	for range nfModel - nfKind {
+		h.key("enter")
+	}
+	if v := h.m.View(); !strings.Contains(v, "has not said what it runs yet") {
+		t.Fatalf("no word of it:\n%s", v)
+	}
+	h.typeText("gpt-x")
+	h.key("ctrl+s")
+	if len(h.be.created) != 1 || h.be.created[0].Kind != driver.Codex || h.be.created[0].Options.Model != "gpt-x" {
+		t.Fatalf("created = %+v", h.be.created)
 	}
 }

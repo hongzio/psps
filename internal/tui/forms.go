@@ -526,7 +526,10 @@ func (f *field) renderSuggestions(th theme, width int) string {
 	var b strings.Builder
 	status := f.status
 	if len(list) > 0 {
-		status = fmt.Sprintf("%d listed · ↑/↓ picks one, or type", len(list))
+		if status != "" {
+			status += " · "
+		}
+		status += fmt.Sprintf("%d listed · ↑/↓ picks one, or type", len(list))
 	}
 	if status != "" {
 		b.WriteString("      " + th.dim.Render(status) + "\n")
@@ -582,7 +585,7 @@ func newAgentForm(isos []api.Isolation) *agentForm {
 		textField("ID", "optional: lowercase letters, digits, dashes", "unique among all agents, archived ones too; an adjective-noun like brave-otter otherwise"),
 		dirField(),
 		selectField("Effort", efforts(string(driver.Claude)), ""),
-		textField("Model", "optional; the CLI's default otherwise", ""),
+		modelField(),
 		selectField("Approvals", approvalModes(),
 			"never: runs unattended inside the isolation · auto: unattended, a reviewer model refuses risky actions · ask: the agent asks first for what its own rules flag · default: the CLI's own settings decide"),
 		textField("Message", "optional; it waits for your first message otherwise", "sent as soon as it is made, and names it"),
@@ -600,6 +603,68 @@ func dirField() *field {
 	fd := textField("Directory", "optional; ~/work/<its ID> otherwise", "~ is the agent's home; made if it is not there")
 	fd.single, fd.pick, fd.looked = true, -1, "\x00"
 	return fd
+}
+
+// modelField is the model a new agent runs: typed, or picked from the
+// ones its CLI last said it runs in the isolation, asked of the daemon as
+// the isolation or the agent changes.
+func modelField() *field {
+	fd := textField("Model", "optional; the CLI's default otherwise", "")
+	fd.single, fd.pick, fd.looked, fd.notes = true, -1, "\x00", map[string]string{}
+	return fd
+}
+
+// modelsMsg is what the agent CLI said it runs in the isolation; looked
+// is the isolation and agent asked of.
+type modelsMsg struct {
+	looked string
+	models api.Models
+	err    error
+}
+
+// lookModels asks for the models the model field offers, unless it
+// already has for the isolation and agent chosen.
+func (m *Model) lookModels() tea.Cmd {
+	f := m.newForm
+	fd, iso, kind := f.fields[nfModel], f.fields[nfIso].value(), f.fields[nfKind].value()
+	looked := iso + "\x00" + kind
+	if f.cur != nfModel || iso == "" || fd.looked == looked {
+		return nil
+	}
+	fd.looked, fd.status = looked, "looking up…"
+	be := m.be
+	return func() tea.Msg {
+		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+		defer cancel()
+		ms, err := be.Models(ctx, iso, driver.Kind(kind))
+		return modelsMsg{looked, ms, err}
+	}
+}
+
+// gotModels fills the model field's suggestions, if they answer the
+// isolation and agent still chosen.
+func (f *agentForm) gotModels(msg modelsMsg) {
+	fd := f.fields[nfModel]
+	if fd.looked != msg.looked {
+		return
+	}
+	fd.options, fd.notes, fd.pick, fd.typed = nil, map[string]string{}, -1, ""
+	switch {
+	case msg.err != nil:
+		fd.status = "can't list: " + msg.err.Error()
+		return
+	case len(msg.models.Models) == 0:
+		fd.status = "its CLI has not said what it runs yet: type one, or leave it for its default"
+		return
+	}
+	fd.status = ""
+	for _, md := range msg.models.Models {
+		fd.options = append(fd.options, md.Value)
+		fd.notes[md.Value] = md.Description
+	}
+	if msg.models.From != "" {
+		fd.status = fmt.Sprintf("as said in %s; this isolation's may differ", msg.models.From)
+	}
 }
 
 // dirsMsg is what the isolation has under typed.
@@ -699,7 +764,7 @@ func (m *Model) handleNewAgentKey(msg tea.KeyMsg) tea.Cmd {
 		return m.submitNewAgent()
 	case msg.String() == "enter":
 		f.move(1)
-		return m.lookDirs()
+		return tea.Batch(m.lookDirs(), m.lookModels())
 	}
 	kind := f.fields[nfKind].value()
 	cmd, _ := f.handle(k, msg)
@@ -709,7 +774,7 @@ func (m *Model) handleNewAgentKey(msg tea.KeyMsg) tea.Cmd {
 		eff.options = efforts(nk)
 		eff.idx = indexOf(eff.options, v)
 	}
-	return tea.Batch(cmd, m.lookDirs())
+	return tea.Batch(cmd, m.lookDirs(), m.lookModels())
 }
 
 func (m *Model) submitNewAgent() tea.Cmd {
