@@ -583,6 +583,21 @@ type PutTodo struct {
 	Auto *bool `json:"auto,omitempty"`
 }
 
+// AddBookmark keeps one of an agent's messages: Event is its event's ID.
+type AddBookmark struct {
+	Agent string `json:"agent"`
+	Event int64  `json:"event"`
+	Note  string `json:"note,omitempty"`
+	// CreatedAt is when it was first kept, for one let go and taken back:
+	// it keeps its place.
+	CreatedAt time.Time `json:"created_at,omitzero"`
+}
+
+// PutBookmark changes a bookmark's note; empty, it has none.
+type PutBookmark struct {
+	Note *string `json:"note,omitempty"`
+}
+
 type Decision struct {
 	Decision driver.Decision `json:"decision"`
 	// Answers answer a question (an approval of kind "question"): each

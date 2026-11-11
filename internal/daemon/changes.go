@@ -145,6 +145,7 @@ func (m *Manager) changeLooks(all bool) map[string]func() (any, error) {
 			order, err := m.Order()
 			return []any{agents, order}, err
 		},
+		"bookmarks": func() (any, error) { return m.store.Bookmarks() },
 		"services": func() (any, error) {
 			envs, err := m.Envs("")
 			if err != nil {

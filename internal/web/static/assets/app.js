@@ -96,6 +96,16 @@ const S = {
   pick: null,
   picking: false,
   drawer: false,
+  // Bookmarks: the messages kept, in the daemon; whether their drawer is
+  // open (this browser's, on a wide screen); its filter and search; the
+  // note being written ({ id, draft }); and a dot on its button for one
+  // kept while it was shut.
+  bookmarks: [],
+  bmOpen: (() => { try { return localStorage.getItem('psps.bookmarks') === '1' && !matchMedia('(max-width: 760px)').matches } catch { return false } })(),
+  bmFilter: 'all',
+  bmQuery: '',
+  bmEdit: null,
+  bmPip: false,
   convos: new Map(),
   // What is typed to each agent and not yet sent, kept in this browser so
   // that another agent, another page or a reload does not lose it.
@@ -229,11 +239,13 @@ const effortOptions = (kind) =>
   (kind === 'codex' ? ['', 'low', 'medium', 'high', 'xhigh'] : ['', 'low', 'medium', 'high', 'xhigh', 'max'])
     .map((e) => ({ value: e, label: e || 'default' }))
 
-function toast(msg, err) {
-  S.toast = { msg, err }
+// toast says msg for a while; action, if given ({ label, run }), is a
+// button on it, the toast gone once it is taken.
+function toast(msg, err, action) {
+  S.toast = { msg, err, action }
   renderToast()
   clearTimeout(toast.t)
-  toast.t = setTimeout(() => { S.toast = null; renderToast() }, 4000)
+  toast.t = setTimeout(() => { S.toast = null; renderToast() }, action ? 6000 : 4000)
 }
 
 async function guarded(fn) {
@@ -495,8 +507,8 @@ function apply(c, e) {
     }
     case 'assistant': {
       const en = c.byItem.get(e.item)
-      if (en && en.kind === 'assistant' && en.live) { en.text = e.text; en.live = false }
-      else add({ kind: 'assistant', item: e.item, text: e.text || '' })
+      if (en && en.kind === 'assistant' && en.live) { en.text = e.text; en.live = false; en.ev = e.id }
+      else add({ kind: 'assistant', item: e.item, text: e.text || '', ev: e.id })
       break
     }
     case 'reasoning': add({ kind: 'reasoning', text: e.text || '' }); break
@@ -864,6 +876,7 @@ async function refreshAgents() {
   S.agents = agents
   S.order = order
   noteTurns()
+  bmAgentsSeen()
   // The open agent was archived as a new session took its place (/new):
   // go on in the new one, as if it were the same agent.
   const now = agentById(S.sel)
@@ -949,6 +962,7 @@ function startPolling() {
   let es = null
   let retry = null
   const all = async () => {
+    guarded(refreshBookmarks)
     await guarded(refreshAgents)
     await guarded(refreshIsolations)
     if (S.view === 'services') await guarded(refreshServices)
@@ -957,6 +971,7 @@ function startPolling() {
     hello: all,
     agents: () => guarded(refreshAgents),
     isolations: () => guarded(refreshIsolations),
+    bookmarks: () => guarded(refreshBookmarks),
     // The services' envs and which isolations have each.
     services: () => S.view === 'services' ? guarded(refreshServices) : S.view === 'isolations' ? guarded(refreshIsolations) : null,
   }
@@ -1160,9 +1175,11 @@ function sidebarResizer() {
 // ---- Rendering
 
 function render() {
-  root.className = 'app' + (S.drawer ? ' drawer' : '')
+  root.className = 'app' + (S.drawer ? ' drawer' : '') + (S.bmOpen ? ' bm-open' : '')
   // The page is drawn anew, the sidebar's list where it was scrolled.
   const scrolled = document.querySelector('#sidebar .agent-list')?.scrollTop || 0
+  const bmScrolled = S.bmEl?.querySelector('.bm-list')?.scrollTop || 0
+  hideBmPop()
   root.replaceChildren()
   if (!S.authed) {
     root.style.display = 'block'
@@ -1172,7 +1189,8 @@ function render() {
   root.style.display = ''
   root.append(h('aside', { class: 'sidebar', id: 'sidebar' }), sidebarResizer(), h('div', { class: 'scrim', onclick: () => { S.drawer = false; render() } }))
   const main = h('main', { class: 'main', id: 'main' })
-  root.append(main)
+  root.append(main, bookmarksDrawer())
+  if (bmScrolled) S.bmEl.querySelector('.bm-list').scrollTop = bmScrolled
   renderSidebar()
   const list = document.querySelector('#sidebar .agent-list')
   if (list && scrolled) list.scrollTop = scrolled
@@ -1184,6 +1202,8 @@ function render() {
   if (S.view === 'isolations') renderIsolations()
   if (S.view === 'services') renderServices()
   if (S.view === 'setup') renderSetup()
+  const box = document.getElementById('convo')
+  if (box) floatScroll('convo', box)
   renderToast()
 }
 
@@ -1191,7 +1211,7 @@ function topbar(title, sub, ...extra) {
   return h('header', { class: 'topbar', id: 'topbar' },
     h('button', { class: 'menu-btn', 'aria-label': 'Agents', onclick: () => { S.drawer = true; render() } }, icon('menu')),
     h('div', { class: 'title' }, h('h1', null, title), sub ? h('div', { class: 'sub' }, sub) : null),
-    ...extra)
+    ...extra, h('span', { class: 'bm-sep' }), bmButton())
 }
 
 // togglePark parks an idle agent, or takes a parked one back: it is idle
@@ -1321,6 +1341,7 @@ function renderSidebar() {
   // list was the foot's height taller, and one scrolled to its end came
   // back short of it by that much.
   if (scrolled) el.querySelector('.agent-list').scrollTop = scrolled
+  floatScroll('sidebar', el.querySelector('.agent-list'))
   placeIconPick()
 }
 
@@ -2428,7 +2449,7 @@ function agentView() {
   const frag = document.createDocumentFragment()
   frag.append(
     h('div', { id: 'topbar-slot' }),
-    h('div', { class: 'convo', id: 'convo', onscroll: (e) => onConvoScroll(e.target, a.id) },
+    h('div', { class: 'convo', id: 'convo', onscroll: (e) => onConvoScroll(e.target, a.id), onclick: (e) => onConvoTap(e, a) },
       h('div', { class: 'last-sent-bar', id: 'last-sent', hidden: true }, h('div', { class: 'last-sent-strip' }, h('div', { class: 'last-sent-row' },
         h('button', { type: 'button', class: 'last-sent' }),
         h('button', { type: 'button', class: 'sent-nav', 'data-go': 'up', title: 'The message you sent before', 'aria-label': 'Previous message you sent', onclick: () => goSent(-1) }, icon('chevron-up')),
@@ -2946,6 +2967,7 @@ function cronForm(a, c, zone, saved, cancel) {
 let stick = true
 
 function onConvoScroll(box, id) {
+  hideBmPop()
   stick = box.scrollHeight - box.scrollTop - box.clientHeight < 8
   // Drawing the earlier would stop a scroll the buttons began.
   if (box.scrollTop < 400 && Date.now() > goingUntil) {
@@ -2970,9 +2992,9 @@ function drawnSig(en, a) {
   switch (en.kind) {
     case 'user': {
       const ed = S.edit?.agent === a.id && S.edit.id === en.id && S.edit
-      return `user|${rewindable(a)}|${ed ? 'edit:' + !!ed.sending : ''}`
+      return `user|${rewindable(a)}|${ed ? 'edit:' + !!ed.sending : ''}|${bmIndex.has(bmKey(a.id, en.id))}`
     }
-    case 'assistant': return `assistant|${label(a)}|${en.live}|${en.text.length}|${en.text.slice(-32)}`
+    case 'assistant': return `assistant|${label(a)}|${en.live}|${en.text.length}|${en.text.slice(-32)}|${en.ev}|${bmIndex.has(bmKey(a.id, en.ev))}`
     case 'tool': return `tool|${en.state}|${en.name}|${en.summary}|${en.output.length}`
     case 'tools': return 'tools|' + en.runs.map((x) => drawnSig(x, a)).join('/')
     case 'approval': return `approval|${en.decision}|${JSON.stringify(en.answers || null)}`
@@ -3211,7 +3233,7 @@ function entryView(en, a, frozen) {
   switch (en.kind) {
     case 'user': {
       const l = letter(en.text)
-      if (l) return h('div', { class: 'msg-mail' }, h('div', { class: 'who' }, icon('mail'), ` Mail #${l.id} from ${l.from} · ${l.iso}`), h('div', { class: 'text' }, markdown(l.body)))
+      if (l) return h('div', { class: 'msg-mail', 'data-ev': en.id }, h('div', { class: 'who' }, icon('mail'), ` Mail #${l.id} from ${l.from} · ${l.iso}`, !frozen && en.id ? bmMark(a, en.id) : null), h('div', { class: 'text' }, markdown(l.body)))
       const rc = receiptsMsg(en.text)
       if (rc) return h('div', { class: 'msg-cron msg-receipt' }, h('div', { class: 'who' }, icon('target'), ' From psps: what came of what it sent'), h('div', { class: 'text' }, richText(rc.body)))
       const cm = cronMsg(en.text)
@@ -3222,7 +3244,7 @@ function entryView(en, a, frozen) {
       const edit = !frozen && en.id && en.src > 0 && rewindable(a)
         ? h('button', { class: 'edit-msg', title: 'Edit and resend: the agent goes back to here', 'aria-label': 'Edit message', onclick: () => startEdit(a, en) }, icon('pencil'))
         : null
-      return h('div', { class: 'msg-user-row' }, edit, stamp(en.time), bubble)
+      return h('div', { class: 'msg-user-row', 'data-ev': en.id }, !frozen && en.id ? bmMark(a, en.id) : null, edit, stamp(en.time), bubble)
     }
     case 'rewound': {
       const key = `${a.id}:${en.src}`
@@ -3235,7 +3257,7 @@ function entryView(en, a, frozen) {
         h('div', { class: 'rewound-body' }, groupTools(en.entries).map((x) => entryView(x, a, true)).filter(Boolean)))
     }
     case 'assistant':
-      return h('div', { class: 'msg-agent' + (en.live ? ' live' : '') }, h('div', { class: 'who' }, label(a), stamp(en.time)), h('div', { class: 'text' }, markdown(en.text, en.live)))
+      return h('div', { class: 'msg-agent' + (en.live ? ' live' : ''), 'data-ev': en.ev }, h('div', { class: 'who' }, label(a), stamp(en.time), !frozen && en.ev && !en.live ? bmMark(a, en.ev) : null), h('div', { class: 'text' }, markdown(en.text, en.live)))
     case 'reasoning': return h('div', { class: 'reasoning' }, en.text)
     case 'tool': {
       const mark = icon(toolMarks[en.state])
@@ -5966,12 +5988,417 @@ function cliLoginForm(iso, tool, l) {
 
 function renderToast() {
   document.querySelector('.toast')?.remove()
-  if (S.toast) document.body.append(h('div', { class: 'toast' + (S.toast.err ? ' err' : ''), role: 'status' }, S.toast.msg))
+  const t = S.toast
+  if (t) document.body.append(h('div', { class: 'toast' + (t.err ? ' err' : ''), role: 'status' }, t.msg,
+    t.action ? h('button', { type: 'button', class: 'toast-action', onclick: () => { clearTimeout(toast.t); S.toast = null; renderToast(); t.action.run() } }, t.action.label) : null))
 }
 
 document.addEventListener('keydown', (e) => {
   if (e.key === 'Escape' && S.drawer) { S.drawer = false; render() }
 })
+
+// ---- Bookmarks: messages kept, with a note, in the daemon (a copy of what
+// each said, so it outlives its agent), shown in a drawer on the right: a
+// column beside the conversation on a wide screen, over it on a phone. A
+// message is kept from its bookmark mark, on hover; with no hover (a
+// phone), a tap on it shows a bar with Bookmark and Copy, so a long press
+// still selects its text. Notes are written in the drawer only.
+
+const narrow = matchMedia('(max-width: 760px)')
+const touch = matchMedia('(hover: none)')
+const bmKey = (agent, ev) => agent + ':' + ev
+let bmIndex = new Map()
+const BM_KINDS = { user: 'Me', assistant: 'Reply', mail: 'Mail' }
+const BM_FILTERS = [['all', 'All'], ['user', 'Me'], ['assistant', 'Replies'], ['mail', 'Mail']]
+
+async function refreshBookmarks() {
+  setBookmarks(await api('GET', '/v1/bookmarks'))
+}
+
+function setBookmarks(bs) {
+  S.bookmarks = bs || []
+  bmIndex = new Map(S.bookmarks.map((b) => [bmKey(b.agent, b.event), b]))
+  if (S.bmEdit && !S.bookmarks.some((b) => b.id === S.bmEdit.id)) S.bmEdit = null
+  renderBookmarks()
+  if (S.view === 'agent' && S.sel) scheduleConvo()
+}
+
+const byKept = (x, y) => new Date(y.created_at) - new Date(x.created_at) || y.id - x.id
+
+// entryEvent is the event a message entry was drawn from: a user message's
+// ID, a reply's ev (none while it is being written).
+const entryEvent = (en) => en.kind === 'user' ? en.id : en.kind === 'assistant' ? en.ev : undefined
+
+// entryText is what a message says as shown: a mail's body, not its envelope.
+function entryText(en) {
+  if (en.kind === 'user') return letter(en.text)?.body ?? en.text
+  return en.text
+}
+
+function findEntry(c, ev) {
+  for (const en of c.entries) {
+    if (entryEvent(en) === ev) return en
+    if (en.kind === 'rewound') { const x = en.entries.find((y) => entryEvent(y) === ev); if (x) return x }
+  }
+  return null
+}
+
+function bmMark(a, ev) {
+  const on = bmIndex.has(bmKey(a.id, ev))
+  return h('button', {
+    type: 'button', class: 'bm-mark' + (on ? ' on' : ''), title: on ? 'Unbookmark' : 'Bookmark',
+    'aria-label': on ? 'Unbookmark' : 'Bookmark', 'aria-pressed': String(on),
+    onclick: (e) => {
+      e.stopPropagation()
+      if (touch.matches) { const msg = e.currentTarget.closest('[data-ev]'); hideBmPop(); showBmPop(a, ev, msg) }
+      else toggleBookmark(a, ev)
+    },
+  }, icon('bookmark'))
+}
+
+async function toggleBookmark(a, ev) {
+  const was = bmIndex.get(bmKey(a.id, ev))
+  if (was) return unbookmark(was)
+  const b = await guarded(() => api('POST', '/v1/bookmarks', { agent: a.id, event: ev }))
+  if (!b) return
+  setBookmarks([b, ...S.bookmarks.filter((x) => x.id !== b.id)])
+  if (!S.bmOpen) { S.bmPip = true; renderBmButtons() }
+  toast('Bookmarked', false, { label: 'Add note', run: () => editNote(b.id) })
+}
+
+async function unbookmark(b) {
+  const ok = await guarded(async () => { await api('DELETE', `/v1/bookmarks/${b.id}`); return true })
+  if (!ok) return
+  setBookmarks(S.bookmarks.filter((x) => x.id !== b.id))
+  toast('Unbookmarked', false, {
+    label: 'Undo', run: async () => {
+      const back = await guarded(() => api('POST', '/v1/bookmarks', { agent: b.agent, event: b.event, note: b.note, created_at: b.created_at }))
+      if (back) setBookmarks([...S.bookmarks.filter((x) => x.id !== back.id), back].sort(byKept))
+    },
+  })
+}
+
+function setBmOpen(open) {
+  S.bmOpen = open
+  if (open) S.bmPip = false
+  if (!narrow.matches) { try { localStorage.setItem('psps.bookmarks', open ? '1' : '0') } catch {} }
+  root.classList.toggle('bm-open', open)
+  renderBmButtons()
+  fitTopbar()
+  if (open) renderBookmarks()
+}
+
+function bmButton() {
+  return h('button', {
+    type: 'button', class: 'btn ghost bm-btn' + (S.bmOpen ? ' on' : ''), title: 'Bookmarks (])', 'aria-label': 'Bookmarks',
+    'aria-pressed': String(S.bmOpen), 'aria-controls': 'bookmarks', onclick: () => setBmOpen(!S.bmOpen),
+  }, icon('panel-right'), S.bmPip && !S.bmOpen ? h('span', { class: 'bm-pip' }) : null)
+}
+
+function renderBmButtons() {
+  for (const b of document.querySelectorAll('.bm-btn')) b.replaceWith(bmButton())
+}
+
+// The drawer is made once and kept: a redraw of the page puts it back as
+// it was, its search, its scroll and a note being written with it.
+function bookmarksDrawer() {
+  if (S.bmEl) return S.bmEl
+  const list = h('div', { class: 'bm-list' })
+  const q = h('input', {
+    id: 'bm-q', type: 'search', placeholder: 'Search bookmarks', 'aria-label': 'Search bookmarks', autocomplete: 'off',
+    oninput: (e) => { S.bmQuery = e.target.value; renderBookmarks() },
+  })
+  q.addEventListener('keydown', (e) => { if (e.key === 'Escape') { e.preventDefault(); q.blur() } })
+  const tools = h('div', { class: 'bm-tools' }, h('label', { class: 'bm-search' }, icon('search'), q), h('div', { class: 'bm-filters' }))
+  const el = h('aside', { class: 'bm-drawer', id: 'bookmarks', 'aria-label': 'Bookmarks' },
+    bmResizer(),
+    h('div', { class: 'bm-head' }, icon('bookmark'), h('span', { class: 'bm-title' }, 'Bookmarks'), h('span', { class: 'bm-count' }),
+      h('button', { type: 'button', class: 'bm-x', title: 'Close (])', 'aria-label': 'Close bookmarks', onclick: () => setBmOpen(false) }, icon('x'))),
+    tools, list)
+  list.addEventListener('scroll', () => tools.classList.toggle('scrolled', list.scrollTop > 0), { passive: true })
+  S.bmEl = el
+  floatScroll('bookmarks', list)
+  renderBookmarks()
+  return el
+}
+
+const bmDefault = 340
+function setBmWidth(w) {
+  if (w == null) { root.style.removeProperty('--bm-w'); return }
+  w = Math.round(Math.min(Math.max(w, 280), Math.min(640, window.innerWidth * 0.5)))
+  root.style.setProperty('--bm-w', w + 'px')
+  return w
+}
+try { const w = +localStorage.getItem('psps.bookmarksWidth'); if (w) setBmWidth(w) } catch {}
+
+function bmResizer() {
+  const bar = h('div', { class: 'bm-resizer', role: 'separator', 'aria-orientation': 'vertical', title: 'Drag to resize · double-click to reset' })
+  let startX = 0, startW = 0, w = null
+  const move = (e) => { w = setBmWidth(startW - (e.clientX - startX)); fitTopbar() }
+  const end = () => {
+    bar.classList.remove('dragging')
+    document.body.classList.remove('resizing')
+    bar.removeEventListener('pointermove', move)
+    try { if (w) localStorage.setItem('psps.bookmarksWidth', String(w)) } catch {}
+  }
+  bar.addEventListener('pointerdown', (e) => {
+    if (e.button !== 0) return
+    e.preventDefault()
+    startX = e.clientX
+    startW = S.bmEl.getBoundingClientRect().width
+    w = null
+    bar.setPointerCapture(e.pointerId)
+    bar.classList.add('dragging')
+    document.body.classList.add('resizing')
+    bar.addEventListener('pointermove', move)
+  })
+  bar.addEventListener('pointerup', end)
+  bar.addEventListener('pointercancel', end)
+  bar.addEventListener('dblclick', () => {
+    setBmWidth(null)
+    try { localStorage.removeItem('psps.bookmarksWidth') } catch {}
+    fitTopbar()
+  })
+  return bar
+}
+
+// bmName is what a bookmark calls its agent: its name now, or as it was
+// when kept if it is gone.
+function bmName(b) {
+  const a = agentById(b.agent)
+  return a ? agentTitle(a) : b.agent_name
+}
+
+// bmAgentsSeen redraws the bookmarks when what they say of their agents
+// changes: a name, or one gone (its Open is then off).
+let bmAgentsKey = ''
+function bmAgentsSeen() {
+  const key = S.bookmarks.map((b) => `${b.id}:${agentById(b.agent) ? bmName(b) : '-'}`).join('|')
+  if (key !== bmAgentsKey) renderBookmarks()
+}
+
+function bmSource(b) {
+  const name = bmName(b)
+  return b.kind === 'user' ? `You → ${name}` : b.kind === 'mail' ? `${b.from} → ${name}` : name
+}
+
+function renderBookmarks() {
+  const el = S.bmEl
+  if (!el) return
+  const bs = S.bookmarks
+  bmAgentsKey = bs.map((b) => `${b.id}:${agentById(b.agent) ? bmName(b) : '-'}`).join('|')
+  el.querySelector('.bm-count').textContent = bs.length ? String(bs.length) : ''
+  el.querySelector('.bm-filters').replaceChildren(...BM_FILTERS.map(([k, l]) => h('button', {
+    type: 'button', 'aria-pressed': String(S.bmFilter === k), onclick: () => { S.bmFilter = k; renderBookmarks() },
+  }, l, h('span', { class: 'n' }, String(k === 'all' ? bs.length : bs.filter((b) => b.kind === k).length)))))
+  const q = S.bmQuery.trim().toLowerCase()
+  const rows = bs.filter((b) => (S.bmFilter === 'all' || b.kind === S.bmFilter) &&
+    (!q || [b.text, b.note, bmSource(b)].some((s) => s.toLowerCase().includes(q))))
+  // A note being written keeps its caret through a redraw.
+  const typing = document.activeElement?.classList.contains('bm-note-box') ? document.activeElement : null
+  const sel = typing && [typing.selectionStart, typing.selectionEnd]
+  const list = el.querySelector('.bm-list')
+  list.replaceChildren(...(rows.length ? rows.map(bmCard)
+    : [h('div', { class: 'bm-empty' }, bs.length ? 'No bookmark matches.'
+      : touch.matches ? 'Tap a message and choose Bookmark: it is kept here.'
+      : 'Hover over a message and click its bookmark: it is kept here.')]))
+  const box = list.querySelector('.bm-note-box')
+  if (box && (typing || S.bmEdit?.focus)) {
+    box.focus({ preventScroll: true })
+    if (sel) box.setSelectionRange(...sel)
+    else box.setSelectionRange(box.value.length, box.value.length)
+    if (S.bmEdit.focus) { S.bmEdit.focus = false; box.closest('.bm-card').scrollIntoView({ block: 'nearest' }) }
+  }
+}
+
+function bmCard(b) {
+  const a = agentById(b.agent)
+  const editing = S.bmEdit?.id === b.id
+  let note = null
+  if (editing) {
+    const ta = h('textarea', { class: 'bm-note-box', rows: 2, value: S.bmEdit.draft, placeholder: 'Why keep this?', 'aria-label': 'Note' })
+    const grow = () => { ta.style.height = 'auto'; ta.style.height = Math.min(ta.scrollHeight, 240) + 'px' }
+    ta.addEventListener('input', () => { S.bmEdit.draft = ta.value; grow() })
+    ta.addEventListener('keydown', (e) => {
+      if (e.key === 'Escape') { e.preventDefault(); S.bmEdit = null; renderBookmarks() }
+      if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) { e.preventDefault(); saveNote(b, ta.value) }
+    })
+    queueMicrotask(grow)
+    note = h('div', { class: 'bm-note-edit' }, ta, h('div', { class: 'bm-note-row' },
+      coarse ? null : h('span', { class: 'hint' }, '⌘↩ saves · Esc cancels'),
+      h('button', { type: 'button', class: 'btn', onclick: () => { S.bmEdit = null; renderBookmarks() } }, 'Cancel'),
+      h('button', { type: 'button', class: 'btn primary', onclick: () => saveNote(b, ta.value) }, 'Save')))
+  } else if (b.note) {
+    note = h('button', { type: 'button', class: 'bm-note', title: 'Edit note', onclick: () => editNote(b.id) }, b.note)
+  }
+  return h('div', { class: 'bm-card', 'data-bm': b.id },
+    h('div', { class: 'bm-src' }, h('span', { class: 'who' }, bmSource(b)), h('span', { class: 'kind' }, BM_KINDS[b.kind] || b.kind), stamp(b.at)),
+    note,
+    h('div', { class: 'bm-quote' }, b.text),
+    h('div', { class: 'bm-acts' },
+      h('button', {
+        type: 'button', disabled: !a, title: a ? 'Open it in its conversation' : 'Its agent is deleted: this copy is all that is left',
+        onclick: () => openBookmark(b),
+      }, icon('arrow-up-right'), 'Open'),
+      editing ? null : h('button', { type: 'button', onclick: () => editNote(b.id) }, icon('pencil'), b.note ? 'Edit note' : 'Add note'),
+      h('button', { type: 'button', onclick: () => copyText(b.text) }, icon('copy'), 'Copy'),
+      h('button', { type: 'button', class: 'end', title: 'Unbookmark (the message stays)', 'aria-label': 'Unbookmark', onclick: () => unbookmark(b) }, icon('bookmark-minus'))))
+}
+
+function editNote(id) {
+  const b = S.bookmarks.find((x) => x.id === id)
+  if (!b) return
+  S.bmEdit = { id, draft: b.note, focus: true }
+  if (!S.bmOpen) setBmOpen(true)
+  else renderBookmarks()
+}
+
+async function saveNote(b, text) {
+  const note = text.trim()
+  const nb = await guarded(() => api('PATCH', `/v1/bookmarks/${b.id}`, { note }))
+  if (!nb) return
+  S.bmEdit = null
+  setBookmarks(S.bookmarks.map((x) => x.id === nb.id ? nb : x))
+  toast(note ? 'Note saved' : (b.note ? 'Note removed' : 'No note'))
+}
+
+async function copyText(text) {
+  try { await navigator.clipboard.writeText(text); toast('Copied') } catch { toast('The browser refused the clipboard; copy it by hand', true) }
+}
+
+// openBookmark goes to its message: its agent, the earlier part of the
+// conversation fetched and drawn if it must be, the message brought to the
+// middle and lit for a moment.
+async function openBookmark(b) {
+  const a = agentById(b.agent)
+  if (!a) return
+  if (narrow.matches) setBmOpen(false)
+  if (S.view !== 'agent' || S.sel !== a.id) select(a.id)
+  const c = convo(a.id)
+  for (let i = 0; !c.ready && i < 200 && S.sel === a.id; i++) await new Promise((r) => setTimeout(r, 50))
+  while (S.sel === a.id && c.more && c.first > b.event) { if (!await loadEarlier(a.id)) break }
+  if (S.sel !== a.id || S.view !== 'agent') return
+  const all = groupTools(c.entries)
+  let i = all.findIndex((en) => entryEvent(en) === b.event)
+  if (i < 0) {
+    i = all.findIndex((en) => en.kind === 'rewound' && en.entries.some((x) => entryEvent(x) === b.event))
+    if (i >= 0) S.openRewound.add(`${a.id}:${all[i].src}`)
+  }
+  if (i < 0) { toast('That message is no longer in its conversation', true); return }
+  stick = false
+  if (i < (c.from ?? all.length)) c.shown = all.length - i + 1
+  renderConvo()
+  const node = document.querySelector(`#convo-inner [data-ev="${b.event}"]`)
+  if (!node) return
+  const fold = node.closest('details.rewound')
+  if (fold) fold.open = true
+  node.scrollIntoView({ block: 'center' })
+  const lit = node.matches('.msg-user-row') ? node.querySelector('.msg-user') : node
+  lit.classList.remove('bm-flash')
+  void lit.offsetWidth
+  lit.classList.add('bm-flash')
+}
+
+// With no hover, a tap on a message shows its bar: Bookmark (or
+// Unbookmark) and Copy. A tap that ends a selection, opens a link or hits a
+// control is left to it.
+function onConvoTap(e, a) {
+  if (!touch.matches) return
+  const pop = document.querySelector('.bm-pop')
+  if (pop?.contains(e.target)) return
+  const was = pop?.dataset.ev
+  hideBmPop()
+  if (e.target.closest('a, button, summary, input, textarea, select, .copy-btn')) return
+  const msg = e.target.closest('#convo-inner [data-ev]')
+  if (!msg || msg.closest('details.rewound') || String(getSelection()).length) return
+  if (was === msg.dataset.ev) return
+  showBmPop(a, +msg.dataset.ev, msg)
+}
+
+function showBmPop(a, ev, msg) {
+  const box = document.getElementById('convo')
+  if (!box || !msg) return
+  const en = findEntry(convo(a.id), ev)
+  if (!en) return
+  const on = bmIndex.has(bmKey(a.id, ev))
+  const pop = h('div', { class: 'bm-pop', role: 'toolbar', 'data-ev': String(ev) },
+    h('button', { type: 'button', onclick: () => { hideBmPop(); toggleBookmark(a, ev) } }, icon(on ? 'bookmark-minus' : 'bookmark'), on ? 'Unbookmark' : 'Bookmark'),
+    h('span', { class: 'sep' }),
+    h('button', { type: 'button', onclick: () => { hideBmPop(); copyText(entryText(en)) } }, icon('copy'), 'Copy'))
+  box.append(pop)
+  const bubble = msg.matches('.msg-user-row') ? msg.querySelector('.msg-user') : msg
+  const r = bubble.getBoundingClientRect(), br = box.getBoundingClientRect()
+  const above = r.top - br.top > pop.offsetHeight + 12
+  pop.style.top = (box.scrollTop + (above ? r.top - br.top - pop.offsetHeight - 6 : r.bottom - br.top + 6)) + 'px'
+  if (bubble.matches('.msg-agent')) pop.style.left = Math.max(8, r.left - br.left) + 'px'
+  else pop.style.right = Math.max(8, br.right - r.right) + 'px'
+  bubble.classList.add('bm-held')
+}
+
+function hideBmPop() {
+  document.querySelector('.bm-pop')?.remove()
+  for (const n of document.querySelectorAll('.bm-held')) n.classList.remove('bm-held')
+}
+document.addEventListener('click', (e) => { if (!e.target.closest?.('#convo')) hideBmPop() })
+
+// ---- Floating scrollbars: the sidebar's list, the conversation and the
+// bookmarks hide their own and wear this one, over what they scroll: it
+// takes no width (a scrollbar coming never rewraps what is under it) and
+// shows only while it scrolls, or is held or pointed at. By key, so the one
+// for a list drawn anew replaces the old.
+
+const floats = new Map()
+
+function floatScroll(key, list) {
+  if (!list) return
+  const old = floats.get(key)
+  if (old?.list === list) { old.fit(); return }
+  old?.stop()
+  const wrap = h('div', { class: 'fs-wrap' })
+  const thumb = h('div', { class: 'fs-thumb' })
+  const bar = h('div', { class: 'fs-bar', hidden: true, 'aria-hidden': 'true' }, thumb)
+  list.before(wrap)
+  wrap.append(list, bar)
+  list.classList.add('fs')
+  let fade, drag = null, hover = false
+  const fit = () => {
+    const { scrollTop: t, scrollHeight: sh, clientHeight: ch } = list
+    bar.hidden = sh <= ch + 1
+    if (bar.hidden) return
+    const th = Math.max(28, ch * ch / sh)
+    thumb.style.height = th + 'px'
+    thumb.style.transform = `translateY(${(t / (sh - ch)) * (ch - th)}px)`
+  }
+  const show = () => {
+    bar.classList.add('on')
+    clearTimeout(fade)
+    fade = setTimeout(() => { if (!drag && !hover) bar.classList.remove('on') }, 900)
+  }
+  const onScroll = () => { fit(); show() }
+  list.addEventListener('scroll', onScroll, { passive: true })
+  thumb.addEventListener('pointerenter', () => { hover = true; show() })
+  thumb.addEventListener('pointerleave', () => { hover = false; show() })
+  thumb.addEventListener('pointerdown', (e) => {
+    e.preventDefault()
+    thumb.setPointerCapture(e.pointerId)
+    drag = { y: e.clientY, top: list.scrollTop }
+    bar.classList.add('drag')
+  })
+  thumb.addEventListener('pointermove', (e) => {
+    if (!drag) return
+    const { scrollHeight: sh, clientHeight: ch } = list
+    list.scrollTop = drag.top + (e.clientY - drag.y) * (sh - ch) / Math.max(1, ch - thumb.offsetHeight)
+  })
+  const end = () => { drag = null; bar.classList.remove('drag'); show() }
+  thumb.addEventListener('pointerup', end)
+  thumb.addEventListener('pointercancel', end)
+  const ro = typeof ResizeObserver === 'function' ? new ResizeObserver(fit) : null
+  ro?.observe(list)
+  const mo = new MutationObserver(fit)
+  mo.observe(list, { childList: true, subtree: true })
+  fit()
+  floats.set(key, { list, fit, stop: () => { ro?.disconnect(); mo.disconnect(); clearTimeout(fade) } })
+}
 
 // ---- Keyboard shortcuts, taken only when no field has the keys: ? lists
 // them. Letters are read by key position as well, so they work with a
@@ -5995,6 +6422,7 @@ const shortcuts = [
   ['t', 'TODO of the agent'],
   ['e', 'Name and ID of the agent'],
   ['x', 'Archive the agent (Enter archives, Esc keeps it)'],
+  [']', 'Show or hide bookmarks'],
   ['g then i / s / a', 'Go to Isolations / Services / Accounts'],
 ]
 
@@ -6397,6 +6825,7 @@ document.addEventListener('keydown', (e) => {
       e: a && (() => editAgent(a)),
       x: a && !a.archived_at && (() => askArchive(a)),
       g: () => { goPending = Date.now() },
+      ']': () => setBmOpen(!S.bmOpen),
       // Out of the message box, Esc asks to stop the agent at work: the
       // dialog's Stop has the focus, so Enter stops and Esc closes it.
       Escape: a && !S.drawer && a.state?.status === 'working' && !a.archived_at && (() => askStop(a)),

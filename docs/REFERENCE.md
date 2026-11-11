@@ -176,6 +176,28 @@ HTTPS certificate and decides which devices can reach it.
 For development, `PSPS_HOME=$PWD/.dev` keeps all state under `.dev/` and runs
 the daemon as a plain background process instead of touching launchd.
 
+#### Bookmarks
+
+The last button of the top bar (or `]`) opens **Bookmarks** on the right: a
+column beside the conversation on a wide screen (its edge drags to resize it),
+the whole screen on a phone. Any message can be kept: one you sent, a mail
+another agent sent, or an agent's reply. On a desktop its bookmark shows when
+you point at it; on a phone, tap the message for a bar with **Bookmark** and
+**Copy** (a long press still selects its text). A kept message wears a filled
+bookmark. Each card says whose message it is, what kind (Me, Reply, Mail) and
+when; the list is searched over the text, the notes and the names, and
+filtered by kind. A note is written on the card (**Add note** / **Edit
+note**, or the toast's **Add note** right after keeping one; ⌘↩ saves, Esc
+cancels, an empty one is removed). **Open** goes to the message in its
+conversation, fetching the earlier part if it must, and lights it up.
+**Unbookmark** lets it go, the message staying where it is, with Undo on the
+toast. The daemon keeps them, so every browser shows the same ones, and each
+keeps a copy of what its message said: an archived agent's still open, a
+deleted one's stay as text. The API is `GET|POST /v1/bookmarks`
+(`{"agent": "ID", "event": 42, "note": "…"}`, the event being the message's
+in `GET /v1/agents/ID/events`) and `PATCH|DELETE /v1/bookmarks/N`
+(`{"note": "…"}`).
+
 #### Autocompact
 
 Settings (the gear by the sidebar's title) has **Autocompact**, kept in the
