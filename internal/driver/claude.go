@@ -685,6 +685,13 @@ func (c *claude) observeOut(rec shimproto.Record, m clMessage) []event.Event {
 		if m.Subtype == "background_tasks_changed" {
 			c.tasks = clTasks(m.Tasks)
 		}
+		if m.Subtype == "task_notification" && m.ParentToolUseID == nil && !c.busy {
+			// A task ended while claude was idle: it starts a turn of its
+			// own to tell it, whose init comes after the task list is
+			// already empty. Busy from here, so the agent is not taken for
+			// idle in between and its process replaced as the turn begins.
+			c.busy = true
+		}
 		if m.Subtype == "init" {
 			// init opens every turn, also one claude starts itself when a
 			// background task it ran ends.
