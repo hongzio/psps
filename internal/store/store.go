@@ -163,7 +163,7 @@ func Open(path string) (*Store, error) {
 	// One writer is all SQLite allows anyway; a single connection turns
 	// contention into queueing instead of SQLITE_BUSY.
 	db.SetMaxOpenConns(1)
-	if _, err := db.Exec(schema + envSchema + accountSchema + mailSchema + cronSchema + todoSchema + orderSchema + teamSchema + leadSchema + reviewSchema + jobSchema + iconSchema + watchSchema + teamWaitSchema); err != nil {
+	if _, err := db.Exec(schema + envSchema + accountSchema + mailSchema + cronSchema + todoSchema + orderSchema + teamSchema + leadSchema + reviewSchema + jobSchema + iconSchema + watchSchema + teamWaitSchema + modelSchema); err != nil {
 		db.Close()
 		return nil, fmt.Errorf("store: schema: %w", err)
 	}
@@ -455,6 +455,9 @@ func (s *Store) DeleteIsolation(id string) error {
 	s.db.QueryRow(`SELECT COUNT(*) FROM agents WHERE isolation = ?`, id).Scan(&n)
 	if n > 0 {
 		return fmt.Errorf("%d agent(s) still belong to it", n)
+	}
+	if _, err := s.db.Exec(`DELETE FROM cli_models WHERE isolation = ?`, id); err != nil {
+		return err
 	}
 	_, err := s.db.Exec(`DELETE FROM isolations WHERE id = ?`, id)
 	return err

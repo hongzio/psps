@@ -32,6 +32,7 @@ type Backend interface {
 	Isolations(ctx context.Context) ([]api.Isolation, error)
 	CreateAgent(ctx context.Context, req api.CreateAgent) (api.Agent, error)
 	Dirs(ctx context.Context, iso, typed string) (api.Dirs, error)
+	Models(ctx context.Context, iso string, kind driver.Kind) (api.Models, error)
 	Send(ctx context.Context, id, text string) (api.Sent, error)
 	Approve(ctx context.Context, id, approval string, d driver.Decision, answers map[string]string) error
 	Interrupt(ctx context.Context, id string) error
@@ -762,6 +763,12 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case dirsMsg:
 		if m.newForm != nil {
 			m.newForm.gotDirs(msg)
+		}
+		return m, nil
+
+	case modelsMsg:
+		if m.newForm != nil {
+			m.newForm.gotModels(msg)
 		}
 		return m, nil
 

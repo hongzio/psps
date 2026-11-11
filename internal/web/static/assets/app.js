@@ -4000,6 +4000,79 @@ function dirCompleter(input, isoName, o = {}) {
   return h('div', { class: 'with-complete' }, input, box)
 }
 
+// modelCompleter offers, under a new agent's model input, the models its
+// CLI last said it runs in the isolation (isoName()), for kind(): its
+// process is not there yet to ask. What it lacks can still be typed.
+function modelCompleter(input, isoName, kind) {
+  const box = h('div', { class: 'complete below', role: 'listbox', hidden: true })
+  let items = [], active = 0, note = null, seq = 0
+  // got: the models asked for, by isolation and agent.
+  const got = new Map()
+  const close = () => { box.hidden = true; seq++ }
+  const draw = () => {
+    box.replaceChildren(...items.map((md, i) => h('div', {
+      class: 'complete-item' + (i === active ? ' active' : ''), role: 'option', 'aria-selected': String(i === active),
+      onmousedown: (e) => { e.preventDefault(); active = i; accept() },
+    }, h('span', { class: 'ci-name' }, md.value), md.description ? h('span', { class: 'ci-desc' }, md.description) : null)),
+    ...(note ? [h('div', { class: 'complete-note' }, note)] : []))
+    box.hidden = !items.length && !note
+    box.querySelector('.active')?.scrollIntoView({ block: 'nearest' })
+  }
+  const ask = async () => {
+    if (!isoName() || document.activeElement !== input) return close()
+    const my = ++seq
+    const key = isoName() + '\0' + kind()
+    try {
+      if (!got.has(key)) got.set(key, await api('GET', `/v1/isolations/${encodeURIComponent(isoName())}/models?kind=${encodeURIComponent(kind())}`))
+      if (my !== seq) return
+      const m = got.get(key)
+      const t = input.value.trim().toLowerCase()
+      const all = m.models || []
+      items = !t || all.some((md) => md.value.toLowerCase() === t) ? all
+        : all.filter((md) => (md.value + ' ' + (md.description || '')).toLowerCase().includes(t))
+      active = Math.max(0, items.findIndex((md) => md.value.toLowerCase() === t))
+      note = !all.length ? "Its CLI has not said what it runs here yet: type one, or leave it for the CLI's default."
+        : m.from ? `As its CLI said in ${m.from}; this isolation's may differ.` : null
+      if (all.length && !items.length) note = null
+      draw()
+    } catch (e) {
+      if (my !== seq) return
+      got.delete(key)
+      items = []
+      note = e instanceof Unauthorized ? null : `Can't list them: ${e.message}`
+      draw()
+    }
+  }
+  const accept = () => {
+    if (!items[active]) return false
+    input.value = items[active].value
+    close()
+    return true
+  }
+  input.addEventListener('input', ask)
+  input.addEventListener('focus', ask)
+  input.addEventListener('blur', close)
+  input.addEventListener('keydown', (e) => {
+    if (box.hidden || e.isComposing) return
+    switch (e.key) {
+      case 'ArrowDown': case 'ArrowUp':
+        if (!items.length) return
+        e.preventDefault()
+        active = (active + (e.key === 'ArrowDown' ? 1 : items.length - 1)) % items.length
+        draw()
+        return
+      case 'Tab': case 'Enter':
+        if (items.length && !e.shiftKey) { e.preventDefault(); accept() }
+        return
+      case 'Escape':
+        e.preventDefault()
+        e.stopPropagation()
+        close()
+    }
+  })
+  return h('div', { class: 'with-complete' }, input, box)
+}
+
 // The isolation, agent and working directory the last new agent was made
 // with, offered for the next. A convenience of this browser only.
 function lastNewAgent() {
@@ -4037,7 +4110,7 @@ function newAgentView() {
   const workdir = h('input', { placeholder: 'optional; ~/work/<its ID> otherwise', autocomplete: 'off', autocapitalize: 'off', spellcheck: 'false' })
   workdir.value = typeof last.workdir === 'string' ? last.workdir : ''
   const effort = dropdown([], { label: 'Effort' })
-  const model = h('input', { placeholder: "optional; the CLI's default otherwise" })
+  const model = h('input', { placeholder: "optional; the CLI's default otherwise", autocomplete: 'off', autocapitalize: 'off', spellcheck: 'false' })
   const approvals = dropdown([
     { value: 'never', label: 'never — run unattended inside the isolation' },
     { value: 'auto', label: 'auto — unattended; a reviewer model refuses risky actions' },
@@ -4102,7 +4175,7 @@ function newAgentView() {
       h('span', { class: 'hint' }, 'Where in the isolation it works, like ~/work/trevia; made if it is not there. ~ is the agent\'s home. Left empty, it gets a workspace of its own.')),
     h('div', { class: 'row' },
       h('div', { class: 'field' }, h('label', null, 'Effort'), effort),
-      h('div', { class: 'field' }, h('label', null, 'Model'), model)),
+      h('div', { class: 'field' }, h('label', null, 'Model'), modelCompleter(model, () => iso.value, () => kind))),
     h('div', { class: 'field' }, h('label', null, 'Approvals'), approvals),
     h('div', { class: 'field' }, h('label', null, 'First message'), prompt,
       h('span', { class: 'hint' }, 'Sent as soon as the agent is made, and names it, as a first message does.')),

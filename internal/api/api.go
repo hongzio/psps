@@ -469,6 +469,15 @@ type Dirs struct {
 	Home   string   `json:"home"` // what ~ stands for
 }
 
+// Models are the models an agent CLI offers in an isolation, as one of its
+// processes there last said, for a new agent's to be picked from. From is
+// the isolation that said them, when the one asked of has not yet. None
+// when none has said.
+type Models struct {
+	Models []driver.Choice `json:"models"`
+	From   string          `json:"from,omitempty"`
+}
+
 type Message struct {
 	Text string `json:"text"`
 }

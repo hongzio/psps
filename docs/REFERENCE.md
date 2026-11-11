@@ -256,6 +256,14 @@ what is typed there works the same.
 - Codex's: its skills, `$name` anywhere in a message, and `/compact`, which
   psps has Codex do; its app-server takes any other slash command for text.
 
+A new agent has no process yet to ask for its models, so New agent's Model
+(web UI and TUI) offers the ones its CLI last said it runs in the isolation,
+kept each time an agent's process there says them. Before any has, it offers
+those said in another isolation, and says which, since a CLI's models differ
+by its version and its login; before any has anywhere, there is nothing to
+offer. A model it does not offer can still be typed. The API is
+`GET /v1/isolations/{name}/models?kind=claude|codex`.
+
 ### Claude & Codex: accounts and logins
 
 An agent CLI in an isolation gets its credential one of two ways.
