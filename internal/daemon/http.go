@@ -442,6 +442,46 @@ func (m *Manager) Handler() http.Handler {
 		v, err := m.TakeTodo(r.PathValue("id"), id)
 		reply(w, v, err)
 	})
+	mux.HandleFunc("GET /v1/bookmarks", func(w http.ResponseWriter, r *http.Request) {
+		v, err := m.Bookmarks()
+		reply(w, v, err)
+	})
+	mux.HandleFunc("POST /v1/bookmarks", func(w http.ResponseWriter, r *http.Request) {
+		var req api.AddBookmark
+		if !decode(w, r, &req) {
+			return
+		}
+		v, err := m.AddBookmark(req.Agent, req.Event, req.Note, req.CreatedAt)
+		reply(w, v, err)
+	})
+	bookmarkID := func(w http.ResponseWriter, r *http.Request) (int64, bool) {
+		id, err := strconv.ParseInt(r.PathValue("bookmark"), 10, 64)
+		if err != nil {
+			reply(w, nil, badRequest(fmt.Errorf("%q is not a bookmark number", r.PathValue("bookmark"))))
+		}
+		return id, err == nil
+	}
+	mux.HandleFunc("PATCH /v1/bookmarks/{bookmark}", func(w http.ResponseWriter, r *http.Request) {
+		id, ok := bookmarkID(w, r)
+		if !ok {
+			return
+		}
+		var req api.PutBookmark
+		if !decode(w, r, &req) {
+			return
+		}
+		if req.Note == nil {
+			reply(w, nil, badRequest(errors.New("nothing to change")))
+			return
+		}
+		v, err := m.SetBookmarkNote(id, *req.Note)
+		reply(w, v, err)
+	})
+	mux.HandleFunc("DELETE /v1/bookmarks/{bookmark}", func(w http.ResponseWriter, r *http.Request) {
+		if id, ok := bookmarkID(w, r); ok {
+			reply(w, nil, m.DeleteBookmark(id))
+		}
+	})
 	// The sidebar's order of a list, live, archived or a team's
 	// ("team:<id>"): its lines from the top.
 	mux.HandleFunc("GET /v1/agent-order", func(w http.ResponseWriter, r *http.Request) {
