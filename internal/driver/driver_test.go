@@ -885,6 +885,39 @@ func TestClaudeCountsWhatRunsInTheBackground(t *testing.T) {
 	}
 }
 
+// A background task that ends while claude is idle is told it in a turn
+// claude starts itself. Between its notification and that turn's init the
+// task list is already empty: were the agent idle there, psps would replace
+// a process waiting to be replaced (an environment changed) just as the
+// turn began, and interrupt it. Its lines are claude's, in claude's order.
+func TestClaudeIsBusyFromABackgroundTaskEndingToItsTurn(t *testing.T) {
+	c := newClaude("a1", "", Options{})
+	tp := &tape{}
+	tp.started()
+	tp.out(`{"type":"system","subtype":"init","session_id":"s1"}`)
+	tp.out(`{"type":"system","subtype":"background_tasks_changed","tasks":[{"task_id":"a2","task_type":"local_agent","description":"review"}]}`)
+	tp.out(`{"type":"result","subtype":"success","queued_turn_count":0}`)
+	feed(c, tp.recs)
+	if st := c.State(); st.Busy || st.Status != event.StatusIdle || st.Background != 1 {
+		t.Fatalf("after the turn: %+v", st)
+	}
+	feed(c, []shimproto.Record{
+		tp.out(`{"type":"system","subtype":"task_updated","task_id":"a2","patch":{"status":"completed"}}`),
+		tp.out(`{"type":"system","subtype":"task_notification","task_id":"a2","status":"completed"}`),
+		tp.out(`{"type":"system","subtype":"background_tasks_changed","tasks":[]}`),
+	})
+	if st := c.State(); !st.Busy || st.Status != event.StatusWorking || st.Background != 0 {
+		t.Fatalf("the task ended, its turn not begun: %+v", st)
+	}
+	feed(c, []shimproto.Record{
+		tp.out(`{"type":"system","subtype":"init","session_id":"s1"}`),
+		tp.out(`{"type":"result","subtype":"success","queued_turn_count":0}`),
+	})
+	if st := c.State(); st.Busy || st.Status != event.StatusIdle {
+		t.Fatalf("after its turn: %+v", st)
+	}
+}
+
 func TestLoginHintPointsAtTheMacForAHostAgent(t *testing.T) {
 	c := newClaude("a1", "", Options{})
 	if h := c.loginHint(Claude); !strings.Contains(h, "psps iso login") {
