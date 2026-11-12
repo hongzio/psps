@@ -98,52 +98,61 @@ func agentPath(a store.Agent, home, p string) (string, error) {
 	return path.Clean(p), nil
 }
 
-// File reads a file in the agent's isolation for the viewer: its text, the
-// first api.FileTextMax bytes of it, or an image whole.
-func (m *Manager) File(ctx context.Context, id, p string) (api.File, error) {
+// readFile reads the first limit bytes of a file in the agent's isolation,
+// as the agent, and says how large it is whole and when it last changed.
+func (m *Manager) readFile(ctx context.Context, id, p string, limit int, timeout time.Duration) (api.File, []byte, error) {
 	a, container, home, err := m.viewerAgent(id)
 	if err != nil {
-		return api.File{}, err
+		return api.File{}, nil, err
 	}
 	full, err := agentPath(a, home, p)
 	if err != nil {
-		return api.File{}, badRequest(err)
+		return api.File{}, nil, badRequest(err)
 	}
-	ext := strings.ToLower(path.Ext(full))
+	ctx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+	out, err := m.cli.RunAsAgent(ctx, container, "sh", "-c", fileScript, "sh", full, strconv.Itoa(limit))
+	if err != nil {
+		return api.File{}, nil, fmt.Errorf("reading %s: %w", full, err)
+	}
+	head, body, _ := strings.Cut(out, "\n")
+	switch head {
+	case "psps:none":
+		return api.File{}, nil, fmt.Errorf("%s: %w", full, store.ErrNotFound)
+	case "psps:dir":
+		return api.File{}, nil, badRequest(fmt.Errorf("%s is a folder", full))
+	case "psps:special":
+		return api.File{}, nil, badRequest(fmt.Errorf("%s is not a file", full))
+	case "psps:unreadable":
+		return api.File{}, nil, httpError{http.StatusForbidden, fmt.Errorf("%s: the agent may not read it", full)}
+	}
+	var size, mtime int64
+	if _, err := fmt.Sscanf(head, "psps:ok %d %d", &size, &mtime); err != nil {
+		return api.File{}, nil, fmt.Errorf("reading %s: %s", full, out)
+	}
+	data, err := base64.StdEncoding.DecodeString(strings.Join(strings.Fields(body), ""))
+	if err != nil {
+		return api.File{}, nil, fmt.Errorf("reading %s: %w", full, err)
+	}
+	return api.File{Path: full, Size: size, MTime: time.Unix(mtime, 0)}, data, nil
+}
+
+// File reads a file in the agent's isolation for the viewer: its text, the
+// first api.FileTextMax bytes of it, or an image whole.
+func (m *Manager) File(ctx context.Context, id, p string) (api.File, error) {
+	ext := strings.ToLower(path.Ext(p))
 	typ, image := imageTypes[ext]
 	limit := api.FileTextMax
 	if image {
 		limit = api.FileImageMax
 	}
-	ctx, cancel := context.WithTimeout(ctx, 20*time.Second)
-	defer cancel()
-	out, err := m.cli.RunAsAgent(ctx, container, "sh", "-c", fileScript, "sh", full, strconv.Itoa(limit+1))
+	f, data, err := m.readFile(ctx, id, p, limit+1, 20*time.Second)
 	if err != nil {
-		return api.File{}, fmt.Errorf("reading %s: %w", full, err)
+		return api.File{}, err
 	}
-	head, body, _ := strings.Cut(out, "\n")
-	switch head {
-	case "psps:none":
-		return api.File{}, fmt.Errorf("%s: %w", full, store.ErrNotFound)
-	case "psps:dir":
-		return api.File{}, badRequest(fmt.Errorf("%s is a folder", full))
-	case "psps:special":
-		return api.File{}, badRequest(fmt.Errorf("%s is not a file", full))
-	case "psps:unreadable":
-		return api.File{}, httpError{http.StatusForbidden, fmt.Errorf("%s: the agent may not read it", full)}
-	}
-	var size, mtime int64
-	if _, err := fmt.Sscanf(head, "psps:ok %d %d", &size, &mtime); err != nil {
-		return api.File{}, fmt.Errorf("reading %s: %s", full, out)
-	}
-	f := api.File{Path: full, Size: size, MTime: time.Unix(mtime, 0)}
-	if image && size > api.FileImageMax {
+	if image && f.Size > api.FileImageMax {
 		f.Kind, f.Type = api.FileTooLarge, typ
 		return f, nil
-	}
-	data, err := base64.StdEncoding.DecodeString(strings.Join(strings.Fields(body), ""))
-	if err != nil {
-		return api.File{}, fmt.Errorf("reading %s: %w", full, err)
 	}
 	if image {
 		f.Kind, f.Type, f.Data = api.FileImage, typ, base64.StdEncoding.EncodeToString(data)
@@ -233,4 +242,24 @@ func (m *Manager) servePage(w http.ResponseWriter, r *http.Request) {
 	h.Set("X-Frame-Options", "SAMEORIGIN")
 	h.Set("Cache-Control", "no-store")
 	w.Write([]byte(f.Text))
+}
+
+// serveDownload sends a file of the agent's whole, up to
+// api.FileDownloadMax, for the browser to save: as bytes, never shown.
+func (m *Manager) serveDownload(w http.ResponseWriter, r *http.Request) {
+	f, data, err := m.readFile(r.Context(), r.PathValue("id"), r.URL.Query().Get("path"), api.FileDownloadMax+1, 2*time.Minute)
+	if err == nil && (f.Size > api.FileDownloadMax || len(data) > api.FileDownloadMax) {
+		err = httpError{http.StatusRequestEntityTooLarge, fmt.Errorf("%s is larger than %d MB, too large to download here", f.Path, api.FileDownloadMax>>20)}
+	}
+	if err != nil {
+		reply(w, nil, err)
+		return
+	}
+	h := w.Header()
+	h.Set("Content-Type", "application/octet-stream")
+	h.Set("Content-Disposition", mime.FormatMediaType("attachment", map[string]string{"filename": path.Base(f.Path)}))
+	h.Set("Content-Length", strconv.Itoa(len(data)))
+	h.Set("X-Content-Type-Options", "nosniff")
+	h.Set("Cache-Control", "no-store")
+	w.Write(data)
 }

@@ -523,6 +523,8 @@ const (
 const (
 	FileTextMax  = 1 << 20
 	FileImageMax = 8 << 20
+	// FileDownloadMax is the most of a file that is downloaded whole.
+	FileDownloadMax = 100 << 20
 )
 
 // File is a file in an agent's isolation, for the web's viewer to show.

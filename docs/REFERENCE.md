@@ -220,16 +220,18 @@ its lines numbered (wrap them with the wrap button). Text past 1 MiB is cut,
 an image over 8 MiB not shown, and anything else neither text nor an image
 is not shown. A file shown is read again when it changes, keeping its
 place; one deleted says so. **@** names it in the message being written,
-the copy button copies its path, and its folders lead back to them in the
-list; Esc goes back too. On a wide screen the drawer widens for a file (the
+the download button saves it whole to the browser's downloads (whatever it
+is, shown or not, up to 100 MiB), the copy button copies its path, and its
+folders lead back to them in the list; Esc goes back too. On a wide screen the drawer widens for a file (the
 button beside its close), down to 360px of conversation.
 
 The API is `GET /v1/agents/ID/file?path=P` (a path relative to the agent's
 workdir, under `~`, or whole: `{"path", "size", "mtime", "kind"` (text,
 image, binary or too_large)`, "type", "text" | "data"` (base64)`,
 "truncated"}`), `GET /v1/agents/ID/page?path=P[&scripts=1]` (an HTML file as
-a sandboxed page) and `POST /v1/agents/ID/stat` (`{"paths": [...]}`, at most
-200: those that are files, with `"abs"`, size and mtime).
+a sandboxed page), `GET /v1/agents/ID/download?path=P` (the file whole, as
+an attachment; 413 over 100 MiB) and `POST /v1/agents/ID/stat`
+(`{"paths": [...]}`, at most 200: those that are files, with `"abs"`, size and mtime).
 
 #### Autocompact
 
