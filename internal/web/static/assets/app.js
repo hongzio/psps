@@ -6741,6 +6741,7 @@ function viewerPane() {
         h('span', { class: 'fv-modes', role: 'group' }),
         h('button', { type: 'button', class: 'bm-x fv-wrap', title: 'Wrap long lines', onclick: () => { S.fv.wrap = !S.fv.wrap; renderViewer(true) } }, icon('wrap-text')),
         h('button', { type: 'button', class: 'bm-x fv-at', title: 'Name it in the message (@)', onclick: () => mentionFile() }, icon('at-sign')),
+        h('a', { class: 'bm-x fv-dl', title: 'Download it', 'aria-label': 'Download it', download: '' }, icon('download')),
         h('button', { type: 'button', class: 'bm-x', title: 'Copy its path', onclick: () => S.fv && copyText(S.fv.path) }, icon('copy'))),
       h('div', { class: 'fv-crumbs' })),
     h('div', { class: 'fv-note', hidden: true }),
@@ -6841,6 +6842,11 @@ function renderViewer(keep) {
   const wrap = pane.querySelector('.fv-wrap')
   wrap.hidden = !source
   wrap.setAttribute('aria-pressed', String(v.wrap))
+  // Downloaded whole, as it is now: whatever it is, shown or not.
+  const dl = pane.querySelector('.fv-dl')
+  dl.href = `/v1/agents/${v.agent}/download?path=${encodeURIComponent(v.path)}`
+  dl.download = baseName(v.path)
+  dl.hidden = v.gone
   const at = pane.querySelector('.fv-at')
   at.hidden = !a || a.archived_at || S.sel !== a.id || S.view !== 'agent'
 

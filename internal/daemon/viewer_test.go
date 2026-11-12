@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/base64"
 	"errors"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -97,6 +98,33 @@ func TestViewerFiles(t *testing.T) {
 		if res.StatusCode != 200 || !strings.HasPrefix(csp, "sandbox") || strings.Contains(csp, "allow-same-origin") ||
 			strings.Contains(csp, "allow-scripts") != scripts || !strings.Contains(csp, "default-src 'none'") {
 			t.Fatalf("%d %q", res.StatusCode, csp)
+		}
+	}
+
+	// Downloaded whole and as bytes, whatever it is, past what is shown.
+	for _, c := range []struct {
+		path string
+		want []byte
+	}{{"bin/blob", []byte("ab\x00cd")}, {"big.txt", []byte(strings.Repeat("a", api.FileTextMax-1) + "한" + "tail")}} {
+		res, err := http.Get(srv.URL + "/v1/agents/" + a.ID + "/download?path=" + c.path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		b, _ := io.ReadAll(res.Body)
+		res.Body.Close()
+		if res.StatusCode != 200 || string(b) != string(c.want) || res.Header.Get("Content-Type") != "application/octet-stream" ||
+			res.Header.Get("Content-Disposition") != "attachment; filename="+filepath.Base(c.path) {
+			t.Fatalf("%s: %d %q %d bytes", c.path, res.StatusCode, res.Header.Get("Content-Disposition"), len(b))
+		}
+	}
+	for path, code := range map[string]int{"nope.md": 404, "docs": 400} {
+		res, err := http.Get(srv.URL + "/v1/agents/" + a.ID + "/download?path=" + path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		res.Body.Close()
+		if res.StatusCode != code {
+			t.Fatalf("%s: %d", path, res.StatusCode)
 		}
 	}
 }

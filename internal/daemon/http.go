@@ -317,6 +317,7 @@ func (m *Manager) Handler() http.Handler {
 		reply(w, v, err)
 	})
 	mux.HandleFunc("GET /v1/agents/{id}/page", m.servePage)
+	mux.HandleFunc("GET /v1/agents/{id}/download", m.serveDownload)
 	mux.HandleFunc("POST /v1/agents/{id}/stat", func(w http.ResponseWriter, r *http.Request) {
 		var req api.StatFiles
 		if !decode(w, r, &req) {
