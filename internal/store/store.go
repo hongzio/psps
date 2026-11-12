@@ -780,6 +780,25 @@ func (s *Store) SetMadeVia(id, via string) error {
 	return err
 }
 
+// CutLoose takes every session of line from the agent that made it, a
+// team's lead or one through the control service: made by no one, and
+// with no turn limit, which only a lead's agents have.
+func (s *Store) CutLoose(line string) error {
+	tx, err := s.db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	if _, err := tx.Exec(`DELETE FROM team_waits WHERE agent IN (SELECT id FROM agents WHERE COALESCE(line, id) = ? AND made_by != '')`, line); err != nil {
+		return err
+	}
+	if _, err := tx.Exec(`UPDATE agents SET turn_minutes = CASE WHEN made_by != '' THEN 0 ELSE turn_minutes END, made_by = '', made_via = ''
+		WHERE COALESCE(line, id) = ?`, line); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
 // RenameAgent changes what is set of an agent's name and handle at once:
 // both, or neither if its handle is taken. A handle of "" takes it away.
 func (s *Store) RenameAgent(id string, name, handle *string) error {
