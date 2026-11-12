@@ -510,6 +510,54 @@ type Files struct {
 	Truncated bool `json:"truncated,omitempty"`
 }
 
+// File kinds: how the web's viewer shows a file.
+const (
+	FileText     = "text"      // Text holds it, the first FileTextMax bytes
+	FileImage    = "image"     // Data holds it, base64
+	FileBinary   = "binary"    // neither: not shown
+	FileTooLarge = "too_large" // an image over FileImageMax: not sent
+)
+
+// The most of a file that is sent: of text, the rest cut off; an image
+// larger is not sent at all.
+const (
+	FileTextMax  = 1 << 20
+	FileImageMax = 8 << 20
+)
+
+// File is a file in an agent's isolation, for the web's viewer to show.
+type File struct {
+	// Path is where it is, whole: a path asked relative is to the agent's
+	// workdir, one starting with ~ to the home there.
+	Path  string    `json:"path"`
+	Size  int64     `json:"size"`
+	MTime time.Time `json:"mtime"`
+	Kind  string    `json:"kind"`
+	// Type is its media type, by its name or else what it starts with.
+	Type      string `json:"type,omitempty"`
+	Text      string `json:"text,omitempty"`
+	Data      string `json:"data,omitempty"`
+	Truncated bool   `json:"truncated,omitempty"`
+}
+
+// StatFiles asks which of Paths are files in an agent's isolation.
+type StatFiles struct {
+	Paths []string `json:"paths"`
+}
+
+// FileStat is one of them that is a file: Path as it was asked, Abs whole.
+type FileStat struct {
+	Path  string    `json:"path"`
+	Abs   string    `json:"abs"`
+	Size  int64     `json:"size"`
+	MTime time.Time `json:"mtime"`
+}
+
+// FileStats are those of the paths asked that are files.
+type FileStats struct {
+	Files []FileStat `json:"files"`
+}
+
 // Branch is the git branch an agent's workspace is on: a commit when it is
 // on none, "" when it is no repository.
 type Branch struct {

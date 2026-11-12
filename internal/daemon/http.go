@@ -312,6 +312,19 @@ func (m *Manager) Handler() http.Handler {
 		v, err := m.Files(r.Context(), r.PathValue("id"))
 		reply(w, v, err)
 	})
+	mux.HandleFunc("GET /v1/agents/{id}/file", func(w http.ResponseWriter, r *http.Request) {
+		v, err := m.File(r.Context(), r.PathValue("id"), r.URL.Query().Get("path"))
+		reply(w, v, err)
+	})
+	mux.HandleFunc("GET /v1/agents/{id}/page", m.servePage)
+	mux.HandleFunc("POST /v1/agents/{id}/stat", func(w http.ResponseWriter, r *http.Request) {
+		var req api.StatFiles
+		if !decode(w, r, &req) {
+			return
+		}
+		v, err := m.StatFiles(r.Context(), r.PathValue("id"), req.Paths)
+		reply(w, v, err)
+	})
 	mux.HandleFunc("GET /v1/agents/{id}/branch", func(w http.ResponseWriter, r *http.Request) {
 		v, err := m.Branch(r.Context(), r.PathValue("id"))
 		reply(w, v, err)
