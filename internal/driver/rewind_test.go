@@ -282,3 +282,50 @@ func texts(evs []event.Event) []string {
 	}
 	return out
 }
+
+// A compaction starts the conversation claude resumes over: an entry from
+// before it is no longer one --resume-session-at finds, so a message from
+// before it cannot be gone back to, but the session's first message can,
+// with a session of its own.
+func TestClaudeRewindRefusesAMessageFromBeforeACompaction(t *testing.T) {
+	tp := &tape{}
+	d := newClaude("a1", "s-1", Options{})
+	d.Observe(tp.startedAs(d.Command()))
+	one := claudeTurn(t, d, tp, "one", "u-1")
+	two := claudeTurn(t, d, tp, "two", "u-2")
+
+	d.Send("/compact")
+	compact, _ := write(d, tp)
+	d.Observe(tp.out(`{"type":"system","subtype":"init","session_id":"s-1"}`))
+	d.Observe(tp.out(`{"type":"system","subtype":"compact_boundary","session_id":"s-1","uuid":"cb-1"}`))
+	d.Observe(tp.out(`{"type":"user","uuid":"sum-1","parent_tool_use_id":null,"message":{"role":"user","content":"summary"}}`))
+	d.Observe(tp.out(`{"type":"result","subtype":"success","is_error":false,"result":""}`))
+	three := claudeTurn(t, d, tp, "three", "u-3")
+
+	for _, src := range []int64{two.Seq, compact.Seq} {
+		err := d.Rewind(src, "again")
+		if err == nil || !strings.Contains(err.Error(), "compacted") {
+			t.Fatalf("rewind to %d: err = %v, want a refusal for the compaction", src, err)
+		}
+		if d.rewind != nil || d.State().Queued != 0 {
+			t.Fatal("a refused rewind left itself or its message behind")
+		}
+	}
+	if err := d.Rewind(three.Seq, "trois"); err != nil {
+		t.Fatal(err)
+	}
+	if argv := strings.Join(d.Command(), " "); !strings.Contains(argv, "--resume-session-at sum-1") {
+		t.Fatalf("command = %s", argv)
+	}
+	d.rewind, d.queue = nil, nil
+	if err := d.Rewind(one.Seq, "uno"); err != nil {
+		t.Fatalf("the first message starts a session of its own: %v", err)
+	}
+
+	// The log alone says the same.
+	replay := newClaude("a1", "s-1", Options{})
+	feed(replay, tp.recs)
+	if err := replay.Rewind(two.Seq, "again"); err == nil {
+		t.Fatal("replayed: a message from before the compaction can be gone back to")
+	}
+}

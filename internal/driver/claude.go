@@ -64,6 +64,10 @@ type claude struct {
 	// next message attaches.
 	prompts   []prompt
 	lastEntry string
+	// compacted is the log record of the last compaction: claude resumes
+	// the conversation from there, so an entry from before it is not one
+	// --resume-session-at can find.
+	compacted int64
 	// rewind is asked for and not started yet; going is the generation
 	// started with it, until claude's init shows the resume took.
 	rewind *clRewind
@@ -274,6 +278,9 @@ func (c *claude) Rewind(src int64, text string) error {
 	p := c.prompts[i]
 	if !p.ok {
 		return errors.New("that message reached claude while it was working, so there is no point before it to go back to")
+	}
+	if p.at != "" && p.src < c.compacted {
+		return errors.New("the conversation was compacted after that message, so claude can no longer go back to it")
 	}
 	rw := &clRewind{at: p.at}
 	if p.at == "" {
@@ -682,6 +689,9 @@ func (c *claude) observeOut(rec shimproto.Record, m clMessage) []event.Event {
 	}
 	switch m.Type {
 	case "system":
+		if m.Subtype == "compact_boundary" {
+			c.compacted = rec.Seq
+		}
 		if m.Subtype == "background_tasks_changed" {
 			c.tasks = clTasks(m.Tasks)
 		}
