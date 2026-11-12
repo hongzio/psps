@@ -1044,6 +1044,12 @@ a.btn { display: inline-flex; align-items: center; color: var(--text); text-deco
   font-size: 15px;
   font-weight: 400;
 }
+.dialog-field.made-by { gap: 6px; }
+.made-by .maker { display: flex; align-items: center; gap: 2px; color: var(--muted); font-weight: 400; }
+.made-by.cut .maker { color: var(--faint); text-decoration: line-through; }
+.made-by .check { align-items: flex-start; font-weight: 400; cursor: pointer; }
+.made-by .check input { margin: 3px 0 0; flex: none; }
+.made-by .check .hint { display: block; color: var(--muted); }
 .dialog .dialog-error { margin: 12px 0 0; color: var(--err); }
 .dialog-cmd { margin: 12px 0 0; padding: 10px 12px; border-radius: 8px; background: var(--code); overflow-x: auto; user-select: all; }
 .inbox { display: grid; gap: 10px; margin-top: 14px; max-height: 50vh; overflow-y: auto; }

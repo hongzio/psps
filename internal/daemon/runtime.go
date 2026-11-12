@@ -764,6 +764,26 @@ func (r *runtime) relabel(name, handle *string) error {
 	return nil
 }
 
+// cutLoose takes the agent's line from its maker, and says which lead's
+// it was, if a lead's: from now on that lead neither hears of its turns
+// nor waits on it, and no limit stops its turns.
+func (r *runtime) cutLoose() (lead string, err error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if err := r.m.store.CutLoose(cmp.Or(r.agent.Line, r.agent.ID)); err != nil {
+		return "", err
+	}
+	lead = r.agent.MadeBy
+	if lead != "" {
+		r.m.setChildBusy(lead, r.agent.ID, false, false)
+		r.agent.TurnMinutes = 0
+		r.tw = store.TeamWait{Agent: r.agent.ID, Mode: store.WatchSettle}
+		r.overtime = overNone
+	}
+	r.agent.MadeBy, r.agent.MadeVia = "", ""
+	return lead, nil
+}
+
 // detach makes the side agent one of its own.
 func (r *runtime) detach() error {
 	r.mu.Lock()

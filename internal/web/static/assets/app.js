@@ -2747,12 +2747,25 @@ async function editAgent(a) {
   const name = h('input', { class: 'dialog-input', value: a.name, autocomplete: 'off', placeholder: 'from its first message' })
   const id = h('input', { class: 'dialog-input', value: a.handle || '', autocomplete: 'off', autocapitalize: 'off', spellcheck: 'false', placeholder: a.id })
   const [team, teams] = teamInput(a.team)
+  // An agent another made, a team's lead or one through the control
+  // service, can be cut loose from it: its own, with no arrow.
+  const makerRef = a.made_by || a.made_via
+  const makerAgent = makerRef && S.agents.find((x) => x.id === makerRef)
+  const makerName = makerAgent ? shownID(makerAgent) : makerRef
+  const cut = h('input', { type: 'checkbox' })
+  const madeBy = makerRef ? h('div', { class: 'dialog-field made-by' }, 'Made by',
+    h('span', { class: 'maker' }, icon('corner-down-right'), ' ',
+      a.made_by ? `${makerName}, its team's lead` : `${makerName}, through the control service`),
+    h('label', { class: 'check' }, cut, h('span', null, 'Cut it loose', h('span', { class: 'hint' },
+      a.made_by ? `Its turns no longer report to ${makerName}, nor does a limit stop them; it stays in its team as any member.`
+        : `No arrow, and ${makerName} no longer counts it among the agents it made.`)))) : null
+  cut.addEventListener('change', () => madeBy.classList.toggle('cut', cut.checked))
   let saved = null
   const ok = await ask({
     title: 'Name, ID and team',
     body: `Only what it is called changes; a running turn carries on. Its ID is unique among all agents; left empty, it goes by ${a.id}, the one psps gave it. A team groups agents in the sidebar; a name no team has makes one.`,
     fields: [h('label', { class: 'dialog-field' }, 'Name', name), h('label', { class: 'dialog-field' }, 'ID', id),
-      h('label', { class: 'dialog-field' }, 'Team', team, teams)],
+      h('label', { class: 'dialog-field' }, 'Team', team, teams), madeBy].filter(Boolean),
     ok: 'Save',
     onOk: async () => {
       const body = {}
@@ -2765,6 +2778,7 @@ async function editAgent(a) {
       }
       if (i !== (a.handle || '')) body.handle = i
       if (tm !== (a.team || '')) body.team = tm
+      if (cut.checked) body.cut_loose = true
       if (Object.keys(body).length) saved = await api('PATCH', `/v1/agents/${enc(a.id)}`, body)
     },
   })

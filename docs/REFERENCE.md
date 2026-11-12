@@ -1170,7 +1170,11 @@ as that agent:
   `[psps control: from agent boss in isolation dev, ...]`, an agent it made
   starts on a prompt that says so, a cron it set says who set it (`psps agent
   cron` under SET BY), and the sidebar marks an agent made this way with an
-  arrow. The daemon's log has a line for every change.
+  arrow. Its Edit dialog cuts it loose (`PATCH /v1/agents/ID` with
+  `cut_loose`): every session of it is its own from then on, with no arrow,
+  and its maker no longer counts it; one a team's lead made goes the same
+  way, its turns no longer the lead's news and no limit stopping them. The
+  daemon's log has a line for every change.
 - **Approvals stay yours.** An agent it makes in its own isolation takes its
   maker's approvals mode, as a lead's do; one in another isolation asks you,
   unless you gave the exposure `--approvals auto`: then one whose maker runs

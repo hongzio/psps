@@ -961,3 +961,39 @@ func TestATurnPastItsLimitIsStoppedForAFinalReport(t *testing.T) {
 		}
 	}
 }
+
+// An agent a lead made, cut loose from it, is its own: the lead no longer
+// sees it, its turns have no limit, and it can be cut loose only once.
+func TestAnAgentALeadMadeIsCutLooseFromIt(t *testing.T) {
+	e := newTestEnv(t)
+	m, stop := e.daemon()
+	defer stop()
+	boss, _ := withTeams(t, e, m, api.PutLead{Budget: ptr(int64(1_000_000))})
+	a := makeAgent(t, m, boss.ID, api.TeamAgentNew{Role: "worker", Kind: driver.Codex, Prompt: "hello"})
+	e.waitFor("its turn's end", func() bool { return len(news(e, boss.ID)) == 1 })
+
+	v, err := m.UpdateAgent(a.ID, api.UpdateAgent{CutLoose: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if v.MadeBy != "" || v.MadeVia != "" || v.TurnMinutes != 0 || v.Team != "lab" {
+		t.Fatalf("%+v", v)
+	}
+	if s, _ := m.storedAgent(a.ID); s.MadeBy != "" || s.TurnMinutes != 0 {
+		t.Fatalf("stored: %+v", s)
+	}
+	if code, _ := teamAs(t, m, boss.ID, "GET", "/agents/"+a.ID, ""); code != http.StatusNotFound {
+		t.Fatalf("the lead still has it: %d", code)
+	}
+	if _, err := m.UpdateAgent(a.ID, api.UpdateAgent{CutLoose: true}); err == nil || !strings.Contains(err.Error(), "made by no agent") {
+		t.Fatalf("again: %v", err)
+	}
+	// Its turns are no lead's news now.
+	if err := m.Send(a.ID, "more"); err != nil {
+		t.Fatal(err)
+	}
+	e.waitFor("its turn", func() bool { return slices.Contains(users(e, v.ID), "more") && status(m, v.ID) == event.StatusIdle })
+	if n := news(e, boss.ID); len(n) != 1 {
+		t.Fatalf("the lead heard of it: %q", n)
+	}
+}

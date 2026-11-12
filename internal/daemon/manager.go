@@ -1306,6 +1306,9 @@ func (m *Manager) UpdateAgent(idOrPrefix string, req api.UpdateAgent) (api.Agent
 	if err != nil {
 		return api.Agent{}, err
 	}
+	if req.CutLoose && a.MadeBy == "" && a.MadeVia == "" {
+		return api.Agent{}, badRequest(fmt.Errorf("agent %s was made by no agent", shownID(a)))
+	}
 	m.mu.Lock()
 	r := m.runtimes[a.ID]
 	m.mu.Unlock()
@@ -1344,7 +1347,43 @@ func (m *Manager) UpdateAgent(idOrPrefix string, req api.UpdateAgent) (api.Agent
 			return api.Agent{}, err
 		}
 	}
+	if req.CutLoose {
+		if err := m.cutLoose(r, a); err != nil {
+			return api.Agent{}, err
+		}
+		a.MadeBy, a.MadeVia = "", ""
+	}
 	return m.viewOf(a)
+}
+
+// cutLoose takes agent a's line from the agent that made it, through its
+// runtime r if it is live. A lead's team is looked at again: one of its
+// agents it may have been waiting on is not its own now.
+func (m *Manager) cutLoose(r *runtime, a store.Agent) error {
+	lead := a.MadeBy
+	maker := cmp.Or(a.MadeBy, a.MadeVia)
+	if x, err := m.store.Agent(maker); err == nil {
+		maker = shownID(x)
+	}
+	if r != nil {
+		l, err := r.cutLoose()
+		if err != nil {
+			return err
+		}
+		lead = cmp.Or(l, lead)
+	} else if err := m.store.CutLoose(cmp.Or(a.Line, a.ID)); err != nil {
+		return err
+	}
+	if lead != "" {
+		if l, err := m.store.LeadOfLine(lead); err == nil {
+			m.teamChanged(l.Team)
+		}
+	}
+	if r != nil {
+		m.addEvents(a.ID, event.Event{Kind: event.KindNotice, Text: fmt.Sprintf("Cut loose from %s, which made it: an agent of its own.", maker)})
+	}
+	m.log.Printf("agent %s: cut loose from %s", a.ID, maker)
+	return nil
 }
 
 // Archive stops the agent and keeps its history. Its session and workspace

@@ -441,6 +441,10 @@ type UpdateAgent struct {
 	// Icon gives its line, every session of it, that icon; one with no
 	// name takes its icon away.
 	Icon *store.Icon `json:"icon,omitempty"`
+	// CutLoose takes its line, every session of it, from the agent that
+	// made it, a team's lead or one through the control service: that one
+	// no longer has it as its own.
+	CutLoose bool `json:"cut_loose,omitempty"`
 }
 
 type CreateAgent struct {
