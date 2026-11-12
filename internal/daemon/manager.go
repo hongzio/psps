@@ -1363,6 +1363,8 @@ func (m *Manager) Archive(ctx context.Context, id string) error {
 	delete(m.runtimes, r.agent.ID)
 	m.mu.Unlock()
 	m.watchesGone(r.agent, "was archived")
+	// Its side agents are its conversation's: they go with it.
+	m.deleteSides(r.agent.ID)
 	return nil
 }
 
@@ -1376,6 +1378,9 @@ func (m *Manager) Renew(ctx context.Context, id string) (store.Agent, error) {
 		return store.Agent{}, err
 	}
 	old, _, _ := r.view()
+	if old.SideOf != "" {
+		return store.Agent{}, badRequest(errors.New("a side agent does not start over: delete it, and /btw again"))
+	}
 	key, err := m.newAgentID()
 	if err != nil {
 		return store.Agent{}, err
@@ -1401,6 +1406,7 @@ func (m *Manager) Renew(ctx context.Context, id string) (store.Agent, error) {
 	m.mu.Unlock()
 	m.log.Printf("agent %s: renewed as %s", old.ID, a.ID)
 	m.watchesGone(old, fmt.Sprintf("started over as a new session (%s), which does not know of it,", a.ID))
+	m.deleteSides(old.ID)
 	_, err = m.ensureRuntime(a)
 	return a, err
 }
@@ -1416,6 +1422,9 @@ func (m *Manager) Restore(ctx context.Context, id string) (api.Agent, error) {
 	}
 	if a.ArchivedAt == nil {
 		return api.Agent{}, httpError{http.StatusConflict, fmt.Errorf("agent %s is not archived", a.ID)}
+	}
+	if a.SideOf != "" {
+		return api.Agent{}, httpError{http.StatusConflict, fmt.Errorf("agent %s is a side agent being deleted", a.ID)}
 	}
 	if a.IsolationID == store.HostIsolation {
 		live, err := m.adminAgents()
@@ -1485,8 +1494,20 @@ func (m *Manager) fork(ctx context.Context, id, via string) (api.Agent, error) {
 	if err != nil {
 		return api.Agent{}, err
 	}
-	if err := notOnHost(from, "forked"); err != nil {
+	a, err := m.forkAgent(ctx, from, via, "")
+	if err != nil {
 		return api.Agent{}, err
+	}
+	return m.viewOf(a)
+}
+
+// forkAgent makes the fork of from, its runtime started. A side agent's
+// (side, the question it is forked to answer) is from's alone: on no line
+// of the list nor in a team, named after its question, its conversation
+// only a note of where it starts, not a copy of from's.
+func (m *Manager) forkAgent(ctx context.Context, from store.Agent, via, side string) (store.Agent, error) {
+	if err := notOnHost(from, "forked"); err != nil {
+		return store.Agent{}, err
 	}
 	session := from.SessionID
 	if r, err := m.runtime(from.ID); err == nil {
@@ -1494,22 +1515,24 @@ func (m *Manager) fork(ctx context.Context, id, via string) (api.Agent, error) {
 		session = st.SessionID
 	}
 	if _, err := m.ensureIsolation(ctx, from.IsolationID); err != nil {
-		return api.Agent{}, err
+		return store.Agent{}, err
 	}
 	if ok, why := m.fenceOK(from.IsolationID); !ok {
-		return api.Agent{}, fmt.Errorf("isolation %s has no verified network fence: %s", m.isoName(from.IsolationID), why)
+		return store.Agent{}, fmt.Errorf("isolation %s has no verified network fence: %s", m.isoName(from.IsolationID), why)
 	}
 	key, err := m.newAgentID()
 	if err != nil {
-		return api.Agent{}, err
+		return store.Agent{}, err
 	}
 	drv, err := driver.New(from.Kind, key, "", from.Options)
 	if err != nil {
-		return api.Agent{}, err
+		return store.Agent{}, err
 	}
 	a := store.Agent{ID: key, Name: from.Name, Kind: from.Kind, IsolationID: from.IsolationID, Workdir: from.Workdir, Repo: from.Repo,
 		Options: from.Options, SessionID: drv.State().SessionID, CreatedAt: time.Now().UTC(), ForkedFrom: from.ID, ForkOf: session, MadeVia: via}
-	if a.Name != "" {
+	if side != "" {
+		a.SideOf, a.Name = from.ID, sideName(side)
+	} else if a.Name != "" {
 		a.Name += " (fork)"
 	}
 	base := cmp.Or(from.Handle, from.Was, from.ID)
@@ -1521,10 +1544,18 @@ func (m *Manager) fork(ctx context.Context, id, via string) (api.Agent, error) {
 		}
 	}
 	if err != nil {
-		return api.Agent{}, err
+		return store.Agent{}, err
 	}
 	if a, err = m.store.Agent(a.ID); err != nil {
-		return api.Agent{}, err
+		return store.Agent{}, err
+	}
+	if side != "" {
+		m.addEvents(a.ID, event.Event{Kind: event.KindNotice, Text: fmt.Sprintf("A side agent of %s: it knows that one's conversation up to here, and works on its own.", cmp.Or(from.Handle, from.ID))})
+		m.log.Printf("agent %s: forked from %s, on the side", a.ID, from.ID)
+		if _, err := m.ensureRuntime(a); err != nil {
+			return store.Agent{}, err
+		}
+		return a, nil
 	}
 	// Its conversation shows where it starts from, as its session does.
 	if err := m.store.CopyEvents(from.ID, a.ID, fmt.Sprintf("Forked from %s: the conversation above is its, copied; this agent goes on from here, on its own.", cmp.Or(from.Handle, from.ID))); err != nil {
@@ -1544,9 +1575,9 @@ func (m *Manager) fork(ctx context.Context, id, via string) (api.Agent, error) {
 		m.log.Printf("agent %s: its place: %v", a.ID, err)
 	}
 	if _, err := m.ensureRuntime(a); err != nil {
-		return api.Agent{}, err
+		return store.Agent{}, err
 	}
-	return m.viewOf(a)
+	return a, nil
 }
 
 // forkHandle is base, cut to leave room, with a random suffix.
@@ -1576,6 +1607,10 @@ func (m *Manager) DeleteAgent(ctx context.Context, idOrPrefix string, purge bool
 	m.mu.Lock()
 	_, live := m.runtimes[a.ID]
 	m.mu.Unlock()
+	// A side agent is deleted live: it is never kept archived.
+	if a.SideOf != "" && (a.ArchivedAt == nil || live) {
+		return m.deleteSide(a)
+	}
 	if a.ArchivedAt == nil || live {
 		return httpError{http.StatusConflict, fmt.Errorf("agent %s is live; archive it first (`psps agent archive %s`)", a.ID, a.ID)}
 	}

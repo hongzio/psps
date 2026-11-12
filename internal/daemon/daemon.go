@@ -78,6 +78,7 @@ func Run(ctx context.Context, p paths.Paths, logger *log.Logger) error {
 		if err := m.Reconcile(); err != nil {
 			logger.Printf("reconcile: %v", err)
 		}
+		m.sweepSides()
 	}()
 	m.loops.Add(4)
 	go func() {

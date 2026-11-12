@@ -113,13 +113,20 @@ const S = {
   // file being viewed ({ agent, path, file, mode, ... }), none for the
   // list; the list's search and chip and its folders open (agent:dir); and
   // the drawer widened for a file (this browser's).
-  dTab: (() => { try { return localStorage.getItem('psps.drawerTab') === 'files' ? 'files' : 'bm' } catch { return 'bm' } })(),
+  dTab: (() => { try { const t = localStorage.getItem('psps.drawerTab'); return t === 'files' || t === 'subs' ? t : 'bm' } catch { return 'bm' } })(),
   fv: null,
   fQuery: '',
   fChip: 'docs',
   fOpen: new Set(),
   dWide: (() => { try { return localStorage.getItem('psps.drawerWide') === '1' } catch { return false } })(),
   convos: new Map(),
+  // Side agents (/btw): forked from an agent to answer a question on the
+  // side, shown only in its drawer's Subagents, never in the list. sub is
+  // the one whose conversation the drawer shows, followed by subEs.
+  sides: [],
+  sub: null,
+  subEs: null,
+  subFor: null,
   // What is typed to each agent and not yet sent, kept in this browser so
   // that another agent, another page or a reload does not lose it.
   drafts: new Map((() => { try { const v = JSON.parse(localStorage.getItem('psps.drafts') || '{}'); return v && typeof v === 'object' ? Object.entries(v).filter(([, t]) => typeof t === 'string' && t) : [] } catch { return [] } })()),
@@ -176,6 +183,8 @@ const S = {
 
 const coarse = matchMedia('(pointer: coarse)').matches
 const agentById = (id) => S.agents.find((a) => a.id === id)
+const sideById = (id) => S.sides.find((a) => a.id === id)
+const sidesOf = (id) => S.sides.filter((a) => a.side_of === id)
 // agentTitle is what an agent is called on the page: one made without a
 // prompt has no name until its first message.
 const agentTitle = (a) => a.name || 'New agent'
@@ -893,7 +902,9 @@ async function refreshAgents() {
   const [agents, order] = await Promise.all([api('GET', '/v1/agents'), api('GET', '/v1/agent-order')])
   if (n !== agentsAsked) return
   const before = agentById(S.sel)
-  S.agents = agents
+  // A side agent is its agent's drawer's; one archived is on its way out.
+  S.agents = agents.filter((a) => !a.side_of)
+  S.sides = agents.filter((a) => a.side_of && !a.archived_at)
   S.order = order
   noteTurns()
   bmAgentsSeen()
@@ -901,7 +912,7 @@ async function refreshAgents() {
   // go on in the new one, as if it were the same agent.
   const now = agentById(S.sel)
   if (S.view === 'agent' && before && !before.archived_at && now?.archived_at) {
-    const next = agents.find((a) => !a.archived_at && a.line === now.line)
+    const next = S.agents.find((a) => !a.archived_at && a.line === now.line)
     if (next) {
       history.replaceState(null, '', '#/a/' + next.id)
       select(next.id, false)
@@ -909,13 +920,14 @@ async function refreshAgents() {
     }
   }
   if (!S.sel && S.view === 'agent') {
-    const live = agents.filter((a) => !a.archived_at)
+    const live = S.agents.filter((a) => !a.archived_at)
     if (live.length) select(live[live.length - 1].id, false)
   }
   // A deep link (#/a/<id>) is drawn before the list arrives; draw the agent
   // once it is known.
   if (S.view === 'agent' && S.sel && S.drawn !== S.sel && agentById(S.sel)) { render(); return }
   renderSidebar()
+  renderSubs()
   if (S.view === 'agent') { renderTopbar(); renderStatusLine() }
   // Its turn started or ended between two events of its stream: the dots under its last word follow.
   if (S.view === 'agent' && before && now && before.state?.status !== now.state?.status) scheduleConvo()
@@ -1034,18 +1046,22 @@ function setHash(hash) {
 // longer marked.
 function noteTurns() {
   const before = S.unread.size, changed = []
-  for (const a of S.agents) {
+  let subDone = false
+  for (const a of S.agents.concat(S.sides)) {
     // Autocompact's /compact is no turn to look at: its end marks none.
     const st = a.archived_at ? 'archived' : a.compacting && a.state?.status === 'working' ? 'compacting' : a.state?.status || 'idle'
     const was = S.lastStatus.get(a.id)
     S.lastStatus.set(a.id, st)
-    if (was === 'working' && st === 'idle' && !(S.view === 'agent' && S.sel === a.id) && !a.parked) { S.unread.add(a.id); changed.push(a.id) }
+    const open = a.side_of ? S.bmOpen && S.dTab === 'subs' && S.sub === a.id : S.view === 'agent' && S.sel === a.id
+    if (was === 'working' && st === 'idle' && !open && !a.parked) { S.unread.add(a.id); changed.push(a.id); subDone ||= !!a.side_of && a.side_of === S.sel }
     else if (S.unread.has(a.id) && ((st !== 'idle' && st !== 'compacting') || a.parked)) { S.unread.delete(a.id); changed.push(a.id) }
   }
-  for (const id of S.unread) if (!agentById(id)) { S.unread.delete(id); changed.push(id) }
+  for (const id of S.unread) if (!agentById(id) && !sideById(id)) { S.unread.delete(id); changed.push(id) }
   if (changed.length) saveUnread()
+  // A subagent of the open one answered while its drawer was shut.
+  if (subDone && !S.bmOpen) { S.bmPip = true; renderBmButtons() }
   let gone = false
-  for (const id of S.drafts.keys()) if (!agentById(id)) { S.drafts.delete(id); gone = true }
+  for (const id of S.drafts.keys()) if (!agentById(id) && !sideById(id)) { S.drafts.delete(id); gone = true }
   if (gone) saveDrafts()
 }
 
@@ -1069,6 +1085,7 @@ function select(id, closeDrawer = true) {
   if (S.unread.delete(id)) saveUnread()
   if (S.sel !== id) S.edit = null
   S.sel = id
+  if (S.sub && sideById(S.sub)?.side_of !== id) dropSub()
   S.view = 'agent'
   S.settingsOpen = false
   if (closeDrawer) S.drawer = false
@@ -1135,6 +1152,12 @@ async function send(text) {
   await guarded(async () => {
     // One of psps's own commands is done, not sent, and says what it did.
     const r = await api('POST', `/v1/agents/${id}/messages`, { text })
+    // /btw: its subagent answers in the drawer.
+    if (r.side && r.agent) {
+      await refreshAgents()
+      openSub(r.agent)
+      return
+    }
     if (r.done) {
       toast(r.done)
       await refreshAgents()
@@ -1142,8 +1165,8 @@ async function send(text) {
   })
 }
 
-async function decide(approvalID, decision, answers) {
-  await guarded(() => api('POST', `/v1/agents/${S.sel}/approvals/${encodeURIComponent(approvalID)}`, { decision, answers }))
+async function decide(id, approvalID, decision, answers) {
+  await guarded(() => api('POST', `/v1/agents/${enc(id)}/approvals/${encodeURIComponent(approvalID)}`, { decision, answers }))
 }
 
 // ---- Sidebar width: its edge is dragged, by mouse or touch, and the
@@ -3264,7 +3287,7 @@ function entryView(en, a, frozen) {
       if (!frozen && S.edit?.agent === a.id && S.edit.id === en.id) return editView(en, a)
       const bubble = h('div', { class: 'msg-user text', 'data-fold': `${a.id}:${en.id || en.time}` }, h('div', { class: 'msg-body' }, richText(en.text)))
       // One copied from the agent forked (src below zero) is not its CLI's to go back to.
-      const edit = !frozen && en.id && en.src > 0 && rewindable(a)
+      const edit = !frozen && en.id && en.src > 0 && rewindable(a) && !a.side_of
         ? h('button', { class: 'edit-msg', title: 'Edit and resend: the agent goes back to here', 'aria-label': 'Edit message', onclick: () => startEdit(a, en) }, icon('pencil'))
         : null
       return h('div', { class: 'msg-user-row', 'data-ev': en.id }, !frozen && en.id ? bmMark(a, en.id) : null, edit, stamp(en.time), bubble)
@@ -3361,9 +3384,9 @@ function approvalCard(a, ap) {
     ap.akind === 'ssm' && ap.detail ? h('pre', { class: 'detail' }, ap.detail) : null,
     ap.reason ? h('div', { class: 'why' }, ap.reason) : null,
     h('div', { class: 'actions' },
-      h('button', { class: 'btn primary', onclick: () => decide(ap.id, 'accept') }, 'Accept'),
-      h('button', { class: 'btn', onclick: () => decide(ap.id, 'decline') }, 'Decline'),
-      h('button', { class: 'btn danger', onclick: () => decide(ap.id, 'cancel') }, 'Decline & stop')))
+      h('button', { class: 'btn primary', onclick: () => decide(a.id, ap.id, 'accept') }, 'Accept'),
+      h('button', { class: 'btn', onclick: () => decide(a.id, ap.id, 'decline') }, 'Decline'),
+      h('button', { class: 'btn danger', onclick: () => decide(a.id, ap.id, 'cancel') }, 'Decline & stop')))
 }
 
 // questionCard is a question the agent asks (Claude's AskUserQuestion),
@@ -3388,7 +3411,7 @@ function questionCard(a, ap) {
     const ready = () => { answer.disabled = !ap.questions.every((q) => answerTo(q)) }
     answer.addEventListener('click', () => {
       const answers = Object.fromEntries(ap.questions.map((q) => [q.question, answerTo(q)]))
-      decide(ap.id, 'accept', answers)
+      decide(a.id, ap.id, 'accept', answers)
     })
     // What the picked options mean, under them: a touch screen has no
     // hover for an option's title.
@@ -3450,8 +3473,8 @@ function questionCard(a, ap) {
       ...ap.questions.map(question),
       h('div', { class: 'actions' },
         answer,
-        h('button', { class: 'btn', onclick: () => decide(ap.id, 'decline') }, 'Decline'),
-        h('button', { class: 'btn danger', onclick: () => decide(ap.id, 'cancel') }, 'Decline & stop')))
+        h('button', { class: 'btn', onclick: () => decide(a.id, ap.id, 'decline') }, 'Decline'),
+        h('button', { class: 'btn danger', onclick: () => decide(a.id, ap.id, 'cancel') }, 'Decline & stop')))
     ready()
     if (sel) {
       const el = card.querySelector(`input[data-q="${sel[0]}"]`)
@@ -6067,6 +6090,7 @@ function findEntry(c, ev) {
 }
 
 function bmMark(a, ev) {
+  if (a.side_of) return null
   const on = bmIndex.has(bmKey(a.id, ev))
   return h('button', {
     type: 'button', class: 'bm-mark' + (on ? ' on' : ''), title: on ? 'Unbookmark' : 'Bookmark',
@@ -6114,7 +6138,7 @@ function setBmOpen(open) {
 
 function bmButton() {
   return h('button', {
-    type: 'button', class: 'btn ghost bm-btn' + (S.bmOpen ? ' on' : ''), title: 'Bookmarks and files (])', 'aria-label': 'Bookmarks and files',
+    type: 'button', class: 'btn ghost bm-btn' + (S.bmOpen ? ' on' : ''), title: 'Bookmarks, files and subagents (])', 'aria-label': 'Bookmarks, files and subagents',
     'aria-pressed': String(S.bmOpen), 'aria-controls': 'bookmarks', onclick: () => setBmOpen(!S.bmOpen),
   }, icon('panel-right'), S.bmPip && !S.bmOpen ? h('span', { class: 'bm-pip' }) : null)
 }
@@ -6135,20 +6159,24 @@ function bookmarksDrawer() {
   q.addEventListener('keydown', (e) => { if (e.key === 'Escape') { e.preventDefault(); q.blur() } })
   const tools = h('div', { class: 'bm-tools' }, h('label', { class: 'bm-search' }, icon('search'), q), h('div', { class: 'bm-filters' }))
   const tab = (key, ic, label, ...more) => h('button', {
-    type: 'button', role: 'tab', class: 'dr-tab', 'data-tab': key, onclick: () => setDrawerTab(key),
-  }, icon(ic), label, ...more)
+    type: 'button', role: 'tab', class: 'dr-tab', 'data-tab': key, title: label, 'aria-label': label, onclick: () => setDrawerTab(key),
+  }, icon(ic), h('span', { class: 'dr-label' }, label), ...more)
   const el = h('aside', { class: 'bm-drawer', id: 'bookmarks', 'aria-label': 'Bookmarks and files' },
     bmResizer(),
     h('div', { class: 'bm-head' },
-      h('div', { class: 'dr-tabs', role: 'tablist' }, tab('bm', 'bookmark', 'Bookmarks', h('span', { class: 'bm-count' })), tab('files', 'file-text', 'Files')),
+      h('div', { class: 'dr-tabs', role: 'tablist' }, tab('bm', 'bookmark', 'Bookmarks', h('span', { class: 'bm-count' })), tab('files', 'file-text', 'Files'),
+        tab('subs', 'bot', 'Subagents', h('span', { class: 'bm-count sub-count' }))),
       h('button', { type: 'button', class: 'bm-x dr-wide', onclick: () => setDrawerWide(!S.dWide) }),
       h('button', { type: 'button', class: 'bm-x', title: 'Close (])', 'aria-label': 'Close the drawer', onclick: () => setBmOpen(false) }, icon('x'))),
     h('div', { class: 'dr-pane', 'data-pane': 'bm' }, tools, list),
-    filesPane(), viewerPane())
+    filesPane(), viewerPane(), subsPane(), subPane())
   list.addEventListener('scroll', () => tools.classList.toggle('scrolled', list.scrollTop > 0), { passive: true })
-  // Esc in a file goes back to the list, not on to the page.
+  // Esc in a file, or a subagent's conversation, goes back to the list,
+  // not on to the page.
   el.addEventListener('keydown', (e) => {
-    if (e.key !== 'Escape' || !S.fv || S.dTab !== 'files' || e.target.matches('input, textarea')) return
+    if (e.key !== 'Escape' || e.target.matches('input, textarea')) return
+    if (S.dTab === 'subs' && S.sub) { e.preventDefault(); e.stopPropagation(); closeSub(); return }
+    if (!S.fv || S.dTab !== 'files') return
     e.preventDefault()
     e.stopPropagation()
     closeFile()
@@ -6157,6 +6185,8 @@ function bookmarksDrawer() {
   floatScroll('bookmarks', list)
   floatScroll('files', el.querySelector('.fl-list'))
   floatScroll('viewer', el.querySelector('.fv-body'))
+  floatScroll('subs', el.querySelector('.sa-list'))
+  floatScroll('sub', el.querySelector('.sa-body'))
   renderBookmarks()
   return el
 }
@@ -6575,12 +6605,15 @@ function renderDrawer() {
   el.querySelector('[data-pane="bm"]').hidden = S.dTab !== 'bm'
   el.querySelector('[data-pane="files"]').hidden = S.dTab !== 'files' || !!S.fv
   el.querySelector('[data-pane="view"]').hidden = S.dTab !== 'files' || !S.fv
+  el.querySelector('[data-pane="subs"]').hidden = S.dTab !== 'subs' || !!S.sub
+  el.querySelector('[data-pane="sub"]').hidden = S.dTab !== 'subs' || !S.sub
   const wide = el.querySelector('.dr-wide')
   wide.hidden = S.dTab !== 'files' || !S.fv || narrow.matches
   wide.replaceChildren(icon(S.dWide ? 'minimize-2' : 'maximize-2'))
   wide.title = S.dWide ? 'Narrow the drawer' : 'Widen the drawer (the conversation narrows)'
   wide.setAttribute('aria-pressed', String(S.dWide))
   if (S.dTab === 'files') { if (S.fv) renderViewer(true); else renderFiles() }
+  renderSubs()
 }
 
 function filesPane() {
@@ -7022,6 +7055,264 @@ function mentionFile() {
 // takes no width (a scrollbar coming never rewraps what is under it) and
 // shows only while it scrolls, or is held or pointed at. By key, so the one
 // for a list drawn anew replaces the old.
+
+// ---- Subagents: the drawer's third tab. /btw <question> forks the open
+// agent into a side agent that answers it with its tools, knowing the
+// conversation so far; it is the open agent's, listed here alone, and is
+// deleted, not archived. One is opened in the drawer as a conversation of
+// its own, with a message box of its own.
+
+const subStatus = (a) => a.compacting && a.state?.status === 'working' ? 'compacting' : a.state?.status || 'idle'
+
+function subsPane() {
+  return h('div', { class: 'dr-pane', 'data-pane': 'subs', hidden: true },
+    h('div', { class: 'sa-intro' }), h('div', { class: 'sa-list' }))
+}
+
+function subPane() {
+  const body = h('div', { class: 'sa-body' }, h('div', { class: 'sa-inner' }))
+  body.addEventListener('scroll', () => { subStick = body.scrollHeight - body.scrollTop - body.clientHeight < 8 }, { passive: true })
+  return h('div', { class: 'dr-pane', 'data-pane': 'sub', hidden: true },
+    h('div', { class: 'fv-head' },
+      h('div', { class: 'fv-row' },
+        h('button', { type: 'button', class: 'bm-x', title: 'Back to the subagents (Esc)', 'aria-label': 'Back to the subagents', onclick: () => closeSub() }, icon('chevron-left')),
+        h('span', { class: 'fv-name sa-name' }), h('span', { class: 'fv-sp' }),
+        h('span', { class: 'chip sa-chip' }),
+        h('button', {
+          type: 'button', class: 'bm-x sa-del', title: 'Delete this subagent', 'aria-label': 'Delete this subagent',
+          onclick: () => { const a = sideById(S.sub); if (a) askDeleteSub(a) },
+        }, icon('trash-2'))),
+      h('div', { class: 'fv-crumbs sa-crumbs' })),
+    body,
+    h('div', { class: 'sa-comp-slot' }))
+}
+
+// renderSubs draws the tab: its count, and the list or the one open.
+function renderSubs() {
+  const el = S.bmEl
+  if (!el) return
+  const mine = S.sel ? sidesOf(S.sel) : []
+  el.querySelector('.sub-count').textContent = mine.length ? String(mine.length) : ''
+  const tab = el.querySelector('.dr-tab[data-tab="subs"]')
+  tab.classList.toggle('pip', mine.some((a) => S.unread.has(a.id) || a.state?.status === 'blocked'))
+  // The one open is gone (deleted, or its agent's archive took it).
+  if (S.sub && !sideById(S.sub)) { dropSub(); renderDrawer(); return }
+  if (!S.bmOpen || S.dTab !== 'subs') return
+  if (S.sub) { renderSubChat(); return }
+  const agent = agentById(S.sel)
+  el.querySelector('.sa-intro').replaceChildren(agent
+    ? h('span', null, 'Forked from ', h('strong', null, shownID(agent)), ' with ', h('code', null, '/btw'),
+      ': each knows its conversation so far and works with its tools. They are only here, and are deleted, not archived.')
+    : 'Open an agent to see its subagents.')
+  const list = el.querySelector('.sa-list')
+  const rows = mine.slice().reverse().map((a) => {
+    const st = subStatus(a)
+    const unread = S.unread.has(a.id)
+    const u = a.state?.usage || {}
+    const used = u.window ? Math.round(100 * (u.context || 0) / u.window) : null
+    return h('div', {
+      class: 'sa-row' + (unread ? ' unread' : ''), role: 'button', tabindex: '0', 'data-sub': a.id,
+      onclick: () => openSub(a.id),
+      onkeydown: (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); openSub(a.id) } },
+    },
+      h('span', { class: 'dot ' + (st === 'compacting' ? 'working' : st) }),
+      h('span', { class: 'sa-q' }, h('span', { class: 't', title: agentTitle(a) }, agentTitle(a)), unread ? h('span', { class: 'unread-dot' }) : null),
+      h('button', {
+        type: 'button', class: 'bm-x sa-x', title: 'Delete', 'aria-label': `Delete "${agentTitle(a)}"`,
+        onclick: (e) => { e.stopPropagation(); askDeleteSub(a) },
+      }, icon('trash-2')),
+      h('span', { class: 'sa-meta' },
+        h('span', { class: 'st ' + st }, st),
+        a.last_message_at ? h('span', null, msgAge(a.last_message_at)) : null,
+        a.problem ? h('span', { class: 'problem' }, a.problem) : null,
+        used != null ? h('span', { class: 'ctx', title: `context ${used}% used` }, h('span', { class: 'bar' }, h('span', { class: used >= 80 ? 'hi' : null, style: `width:${Math.min(used, 100)}%` })), `${used}%`) : null))
+  })
+  if (!rows.length) rows.push(h('div', { class: 'bm-empty' }, agent ? 'None yet. Type /btw and a question in the message box: a subagent answers it here.' : ''))
+  list.replaceChildren(...rows)
+}
+
+function openSub(id) {
+  if (!sideById(id)) return
+  S.sub = id
+  S.dTab = 'subs'
+  try { localStorage.setItem('psps.drawerTab', 'subs') } catch {}
+  if (S.unread.delete(id)) saveUnread()
+  subStick = true
+  subFollow(id)
+  if (!S.bmOpen) setBmOpen(true)
+  else renderDrawer()
+  fitTopbar()
+  if (!coarse) queueMicrotask(() => S.bmEl?.querySelector('.sa-comp textarea')?.focus({ preventScroll: true }))
+}
+
+// dropSub lets go of the one open, its stream and its message box.
+function dropSub() {
+  S.sub = null
+  S.subComposerFor = null
+  if (S.subEs) S.subEs.close()
+  S.subEs = null
+  S.subFor = null
+}
+
+function closeSub() {
+  dropSub()
+  renderDrawer()
+  S.bmEl?.querySelector('.sa-list .sa-row')?.focus({ preventScroll: true })
+}
+
+// subFollow follows a subagent's events, as follow does the open agent's.
+function subFollow(id) {
+  if (S.subFor === id && S.subEs && S.subEs.readyState !== EventSource.CLOSED) return
+  if (S.subEs) S.subEs.close()
+  const c = convo(id)
+  const tail = !c.lastID
+  const es = new EventSource(`/v1/agents/${encodeURIComponent(id)}/events?follow=1&` + (tail ? `tail=${tailEvents}` : `after=${c.lastID}`))
+  es.onmessage = (m) => {
+    const e = JSON.parse(m.data)
+    apply(c, e)
+    if (e.kind === 'status' && !e.ephemeral && c.ready) {
+      const a = sideById(id)
+      if (a && a.state?.status !== e.status) { a.state = { ...a.state, status: e.status }; noteTurns() }
+    }
+    if (S.sub === id && c.ready) scheduleSub()
+  }
+  es.addEventListener('ready', () => { c.ready = true; if (S.sub === id) scheduleSub() })
+  es.onerror = () => {
+    if (es.readyState === EventSource.CLOSED && S.sub === id) setTimeout(() => S.sub === id && S.subEs === es && (S.subEs = null, subFollow(id)), 2000)
+  }
+  S.subEs = es
+  S.subFor = id
+}
+
+let subStick = true
+let subQueued = false
+function scheduleSub() {
+  if (subQueued) return
+  subQueued = true
+  setTimeout(() => { subQueued = false; renderSubs() }, 30)
+}
+
+// subShown is how many of its last entries the drawer draws.
+const subShown = 300
+
+function renderSubChat() {
+  const el = S.bmEl
+  const a = sideById(S.sub)
+  if (!el || !a) return
+  const pane = el.querySelector('[data-pane="sub"]')
+  const name = pane.querySelector('.sa-name')
+  name.textContent = agentTitle(a)
+  name.title = agentTitle(a)
+  const st = subStatus(a)
+  const chip = pane.querySelector('.sa-chip')
+  chip.className = 'chip sa-chip ' + (st === 'compacting' ? 'working' : st)
+  chip.textContent = st
+  const from = agentById(a.side_of)
+  pane.querySelector('.sa-crumbs').replaceChildren(
+    h('span', { class: 'who' }, 'btw'),
+    h('span', { class: 'cp' }, `of ${from ? shownID(from) : a.side_of} · ${a.isolation}`),
+    a.last_message_at ? h('span', { class: 'when' }, msgAge(a.last_message_at)) : null)
+  const box = pane.querySelector('.sa-body')
+  const inner = box.firstChild
+  const c = convo(a.id)
+  const all = groupTools(c.entries)
+  const items = all.slice(-subShown).map((en) => drawEntry(en, a)).filter(Boolean)
+  if (!items.length) items.push(h('div', { class: 'empty' }, c.ready ? 'Nothing yet.' : 'Loading…'))
+  const last = c.entries[c.entries.length - 1]
+  if (c.ready && a.state?.status === 'working' && !(last?.kind === 'assistant' && last.live)) {
+    c.typing ||= h('div', { class: 'typing-row', role: 'status', 'aria-label': `${agentTitle(a)} is working` },
+      h('span', { class: 'typing' }, h('i'), h('i'), h('i')))
+    items.push(c.typing)
+  }
+  const keep = new Set(items)
+  for (const node of [...inner.children]) if (!keep.has(node)) node.remove()
+  let at = inner.firstChild
+  for (const node of items) {
+    if (node === at) at = at.nextSibling
+    else inner.insertBefore(node, at)
+  }
+  if (subStick) box.scrollTop = box.scrollHeight
+  const slot = pane.querySelector('.sa-comp-slot')
+  if (S.subComposerFor !== a.id) { slot.replaceChildren(subComposer(a)); S.subComposerFor = a.id }
+  const busy = ['working', 'starting', 'blocked'].includes(a.state?.status)
+  const stop = slot.querySelector('.sa-stop')
+  if (stop) stop.hidden = !busy
+  renderSubStatus(a, slot.querySelector('.sa-status'))
+}
+
+function renderSubStatus(a, slot) {
+  if (!slot) return
+  const u = a.state?.usage || {}
+  const parts = [u.model && h('span', { class: 'sl-model' }, modelName(u.model))]
+  if (u.window) {
+    const used = Math.round(100 * (u.context || 0) / u.window)
+    parts.push(h('span', { class: used >= 80 ? 'sl-low' : used >= 50 ? 'sl-warn' : null }, `ctx ${used}% (${tokens(u.context || 0)}/${tokens(u.window)})`))
+  }
+  if (u.cost_usd) parts.push(h('span', null, '$' + u.cost_usd.toFixed(2)))
+  const shown = parts.filter(Boolean)
+  slot.replaceChildren(...(shown.length ? [h('div', { class: 'sl-row' }, h('div', { class: 'sl-items' }, ...shown))] : []))
+}
+
+// subComposer is a subagent's message box: Enter sends, / and @ complete
+// as in the agent's own.
+function subComposer(a) {
+  const ta = h('textarea', {
+    rows: 1, placeholder: 'Message this subagent…', 'aria-label': 'Message this subagent',
+    title: coarse ? null : 'Enter sends · Shift+Enter adds a line', value: S.drafts.get(a.id) || '',
+  })
+  const grow = () => {
+    ta.style.height = ''
+    if (!ta.value) return
+    ta.style.height = 'auto'
+    ta.style.height = Math.min(ta.scrollHeight, 160) + 'px'
+  }
+  const submit = async () => {
+    const text = ta.value.trim()
+    if (!text) return
+    ta.value = ''
+    setDraft(a.id, '')
+    grow()
+    subStick = true
+    await guarded(async () => {
+      const r = await api('POST', `/v1/agents/${enc(a.id)}/messages`, { text })
+      if (r.done) { toast(r.done); await refreshAgents() }
+    })
+  }
+  ta.addEventListener('input', () => { setDraft(a.id, ta.value); grow() })
+  const done = completer(a, ta, submit)
+  ta.addEventListener('keydown', (e) => {
+    if (done.key(e)) return
+    if (e.key === 'Enter' && !e.shiftKey && !coarse && !e.isComposing) { e.preventDefault(); submit() }
+  })
+  queueMicrotask(grow)
+  return h('div', { class: 'composer sa-comp' },
+    h('div', { class: 'status-line sa-status' }),
+    h('div', { class: 'composer-row' },
+      done.box,
+      ta,
+      h('button', {
+        type: 'button', class: 'icon-btn sa-stop', title: 'Stop its turn', 'aria-label': 'Stop its turn', hidden: true,
+        onclick: () => guarded(() => api('POST', `/v1/agents/${enc(a.id)}/messages`, { text: '/stop' })),
+      }, icon('square')),
+      h('button', { type: 'button', class: 'btn primary send-btn', onclick: submit }, 'Send')))
+}
+
+async function askDeleteSub(a) {
+  const busy = ['working', 'starting', 'blocked'].includes(a.state?.status)
+  if (!await ask({
+    title: `Delete "${agentTitle(a)}"?`,
+    body: 'Its conversation goes now: a subagent is not archived, so this cannot be undone.' +
+      (busy ? ' It is working: it is stopped first. Files it changed stay as they are.' : ''),
+    ok: 'Delete', danger: true,
+  })) return
+  await guarded(() => api('DELETE', `/v1/agents/${enc(a.id)}`))
+  if (S.sub === a.id) dropSub()
+  S.convos.delete(a.id)
+  if (S.unread.delete(a.id)) saveUnread()
+  setDraft(a.id, '')
+  await guarded(refreshAgents)
+  renderDrawer()
+}
 
 const floats = new Map()
 

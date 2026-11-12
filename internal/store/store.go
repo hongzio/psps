@@ -94,6 +94,10 @@ type Agent struct {
 	// MadeVia is the agent that made it through the control service, if
 	// one did.
 	MadeVia string `json:"made_via,omitempty"`
+	// SideOf is the key of the agent it is a side agent of, if it is one:
+	// forked by /btw to answer a question on the side, it is shown only in
+	// that agent's drawer, and is deleted, never kept archived.
+	SideOf string `json:"side_of,omitempty"`
 	// LastSrc is the newest shim log Seq whose events are committed.
 	LastSrc int64 `json:"-"`
 	// LastMessageAt is when the last message to or from it was, if any
@@ -223,6 +227,7 @@ var added = []struct{ table, column, def string }{
 	{"crons", "compacted_at", "TEXT"},
 	{"team_leads", "compact", "TEXT NOT NULL DEFAULT ''"},
 	{"agents", "last_message_at", "TEXT"},
+	{"agents", "side_of", "TEXT NOT NULL DEFAULT ''"},
 }
 
 func hasColumn(db interface {
@@ -509,10 +514,10 @@ func (s *Store) CreateAgent(a Agent) error {
 
 func insertAgent(tx *sql.Tx, a Agent) error {
 	opts, _ := json.Marshal(a.Options)
-	_, err := tx.Exec(`INSERT INTO agents (id, handle, name, kind, isolation, workdir, repo, options, session_id, created_at, line, forked_from, fork_of, made_by, turn_minutes, made_via)
-		VALUES (?, NULLIF(?, ''), ?, ?, ?, ?, ?, ?, ?, ?, NULLIF(?, ''), ?, ?, ?, ?, ?)`,
+	_, err := tx.Exec(`INSERT INTO agents (id, handle, name, kind, isolation, workdir, repo, options, session_id, created_at, line, forked_from, fork_of, made_by, turn_minutes, made_via, side_of)
+		VALUES (?, NULLIF(?, ''), ?, ?, ?, ?, ?, ?, ?, ?, NULLIF(?, ''), ?, ?, ?, ?, ?, ?)`,
 		a.ID, a.Handle, a.Name, string(a.Kind), a.IsolationID, a.Workdir, a.Repo, string(opts), a.SessionID, ts(a.CreatedAt), a.Line, a.ForkedFrom, a.ForkOf,
-		a.MadeBy, a.TurnMinutes, a.MadeVia)
+		a.MadeBy, a.TurnMinutes, a.MadeVia, a.SideOf)
 	return err
 }
 
@@ -673,14 +678,14 @@ func (s *Store) AgentByHandle(handle string) (Agent, error) {
 	return scanAgent(s.db.QueryRow(`SELECT `+agentCols+` FROM agents WHERE handle = ?`, handle))
 }
 
-const agentCols = `id, COALESCE(handle, ''), name, kind, isolation, workdir, repo, options, session_id, last_src, created_at, archived_at, parked, COALESCE(line, id), was_handle, forked_from, fork_of, made_by, turn_minutes, made_via, last_message_at`
+const agentCols = `id, COALESCE(handle, ''), name, kind, isolation, workdir, repo, options, session_id, last_src, created_at, archived_at, parked, COALESCE(line, id), was_handle, forked_from, fork_of, made_by, turn_minutes, made_via, last_message_at, side_of`
 
 func scanAgent(row interface{ Scan(...any) error }) (Agent, error) {
 	var a Agent
 	var kind, opts, created string
 	var archived, lastMessage sql.NullString
 	err := row.Scan(&a.ID, &a.Handle, &a.Name, &kind, &a.IsolationID, &a.Workdir, &a.Repo, &opts, &a.SessionID,
-		&a.LastSrc, &created, &archived, &a.Parked, &a.Line, &a.Was, &a.ForkedFrom, &a.ForkOf, &a.MadeBy, &a.TurnMinutes, &a.MadeVia, &lastMessage)
+		&a.LastSrc, &created, &archived, &a.Parked, &a.Line, &a.Was, &a.ForkedFrom, &a.ForkOf, &a.MadeBy, &a.TurnMinutes, &a.MadeVia, &lastMessage, &a.SideOf)
 	if errors.Is(err, sql.ErrNoRows) {
 		return a, ErrNotFound
 	}

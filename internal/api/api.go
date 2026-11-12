@@ -488,6 +488,8 @@ type Message struct {
 type Sent struct {
 	Done  string `json:"done,omitempty"`
 	Agent string `json:"agent,omitempty"`
+	// Side: Agent is a side agent, made by /btw.
+	Side bool `json:"side,omitempty"`
 }
 
 // Commands are what may be typed in a message to an agent, for a message

@@ -308,6 +308,18 @@ what is typed there works the same.
   too, up to a line saying it was forked; a copied message of yours cannot
   be edited and resent there, and an approval that was still open is shown
   void.
+- `/btw <question>` asks on the side: the agent is forked, as above, into a
+  subagent that is sent the question and answers it with its tools, while
+  the agent's own conversation is left as it was (the question is not put
+  in it). A subagent is the agent's alone: it is in no list nor team, only
+  in the web UI's drawer, under Subagents, where it opens as a conversation
+  of its own with a message box of its own (the TUI does not show them).
+  Its conversation starts with a line saying where it was forked, not a
+  copy. Autocompact compacts it like any agent. It is deleted, never kept
+  archived: from the drawer, and with the agent when that one is archived,
+  started over (`/new`) or deleted. Deleting one stops it first; files it
+  changed in the shared directory stay as they are. A subagent has no
+  `/btw` or `/new` of its own.
 - Claude's: its slash commands and skills, as the running `claude` lists
   them (asked once a process, which costs no turn). Its `/model` and
   `/effort` are left out for psps's, which last beyond the process, and
