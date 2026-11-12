@@ -309,7 +309,7 @@ func (m *Manager) Handler() http.Handler {
 		reply(w, v, err)
 	})
 	mux.HandleFunc("GET /v1/agents/{id}/files", func(w http.ResponseWriter, r *http.Request) {
-		v, err := m.Files(r.Context(), r.PathValue("id"))
+		v, err := m.Files(r.Context(), r.PathValue("id"), r.URL.Query().Get("dir"))
 		reply(w, v, err)
 	})
 	mux.HandleFunc("GET /v1/agents/{id}/file", func(w http.ResponseWriter, r *http.Request) {

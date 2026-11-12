@@ -503,9 +503,13 @@ type Command struct {
 }
 
 // Files are the files in an agent's workspace, by their paths in it, for
-// a message to name one.
+// a message to name one. Asked for a folder (?dir=), Files is what is in
+// it, a folder's path ending in /.
 type Files struct {
 	Files []string `json:"files"`
+	// Ignored is what git ignores (out of a repository, node_modules): its
+	// files, and its folders by their names alone, ending in /.
+	Ignored []string `json:"ignored,omitempty"`
 	// Truncated: there are more than these.
 	Truncated bool `json:"truncated,omitempty"`
 }

@@ -16,6 +16,9 @@ function h(tag, props, ...children) {
   for (const [k, v] of Object.entries(props || {})) {
     if (v == null || v === false) continue
     if (k === 'class') el.className = v
+    // Through the CSSOM: the page's policy (style-src 'self') refuses a
+    // style attribute.
+    else if (k === 'style') el.style.cssText = v
     else if (k.startsWith('on')) el.addEventListener(k.slice(2), v)
     else if (k === 'value' || k === 'checked' || k === 'disabled' || k === 'open') el[k] = v
     else el.setAttribute(k, v === true ? '' : v)
@@ -6608,7 +6611,9 @@ function filesPane() {
   return h('div', { class: 'dr-pane', 'data-pane': 'files', hidden: true }, tools, list)
 }
 
-// The tree of a list of files, made once per list and chip.
+// The tree of a list of files, made once per list and chip. What git
+// ignores is in it too, marked: a file in its folder's ign, a folder by its
+// name alone, as lazy, its files listed when it is opened (dirListing).
 const fileTrees = new WeakMap()
 function fileTree(data, chip) {
   let byChip = fileTrees.get(data)
@@ -6628,6 +6633,19 @@ function fileTree(data, chip) {
     }
     node.files.push(parts[parts.length - 1])
   }
+  for (const f of data.ignored || []) {
+    const dir = f.endsWith('/')
+    const parts = (dir ? f.slice(0, -1) : f).split('/')
+    if (!dir && !keep(f)) continue
+    let node = root
+    for (const d of parts.slice(0, -1)) {
+      if (!node.dirs.has(d)) node.dirs.set(d, { dirs: new Map(), files: [], n: 0 })
+      node = node.dirs.get(d)
+    }
+    const name = parts[parts.length - 1]
+    if (dir) node.dirs.set(name, { dirs: new Map(), files: [], n: 0, lazy: parts.join('/') })
+    else { node.files.push(name); (node.ign ||= new Set()).add(name) }
+  }
   byChip.set(chip, root)
   return root
 }
@@ -6638,9 +6656,32 @@ function extBadge(p) {
   return h('span', { class: 'fl-ext' + (isMd(p) ? ' md' : isHtml(p) ? ' html' : FILE_IMG.test(p) ? ' img' : '') }, e || '—')
 }
 
-function fileRow(a, abs, { dir, meta, depth = 0, cur } = {}) {
+// dirListing is what is in the folder dir of an agent's workspace, one git
+// ignores: asked for when it is opened, and again as it stays open.
+const dirListings = new Map()
+function dirListing(id, dir) {
+  const key = id + '\n' + dir
+  let c = dirListings.get(key)
+  if (!c) dirListings.set(key, (c = { at: 0, data: null, error: null, ready: null }))
+  if (!c.ready && Date.now() - c.at >= 15000) {
+    c.ready = api('GET', `/v1/agents/${id}/files?dir=${encodeURIComponent(dir)}`)
+      .then((d) => { c.data = d; c.error = null }, (e) => { c.error = e })
+      .finally(() => { c.at = Date.now(); c.ready = null })
+    c.ready.then(() => renderFiles())
+  }
+  return c
+}
+
+// listedIgnored are the files of an agent's ignored folders listed so far.
+function listedIgnored(id) {
+  const out = []
+  for (const [k, c] of dirListings) if (k.startsWith(id + '\n') && c.data) out.push(...c.data.files.filter((f) => !f.endsWith('/')))
+  return out
+}
+
+function fileRow(a, abs, { dir, meta, depth = 0, cur, ign } = {}) {
   return h('button', {
-    type: 'button', class: 'fl-row' + (cur ? ' cur' : ''), 'data-file': abs, title: shownPath(a, abs),
+    type: 'button', class: 'fl-row' + (cur ? ' cur' : '') + (ign ? ' ign' : ''), 'data-file': abs, title: shownPath(a, abs),
     style: depth ? `padding-left: ${8 + depth * 14}px` : null, onclick: () => openFile(a.id, abs),
   }, extBadge(abs), h('span', { class: 'nm' }, baseName(abs)), dir ? h('span', { class: 'dir' }, dir) : null, meta ? h('span', { class: 'meta' }, meta) : null)
 }
@@ -6662,7 +6703,8 @@ function renderFiles() {
   const fs = a.archived_at ? null : fetched('files', a.id, 15000)
   if (fs?.ready && filesHooked !== fs.ready) { filesHooked = fs.ready; fs.ready.then(() => { linkPaths(); renderFiles() }) }
   const data = fs?.data
-  const docs = data ? data.files : []
+  const ignored = data ? (data.ignored || []).filter((f) => !f.endsWith('/')).concat(listedIgnored(a.id)) : []
+  const docs = data ? data.files.concat(ignored) : []
   chips.replaceChildren(...FILE_CHIPS.map(([k, l, keep]) => h('button', {
     type: 'button', 'aria-pressed': String(S.fChip === k), onclick: () => { S.fChip = k; renderFiles() },
   }, l, data ? h('span', { class: 'n' }, String(docs.filter(keep).length)) : null)))
@@ -6684,9 +6726,10 @@ function renderFiles() {
     }
     hits.sort((x, y) => y[0] - x[0] || x[2].length - y[2].length)
     rows.push(h('div', { class: 'fl-sec' }, hits.length ? `${hits.length > 100 ? '100+' : hits.length} found` : 'No file matches.'))
+    const ign = new Set(ignored.map((f) => joinPath(a.workdir, f)))
     for (const [, abs, shown] of hits.slice(0, 100)) {
       const d = shown.slice(0, shown.length - baseName(shown).length)
-      rows.push(fileRow(a, abs, { dir: d }))
+      rows.push(fileRow(a, abs, { dir: d, ign: ign.has(abs) }))
     }
   } else {
     if (changed.length) {
@@ -6705,23 +6748,48 @@ function renderFiles() {
     else if (!data) rows.push(h('div', { class: 'bm-empty' }, fs.error ? `Can't list its files: ${fs.error.message}` : 'Listing files…'))
     else {
       const tree = fileTree(data, S.fChip)
+      const pad = (depth) => (depth ? `padding-left: ${8 + depth * 14}px` : null)
+      const dirRow = (path, depth, meta, ign) => {
+        const key = `${a.id}:${path}`
+        const open = S.fOpen.has(key)
+        rows.push(h('button', {
+          type: 'button', class: 'fl-row fl-dir' + (ign ? ' ign' : ''), 'aria-expanded': String(open), style: pad(depth),
+          title: ign ? 'Ignored by git: listed as it is opened' : null,
+          onclick: () => { if (S.fOpen.has(key)) S.fOpen.delete(key); else S.fOpen.add(key); renderFiles() },
+        }, h('span', { class: 'tw' }, icon(open ? 'chevron-down' : 'chevron-right')), h('span', { class: 'nm' }, baseName(path) + '/'), meta != null ? h('span', { class: 'meta' }, String(meta)) : null))
+        return open
+      }
+      const fileRows = (names, at, depth, ign) => {
+        const files = [...names].sort((x, y) => x.localeCompare(y))
+        for (const f of files.slice(0, 500)) rows.push(fileRow(a, joinPath(a.workdir, at(f)), { depth, ign: ign(f) }))
+        if (files.length > 500) rows.push(h('div', { class: 'fl-more', style: pad(depth) }, `${files.length - 500} more: find them by name`))
+      }
+      // An ignored folder's own, as listed: all of it ignored.
+      const walkLazy = (dir, depth) => {
+        const c = dirListing(a.id, dir)
+        if (!c.data) {
+          rows.push(h('div', { class: 'fl-more', style: pad(depth) }, c.error ? `Can't list it: ${c.error.message}` : 'Listing…'))
+          return
+        }
+        const ents = c.data.files
+        for (const d of ents.filter((e) => e.endsWith('/')).sort((x, y) => x.localeCompare(y))) {
+          const path = d.slice(0, -1)
+          if (dirRow(path, depth, null, true)) walkLazy(path, depth + 1)
+        }
+        fileRows(ents.filter((e) => !e.endsWith('/') && keep(e)).map(baseName), (f) => dir + '/' + f, depth, () => true)
+        if (!ents.length) rows.push(h('div', { class: 'fl-more', style: pad(depth) }, 'Nothing in it.'))
+        if (c.data.truncated) rows.push(h('div', { class: 'fl-more', style: pad(depth) }, `Only its first ${ents.length} are listed.`))
+      }
       const walk = (node, dir, depth) => {
         for (const [d, sub] of [...node.dirs].sort(([x], [y]) => x.localeCompare(y))) {
           const path = dir + d
-          const key = `${a.id}:${path}`
-          const open = S.fOpen.has(key) || (!!q && sub.n < 50)
-          rows.push(h('button', {
-            type: 'button', class: 'fl-row fl-dir', 'aria-expanded': String(open), style: depth ? `padding-left: ${8 + depth * 14}px` : null,
-            onclick: () => { if (S.fOpen.has(key)) S.fOpen.delete(key); else S.fOpen.add(key); renderFiles() },
-          }, h('span', { class: 'tw' }, icon(open ? 'chevron-down' : 'chevron-right')), h('span', { class: 'nm' }, d + '/'), h('span', { class: 'meta' }, String(sub.n))))
-          if (open) walk(sub, path + '/', depth + 1)
+          if (sub.lazy) { if (dirRow(path, depth, null, true)) walkLazy(path, depth + 1) }
+          else if (dirRow(path, depth, sub.n)) walk(sub, path + '/', depth + 1)
         }
-        const files = [...node.files].sort((x, y) => x.localeCompare(y))
-        for (const f of files.slice(0, 500)) rows.push(fileRow(a, joinPath(a.workdir, dir + f), { depth }))
-        if (files.length > 500) rows.push(h('div', { class: 'fl-more', style: `padding-left: ${8 + depth * 14}px` }, `${files.length - 500} more: find them by name`))
+        fileRows(node.files, (f) => dir + f, depth, (f) => node.ign?.has(f))
       }
       walk(tree, '', 0)
-      if (!tree.n) rows.push(h('div', { class: 'bm-empty' }, data.files.length ? 'No file of this kind here.' : 'No files here yet.'))
+      if (!tree.n && !tree.dirs.size) rows.push(h('div', { class: 'bm-empty' }, data.files.length ? 'No file of this kind here.' : 'No files here yet.'))
       if (data.truncated) rows.push(h('div', { class: 'fl-more' }, `Only the first ${data.files.length} files are listed.`))
     }
   }

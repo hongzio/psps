@@ -1480,6 +1480,8 @@ kbd {
 .fl-row .nm { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .fl-row .dir { min-width: 0; flex-shrink: 9999; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--faint); font-size: 12px; }
 .fl-row .meta { margin-left: auto; flex: none; padding-left: 6px; color: var(--faint); font-size: 11.5px; font-variant-numeric: tabular-nums; }
+/* What git ignores: there, but quieter. */
+.fl-row.ign .nm, .fl-row.ign .fl-ext, .fl-row.ign .meta { opacity: .55; }
 .fl-row .tw { flex: none; width: 14px; display: grid; place-items: center; color: var(--faint); }
 .fl-row .tw .icon { width: 13px; height: 13px; }
 .fl-ext { flex: none; width: 34px; border-radius: 4px; background: var(--code); color: var(--muted); font: 600 9.5px/16px var(--mono); text-align: center; text-transform: uppercase; overflow: hidden; }
