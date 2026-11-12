@@ -378,9 +378,14 @@ function dropdown(options, { value, label, disabled } = {}) {
     // The side goes by the list's whole height, borders and all, before it
     // is clipped: a clipped list grows a scrollbar, which can wrap a long
     // option, and measured that way it would change sides every frame.
+    // Unclipped for that moment, the list has nothing to scroll and its
+    // position goes back to the top, so it is kept and put back: this runs
+    // every frame, and a list scrolled would not stay so.
+    const scrolled = list.scrollTop
     list.style.maxHeight = ''
     const up = Math.min(list.getBoundingClientRect().height, 320) > below && above > below
     list.style.maxHeight = Math.max(80, Math.min(320, up ? above : below)) + 'px'
+    list.scrollTop = scrolled
     list.style.left = Math.max(edge, Math.min(r.left, vw - list.offsetWidth - edge)) + 'px'
     list.style.top = up ? '' : r.bottom + gap + 'px'
     list.style.bottom = up ? innerHeight - r.top + gap + 'px' : ''
