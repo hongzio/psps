@@ -178,7 +178,8 @@ the daemon as a plain background process instead of touching launchd.
 
 #### Bookmarks
 
-The last button of the top bar (or `]`) opens **Bookmarks** on the right: a
+The last button of the top bar (or `]`) opens a drawer on the right with two
+tabs, **Bookmarks** and **Files** (below): a
 column beside the conversation on a wide screen (its edge drags to resize it),
 the whole screen on a phone. Any message can be kept: one you sent, a mail
 another agent sent, or an agent's reply. On a desktop its bookmark shows when
@@ -197,6 +198,38 @@ deleted one's stay as text. The API is `GET|POST /v1/bookmarks`
 (`{"agent": "ID", "event": 42, "note": "…"}`, the event being the message's
 in `GET /v1/agents/ID/events`) and `PATCH|DELETE /v1/bookmarks/N`
 (`{"note": "…"}`).
+
+#### Files
+
+The drawer's other tab, **Files**, reads the files of the agent shown, as
+that agent: nothing it could not read itself, and nothing is ever changed.
+It lists the agent's workspace (what git ignores left out, as for `@`) as a
+tree, with **Changed here** (what its tools wrote in the conversation) and
+**Elsewhere · named here** (files outside the workspace the conversation
+names) above; it is searched by name (by path once you type a slash) and
+filtered to **Docs** (md, html, txt), **Images** or **All**. A path an
+agent's reply or a mail names, in code or as a link, is a link to the file
+when it is one in the isolation, wherever it is (`/tmp/report.html` too); a
+relative one is to the workspace.
+
+A file shows by its kind: markdown drawn (**Source** for the text, its links
+to files beside it open them), an HTML file as a page in a sandboxed frame
+that reaches nothing outside it, its scripts off until **Run scripts**, an
+image (png, jpg, gif, webp, svg) fitted or at **100%**, and other text with
+its lines numbered (wrap them with the wrap button). Text past 1 MiB is cut,
+an image over 8 MiB not shown, and anything else neither text nor an image
+is not shown. A file shown is read again when it changes, keeping its
+place; one deleted says so. **@** names it in the message being written,
+the copy button copies its path, and its folders lead back to them in the
+list; Esc goes back too. On a wide screen the drawer widens for a file (the
+button beside its close), down to 360px of conversation.
+
+The API is `GET /v1/agents/ID/file?path=P` (a path relative to the agent's
+workdir, under `~`, or whole: `{"path", "size", "mtime", "kind"` (text,
+image, binary or too_large)`, "type", "text" | "data"` (base64)`,
+"truncated"}`), `GET /v1/agents/ID/page?path=P[&scripts=1]` (an HTML file as
+a sandboxed page) and `POST /v1/agents/ID/stat` (`{"paths": [...]}`, at most
+200: those that are files, with `"abs"`, size and mtime).
 
 #### Autocompact
 

@@ -106,6 +106,16 @@ const S = {
   bmQuery: '',
   bmEdit: null,
   bmPip: false,
+  // Files, the drawer's other tab: the tab it shows (this browser's); the
+  // file being viewed ({ agent, path, file, mode, ... }), none for the
+  // list; the list's search and chip and its folders open (agent:dir); and
+  // the drawer widened for a file (this browser's).
+  dTab: (() => { try { return localStorage.getItem('psps.drawerTab') === 'files' ? 'files' : 'bm' } catch { return 'bm' } })(),
+  fv: null,
+  fQuery: '',
+  fChip: 'docs',
+  fOpen: new Set(),
+  dWide: (() => { try { return localStorage.getItem('psps.drawerWide') === '1' } catch { return false } })(),
   convos: new Map(),
   // What is typed to each agent and not yet sent, kept in this browser so
   // that another agent, another page or a reload does not lose it.
@@ -599,9 +609,11 @@ const askText = (kind) => ({ command: 'run a command', file_change: 'change file
 
 // markdown draws what an agent writes, which is GitHub markdown, from
 // marked's tokens. Raw HTML in it is shown as written. Only a web address
-// is a link: a path in the workspace has nowhere to go in a browser. An
-// image is a link to it, never loaded: a page that fetched an agent's URL
-// would carry what the agent put in it past the isolation's fence.
+// is a link here; a path it names, in code or as a link, is marked
+// (data-fp) for linkPaths to make one to the file viewer if it is a file in
+// the isolation. An image is a link to it, never loaded: a page that
+// fetched an agent's URL would carry what the agent put in it past the
+// isolation's fence.
 const mdTokens = new Map()
 
 function markdown(text, live) {
@@ -662,7 +674,7 @@ function mdInline(toks) {
       case 'strong': return h('strong', null, mdInline(t.tokens))
       case 'em': return h('em', null, mdInline(t.tokens))
       case 'del': return h('del', null, mdInline(t.tokens))
-      case 'codespan': return h('code', null, t.text)
+      case 'codespan': return h('code', { 'data-fp': pathCandidate(t.text) }, t.text)
       case 'br': return h('br')
       case 'link': return mdLink(t.href, mdInline(t.tokens), t.title)
       case 'image': return mdLink(t.href, [icon('image'), ' ' + (t.text || 'image')], t.title)
@@ -674,7 +686,7 @@ function mdInline(toks) {
 }
 
 function mdLink(href, kids, title) {
-  if (!/^(https?|mailto):/i.test(href)) return h('span', { class: 'link-off', title: href }, kids)
+  if (!/^(https?|mailto):/i.test(href)) return h('span', { class: 'link-off', title: href, 'data-fp': pathCandidate(safeDecode(href)) }, kids)
   return h('a', { href, title: title || null, target: '_blank', rel: 'noopener noreferrer' }, kids)
 }
 
@@ -1175,7 +1187,7 @@ function sidebarResizer() {
 // ---- Rendering
 
 function render() {
-  root.className = 'app' + (S.drawer ? ' drawer' : '') + (S.bmOpen ? ' bm-open' : '')
+  root.className = 'app' + (S.drawer ? ' drawer' : '') + (S.bmOpen ? ' bm-open' : '') + (drawerWide() ? ' bm-wide' : '')
   // The page is drawn anew, the sidebar's list where it was scrolled.
   const scrolled = document.querySelector('#sidebar .agent-list')?.scrollTop || 0
   const bmScrolled = S.bmEl?.querySelector('.bm-list')?.scrollTop || 0
@@ -1190,6 +1202,7 @@ function render() {
   root.append(h('aside', { class: 'sidebar', id: 'sidebar' }), sidebarResizer(), h('div', { class: 'scrim', onclick: () => { S.drawer = false; render() } }))
   const main = h('main', { class: 'main', id: 'main' })
   root.append(main, bookmarksDrawer())
+  renderDrawer()
   if (bmScrolled) S.bmEl.querySelector('.bm-list').scrollTop = bmScrolled
   renderSidebar()
   const list = document.querySelector('#sidebar .agent-list')
@@ -3063,6 +3076,8 @@ function renderConvo(forceBottom) {
   const ta = typing && inner.querySelector('.edit-box')
   if (ta && ta !== typing) { ta.focus({ preventScroll: true }); ta.setSelectionRange(...sel) }
   foldLong()
+  linkPaths()
+  filesSoon()
   if (stick) box.scrollTop = box.scrollHeight
   renderLastSent()
   renderAskJump()
@@ -6083,14 +6098,15 @@ function setBmOpen(open) {
   if (open) S.bmPip = false
   if (!narrow.matches) { try { localStorage.setItem('psps.bookmarks', open ? '1' : '0') } catch {} }
   root.classList.toggle('bm-open', open)
+  root.classList.toggle('bm-wide', drawerWide())
   renderBmButtons()
   fitTopbar()
-  if (open) renderBookmarks()
+  if (open) { renderBookmarks(); renderDrawer() }
 }
 
 function bmButton() {
   return h('button', {
-    type: 'button', class: 'btn ghost bm-btn' + (S.bmOpen ? ' on' : ''), title: 'Bookmarks (])', 'aria-label': 'Bookmarks',
+    type: 'button', class: 'btn ghost bm-btn' + (S.bmOpen ? ' on' : ''), title: 'Bookmarks and files (])', 'aria-label': 'Bookmarks and files',
     'aria-pressed': String(S.bmOpen), 'aria-controls': 'bookmarks', onclick: () => setBmOpen(!S.bmOpen),
   }, icon('panel-right'), S.bmPip && !S.bmOpen ? h('span', { class: 'bm-pip' }) : null)
 }
@@ -6110,14 +6126,29 @@ function bookmarksDrawer() {
   })
   q.addEventListener('keydown', (e) => { if (e.key === 'Escape') { e.preventDefault(); q.blur() } })
   const tools = h('div', { class: 'bm-tools' }, h('label', { class: 'bm-search' }, icon('search'), q), h('div', { class: 'bm-filters' }))
-  const el = h('aside', { class: 'bm-drawer', id: 'bookmarks', 'aria-label': 'Bookmarks' },
+  const tab = (key, ic, label, ...more) => h('button', {
+    type: 'button', role: 'tab', class: 'dr-tab', 'data-tab': key, onclick: () => setDrawerTab(key),
+  }, icon(ic), label, ...more)
+  const el = h('aside', { class: 'bm-drawer', id: 'bookmarks', 'aria-label': 'Bookmarks and files' },
     bmResizer(),
-    h('div', { class: 'bm-head' }, icon('bookmark'), h('span', { class: 'bm-title' }, 'Bookmarks'), h('span', { class: 'bm-count' }),
-      h('button', { type: 'button', class: 'bm-x', title: 'Close (])', 'aria-label': 'Close bookmarks', onclick: () => setBmOpen(false) }, icon('x'))),
-    tools, list)
+    h('div', { class: 'bm-head' },
+      h('div', { class: 'dr-tabs', role: 'tablist' }, tab('bm', 'bookmark', 'Bookmarks', h('span', { class: 'bm-count' })), tab('files', 'file-text', 'Files')),
+      h('button', { type: 'button', class: 'bm-x dr-wide', onclick: () => setDrawerWide(!S.dWide) }),
+      h('button', { type: 'button', class: 'bm-x', title: 'Close (])', 'aria-label': 'Close the drawer', onclick: () => setBmOpen(false) }, icon('x'))),
+    h('div', { class: 'dr-pane', 'data-pane': 'bm' }, tools, list),
+    filesPane(), viewerPane())
   list.addEventListener('scroll', () => tools.classList.toggle('scrolled', list.scrollTop > 0), { passive: true })
+  // Esc in a file goes back to the list, not on to the page.
+  el.addEventListener('keydown', (e) => {
+    if (e.key !== 'Escape' || !S.fv || S.dTab !== 'files' || e.target.matches('input, textarea')) return
+    e.preventDefault()
+    e.stopPropagation()
+    closeFile()
+  })
   S.bmEl = el
   floatScroll('bookmarks', list)
+  floatScroll('files', el.querySelector('.fl-list'))
+  floatScroll('viewer', el.querySelector('.fv-body'))
   renderBookmarks()
   return el
 }
@@ -6308,7 +6339,7 @@ function onConvoTap(e, a) {
   if (pop?.contains(e.target)) return
   const was = pop?.dataset.ev
   hideBmPop()
-  if (e.target.closest('a, button, summary, input, textarea, select, .copy-btn')) return
+  if (e.target.closest('a, button, summary, input, textarea, select, .copy-btn, .fpath')) return
   const msg = e.target.closest('#convo-inner [data-ev]')
   if (!msg || msg.closest('details.rewound') || String(getSelection()).length) return
   if (was === msg.dataset.ev) return
@@ -6340,6 +6371,572 @@ function hideBmPop() {
   for (const n of document.querySelectorAll('.bm-held')) n.classList.remove('bm-held')
 }
 document.addEventListener('click', (e) => { if (!e.target.closest?.('#convo')) hideBmPop() })
+
+// ---- Files: the drawer's other tab. It lists the files of the agent shown,
+// in its workspace, and shows one: markdown drawn, an HTML file as a page
+// (sandboxed, in a frame), an image, other text with its lines numbered.
+// Any file in the isolation can be shown, not only the workspace's (/tmp,
+// say): a path a message names is a link to it when it is a file there.
+// It only reads, as the agent: what the agent could not read, it cannot.
+
+const FILE_DOC = /\.(md|markdown|html?|txt|rst|adoc)$/i
+const FILE_IMG = /\.(png|jpe?g|gif|webp|svg|avif|bmp|ico)$/i
+const FILE_CHIPS = [['docs', 'Docs', (p) => FILE_DOC.test(p)], ['images', 'Images', (p) => FILE_IMG.test(p)], ['all', 'All', () => true]]
+const isMd = (p) => /\.(md|markdown)$/i.test(p)
+const isHtml = (p) => /\.html?$/i.test(p)
+const baseName = (p) => p.slice(p.lastIndexOf('/') + 1)
+const safeDecode = (s) => { try { return decodeURIComponent(s) } catch { return s } }
+
+function fmtSize(n) {
+  if (n < 1024) return `${n} B`
+  if (n < 1 << 20) return `${(n / 1024).toFixed(n < 10240 ? 1 : 0)} KB`
+  return `${(n / 1048576).toFixed(1)} MB`
+}
+
+// normPath is p with its . and .. worked out.
+function normPath(p) {
+  const out = []
+  for (const s of p.split('/')) {
+    if (s === '..') out.pop()
+    else if (s && s !== '.') out.push(s)
+  }
+  return (p.startsWith('/') ? '/' : '') + out.join('/')
+}
+const joinPath = (dir, p) => p.startsWith('/') || p.startsWith('~') ? normPath(p) : normPath(`${dir}/${p}`)
+
+// relPath is abs as the agent's workspace has it, or null if outside it.
+function relPath(a, abs) {
+  const w = (a?.workdir || '').replace(/\/+$/, '')
+  return w && abs.startsWith(w + '/') ? abs.slice(w.length + 1) : null
+}
+// shownPath is how a path is written for the person: in the workspace, as
+// it has it; else whole, the home as ~.
+function shownPath(a, abs) {
+  const r = relPath(a, abs)
+  if (r != null) return r
+  return a?.host ? tildeHome(abs) : abs.replace(/^\/home\/agent(?=\/|$)/, '~')
+}
+
+// pathCandidate is s as a path a message may name, its line (:12, #L12)
+// off, or null: something with a slash in it, or a name with an extension.
+// Whether it is a file is for the daemon to say (fpLookup).
+function pathCandidate(s) {
+  s = (s || '').trim().replace(/^@/, '')
+  if (s.length < 2 || s.length > 400 || /\s|:\/\/|[`'"<>|;$*?{}()=,\\]/.test(s)) return null
+  s = s.replace(/(?::\d+){1,2}$|#L\d+(?:-L?\d+)?$/, '').replace(/^\.\//, '')
+  if (!s || s === '/' || s === '~' || s.endsWith('/') || s.startsWith('-')) return null
+  const base = baseName(s)
+  if (!base || /^\.+$/.test(base)) return null
+  return s.includes('/') || /\.[A-Za-z][\w-]{0,9}$/.test(base) ? s : null
+}
+
+// What the daemon said of each path a message of an agent names: the file
+// it is ({ abs }), none ({ abs: null }, asked again after a minute) or not
+// yet known ({ pending }). By agent and path.
+const fpKnown = new Map()
+const fpQueue = new Map()
+let fpTimer = null
+const fileSets = new WeakMap()
+
+function fileSet(data) {
+  let set = fileSets.get(data)
+  if (!set) fileSets.set(data, (set = new Set(data.files)))
+  return set
+}
+
+function fpLookup(a, cand) {
+  const k = a.id + '\n' + cand
+  const r = fpKnown.get(k)
+  if (r && (r.pending || r.abs || Date.now() - r.at < 60000)) return r
+  // One in the workspace's list is a file; the list leaves out what git
+  // ignores, so one not in it is asked of the daemon.
+  const fs = completions.files.get(a.id)
+  if (fs?.data && !cand.startsWith('/') && !cand.startsWith('~') && fileSet(fs.data).has(cand)) {
+    const known = { abs: joinPath(a.workdir, cand), at: Date.now() }
+    fpKnown.set(k, known)
+    return known
+  }
+  fpKnown.set(k, { pending: true })
+  if (!fpQueue.has(a.id)) fpQueue.set(a.id, new Set())
+  fpQueue.get(a.id).add(cand)
+  fpTimer ||= setTimeout(fpFlush, 60)
+  return null
+}
+
+async function fpFlush() {
+  fpTimer = null
+  const queued = [...fpQueue]
+  fpQueue.clear()
+  for (const [id, set] of queued) {
+    const paths = [...set]
+    for (let i = 0; i < paths.length; i += 200) {
+      const part = paths.slice(i, i + 200)
+      let found = []
+      try { found = (await api('POST', `/v1/agents/${id}/stat`, { paths: part })).files } catch {}
+      const by = new Map(found.map((f) => [f.path, f.abs]))
+      for (const p of part) fpKnown.set(id + '\n' + p, { abs: by.get(p) || null, at: Date.now() })
+    }
+    if (S.sel === id) { linkPaths(); renderFiles() }
+  }
+}
+
+// linkPaths makes each path the conversation names that is a file a link
+// to it in the viewer.
+function linkPaths() {
+  const a = agentById(S.sel)
+  const inner = document.getElementById('convo-inner')
+  if (!a || !inner) return
+  for (const el of inner.querySelectorAll('[data-fp]:not(.fpath):not([data-fp-none])')) {
+    const r = fpLookup(a, el.dataset.fp)
+    if (r?.abs) fpLink(el, () => openFile(a.id, r.abs), r.abs)
+    else if (r && !r.pending) el.dataset.fpNone = ''
+  }
+}
+
+// filesSoon redraws the list a moment after the conversation changes, for
+// its Changed here: once a second at most.
+let filesTimer = null
+function filesSoon() {
+  if (filesTimer || !S.bmOpen || S.dTab !== 'files' || S.fv) return
+  filesTimer = setTimeout(() => { filesTimer = null; renderFiles() }, 1000)
+}
+
+function fpLink(el, open, title) {
+  el.classList.add('fpath')
+  el.tabIndex = 0
+  el.setAttribute('role', 'link')
+  el.title = `Open ${title}`
+  el.addEventListener('click', (e) => { e.preventDefault(); e.stopPropagation(); open() })
+  el.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); open() } })
+}
+
+// changedFiles are the files the agent's tools wrote in the conversation
+// as loaded, whole, the latest first, with when.
+const EDIT_TOOLS = new Set(['Write', 'Edit', 'MultiEdit', 'NotebookEdit'])
+function changedFiles(a) {
+  const c = S.convos.get(a.id)
+  const seen = new Map()
+  const walk = (list) => {
+    for (const en of list) {
+      if (en.kind === 'rewound') { walk(en.entries); continue }
+      if (en.kind !== 'tool' || en.state === 'failed' || !en.summary) continue
+      let paths = []
+      if (EDIT_TOOLS.has(en.name)) paths = [en.summary]
+      // Codex's: "add a, update b, delete c".
+      else if (en.name === 'edit') paths = en.summary.split(', ').filter((x) => !x.startsWith('delete ')).map((x) => x.replace(/^(add|update) /, ''))
+      for (const p of paths) {
+        const abs = joinPath(a.workdir, p)
+        seen.delete(abs)
+        seen.set(abs, en.time)
+      }
+    }
+  }
+  if (c) walk(c.entries)
+  return [...seen].reverse()
+}
+
+// elsewhereFiles are the files outside its workspace the conversation names.
+function elsewhereFiles(a) {
+  const out = new Set()
+  for (const [k, r] of fpKnown) if (r.abs && k.startsWith(a.id + '\n') && relPath(a, r.abs) == null) out.add(r.abs)
+  return [...out].sort()
+}
+
+function setDrawerTab(t) {
+  S.dTab = t
+  try { localStorage.setItem('psps.drawerTab', t) } catch {}
+  renderDrawer()
+  if (t === 'files' && !S.fv) S.bmEl?.querySelector('.fl-list')?.scrollTo(0, 0)
+}
+
+const drawerWide = () => S.bmOpen && S.dWide && S.dTab === 'files' && !!S.fv && !narrow.matches
+
+function setDrawerWide(on) {
+  S.dWide = on
+  try { localStorage.setItem('psps.drawerWide', on ? '1' : '0') } catch {}
+  renderDrawer()
+  fitTopbar()
+}
+
+// renderDrawer shows the tab chosen, and in Files the list or a file.
+function renderDrawer() {
+  const el = S.bmEl
+  if (!el) return
+  root.classList.toggle('bm-wide', drawerWide())
+  for (const t of el.querySelectorAll('.dr-tab')) t.setAttribute('aria-selected', String(t.dataset.tab === S.dTab))
+  el.querySelector('[data-pane="bm"]').hidden = S.dTab !== 'bm'
+  el.querySelector('[data-pane="files"]').hidden = S.dTab !== 'files' || !!S.fv
+  el.querySelector('[data-pane="view"]').hidden = S.dTab !== 'files' || !S.fv
+  const wide = el.querySelector('.dr-wide')
+  wide.hidden = S.dTab !== 'files' || !S.fv || narrow.matches
+  wide.replaceChildren(icon(S.dWide ? 'minimize-2' : 'maximize-2'))
+  wide.title = S.dWide ? 'Narrow the drawer' : 'Widen the drawer (the conversation narrows)'
+  wide.setAttribute('aria-pressed', String(S.dWide))
+  if (S.dTab === 'files') { if (S.fv) renderViewer(true); else renderFiles() }
+}
+
+function filesPane() {
+  const q = h('input', {
+    type: 'search', placeholder: 'Find a file', 'aria-label': 'Find a file', autocomplete: 'off', spellcheck: 'false',
+    oninput: (e) => { S.fQuery = e.target.value; renderFiles() },
+  })
+  q.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape') { e.preventDefault(); if (q.value) { q.value = S.fQuery = ''; renderFiles() } else q.blur() }
+    // ↓ and Enter go down the list, to open one.
+    if (e.key === 'ArrowDown' || e.key === 'Enter') { e.preventDefault(); S.bmEl.querySelector('.fl-list .fl-row[data-file]')?.focus() }
+  })
+  const list = h('div', { class: 'fl-list' })
+  list.addEventListener('keydown', (e) => {
+    if (e.key !== 'ArrowDown' && e.key !== 'ArrowUp') return
+    const rows = [...list.querySelectorAll('.fl-row')]
+    const i = rows.indexOf(document.activeElement)
+    if (i < 0) return
+    e.preventDefault()
+    if (e.key === 'ArrowUp' && i === 0) q.focus()
+    else rows[Math.min(rows.length - 1, Math.max(0, i + (e.key === 'ArrowDown' ? 1 : -1)))].focus()
+  })
+  const tools = h('div', { class: 'bm-tools' },
+    h('div', { class: 'fl-scope' }),
+    h('label', { class: 'bm-search' }, icon('search'), q),
+    h('div', { class: 'bm-filters fl-chips' }))
+  list.addEventListener('scroll', () => tools.classList.toggle('scrolled', list.scrollTop > 0), { passive: true })
+  return h('div', { class: 'dr-pane', 'data-pane': 'files', hidden: true }, tools, list)
+}
+
+// The tree of a list of files, made once per list and chip.
+const fileTrees = new WeakMap()
+function fileTree(data, chip) {
+  let byChip = fileTrees.get(data)
+  if (!byChip) fileTrees.set(data, (byChip = new Map()))
+  if (byChip.has(chip)) return byChip.get(chip)
+  const keep = FILE_CHIPS.find(([k]) => k === chip)[2]
+  const root = { dirs: new Map(), files: [], n: 0 }
+  for (const f of data.files) {
+    if (!keep(f)) continue
+    let node = root
+    root.n++
+    const parts = f.split('/')
+    for (const d of parts.slice(0, -1)) {
+      if (!node.dirs.has(d)) node.dirs.set(d, { dirs: new Map(), files: [], n: 0 })
+      node = node.dirs.get(d)
+      node.n++
+    }
+    node.files.push(parts[parts.length - 1])
+  }
+  byChip.set(chip, root)
+  return root
+}
+
+function extBadge(p) {
+  const m = /\.([a-z0-9]{1,5})$/i.exec(baseName(p))
+  const e = m ? m[1].toLowerCase() : ''
+  return h('span', { class: 'fl-ext' + (isMd(p) ? ' md' : isHtml(p) ? ' html' : FILE_IMG.test(p) ? ' img' : '') }, e || '—')
+}
+
+function fileRow(a, abs, { dir, meta, depth = 0, cur } = {}) {
+  return h('button', {
+    type: 'button', class: 'fl-row' + (cur ? ' cur' : ''), 'data-file': abs, title: shownPath(a, abs),
+    style: depth ? `padding-left: ${8 + depth * 14}px` : null, onclick: () => openFile(a.id, abs),
+  }, extBadge(abs), h('span', { class: 'nm' }, baseName(abs)), dir ? h('span', { class: 'dir' }, dir) : null, meta ? h('span', { class: 'meta' }, meta) : null)
+}
+
+let filesHooked = null
+function renderFiles() {
+  const el = S.bmEl
+  if (!el || !S.bmOpen || S.dTab !== 'files' || S.fv) return
+  const scope = el.querySelector('.fl-scope'), chips = el.querySelector('.fl-chips'), list = el.querySelector('.fl-list')
+  const a = S.view === 'agent' ? agentById(S.sel) : null
+  if (!a) {
+    scope.replaceChildren()
+    chips.replaceChildren()
+    list.replaceChildren(h('div', { class: 'bm-empty' }, 'Pick an agent: its files are listed here.'))
+    return
+  }
+  scope.replaceChildren(h('span', { class: 'iso' }, icon(a.host ? 'monitor' : 'box'), a.host ? 'Mac' : a.isolation),
+    h('span', { class: 'path', title: a.workdir }, shownPath(a, a.workdir || '')))
+  const fs = a.archived_at ? null : fetched('files', a.id, 15000)
+  if (fs?.ready && filesHooked !== fs.ready) { filesHooked = fs.ready; fs.ready.then(() => { linkPaths(); renderFiles() }) }
+  const data = fs?.data
+  const docs = data ? data.files : []
+  chips.replaceChildren(...FILE_CHIPS.map(([k, l, keep]) => h('button', {
+    type: 'button', 'aria-pressed': String(S.fChip === k), onclick: () => { S.fChip = k; renderFiles() },
+  }, l, data ? h('span', { class: 'n' }, String(docs.filter(keep).length)) : null)))
+  const keep = FILE_CHIPS.find(([k]) => k === S.fChip)[2]
+  const rows = []
+  const changed = changedFiles(a).filter(([p]) => keep(p))
+  const away = elsewhereFiles(a).filter(keep)
+  const q = S.fQuery.trim()
+  if (q) {
+    const pool = new Map()
+    for (const f of docs) if (keep(f)) pool.set(joinPath(a.workdir, f), f)
+    for (const [p] of changed) pool.set(p, shownPath(a, p))
+    for (const p of away) pool.set(p, shownPath(a, p))
+    const hits = []
+    for (const [abs, shown] of pool) {
+      // By its name; by its path when one is typed (with a slash).
+      const s = q.includes('/') ? fuzzy(q, shown) : fuzzy(q, baseName(shown))
+      if (s >= 0) hits.push([s, abs, shown])
+    }
+    hits.sort((x, y) => y[0] - x[0] || x[2].length - y[2].length)
+    rows.push(h('div', { class: 'fl-sec' }, hits.length ? `${hits.length > 100 ? '100+' : hits.length} found` : 'No file matches.'))
+    for (const [, abs, shown] of hits.slice(0, 100)) {
+      const d = shown.slice(0, shown.length - baseName(shown).length)
+      rows.push(fileRow(a, abs, { dir: d }))
+    }
+  } else {
+    if (changed.length) {
+      rows.push(h('div', { class: 'fl-sec', title: 'Written by the agent in this conversation, the latest first' }, icon('pencil'), 'Changed here'))
+      for (const [abs, t] of changed.slice(0, 30)) {
+        const shown = shownPath(a, abs)
+        rows.push(fileRow(a, abs, { dir: shown.slice(0, shown.length - baseName(shown).length), meta: t ? msgAge(t) : null }))
+      }
+    }
+    if (away.length) {
+      rows.push(h('div', { class: 'fl-sec', title: 'Outside the workspace, named in this conversation' }, 'Elsewhere · named here'))
+      for (const abs of away) { const shown = shownPath(a, abs); rows.push(fileRow(a, abs, { dir: shown.slice(0, shown.length - baseName(shown).length) })) }
+    }
+    rows.push(h('div', { class: 'fl-sec' }, baseName((a.workdir || '').replace(/\/+$/, '')) || 'Workspace'))
+    if (a.archived_at) rows.push(h('div', { class: 'bm-empty' }, 'This agent is archived: its workspace is not listed.'))
+    else if (!data) rows.push(h('div', { class: 'bm-empty' }, fs.error ? `Can't list its files: ${fs.error.message}` : 'Listing files…'))
+    else {
+      const tree = fileTree(data, S.fChip)
+      const walk = (node, dir, depth) => {
+        for (const [d, sub] of [...node.dirs].sort(([x], [y]) => x.localeCompare(y))) {
+          const path = dir + d
+          const key = `${a.id}:${path}`
+          const open = S.fOpen.has(key) || (!!q && sub.n < 50)
+          rows.push(h('button', {
+            type: 'button', class: 'fl-row fl-dir', 'aria-expanded': String(open), style: depth ? `padding-left: ${8 + depth * 14}px` : null,
+            onclick: () => { if (S.fOpen.has(key)) S.fOpen.delete(key); else S.fOpen.add(key); renderFiles() },
+          }, h('span', { class: 'tw' }, icon(open ? 'chevron-down' : 'chevron-right')), h('span', { class: 'nm' }, d + '/'), h('span', { class: 'meta' }, String(sub.n))))
+          if (open) walk(sub, path + '/', depth + 1)
+        }
+        const files = [...node.files].sort((x, y) => x.localeCompare(y))
+        for (const f of files.slice(0, 500)) rows.push(fileRow(a, joinPath(a.workdir, dir + f), { depth }))
+        if (files.length > 500) rows.push(h('div', { class: 'fl-more', style: `padding-left: ${8 + depth * 14}px` }, `${files.length - 500} more: find them by name`))
+      }
+      walk(tree, '', 0)
+      if (!tree.n) rows.push(h('div', { class: 'bm-empty' }, data.files.length ? 'No file of this kind here.' : 'No files here yet.'))
+      if (data.truncated) rows.push(h('div', { class: 'fl-more' }, `Only the first ${data.files.length} files are listed.`))
+    }
+  }
+  const focused = document.activeElement?.closest?.('.fl-list') && document.activeElement.dataset.file
+  list.replaceChildren(...rows)
+  if (focused) list.querySelector(`[data-file="${CSS.escape(focused)}"]`)?.focus({ preventScroll: true })
+}
+
+// ---- The viewer
+
+function viewerPane() {
+  return h('div', { class: 'dr-pane', 'data-pane': 'view', hidden: true },
+    h('div', { class: 'fv-head' },
+      h('div', { class: 'fv-row' },
+        h('button', { type: 'button', class: 'bm-x', title: 'Back to the files (Esc)', 'aria-label': 'Back to the files', onclick: () => closeFile() }, icon('chevron-left')),
+        h('span', { class: 'fv-name' }), h('span', { class: 'fv-sp' }),
+        h('span', { class: 'fv-modes', role: 'group' }),
+        h('button', { type: 'button', class: 'bm-x fv-wrap', title: 'Wrap long lines', onclick: () => { S.fv.wrap = !S.fv.wrap; renderViewer(true) } }, icon('wrap-text')),
+        h('button', { type: 'button', class: 'bm-x fv-at', title: 'Name it in the message (@)', onclick: () => mentionFile() }, icon('at-sign')),
+        h('button', { type: 'button', class: 'bm-x', title: 'Copy its path', onclick: () => S.fv && copyText(S.fv.path) }, icon('copy'))),
+      h('div', { class: 'fv-crumbs' })),
+    h('div', { class: 'fv-note', hidden: true }),
+    h('div', { class: 'fv-body' }))
+}
+
+// openFile shows the file at path (whole) in the agent's isolation.
+function openFile(id, path) {
+  S.fv = { agent: id, path, file: null, mode: null, wrap: false, scripts: false, err: null, loading: true, upd: 0, gone: false }
+  S.dTab = 'files'
+  try { localStorage.setItem('psps.drawerTab', 'files') } catch {}
+  if (!S.bmOpen) setBmOpen(true)
+  else renderDrawer()
+  fitTopbar()
+  loadFile()
+}
+
+function closeFile() {
+  S.fv = null
+  renderDrawer()
+  fitTopbar()
+  const row = S.bmEl?.querySelector('.fl-list .fl-row.cur, .fl-list .fl-row[data-file]')
+  if (row && !coarse) row.focus({ preventScroll: true })
+}
+
+function defaultMode(f) {
+  if (f.kind === 'image') return 'fit'
+  if (f.kind === 'text' && isHtml(f.path)) return 'page'
+  if (f.kind === 'text' && isMd(f.path)) return 'rendered'
+  return 'source'
+}
+
+// loadFile reads the file shown; again, it is read again where it changed,
+// what is read keeping its place.
+async function loadFile(again) {
+  const v = S.fv
+  if (!v) return
+  try {
+    const f = await api('GET', `/v1/agents/${v.agent}/file?path=${encodeURIComponent(v.path)}`)
+    if (S.fv !== v) return
+    if (again && v.file && (f.size !== v.file.size || f.mtime !== v.file.mtime)) v.upd = Date.now()
+    v.file = f
+    v.path = f.path
+    v.err = null
+    v.gone = false
+    if (!v.mode || (v.mode === 'source' && !again)) v.mode = defaultMode(f)
+  } catch (e) {
+    if (e instanceof Unauthorized) { S.authed = false; render(); return }
+    if (S.fv !== v) return
+    v.err = e.message
+  }
+  v.loading = false
+  renderViewer(again)
+}
+
+// While a file is shown, it is looked at every few seconds, and read again
+// when it changed; one gone says so.
+setInterval(async () => {
+  const v = S.fv
+  if (!v?.file || !S.bmOpen || S.dTab !== 'files' || document.hidden || v.checking) return
+  v.checking = true
+  try {
+    const st = await api('POST', `/v1/agents/${v.agent}/stat`, { paths: [v.path] })
+    if (S.fv !== v) return
+    const f = st.files[0]
+    if (!f) { if (!v.gone) { v.gone = true; renderViewer(true) } }
+    else if (v.gone || f.size !== v.file.size || f.mtime !== v.file.mtime) await loadFile(true)
+  } catch {} finally { v.checking = false }
+}, 3000)
+
+function fileModes(v) {
+  const f = v.file
+  if (!f) return []
+  if (f.kind === 'image') return [['fit', 'Fit'], ['actual', '100%'], ...(f.type === 'image/svg+xml' ? [['source', 'Source']] : [])]
+  if (f.kind !== 'text') return []
+  if (isHtml(f.path)) return [['page', 'Page'], ['source', 'Source']]
+  if (isMd(f.path)) return [['rendered', 'Rendered'], ['source', 'Source']]
+  return []
+}
+
+const b64text = (b64) => new TextDecoder().decode(Uint8Array.from(atob(b64), (c) => c.charCodeAt(0)))
+
+function renderViewer(keep) {
+  const el = S.bmEl
+  const v = S.fv
+  if (!el || !v || S.dTab !== 'files') return
+  const a = agentById(v.agent)
+  const pane = el.querySelector('[data-pane="view"]')
+  const f = v.file
+  pane.querySelector('.fv-name').textContent = baseName(v.path)
+  pane.querySelector('.fv-name').title = v.path
+  const modes = fileModes(v)
+  pane.querySelector('.fv-modes').replaceChildren(...modes.map(([k, l]) => h('button', {
+    type: 'button', 'aria-pressed': String(v.mode === k), onclick: () => { v.mode = k; renderViewer() },
+  }, l)))
+  pane.querySelector('.fv-modes').hidden = !modes.length
+  const source = f?.kind === 'text' && v.mode === 'source' || f?.kind === 'image' && v.mode === 'source'
+  const wrap = pane.querySelector('.fv-wrap')
+  wrap.hidden = !source
+  wrap.setAttribute('aria-pressed', String(v.wrap))
+  const at = pane.querySelector('.fv-at')
+  at.hidden = !a || a.archived_at || S.sel !== a.id || S.view !== 'agent'
+
+  // Where it is: the workspace's folders lead back to them in the list.
+  const crumbs = pane.querySelector('.fv-crumbs')
+  const rel = a ? relPath(a, v.path) : null
+  const path = h('span', { class: 'cp' })
+  if (rel != null) {
+    const parts = rel.split('/')
+    path.append(h('button', { type: 'button', onclick: () => showFolder(a, '') }, shownPath(a, a.workdir) || '~'))
+    parts.slice(0, -1).forEach((d, i) => {
+      const dir = parts.slice(0, i + 1).join('/')
+      path.append('/', h('button', { type: 'button', onclick: () => showFolder(a, dir) }, d))
+    })
+    path.append('/' + parts[parts.length - 1])
+  } else path.append(a ? shownPath(a, v.path) : v.path)
+  const fresh = v.upd && Date.now() - v.upd < 3000
+  const meta = v.gone ? 'Deleted' : fresh ? 'Updated · just now' : f ? `${fmtSize(f.size)} · ${msgAge(f.mtime)}` : ''
+  crumbs.replaceChildren(...[a && S.sel !== a.id ? h('span', { class: 'who' }, agentTitle(a)) : null, path,
+    h('span', { class: 'when' + (fresh ? ' upd' : v.gone ? ' gone' : '') }, meta)].filter(Boolean))
+  if (fresh) setTimeout(() => { if (S.fv === v) renderViewer(true) }, 3100)
+
+  const note = pane.querySelector('.fv-note')
+  note.hidden = true
+  note.replaceChildren()
+  if (f?.truncated && v.mode === 'source') { note.hidden = false; note.append(`Only its first ${fmtSize(f.text.length)} of ${fmtSize(f.size)} are shown.`) }
+  if (f?.kind === 'text' && v.mode === 'page') {
+    note.hidden = false
+    note.append(v.scripts ? 'Its scripts run, in a sandbox that reaches nothing outside the page.' : 'Its scripts are off.',
+      h('button', { type: 'button', onclick: () => { v.scripts = !v.scripts; renderViewer() } }, v.scripts ? 'Turn them off' : 'Run scripts'))
+  }
+
+  const body = pane.querySelector('.fv-body')
+  const top = keep ? body.scrollTop : 0
+  const left = keep ? body.scrollLeft : 0
+  // A page already in its frame is kept unless it changed.
+  const frame = body.querySelector('iframe')
+  const src = f && v.mode === 'page' ? `/v1/agents/${v.agent}/page?path=${encodeURIComponent(v.path)}${v.scripts ? '&scripts=1' : ''}&v=${encodeURIComponent(f.mtime + ':' + f.size)}` : null
+  if (src && frame && frame.dataset.src === src) return
+  body.className = 'fv-body fs' + (v.mode === 'page' ? ' fv-page' : '')
+  let view
+  if (v.err) view = h('div', { class: 'fv-empty' }, v.err, h('button', { type: 'button', class: 'btn', onclick: () => { v.err = null; v.loading = true; renderViewer(); loadFile() } }, 'Try again'))
+  else if (!f) view = h('div', { class: 'fv-empty' }, 'Reading…')
+  else if (f.kind === 'binary') view = h('div', { class: 'fv-empty' }, `Not text or an image (${fmtSize(f.size)}): it is not shown.`)
+  else if (f.kind === 'too_large') view = h('div', { class: 'fv-empty' }, `An image of ${fmtSize(f.size)}: only those up to 8 MB are shown.`)
+  else if (f.kind === 'image' && v.mode !== 'source') {
+    view = h('div', { class: 'fv-img' + (v.mode === 'actual' ? ' actual' : '') }, h('img', { src: `data:${f.type};base64,${f.data}`, alt: baseName(f.path) }))
+  } else if (v.mode === 'page') {
+    view = h('iframe', { class: 'fv-frame', src, 'data-src': src, sandbox: v.scripts ? 'allow-scripts' : '', title: baseName(f.path), referrerpolicy: 'no-referrer' })
+  } else if (v.mode === 'rendered') {
+    view = h('div', { class: 'fv-md text' }, markdown(f.text, true))
+    // Its links to files beside it open them here.
+    const dir = f.path.slice(0, f.path.lastIndexOf('/'))
+    for (const l of view.querySelectorAll('.link-off[title]')) {
+      const href = l.title.split('#')[0]
+      if (!href || /^[a-z][\w+.-]*:/i.test(href)) continue
+      const target = joinPath(dir, safeDecode(href))
+      fpLink(l, () => openFile(v.agent, target), target)
+    }
+  } else {
+    const text = f.kind === 'image' ? b64text(f.data) : f.text
+    const lines = text.replace(/\n$/, '').split('\n')
+    view = h('pre', { class: 'fv-src' + (v.wrap ? ' wrap' : '') }, lines.map((l) => h('span', { class: 'l' }, l || ' ')))
+  }
+  body.replaceChildren(view)
+  body.scrollTop = top
+  body.scrollLeft = left
+  if (keep && v.upd && fresh) {
+    body.classList.remove('fv-flash')
+    void body.offsetWidth
+    body.classList.add('fv-flash')
+  }
+}
+
+// showFolder goes back to the list with dir (in the workspace) open.
+function showFolder(a, dir) {
+  const parts = dir ? dir.split('/') : []
+  for (let i = 1; i <= parts.length; i++) S.fOpen.add(`${a.id}:${parts.slice(0, i).join('/')}`)
+  S.fQuery = ''
+  const q = S.bmEl?.querySelector('[data-pane="files"] input')
+  if (q) q.value = ''
+  closeFile()
+}
+
+// mentionFile names the file shown in the message being written, as @path.
+function mentionFile() {
+  const v = S.fv
+  const a = v && agentById(v.agent)
+  const ta = document.querySelector('.composer textarea')
+  if (!a || S.sel !== a.id || !ta || ta.disabled) return
+  const ref = '@' + (relPath(a, v.path) ?? v.path)
+  const at = ta.selectionStart ?? ta.value.length
+  const before = ta.value.slice(0, at), after = ta.value.slice(ta.selectionEnd ?? at)
+  const lead = before && !/\s$/.test(before) ? ' ' : ''
+  ta.value = before + lead + ref + ' ' + after.replace(/^ /, '')
+  const caret = (before + lead + ref + ' ').length
+  ta.dispatchEvent(new Event('input'))
+  if (narrow.matches) setBmOpen(false)
+  ta.focus()
+  ta.setSelectionRange(caret, caret)
+}
 
 // ---- Floating scrollbars: the sidebar's list, the conversation and the
 // bookmarks hide their own and wear this one, over what they scroll: it
@@ -6425,7 +7022,7 @@ const shortcuts = [
   ['t', 'TODO of the agent'],
   ['e', 'Name and ID of the agent'],
   ['x', 'Archive the agent (Enter archives, Esc keeps it)'],
-  [']', 'Show or hide bookmarks'],
+  [']', 'Show or hide the drawer: bookmarks and files'],
   ['g then i / s / a', 'Go to Isolations / Services / Accounts'],
 ]
 

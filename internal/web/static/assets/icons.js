@@ -3,6 +3,11 @@
 // without parsing markup. All are 24x24, stroked in currentColor.
 
 export const icons = {
+  "folder": [["path",{"d":"M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z"}]],
+  "at-sign": [["circle",{"cx":"12","cy":"12","r":"4"}],["path",{"d":"M16 8v5a3 3 0 0 0 6 0v-1a10 10 0 1 0-4 8"}]],
+  "maximize-2": [["polyline",{"points":"15 3 21 3 21 9"}],["polyline",{"points":"9 21 3 21 3 15"}],["line",{"x1":"21","x2":"14","y1":"3","y2":"10"}],["line",{"x1":"3","x2":"10","y1":"21","y2":"14"}]],
+  "minimize-2": [["polyline",{"points":"4 14 10 14 10 20"}],["polyline",{"points":"20 10 14 10 14 4"}],["line",{"x1":"14","x2":"21","y1":"10","y2":"3"}],["line",{"x1":"3","x2":"10","y1":"21","y2":"14"}]],
+  "wrap-text": [["line",{"x1":"3","x2":"21","y1":"6","y2":"6"}],["path",{"d":"M3 12h15a3 3 0 1 1 0 6h-4"}],["polyline",{"points":"16 16 14 18 16 20"}],["line",{"x1":"3","x2":"10","y1":"18","y2":"18"}]],
   "panel-right": [["rect",{"width":"18","height":"18","x":"3","y":"3","rx":"2"}],["path",{"d":"M15 3v18"}]],
   "search": [["circle",{"cx":"11","cy":"11","r":"8"}],["path",{"d":"m21 21-4.3-4.3"}]],
   "arrow-up-right": [["path",{"d":"M7 7h10v10"}],["path",{"d":"M7 17 17 7"}]],
