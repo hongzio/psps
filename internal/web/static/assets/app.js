@@ -6970,9 +6970,13 @@ function floatScroll(key, list) {
     const { scrollTop: t, scrollHeight: sh, clientHeight: ch } = list
     bar.hidden = sh <= ch + 1
     if (bar.hidden) return
-    const th = Math.max(28, ch * ch / sh)
+    // The thumb runs in the bar, a little shorter than the list: run in
+    // the list's height, at the end it hung past the bar and the wrap, and
+    // the page itself grew a scrollbar.
+    const track = bar.clientHeight
+    const th = Math.min(track, Math.max(28, track * ch / sh))
     thumb.style.height = th + 'px'
-    thumb.style.transform = `translateY(${(t / (sh - ch)) * (ch - th)}px)`
+    thumb.style.transform = `translateY(${(t / (sh - ch)) * (track - th)}px)`
   }
   const show = () => {
     bar.classList.add('on')
