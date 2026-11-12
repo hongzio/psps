@@ -73,6 +73,10 @@ func agentCmd(p paths.Paths, args []string) error {
 		tw := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
 		fmt.Fprintln(tw, "ID\tSTATUS\tKIND\tISOLATION\tTEAM\tMAIL\tNAME")
 		for _, a := range agents {
+			// Side agents (/btw) are the web drawer's, not the list's.
+			if a.SideOf != "" {
+				continue
+			}
 			status := string(a.State.Status)
 			switch {
 			case a.ArchivedAt != nil:

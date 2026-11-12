@@ -48,6 +48,7 @@ func pspsCommands(kind driver.Kind, models []driver.Choice) []api.Command {
 			{Value: "ask", Description: "it asks first"},
 			{Value: "default", Description: "the CLI's own settings decide"},
 		}),
+		cmd("btw", "Ask on the side: a subagent forked from this conversation answers with its tools, in the drawer's Subagents", "<question>", nil),
 		cmd("stop", "Stop its turn", "", nil),
 		cmd("new", "Start over in a new session: same ID and directory, this one archived", "", nil),
 	}
@@ -125,6 +126,13 @@ func pspsCommand(text string) (name string, args []string, ok bool) {
 // Message sends text to the agent, or does what it says instead when it is
 // one of psps's commands.
 func (m *Manager) Message(id, text string) (api.Sent, error) {
+	if q, ok := btwQuestion(text); ok {
+		a, err := m.Btw(m.ctx, id, q)
+		if err != nil {
+			return api.Sent{}, err
+		}
+		return api.Sent{Done: "Asked on the side: its answer is in the drawer's Subagents.", Agent: a.ID, Side: true}, nil
+	}
 	name, args, ok := pspsCommand(text)
 	if !ok {
 		return api.Sent{}, m.Send(id, text)

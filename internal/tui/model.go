@@ -248,6 +248,8 @@ func (m *Model) fetchAgents() tea.Cmd {
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
 		as, err := be.Agents(ctx)
+		// Side agents (/btw) are the web drawer's, not the list's.
+		as = slices.DeleteFunc(as, func(a api.Agent) bool { return a.SideOf != "" })
 		return agentsMsg{as, err}
 	}
 }

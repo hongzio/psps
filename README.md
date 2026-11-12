@@ -107,6 +107,7 @@ You run the same agent lifecycle whichever CLI is underneath:
 | `/new` | A fresh session that keeps the agent's ID, crons and waiting mail. The old one is archived |
 | **Restore** | Goes back to an archived session, picking up where it left off |
 | **Fork** | A new agent that starts from a copy of this one's conversation |
+| `/btw <question>` | A subagent forked from this conversation answers on the side, with its tools, in the web drawer's Subagents. Deleted, not archived |
 | **Send when idle** | On the web, queue your next message. It goes when the current turn ends |
 
 ## Teams that run themselves

@@ -1531,3 +1531,53 @@ kbd {
 /* A path a message names that is a file: a link to it in the viewer. */
 .fpath { color: var(--accent); cursor: pointer; text-decoration: underline dotted; text-underline-offset: 3px; }
 .fpath:hover { text-decoration-style: solid; }
+
+/* Subagents (/btw): the drawer's third tab. The list, then one open as a
+   conversation of its own with a message box of its own. */
+.dr-tab.pip { position: relative; }
+.dr-tab.pip::after { content: ''; position: absolute; top: 12px; right: 2px; width: 6px; height: 6px; border-radius: 50%; background: var(--unread); }
+.sa-intro { flex: none; padding: 12px 14px 10px; color: var(--muted); font-size: 12.5px; line-height: 1.45; }
+.sa-intro strong { color: var(--text); font-weight: 600; }
+.sa-intro code { font-size: 12px; color: var(--accent); }
+.sa-list { flex: 1; min-height: 0; overflow-y: auto; overscroll-behavior: contain; display: flex; flex-direction: column; gap: 6px; padding: 2px 10px 16px; }
+.sa-list > * { flex: none; }
+.sa-row {
+  display: grid; grid-template-columns: 14px minmax(0, 1fr) auto; gap: 3px 8px; align-items: start;
+  padding: 9px 8px 9px 10px; border: 1px solid var(--border); border-radius: var(--radius); background: var(--panel); cursor: pointer;
+}
+.sa-row:hover, .sa-row:focus-visible { border-color: color-mix(in srgb, var(--accent) 40%, var(--border)); }
+.sa-row .dot { width: 9px; height: 9px; margin-top: 6px; justify-self: center; }
+.sa-q { display: flex; align-items: center; gap: 8px; min-width: 0; font-size: 14px; font-weight: 500; }
+.sa-q .t { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.sa-q .unread-dot { flex: none; width: 7px; height: 7px; border-radius: 50%; background: var(--unread); }
+.sa-x { width: 26px; height: 26px; margin: -2px -2px 0 0; opacity: 0; }
+.sa-row:hover .sa-x, .sa-x:focus-visible { opacity: 1; }
+.sa-x:hover, .sa-del:hover { color: var(--err); background: var(--err-soft); }
+@media (hover: none) { .sa-x { opacity: .6; } }
+.sa-meta { grid-column: 2 / 4; display: flex; align-items: center; gap: 8px; min-width: 0; font-size: 12px; color: var(--muted); white-space: nowrap; }
+.sa-meta .st.working, .sa-meta .st.starting { color: var(--accent); font-weight: 500; }
+.sa-meta .st.compacting, .sa-meta .st.blocked, .sa-meta .st.interrupted { color: var(--warn); font-weight: 500; }
+.sa-meta .st.error, .sa-meta .problem { color: var(--err); }
+.sa-meta .problem { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.sa-meta .ctx { display: inline-flex; align-items: center; gap: 5px; margin-left: auto; font-family: var(--mono); font-size: 11px; color: var(--faint); }
+.sa-meta .bar { display: inline-block; width: 40px; height: 4px; border-radius: 2px; background: var(--border); overflow: hidden; }
+.sa-meta .bar > span { display: block; height: 100%; background: var(--accent); }
+.sa-meta .bar > span.hi { background: var(--warn); }
+.sa-chip { flex: none; margin-right: 2px; padding: 1px 8px; font-size: 11.5px; }
+.sa-chip.working, .sa-chip.starting { color: var(--accent); background: var(--accent-soft); }
+.sa-chip.blocked, .sa-chip.interrupted { color: var(--warn); background: var(--warn-soft); }
+.sa-chip.error { color: var(--err); background: var(--err-soft); }
+.sa-crumbs .who { color: var(--accent); background: var(--accent-soft); font-weight: 600; }
+.sa-body { flex: 1; min-height: 0; overflow-y: auto; overscroll-behavior: contain; background: var(--panel); }
+.sa-inner { display: flex; flex-direction: column; gap: 10px; padding: 14px 14px 10px; font-size: 14px; }
+.sa-inner .msg-user-row, .sa-inner .msg-user { max-width: 92%; }
+.sa-inner .empty { margin-top: 30%; }
+.sa-comp { flex: none; padding: 8px 10px calc(10px + env(safe-area-inset-bottom)); }
+.sa-comp .status-line { margin-bottom: 5px; }
+.sa-comp textarea { font-size: 14px; }
+.sa-stop[hidden] { display: none; }
+/* Three tabs in a narrow drawer: those not chosen show their icon alone. */
+.bm-drawer { container-type: inline-size; }
+@container (max-width: 400px) {
+  .dr-tab:not([aria-selected="true"]) .dr-label { display: none; }
+}
