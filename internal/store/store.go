@@ -827,6 +827,12 @@ func (s *Store) SetSessionID(id, sessionID string) error {
 	return err
 }
 
+// SetSideOf makes the agent id a side agent of of, or, of "", one of its own.
+func (s *Store) SetSideOf(id, of string) error {
+	_, err := s.db.Exec(`UPDATE agents SET side_of = ? WHERE id = ?`, of, id)
+	return err
+}
+
 func (s *Store) SetArchived(id string, at *time.Time) error {
 	var v any
 	if at != nil {

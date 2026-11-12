@@ -95,6 +95,34 @@ func TestBtwForksASideAgentThatIsDeletedNotArchived(t *testing.T) {
 	}
 	e.waitFor("it to be gone", func() bool { _, err := e.st.Agent(s.ID); return errors.Is(err, store.ErrNotFound) })
 
+	// Moved out, it is an agent of its own, right under the one it was of,
+	// which no longer takes it along.
+	out, err := m.Message("id1", "/btw out")
+	if err != nil {
+		t.Fatal(err)
+	}
+	e.waitFor("its answer", func() bool { return e.hasAssistant(out.Agent, "echo: out") })
+	if _, err := m.Detach(ctx, a.ID); err == nil {
+		t.Fatal("an agent that is no subagent was moved out")
+	}
+	v, err := m.Detach(ctx, out.Agent)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if v.SideOf != "" {
+		t.Fatalf("moved out: %+v", v)
+	}
+	if s, _ := e.st.Agent(out.Agent); s.SideOf != "" {
+		t.Fatalf("stored: %+v", s)
+	}
+	order, _ := e.st.Order()
+	if p, q := order[store.LiveList][a.ID], order[store.LiveList][out.Agent]; q != p+1 {
+		t.Fatalf("its place: %d, the agent's %d", q, p)
+	}
+	if _, err := m.Detach(ctx, out.Agent); err == nil {
+		t.Fatal("moved out twice")
+	}
+
 	// The agent's archive takes its side agents with it.
 	sent, err = m.Message("id1", "/btw another")
 	if err != nil {
@@ -107,5 +135,8 @@ func TestBtwForksASideAgentThatIsDeletedNotArchived(t *testing.T) {
 	e.waitFor("it to be gone", func() bool { _, err := e.st.Agent(sent.Agent); return errors.Is(err, store.ErrNotFound) })
 	if _, err := e.st.Agent(a.ID); err != nil {
 		t.Fatalf("the agent itself: %v", err)
+	}
+	if s, err := e.st.Agent(out.Agent); err != nil || s.ArchivedAt != nil {
+		t.Fatalf("the one moved out: %+v, %v", s, err)
 	}
 }

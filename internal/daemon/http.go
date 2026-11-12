@@ -596,6 +596,10 @@ func (m *Manager) Handler() http.Handler {
 		v, err := m.Fork(r.Context(), r.PathValue("id"))
 		reply(w, v, err)
 	})
+	mux.HandleFunc("POST /v1/agents/{id}/detach", func(w http.ResponseWriter, r *http.Request) {
+		v, err := m.Detach(r.Context(), r.PathValue("id"))
+		reply(w, v, err)
+	})
 	mux.HandleFunc("POST /v1/agents/{id}/restore", func(w http.ResponseWriter, r *http.Request) {
 		v, err := m.Restore(r.Context(), r.PathValue("id"))
 		reply(w, v, err)
