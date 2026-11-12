@@ -7154,12 +7154,6 @@ function openSub(id) {
   if (!S.bmOpen) setBmOpen(true)
   else renderDrawer()
   fitTopbar()
-  // Its message box has the focus, out of the agent's own, once drawn.
-  if (!coarse) {
-    const focus = () => S.sub === id && S.bmEl?.querySelector('.sa-comp textarea')?.focus({ preventScroll: true })
-    focus()
-    requestAnimationFrame(focus)
-  }
 }
 
 // dropSub lets go of the one open, its stream and its message box.
