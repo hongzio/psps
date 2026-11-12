@@ -124,34 +124,55 @@ func TestFiles(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	files := func() []string {
+	list := func(dir string) api.Files {
 		t.Helper()
-		fs, err := m.Files(context.Background(), a.ID)
+		fs, err := m.Files(context.Background(), a.ID, dir)
 		if err != nil || fs.Truncated {
 			t.Fatalf("%+v %v", fs, err)
 		}
 		slices.Sort(fs.Files)
-		return fs.Files
+		slices.Sort(fs.Ignored)
+		return fs
 	}
+	files := func() []string { t.Helper(); return list("").Files }
 	if got := files(); len(got) != 0 {
 		t.Fatalf("%q", got)
 	}
 	for _, f := range []string{"main.go", "src/a b.go", "node_modules/x/index.js", ".git/config"} {
 		write(f)
 	}
-	if got := files(); !slices.Equal(got, []string{"main.go", "src/a b.go"}) {
-		t.Fatalf("%q", got)
+	// Out of a repository node_modules is offered by its name alone.
+	if got := list(""); !slices.Equal(got.Files, []string{"main.go", "src/a b.go"}) || !slices.Equal(got.Ignored, []string{"node_modules/"}) {
+		t.Fatalf("%+v", got)
 	}
-	// In a repository, git's list: what it ignores is not offered.
+	// In a repository, git's list: what it ignores is offered apart, a
+	// folder by its name alone, and what is in it when asked.
 	os.RemoveAll(filepath.Join(a.Workdir, ".git"))
 	if out, err := exec.Command("git", "-C", a.Workdir, "init", "-q").CombinedOutput(); err != nil {
 		t.Skipf("git: %v %s", err, out)
 	}
 	write(".gitignore")
-	os.WriteFile(filepath.Join(a.Workdir, ".gitignore"), []byte("build/\n"), 0o644)
-	write("build/out.bin")
-	if got := files(); !slices.Equal(got, []string{".gitignore", "main.go", "node_modules/x/index.js", "src/a b.go"}) {
+	os.WriteFile(filepath.Join(a.Workdir, ".gitignore"), []byte("build/\nnotes.md\n"), 0o644)
+	for _, f := range []string{"build/out.bin", "build/.hidden", "build/sub/x.txt", "notes.md"} {
+		write(f)
+	}
+	got := list("")
+	if !slices.Equal(got.Files, []string{".gitignore", "main.go", "node_modules/x/index.js", "src/a b.go"}) || !slices.Equal(got.Ignored, []string{"build/", "notes.md"}) {
+		t.Fatalf("%+v", got)
+	}
+	if got := list("build/").Files; !slices.Equal(got, []string{"build/.hidden", "build/out.bin", "build/sub/"}) {
 		t.Fatalf("%q", got)
+	}
+	if got := list("build/sub").Files; !slices.Equal(got, []string{"build/sub/x.txt"}) {
+		t.Fatalf("%q", got)
+	}
+	if got := list("missing").Files; len(got) != 0 {
+		t.Fatalf("%q", got)
+	}
+	for _, dir := range []string{"..", "../x", "/etc", "build/../.."} {
+		if _, err := m.Files(context.Background(), a.ID, dir); err == nil {
+			t.Fatalf("%q was listed", dir)
+		}
 	}
 }
 

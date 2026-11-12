@@ -334,19 +334,38 @@ func (m *Manager) Branch(ctx context.Context, id string) (api.Branch, error) {
 // filesMax is how many of a workspace's files are offered.
 const filesMax = 20000
 
-// filesScript lists the files under $1 by their paths there: git's own
-// list in a repository, tracked and untracked but not ignored, every file
-// otherwise.
+// filesScript lists the files under $1 by their paths there, each after
+// "f ": git's own list in a repository, tracked and untracked but not
+// ignored, every file otherwise. What git ignores comes after "i ", a
+// folder of it by its name alone (ending in /), its files not listed: they
+// are many at times (node_modules, a build's), and dirScript lists one's
+// when asked. Out of a repository node_modules is such a folder.
 var filesScript = `cd "$1" 2>/dev/null || exit 0
 if git rev-parse --is-inside-work-tree >/dev/null 2>&1; then
-	git -c core.quotepath=off ls-files -co --exclude-standard 2>/dev/null
+	git -c core.quotepath=off ls-files -co --exclude-standard 2>/dev/null | sed 's/^/f /'
+	git -c core.quotepath=off ls-files -oi --exclude-standard --directory 2>/dev/null | sed 's/^/i /'
 else
-	find . \( -name .git -o -name node_modules \) -prune -o -type f -print 2>/dev/null | sed 's|^\./||'
+	find . -name .git -prune -o -name node_modules -prune -exec printf 'i %s/\n' {} \; -o -type f -print 2>/dev/null | sed 's|^i \./|i |; s|^\./|f |'
 fi | head -n ` + strconv.Itoa(filesMax+1)
 
-// Files are the files in the agent's workspace. The isolation is not
-// started for them: one that is stopped has none to offer.
-func (m *Manager) Files(ctx context.Context, id string) (api.Files, error) {
+// dirScript lists what is in the folder $2 of the workspace $1, by paths
+// in the workspace, a folder's ending in /.
+var dirScript = `cd "$1" 2>/dev/null && cd "./$2" 2>/dev/null || exit 0
+for f in .[!.]* ..?* *; do
+	if [ -d "$f" ] && [ ! -L "$f" ]; then echo "$2/$f/"
+	elif [ -e "$f" ] || [ -L "$f" ]; then echo "$2/$f"; fi
+done | head -n ` + strconv.Itoa(filesMax+1)
+
+// Files are the files in the agent's workspace; with dir, what is in that
+// folder of it (one git ignores, say). The isolation is not started for
+// them: one that is stopped has none to offer.
+func (m *Manager) Files(ctx context.Context, id, dir string) (api.Files, error) {
+	if dir != "" {
+		dir = path.Clean(dir)
+		if path.IsAbs(dir) || dir == "." || dir == ".." || strings.HasPrefix(dir, "../") {
+			return api.Files{}, badRequest(fmt.Errorf("%q is not a folder in the workspace", dir))
+		}
+	}
 	a, err := m.storedAgent(id)
 	if err != nil {
 		return api.Files{}, err
@@ -360,19 +379,36 @@ func (m *Manager) Files(ctx context.Context, id string) (api.Files, error) {
 	}
 	ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
 	defer cancel()
-	out, err := m.cli.RunAsAgent(ctx, iso.Container, "sh", "-c", filesScript, "sh", a.Workdir)
+	argv := []string{"sh", "-c", filesScript, "sh", a.Workdir}
+	if dir != "" {
+		argv = []string{"sh", "-c", dirScript, "sh", a.Workdir, dir}
+	}
+	out, err := m.cli.RunAsAgent(ctx, iso.Container, argv...)
 	if err != nil {
 		return api.Files{}, fmt.Errorf("listing the workspace: %w", err)
 	}
 	fs := api.Files{Files: []string{}}
+	n := 0
 	for l := range strings.SplitSeq(out, "\n") {
+		if l == "" {
+			continue
+		}
+		if n++; n > filesMax {
+			fs.Truncated = true
+			break
+		}
+		list := &fs.Files
+		if dir == "" {
+			kind, p, _ := strings.Cut(l, " ")
+			if kind == "i" {
+				list = &fs.Ignored
+			}
+			l = p
+		}
 		// git quotes a name it cannot print as it is.
 		if l != "" && !strings.HasPrefix(l, `"`) {
-			fs.Files = append(fs.Files, l)
+			*list = append(*list, l)
 		}
-	}
-	if len(fs.Files) > filesMax {
-		fs.Files, fs.Truncated = fs.Files[:filesMax], true
 	}
 	return fs, nil
 }

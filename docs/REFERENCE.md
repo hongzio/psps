@@ -203,10 +203,13 @@ in `GET /v1/agents/ID/events`) and `PATCH|DELETE /v1/bookmarks/N`
 
 The drawer's other tab, **Files**, reads the files of the agent shown, as
 that agent: nothing it could not read itself, and nothing is ever changed.
-It lists the agent's workspace (what git ignores left out, as for `@`) as a
-tree, with **Changed here** (what its tools wrote in the conversation) and
+It lists the agent's workspace as a tree, what git ignores dimmed (out of a
+repository, `node_modules`): an ignored folder is listed by its name alone
+and what is in it only as it is opened, so a large one costs nothing
+unopened, and search finds only its files listed so far. Above the tree
+are **Changed here** (what its tools wrote in the conversation) and
 **Elsewhere · named here** (files outside the workspace the conversation
-names) above; it is searched by name (by path once you type a slash) and
+names). The list is searched by name (by path once you type a slash) and
 filtered to **Docs** (md, html, txt), **Images** or **All**. A path an
 agent's reply or a mail names, in code or as a link, is a link to the file
 when it is one in the isolation, wherever it is (`/tmp/report.html` too); a
