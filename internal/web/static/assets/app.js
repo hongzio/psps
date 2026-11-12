@@ -6357,8 +6357,11 @@ function floatScroll(key, list) {
   const wrap = h('div', { class: 'fs-wrap' })
   const thumb = h('div', { class: 'fs-thumb' })
   const bar = h('div', { class: 'fs-bar', hidden: true, 'aria-hidden': 'true' }, thumb)
+  // Moved into the wrap, a list loses where it was scrolled: it is put back.
+  const top = list.scrollTop
   list.before(wrap)
   wrap.append(list, bar)
+  if (top) list.scrollTop = top
   list.classList.add('fs')
   let fade, drag = null, hover = false
   const fit = () => {
