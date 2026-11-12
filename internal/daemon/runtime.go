@@ -764,6 +764,17 @@ func (r *runtime) relabel(name, handle *string) error {
 	return nil
 }
 
+// detach makes the side agent one of its own.
+func (r *runtime) detach() error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if err := r.m.store.SetSideOf(r.agent.ID, ""); err != nil {
+		return err
+	}
+	r.agent.SideOf = ""
+	return nil
+}
+
 // park parks the agent while it is idle, or takes it out of being parked.
 func (r *runtime) park(on bool) error {
 	r.mu.Lock()

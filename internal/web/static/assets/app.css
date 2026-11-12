@@ -1552,6 +1552,7 @@ kbd {
 .sa-q .unread-dot { flex: none; width: 7px; height: 7px; border-radius: 50%; background: var(--unread); }
 .sa-x { width: 26px; height: 26px; margin: -2px -2px 0 0; opacity: 0; }
 .sa-row:hover .sa-x, .sa-x:focus-visible { opacity: 1; }
+.sa-out:hover { color: var(--accent); }
 .sa-x:hover, .sa-del:hover { color: var(--err); background: var(--err-soft); }
 @media (hover: none) { .sa-x { opacity: .6; } }
 .sa-meta { grid-column: 2 / 4; display: flex; align-items: center; gap: 8px; min-width: 0; font-size: 12px; color: var(--muted); white-space: nowrap; }

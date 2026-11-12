@@ -7091,6 +7091,10 @@ function subPane() {
         h('span', { class: 'fv-name sa-name' }), h('span', { class: 'fv-sp' }),
         h('span', { class: 'chip sa-chip' }),
         h('button', {
+          type: 'button', class: 'bm-x sa-out', title: 'Move it out, to the agent list', 'aria-label': 'Move it out, to the agent list',
+          onclick: () => { const a = sideById(S.sub); if (a) askDetachSub(a) },
+        }, icon('arrow-up-left')),
+        h('button', {
           type: 'button', class: 'bm-x sa-del', title: 'Delete this subagent', 'aria-label': 'Delete this subagent',
           onclick: () => { const a = sideById(S.sub); if (a) askDeleteSub(a) },
         }, icon('trash-2'))),
@@ -7306,6 +7310,24 @@ function subComposer(a) {
         onclick: () => guarded(() => api('POST', `/v1/agents/${enc(a.id)}/messages`, { text: '/stop' })),
       }, icon('square')),
       h('button', { type: 'button', class: 'btn primary send-btn', onclick: submit }, 'Send')))
+}
+
+// askDetachSub moves the subagent a out of the drawer: an agent of its
+// own, right under the one it is of.
+async function askDetachSub(a) {
+  const from = agentById(a.side_of)
+  if (!await ask({
+    title: `Move "${agentTitle(a)}" out?`,
+    body: `It becomes an agent of its own, in the list right under ${from ? agentTitle(from) : a.side_of}, as a fork is. ` +
+      'It is archived, not deleted, from then on, and no longer goes when that one does.',
+    ok: 'Move out',
+  })) return
+  const moved = await guarded(() => api('POST', `/v1/agents/${enc(a.id)}/detach`))
+  if (!moved) return
+  if (S.sub === a.id) dropSub()
+  await guarded(refreshAgents)
+  renderDrawer()
+  toast(`Moved "${agentTitle(moved)}" to the list`, false, { label: 'Open', run: () => select(moved.id) })
 }
 
 async function askDeleteSub(a) {

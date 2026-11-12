@@ -319,7 +319,10 @@ what is typed there works the same.
   archived: from the drawer, and with the agent when that one is archived,
   started over (`/new`) or deleted. Deleting one stops it first; files it
   changed in the shared directory stay as they are. A subagent has no
-  `/btw` or `/new` of its own.
+  `/btw` or `/new` of its own. Its ↖ button moves it out, after asking
+  (`POST /v1/agents/{id}/detach`): it becomes an agent of its own, in the
+  list right under the one it was of and in its team, as a fork is, archived
+  rather than deleted from then on, and no longer going with that one.
 - Claude's: its slash commands and skills, as the running `claude` lists
   them (asked once a process, which costs no turn). Its `/model` and
   `/effort` are left out for psps's, which last beyond the process, and

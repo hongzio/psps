@@ -1562,7 +1562,16 @@ func (m *Manager) forkAgent(ctx context.Context, from store.Agent, via, side str
 		m.log.Printf("agent %s: its conversation: %v", a.ID, err)
 	}
 	m.log.Printf("agent %s: forked from %s", a.ID, from.ID)
-	// A fork is of its agent's team: its work is the same work's.
+	m.joinFork(a, from)
+	if _, err := m.ensureRuntime(a); err != nil {
+		return store.Agent{}, err
+	}
+	return a, nil
+}
+
+// joinFork puts the fork a in the list, after from, and in from's team: its
+// work is the same work's.
+func (m *Manager) joinFork(a, from store.Agent) {
 	if team, err := m.store.LineTeam(cmp.Or(from.Line, from.ID)); err != nil || team != "" {
 		if err == nil {
 			err = m.store.SetTeam(cmp.Or(a.Line, a.ID), team)
@@ -1574,10 +1583,6 @@ func (m *Manager) forkAgent(ctx context.Context, from store.Agent, via, side str
 	if err := m.placeFork(a, from); err != nil {
 		m.log.Printf("agent %s: its place: %v", a.ID, err)
 	}
-	if _, err := m.ensureRuntime(a); err != nil {
-		return store.Agent{}, err
-	}
-	return a, nil
 }
 
 // forkHandle is base, cut to leave room, with a random suffix.

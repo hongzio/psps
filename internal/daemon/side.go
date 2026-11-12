@@ -1,14 +1,17 @@
 package daemon
 
 import (
+	"cmp"
 	"context"
 	"errors"
+	"fmt"
 	"net/http"
 	"strings"
 	"time"
 	"unicode/utf8"
 
 	"github.com/hongzio/psps/internal/api"
+	"github.com/hongzio/psps/internal/event"
 	"github.com/hongzio/psps/internal/store"
 )
 
@@ -65,6 +68,38 @@ func (m *Manager) Btw(ctx context.Context, id, question string) (api.Agent, erro
 	if err := m.Send(a.ID, question); err != nil {
 		return api.Agent{}, err
 	}
+	return m.viewOf(a)
+}
+
+// Detach makes the live side agent id one of its own: out of its agent's
+// drawer, it is in the list after that one, in its team, as a fork is, and
+// is archived, not deleted, and no longer goes with it.
+func (m *Manager) Detach(ctx context.Context, id string) (api.Agent, error) {
+	a, err := m.storedAgent(id)
+	if err != nil {
+		return api.Agent{}, err
+	}
+	if a.SideOf == "" {
+		return api.Agent{}, badRequest(fmt.Errorf("agent %s is not a subagent", a.ID))
+	}
+	if a.ArchivedAt != nil {
+		return api.Agent{}, httpError{http.StatusConflict, fmt.Errorf("subagent %s is being deleted", a.ID)}
+	}
+	r, err := m.runtime(a.ID)
+	if err != nil {
+		return api.Agent{}, err
+	}
+	from, err := m.store.Agent(a.SideOf)
+	if err != nil {
+		return api.Agent{}, err
+	}
+	if err := r.detach(); err != nil {
+		return api.Agent{}, err
+	}
+	a.SideOf = ""
+	m.joinFork(a, from)
+	m.addEvents(a.ID, event.Event{Kind: event.KindNotice, Text: fmt.Sprintf("Moved out of %s's subagents: an agent of its own, in the list.", cmp.Or(from.Handle, from.ID))})
+	m.log.Printf("agent %s: a subagent of %s no longer", a.ID, from.ID)
 	return m.viewOf(a)
 }
 
