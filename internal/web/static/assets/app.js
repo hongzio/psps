@@ -1149,12 +1149,24 @@ window.addEventListener('popstate', route)
 
 async function send(text) {
   const id = S.sel
+  // /btw: the drawer opens on its subagents at once, its fork taking a while.
+  if (/^\/btw\s+\S/.test(text)) {
+    if (S.sub) dropSub()
+    S.dTab = 'subs'
+    if (!S.bmOpen) setBmOpen(true)
+    else renderDrawer()
+  }
   await guarded(async () => {
     // One of psps's own commands is done, not sent, and says what it did.
     const r = await api('POST', `/v1/agents/${id}/messages`, { text })
     // /btw: its subagent answers in the drawer.
+    // A list asked for at the same time may win over this one's and not
+    // have it yet: ask again until it is there.
     if (r.side && r.agent) {
-      await refreshAgents()
+      for (let i = 0; i < 8 && !sideById(r.agent); i++) {
+        if (i) await new Promise((ok) => setTimeout(ok, 250))
+        await refreshAgents()
+      }
       openSub(r.agent)
       return
     }
@@ -7142,7 +7154,12 @@ function openSub(id) {
   if (!S.bmOpen) setBmOpen(true)
   else renderDrawer()
   fitTopbar()
-  if (!coarse) queueMicrotask(() => S.bmEl?.querySelector('.sa-comp textarea')?.focus({ preventScroll: true }))
+  // Its message box has the focus, out of the agent's own, once drawn.
+  if (!coarse) {
+    const focus = () => S.sub === id && S.bmEl?.querySelector('.sa-comp textarea')?.focus({ preventScroll: true })
+    focus()
+    requestAnimationFrame(focus)
+  }
 }
 
 // dropSub lets go of the one open, its stream and its message box.
@@ -7211,7 +7228,7 @@ function renderSubChat() {
   pane.querySelector('.sa-crumbs').replaceChildren(
     h('span', { class: 'who' }, 'btw'),
     h('span', { class: 'cp' }, `of ${from ? shownID(from) : a.side_of} · ${a.isolation}`),
-    a.last_message_at ? h('span', { class: 'when' }, msgAge(a.last_message_at)) : null)
+    ...(a.last_message_at ? [h('span', { class: 'when' }, msgAge(a.last_message_at))] : []))
   const box = pane.querySelector('.sa-body')
   const inner = box.firstChild
   const c = convo(a.id)
