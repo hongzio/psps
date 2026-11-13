@@ -1556,6 +1556,16 @@ kbd {
 .sa-q { display: flex; align-items: center; gap: 8px; min-width: 0; font-size: 14px; font-weight: 500; }
 .sa-q .t { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .sa-q .unread-dot { flex: none; width: 7px; height: 7px; border-radius: 50%; background: var(--unread); }
+/* Another agent's subagents: faded, under a line, each agent's under its name. */
+.sa-row.other { opacity: .45; background: transparent; transition: opacity .15s; }
+.sa-row.other:hover, .sa-row.other:focus-visible { opacity: .85; }
+@media (prefers-reduced-motion: reduce) { .sa-row.other { transition: none; } }
+.sa-sep { display: flex; align-items: center; gap: 8px; padding: 10px 4px 2px; font-size: 11px; letter-spacing: .06em; text-transform: uppercase; color: var(--faint); }
+.sa-sep::after { content: ''; flex: 1; height: 1px; background: var(--border); }
+.sa-grp { display: flex; align-items: center; gap: 6px; min-width: 0; padding: 8px 4px 0; font-size: 12px; font-weight: 600; color: var(--faint); }
+.sa-grp .gn { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.sa-grp .n { flex: none; font-weight: 400; font-variant-numeric: tabular-nums; }
+.bm-empty.sa-none { padding: 14px 8px 10px; }
 .sa-x { width: 26px; height: 26px; margin: -2px -2px 0 0; opacity: 0; }
 .sa-row:hover .sa-x, .sa-x:focus-visible { opacity: 1; }
 .sa-out:hover { color: var(--accent); }
