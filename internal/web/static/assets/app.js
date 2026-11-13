@@ -7084,9 +7084,10 @@ function mentionFile() {
 
 // ---- Subagents: the drawer's third tab. /btw <question> forks the open
 // agent into a side agent that answers it with its tools, knowing the
-// conversation so far; it is the open agent's, listed here alone, and is
-// deleted, not archived. One is opened in the drawer as a conversation of
-// its own, with a message box of its own.
+// conversation so far; it is the open agent's, listed here first, the
+// other agents' after it, faded, and is deleted, not archived. One is
+// opened in the drawer as a conversation of its own, with a message box
+// of its own.
 
 const subStatus = (a) => a.compacting && a.state?.status === 'working' ? 'compacting' : a.state?.status || 'idle'
 
@@ -7132,33 +7133,73 @@ function renderSubs() {
   const agent = agentById(S.sel)
   el.querySelector('.sa-intro').replaceChildren(agent
     ? h('span', null, 'Forked from ', h('strong', null, shownID(agent)), ' with ', h('code', null, '/btw'),
-      ': each knows its conversation so far and works with its tools. They are only here, and are deleted, not archived.')
+      ': each knows its conversation so far and works with its tools. They are only here, and are deleted, not archived.' +
+      (S.sides.length > mine.length ? ' Other agents’ are below, faded.' : ''))
     : 'Open an agent to see its subagents.')
   const list = el.querySelector('.sa-list')
-  const rows = mine.slice().reverse().map((a) => {
-    const st = subStatus(a)
-    const unread = S.unread.has(a.id)
-    const u = a.state?.usage || {}
-    const used = u.window ? Math.round(100 * (u.context || 0) / u.window) : null
-    return h('div', {
-      class: 'sa-row' + (unread ? ' unread' : ''), role: 'button', tabindex: '0', 'data-sub': a.id,
-      onclick: () => openSub(a.id),
-      onkeydown: (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); openSub(a.id) } },
-    },
-      h('span', { class: 'dot ' + (st === 'compacting' ? 'working' : st) }),
-      h('span', { class: 'sa-q' }, h('span', { class: 't', title: agentTitle(a) }, agentTitle(a)), unread ? h('span', { class: 'unread-dot' }) : null),
-      h('button', {
-        type: 'button', class: 'bm-x sa-x', title: 'Delete', 'aria-label': `Delete "${agentTitle(a)}"`,
-        onclick: (e) => { e.stopPropagation(); askDeleteSub(a) },
-      }, icon('trash-2')),
-      h('span', { class: 'sa-meta' },
-        h('span', { class: 'st ' + st }, st),
-        a.last_message_at ? h('span', null, msgAge(a.last_message_at)) : null,
-        a.problem ? h('span', { class: 'problem' }, a.problem) : null,
-        used != null ? h('span', { class: 'ctx', title: `context ${used}% used` }, h('span', { class: 'bar' }, h('span', { class: used >= 80 ? 'hi' : null, style: `width:${Math.min(used, 100)}%` })), `${used}%`) : null))
-  })
-  if (!rows.length) rows.push(h('div', { class: 'bm-empty' }, agent ? 'None yet. Type /btw and a question in the message box: a subagent answers it here.' : ''))
+  const rows = mine.slice().reverse().map((a) => subRow(a, false))
+  if (!rows.length && agent) rows.push(h('div', { class: 'bm-empty' + (S.sides.length ? ' sa-none' : '') }, 'None yet. Type /btw and a question in the message box: a subagent answers it here.'))
+  // The other agents' subagents, faded, each agent's together, in the
+  // order of the list: one opens here as the agent's own do, the agent
+  // open staying open.
+  const others = S.sides.filter((a) => a.side_of !== S.sel)
+  if (others.length) {
+    rows.push(h('div', { class: 'sa-sep', role: 'separator' }, `Other agents · ${others.length}`))
+    const by = new Map()
+    for (const a of others) {
+      if (!by.has(a.side_of)) by.set(a.side_of, [])
+      by.get(a.side_of).push(a)
+    }
+    const rank = listRank()
+    const ids = [...by.keys()].sort((x, y) => rank(x) - rank(y))
+    for (const id of ids) {
+      const of = agentById(id)
+      const name = of ? agentTitle(of) : id
+      rows.push(h('div', { class: 'sa-grp', title: of ? `${name} (${shownID(of)})` : id },
+        h('span', { class: 'gn' }, name), h('span', { class: 'n' }, String(by.get(id).length))))
+      for (const a of by.get(id).reverse()) rows.push(subRow(a, true))
+    }
+  }
   list.replaceChildren(...rows)
+}
+
+// subRow is a subagent's row in the tab: other is one of another agent,
+// faded and with no bin.
+function subRow(a, other) {
+  const st = subStatus(a)
+  const unread = S.unread.has(a.id)
+  const u = a.state?.usage || {}
+  const used = u.window ? Math.round(100 * (u.context || 0) / u.window) : null
+  return h('div', {
+    class: 'sa-row' + (unread ? ' unread' : '') + (other ? ' other' : ''), role: 'button', tabindex: '0', 'data-sub': a.id,
+    onclick: () => openSub(a.id),
+    onkeydown: (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); openSub(a.id) } },
+  },
+    h('span', { class: 'dot ' + (st === 'compacting' ? 'working' : st) }),
+    h('span', { class: 'sa-q' }, h('span', { class: 't', title: agentTitle(a) }, agentTitle(a)), unread ? h('span', { class: 'unread-dot' }) : null),
+    other ? h('span') : h('button', {
+      type: 'button', class: 'bm-x sa-x', title: 'Delete', 'aria-label': `Delete "${agentTitle(a)}"`,
+      onclick: (e) => { e.stopPropagation(); askDeleteSub(a) },
+    }, icon('trash-2')),
+    h('span', { class: 'sa-meta' },
+      h('span', { class: 'st ' + st }, st),
+      a.last_message_at ? h('span', null, msgAge(a.last_message_at)) : null,
+      a.problem ? h('span', { class: 'problem' }, a.problem) : null,
+      used != null ? h('span', { class: 'ctx', title: `context ${used}% used` }, h('span', { class: 'bar' }, h('span', { class: used >= 80 ? 'hi' : null, style: `width:${Math.min(used, 100)}%` })), `${used}%`) : null))
+}
+
+// listRank orders agents as the list does near enough: by where the
+// daemon's order has them, or their team, then as the daemon sorts them.
+function listRank() {
+  const at = new Map()
+  ;(S.order?.live || []).forEach((l, i) => at.set(l, i))
+  const idx = new Map(S.agents.map((a, i) => [a.id, i]))
+  return (id) => {
+    const a = agentById(id)
+    if (!a) return Infinity
+    const p = at.get(a.team_id ? 'team:' + a.team_id : a.line || a.id) ?? at.get(a.line || a.id)
+    return (p ?? 1e6) * 1e4 + (idx.get(id) ?? 0)
+  }
 }
 
 function openSub(id) {
