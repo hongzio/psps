@@ -838,8 +838,8 @@ func TestClaudeForkCopiesTheSessionOnce(t *testing.T) {
 	d.Observe(tp.add(shimproto.DirSys, "", &shimproto.Sys{Kind: shimproto.SysStarted, PID: 1, Argv: argv}))
 	d.Observe(tp.out(`{"type":"system","subtype":"init","session_id":"own"}`))
 	d.Observe(tp.exited(0))
-	if argv := strings.Join(d.Command(), " "); !strings.Contains(argv, "--resume own") || strings.Contains(argv, "fork") {
-		t.Fatalf("after the fork took: %s", argv)
+	if argv := d.Command(); !strings.Contains(strings.Join(argv, " "), "--resume own") || slices.Contains(argv, "--fork-session") {
+		t.Fatalf("after the fork took: %v", argv)
 	}
 
 	f := newClaude("a2", "mine", Options{})
@@ -855,6 +855,42 @@ func TestClaudeForkCopiesTheSessionOnce(t *testing.T) {
 	}
 	if argv := strings.Join(f.Command(), " "); strings.Contains(argv, "fork") || !strings.Contains(argv, "--session-id mine") {
 		t.Fatalf("after a failed fork: %s", argv)
+	}
+}
+
+// A fork is told, every generation, that the session it is a copy of goes
+// on: claude says that session's background tasks ended when it did not.
+// An agent of its own, or one whose fork failed, is told nothing.
+func TestClaudeForkKnowsTheOtherSessionGoesOn(t *testing.T) {
+	prompt := func(argv []string) string {
+		if i := slices.Index(argv, "--append-system-prompt"); i >= 0 && i+1 < len(argv) {
+			return argv[i+1]
+		}
+		return ""
+	}
+	d := newClaude("a1", "own", Options{})
+	d.ForkFrom("theirs")
+	argv := d.Command()
+	if p := prompt(argv); !strings.Contains(p, "still running") {
+		t.Fatalf("first command %v", argv)
+	}
+	tp := &tape{}
+	d.Observe(tp.add(shimproto.DirSys, "", &shimproto.Sys{Kind: shimproto.SysStarted, PID: 1, Argv: argv}))
+	d.Observe(tp.out(`{"type":"system","subtype":"init","session_id":"own"}`))
+	d.Observe(tp.exited(0))
+	if argv := d.Command(); prompt(argv) == "" {
+		t.Fatalf("resumed: %v", argv)
+	}
+	if argv := newClaude("a2", "mine", Options{}).Command(); slices.Contains(argv, "--append-system-prompt") {
+		t.Fatalf("not a fork: %v", argv)
+	}
+	f := newClaude("a3", "mine", Options{})
+	f.ForkFrom("gone")
+	tp = &tape{}
+	f.Observe(tp.add(shimproto.DirSys, "", &shimproto.Sys{Kind: shimproto.SysStarted, PID: 1, Argv: f.Command()}))
+	f.Observe(tp.exited(1))
+	if argv := f.Command(); slices.Contains(argv, "--append-system-prompt") {
+		t.Fatalf("after a failed fork: %v", argv)
 	}
 }
 

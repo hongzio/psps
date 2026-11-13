@@ -201,6 +201,16 @@ func newUUID() string {
 	return fmt.Sprintf("%x-%x-%x-%x-%x", b[0:4], b[4:6], b[6:8], b[8:10], b[10:16])
 }
 
+// clForkPrompt tells a fork (a /btw subagent too) that the session it was
+// copied from is still running. Claude, resuming a copy, says the
+// background tasks the copy shows running "didn't finish before the
+// previous session ended"; a fork that believed it stopped, killed and
+// started again work the other session was doing.
+const clForkPrompt = `This session is a fork: it was copied from another Claude Code session, which has NOT ended and is still running alongside this one, on the same machine and resources.
+- Everything the conversation shows started before the fork (background shells, monitors, subagents, processes, jobs on remote services) belongs to that other session and may still be running. A notification that such a task "didn't finish before the previous session ended", or was stopped or lost, means only that this session cannot see it; the task itself is very likely still running.
+- Do not stop, kill, restart, clean up or take over that work, and do not redo it, unless the user asks you to in this session. If its state matters, look without changing anything and tell the user.
+- Do only what the user asks in this session.`
+
 func (c *claude) Command() []string {
 	argv := []string{"claude", "-p",
 		"--input-format", "stream-json", "--output-format", "stream-json",
@@ -233,6 +243,10 @@ func (c *claude) Command() []string {
 		argv = append(argv, "--permission-prompt-tool", "stdio")
 	default:
 		argv = append(argv, "--permission-mode", "bypassPermissions")
+	}
+	if c.forkOf != "" {
+		// Its every generation, as the session it is a copy of goes on.
+		argv = append(argv, "--append-system-prompt", clForkPrompt)
 	}
 	if c.opts.Model != "" {
 		argv = append(argv, "--model", c.opts.Model)
