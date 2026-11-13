@@ -246,7 +246,10 @@ func (c *claude) Command() []string {
 	}
 	if c.forkOf != "" {
 		// Its every generation, as the session it is a copy of goes on.
-		argv = append(argv, "--append-system-prompt", clForkPrompt)
+		// Off: claude records a conversation's system prompt once and sends
+		// the record on every resume, whatever a launch passes; a fork's
+		// record is the copied session's, without this.
+		argv = append(argv, "--append-system-prompt", clForkPrompt, "--system-prompt-snapshot", "off")
 	}
 	if c.opts.Model != "" {
 		argv = append(argv, "--model", c.opts.Model)

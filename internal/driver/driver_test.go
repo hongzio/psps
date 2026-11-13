@@ -871,7 +871,7 @@ func TestClaudeForkKnowsTheOtherSessionGoesOn(t *testing.T) {
 	d := newClaude("a1", "own", Options{})
 	d.ForkFrom("theirs")
 	argv := d.Command()
-	if p := prompt(argv); !strings.Contains(p, "still running") {
+	if p := prompt(argv); !strings.Contains(p, "still running") || !strings.Contains(strings.Join(argv, " "), "--system-prompt-snapshot off") {
 		t.Fatalf("first command %v", argv)
 	}
 	tp := &tape{}
