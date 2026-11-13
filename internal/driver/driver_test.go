@@ -858,39 +858,58 @@ func TestClaudeForkCopiesTheSessionOnce(t *testing.T) {
 	}
 }
 
-// A fork is told, every generation, that the session it is a copy of goes
-// on: claude says that session's background tasks ended when it did not.
-// An agent of its own, or one whose fork failed, is told nothing.
+// A fork's first message carries the word that the session it is a copy of
+// goes on: claude says that session's background tasks ended when they did
+// not. psps shows the message alone; a fork that was told, its log played
+// again, is not told twice, and an agent of its own is told nothing.
 func TestClaudeForkKnowsTheOtherSessionGoesOn(t *testing.T) {
-	prompt := func(argv []string) string {
-		if i := slices.Index(argv, "--append-system-prompt"); i >= 0 && i+1 < len(argv) {
-			return argv[i+1]
+	users := func(d *claude) []map[string]any {
+		var out []map[string]any
+		for _, l := range d.Next() {
+			var m map[string]any
+			json.Unmarshal(l, &m)
+			if m["type"] == "user" {
+				out = append(out, m["message"].(map[string]any))
+			}
 		}
-		return ""
+		return out
 	}
 	d := newClaude("a1", "own", Options{})
 	d.ForkFrom("theirs")
-	argv := d.Command()
-	if p := prompt(argv); !strings.Contains(p, "still running") || !strings.Contains(strings.Join(argv, " "), "--system-prompt-snapshot off") {
-		t.Fatalf("first command %v", argv)
-	}
 	tp := &tape{}
-	d.Observe(tp.add(shimproto.DirSys, "", &shimproto.Sys{Kind: shimproto.SysStarted, PID: 1, Argv: argv}))
+	d.Observe(tp.add(shimproto.DirSys, "", &shimproto.Sys{Kind: shimproto.SysStarted, PID: 1, Argv: d.Command()}))
 	d.Observe(tp.out(`{"type":"system","subtype":"init","session_id":"own"}`))
-	d.Observe(tp.exited(0))
-	if argv := d.Command(); prompt(argv) == "" {
-		t.Fatalf("resumed: %v", argv)
+	d.Send("what scores the sim?")
+	msgs := users(d)
+	bs, _ := msgs[0]["content"].([]any)
+	text := func(i int) string { m, _ := bs[i].(map[string]any); s, _ := m["text"].(string); return s }
+	if len(msgs) != 1 || len(bs) != 2 || !strings.Contains(text(0), "still running") || text(1) != "what scores the sim?" {
+		t.Fatalf("first message %v", msgs)
 	}
-	if argv := newClaude("a2", "mine", Options{}).Command(); slices.Contains(argv, "--append-system-prompt") {
-		t.Fatalf("not a fork: %v", argv)
+	first, _ := json.Marshal(map[string]any{"type": "user", "message": msgs[0]})
+	evs := d.Observe(tp.in(string(first)))
+	if !slices.ContainsFunc(evs, func(e event.Event) bool { return e.Kind == event.KindUser && e.Text == "what scores the sim?" }) {
+		t.Fatalf("shown: %+v", evs)
 	}
-	f := newClaude("a3", "mine", Options{})
-	f.ForkFrom("gone")
+	d.Send("and then?")
+	if msgs := users(d); len(msgs) != 1 || msgs[0]["content"] != "and then?" {
+		t.Fatalf("second message %v", msgs)
+	}
+
+	again := newClaude("a1", "own", Options{})
+	again.ForkFrom("theirs")
+	feed(again, tp.recs)
+	again.Send("still there?")
+	if msgs := users(again); len(msgs) != 1 || msgs[0]["content"] != "still there?" {
+		t.Fatalf("after its log played again: %v", msgs)
+	}
+
+	own := newClaude("a2", "mine", Options{})
 	tp = &tape{}
-	f.Observe(tp.add(shimproto.DirSys, "", &shimproto.Sys{Kind: shimproto.SysStarted, PID: 1, Argv: f.Command()}))
-	f.Observe(tp.exited(1))
-	if argv := f.Command(); slices.Contains(argv, "--append-system-prompt") {
-		t.Fatalf("after a failed fork: %v", argv)
+	own.Observe(tp.add(shimproto.DirSys, "", &shimproto.Sys{Kind: shimproto.SysStarted, PID: 1, Argv: own.Command()}))
+	own.Send("hi")
+	if msgs := users(own); len(msgs) != 1 || msgs[0]["content"] != "hi" {
+		t.Fatalf("not a fork: %v", msgs)
 	}
 }
 
