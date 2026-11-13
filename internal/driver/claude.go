@@ -75,6 +75,8 @@ type claude struct {
 	// forking: this generation was started as a fork of forkOf, until
 	// claude's init shows it took.
 	forking bool
+	// noted: the fork was sent clForkNote, before its first message.
+	noted bool
 	// asked: this generation was sent the initialize request, which
 	// claude answers with its commands and models, whenever it is sent.
 	// terminal are the commands it says need its terminal.
@@ -201,15 +203,21 @@ func newUUID() string {
 	return fmt.Sprintf("%x-%x-%x-%x-%x", b[0:4], b[4:6], b[6:8], b[8:10], b[10:16])
 }
 
-// clForkPrompt tells a fork (a /btw subagent too) that the session it was
+// clForkNote tells a fork (a /btw subagent too) that the session it was
 // copied from is still running. Claude, resuming a copy, says the
 // background tasks the copy shows running "didn't finish before the
 // previous session ended"; a fork that believed it stopped, killed and
-// started again work the other session was doing.
-const clForkPrompt = `This session is a fork: it was copied from another Claude Code session, which has NOT ended and is still running alongside this one, on the same machine and resources.
+// started again work the other session was doing. It goes before the
+// fork's first message, a text block of its own that psps does not show:
+// in the system prompt it would go unseen (claude sends a resumed
+// conversation's recorded one) or, with no record, cost the copied
+// conversation's prompt cache.
+const clForkNote = `<system-reminder>
+This session is a fork: it was copied from another Claude Code session, which has NOT ended and is still running alongside this one, on the same machine and resources.
 - Everything the conversation shows started before the fork (background shells, monitors, subagents, processes, jobs on remote services) belongs to that other session and may still be running. A notification that such a task "didn't finish before the previous session ended", or was stopped or lost, means only that this session cannot see it; the task itself is very likely still running.
 - Do not stop, kill, restart, clean up or take over that work, and do not redo it, unless the user asks you to in this session. If its state matters, look without changing anything and tell the user.
-- Do only what the user asks in this session.`
+- Do only what the user asks in this session.
+</system-reminder>`
 
 func (c *claude) Command() []string {
 	argv := []string{"claude", "-p",
@@ -243,13 +251,6 @@ func (c *claude) Command() []string {
 		argv = append(argv, "--permission-prompt-tool", "stdio")
 	default:
 		argv = append(argv, "--permission-mode", "bypassPermissions")
-	}
-	if c.forkOf != "" {
-		// Its every generation, as the session it is a copy of goes on.
-		// Off: claude records a conversation's system prompt once and sends
-		// the record on every resume, whatever a launch passes; a fork's
-		// record is the copied session's, without this.
-		argv = append(argv, "--append-system-prompt", clForkPrompt, "--system-prompt-snapshot", "off")
 	}
 	if c.opts.Model != "" {
 		argv = append(argv, "--model", c.opts.Model)
@@ -481,8 +482,13 @@ func (c *claude) Next() [][]byte {
 	// Claude queues user messages itself, so there is no need to hold one
 	// back until the previous turn ends.
 	for _, text := range c.queue {
+		var content any = text
+		if c.forkOf != "" && !c.noted {
+			c.noted = true
+			content = []map[string]any{{"type": "text", "text": clForkNote}, {"type": "text", "text": text}}
+		}
 		out = append(out, line(map[string]any{"type": "user",
-			"message": map[string]any{"role": "user", "content": text}}))
+			"message": map[string]any{"role": "user", "content": content}}))
 	}
 	c.queue = nil
 	return out
@@ -553,7 +559,7 @@ func blockText(raw json.RawMessage) string {
 	}
 	var parts []string
 	for _, b := range bs {
-		if b.Type == "text" {
+		if b.Type == "text" && b.Text != clForkNote {
 			parts = append(parts, b.Text)
 		}
 	}
@@ -629,6 +635,9 @@ func (c *claude) observeIn(rec shimproto.Record, m clMessage) []event.Event {
 	case "user":
 		var msg clContent
 		json.Unmarshal(m.Message, &msg)
+		if _, bs := blocks(msg.Content); slices.ContainsFunc(bs, func(b clBlock) bool { return b.Text == clForkNote }) {
+			c.noted = true
+		}
 		// One written while a turn runs joins claude's queue, and where it
 		// lands in the transcript is claude's to decide.
 		c.prompts = append(c.prompts, prompt{src: rec.Seq, at: c.lastEntry, ok: c.pendingTurns == 0})
