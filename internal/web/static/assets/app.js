@@ -6,7 +6,7 @@
 // marked (marked.esm.js, marked 18.1.1 from npm as published) and drawn
 // here, never made into HTML.
 
-import { Lexer } from './marked.esm.js'
+import { Lexer, Tokenizer } from './marked.esm.js'
 import { icons } from './icons.js'
 
 const root = document.getElementById('app')
@@ -633,11 +633,22 @@ const askText = (kind) => ({ command: 'run a command', file_change: 'change file
 // isolation's fence.
 const mdTokens = new Map()
 
+// Only ~~a~~ is struck through, not ~a~ as GitHub has it too: a ~ between
+// two words is a range (3~5개, 11/1~11/10), and two in a line struck out
+// what lay between them.
+class MdTokenizer extends Tokenizer {
+  del(src, ...rest) {
+    if (/^~(?!~)/.test(src)) return
+    return super.del(src, ...rest)
+  }
+}
+const mdTokenizer = new MdTokenizer()
+
 function markdown(text, live) {
   let toks = mdTokens.get(text)
   if (!toks) {
     try {
-      toks = Lexer.lex(text, { gfm: true, breaks: true })
+      toks = Lexer.lex(text, { gfm: true, breaks: true, tokenizer: mdTokenizer })
     } catch {
       return richText(text)
     }
