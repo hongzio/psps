@@ -5,7 +5,7 @@
 <p align="center">
   <a href="#get-going-in-a-minute"><b>Quick start</b></a> ·
   <a href="#teams-that-run-themselves">Teams</a> ·
-  <a href="#agents-that-talk-schedule-and-delegate">Mail · Cron · Control</a> ·
+  <a href="#agents-that-talk-schedule-and-delegate">Mail · Cron · Control · Jobs</a> ·
   <a href="#safe-enough-to-leave-running">Safety</a> ·
   <a href="#questions-youre-probably-asking">FAQ</a> ·
   <a href="docs/REFERENCE.md">Reference</a>
@@ -110,6 +110,21 @@ You run the same agent lifecycle whichever CLI is underneath:
 | `/btw <question>` | A subagent forked from this conversation answers on the side, with its tools, in the web drawer's Subagents. Deleted, not archived, unless moved out to the list |
 | **Send when idle** | On the web, queue your next message. It goes when the current turn ends |
 
+The web's drawer on the right (`]`) keeps what you'll want again:
+
+- 🔖 **Bookmarks.** Keep any message, yours, a mail or a reply, with a note.
+  Search them, filter them, and jump back to the spot in its conversation.
+- 📂 **Files.** Browse the agent's workspace as the agent sees it, read-only.
+  Markdown is drawn, HTML opens in a sandbox, images show, and a path an
+  agent names in its reply is a link to the file.
+- 🧵 **Subagents.** Every agent's `/btw` asides, the open agent's first.
+  Move one out with ↖ to make it an agent of its own.
+
+Settings (the gear by the sidebar) has **Autocompact**, which sends
+`/compact` to an agent that has sat idle for N minutes, and **Admin mode**:
+one agent on the Mac itself, as you, with no fence, marked `HOST` above the
+rest.
+
 ## Teams that run themselves
 
 This is the main event. **Give a lead a goal, a budget and a scoring
@@ -153,6 +168,12 @@ psps keeps the run within your terms:
 - 🚦 **It stays within limits.** At most `--max-live` of the lead's agents
   run at once, and a turn that runs past `--turn-minutes` is stopped and
   asked for a report.
+- ✋ **A second opinion before each score.** With `--approver vera`, another
+  agent looks over each round before its eval and approves or rejects it,
+  with a note for the lead. Use `--approve-mode notify` to only keep it
+  informed.
+- 🗜️ **A lead that stays fresh.** `--compact-first` compacts the lead before
+  it hears a round's score.
 - 👀 **You can watch it.** `psps team show lab`, the team's dialog on the
   web or its page in the TUI show the spend, every score and the lead's
   agents. **Run eval now**, **Resume** and **Reset best** are one click away.
@@ -201,8 +222,27 @@ psps iso expose dev control ops
 ```
 Tick the actions an agent may take: list, create, message, fork or archive
 agents, set crons, run evals. Anything an agent makes or sends is marked as
-coming from it. Credentials, approvals, making or removing isolations, and
-the fence are never on the list.
+coming from it, and you can cut an agent it made loose from it in the
+agent's Edit dialog. Credentials, approvals, making or removing isolations,
+and the fence are never on the list.
+
+</td>
+</tr>
+<tr>
+<td colspan="2" valign="top">
+
+### 🏭 Jobs: a command of yours, run on an agent's work
+```sh
+psps env add job sim --isolation sim --command '/home/agent/sim/run' \
+  --about 'Replays the strategy on market tapes. Result: {"pnl":…}'
+psps iso expose dev job sim
+```
+A runner is your command in an isolation of its own: a simulation, a
+benchmark, a clean-room build. An agent asks for a job, psps copies its
+directory over, runs the command within your limits on time, memory and
+size, and hands back only what the command leaves. The agent never sees the
+command, or what the runner's isolation can reach. A team's eval can run as
+a job too (`--eval-job`).
 
 </td>
 </tr>
@@ -217,6 +257,8 @@ the fence are never on the list.
   your next message resumes the same session.
 - **psps can upgrade.** After `brew upgrade psps`, the next psps command
   moves the daemon onto the new version, and the agents carry on.
+- **The Mac can be replaced.** `psps backup FILE` saves the store, config,
+  credentials and skills in one file, and `psps restore FILE` puts them back.
 
 ## Safe enough to leave running
 
@@ -227,7 +269,7 @@ no one approving each step, inside a box that holds even if it misbehaves:
 |---|---|
 | 📦 **A VM per isolation** | Apple's `container` gives each isolation its own lightweight Linux VM. It doesn't see your files unless you share a folder, read-only by default |
 | 🧱 **A measured fence** | pf walls each isolation off the Mac and the LAN over IPv4 and IPv6. **The daemon tests the fence from inside** against every address your Mac has, and agents take no turns until the test passes |
-| 🔑 **Credentials it can use but never read** | git, AWS, Postgres, Slack, Notion, Linear and more go through proxies on the Mac. Each proxy adds your credential and checks the request against an allowlist, so the agent never sees the token |
+| 🔑 **Credentials it can use but never read** | git, AWS, Postgres, Slack, Notion, Linear and more go through proxies on the Mac. Each proxy adds your credential and checks the request against an allowlist, so the agent never sees the token. On disk the credentials are encrypted |
 | 🙋 **Approvals if you want them** | `never` · `auto` (a reviewer model checks each action) · `ask` · `default`, set per agent at any time |
 
 ```sh
@@ -317,7 +359,8 @@ Mac.
 
 `psps env add skill pdf --path ~/skills/pdf` checks the skill the way both
 CLIs read it, refuses a broken one rather than dropping it silently, and
-installs it for Claude Code and Codex alike.
+installs it for Claude Code and Codex alike. `--github anthropics/skills`
+fetches one from a public GitHub repository instead.
 </details>
 
 ## The fine print
@@ -326,6 +369,9 @@ installs it for Claude Code and Codex alike.
 - **The CLI's own login lives in the VM.** Service credentials stay on the
   Mac, but Claude's account token or Codex's login is in the isolation,
   where the CLI needs it.
+- **Admin mode has no fence.** Its agent runs on the Mac as you, so its
+  approvals start at `default` and it asks before what your CLI settings say
+  to ask about. Every other agent stays in a VM.
 - **Agents in one isolation share a user.** Isolations are the trust
   boundary. A team's agents work in the lead's isolation.
 - **A writable shared folder is a real hole.** Shares are read-only by
@@ -337,7 +383,8 @@ installs it for Claude Code and Codex alike.
 ## Learn more
 
 - 📖 **[The reference](docs/REFERENCE.md)**: every command, flag and guarantee, in depth
-- 🤝 [Teams](docs/REFERENCE.md#teams) · [Mail](docs/REFERENCE.md#mail) · [Cron](docs/REFERENCE.md#cron) · [Control](docs/REFERENCE.md#control)
+- 🤝 [Teams](docs/REFERENCE.md#teams) · [Mail](docs/REFERENCE.md#mail) · [Cron](docs/REFERENCE.md#cron) · [Control](docs/REFERENCE.md#control) · [Jobs](docs/REFERENCE.md#jobs)
+- 🌐 [Bookmarks](docs/REFERENCE.md#bookmarks) · [Files](docs/REFERENCE.md#files) · [Autocompact](docs/REFERENCE.md#autocompact) · [Admin mode](docs/REFERENCE.md#admin-mode)
 - 🔒 [Network fence](docs/REFERENCE.md#network-fence) · [Credential proxies](docs/REFERENCE.md#credential-proxies) · [Verify](docs/REFERENCE.md#verify)
 - 🛠️ [Build from source](docs/REFERENCE.md#build): `mise install && mise run build`
 

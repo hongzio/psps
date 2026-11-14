@@ -178,8 +178,8 @@ the daemon as a plain background process instead of touching launchd.
 
 #### Bookmarks
 
-The last button of the top bar (or `]`) opens a drawer on the right with two
-tabs, **Bookmarks** and **Files** (below): a
+The last button of the top bar (or `]`) opens a drawer on the right with three
+tabs, **Bookmarks**, **Files** (below) and **Subagents** (`/btw`): a
 column beside the conversation on a wide screen (its edge drags to resize it),
 the whole screen on a phone. Any message can be kept: one you sent, a mail
 another agent sent, or an agent's reply. On a desktop its bookmark shows when
