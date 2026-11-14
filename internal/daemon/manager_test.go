@@ -179,6 +179,8 @@ type fakeContainers struct {
 	refuse  string
 	// swaps are the swaps root turned on, as "container bytes".
 	swaps []string
+	// discards are the remounts with discard root ran, as "container paths".
+	discards []string
 	// shares are the Mac's folders each container was started with, and
 	// refuseShare a folder Create fails for, as macOS privacy protection
 	// makes container fail.
@@ -430,10 +432,14 @@ func (f *fakeContainers) RunAsAgent(ctx context.Context, name string, argv ...st
 
 // StartAsAgent runs argv on this Mac with the fakes in bin first on PATH,
 // and HOME the container's own directory, as the agent's home.
-// RunAsRoot is the swap script alone, which is what root runs.
+// RunAsRoot is the swap script or the discard one, which is what root runs.
 func (f *fakeContainers) RunAsRoot(_ context.Context, name string, argv ...string) (string, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	if len(argv) > 3 && argv[3] == "psps-discard" {
+		f.discards = append(f.discards, name+" "+strings.Join(argv[4:], " "))
+		return "", nil
+	}
 	f.swaps = append(f.swaps, name+" "+argv[len(argv)-1])
 	return "", nil
 }
@@ -2638,5 +2644,41 @@ func TestStartingAnIsolationBringsAStoppedOneUp(t *testing.T) {
 	}
 	if st, _ := e.fc.State(context.Background(), testCtr); st != "running" {
 		t.Fatalf("after start: %q", st)
+	}
+}
+
+// A file deleted in the VM gives its blocks back to the Mac only on a
+// filesystem mounted with discard: root remounts them so, once each time
+// the container starts.
+func TestAnIsolationsDisksAreRemountedWithDiscardOnceEachStart(t *testing.T) {
+	e := newTestEnv(t)
+	ctx := context.Background()
+	m, stop := e.daemon()
+	defer stop()
+	discards := func() []string {
+		e.fc.mu.Lock()
+		defer e.fc.mu.Unlock()
+		return slices.Clone(e.fc.discards)
+	}
+	want := testCtr + " / " + isolation.AgentHome + " " + isolation.StateRoot(testCtr)
+	restart := func() {
+		e.fc.reboot(testCtr, false)
+		st := m.isoLock(testIsoID)
+		st.mu.Lock()
+		st.healthy = time.Time{}
+		st.mu.Unlock()
+		for range 2 {
+			if _, err := m.StartIsolation(ctx, "dev"); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+	restart()
+	if got := discards(); !slices.Equal(got, []string{want}) {
+		t.Fatalf("after a start: %v", got)
+	}
+	restart()
+	if got := discards(); !slices.Equal(got, []string{want, want}) {
+		t.Fatalf("after another start: %v", got)
 	}
 }
