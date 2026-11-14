@@ -138,6 +138,7 @@ type Manager struct {
 	tunnels   map[string]*tunnelState
 	synced    map[string]string
 	swapped   map[string]string // the swap last turned on since the container started (swap.go)
+	discarded map[string]bool   // discard was turned on, or tried, since the container started (discard.go)
 	versions  map[string]string
 	lastEnv   map[string]string
 	health    map[string]isoHealth    // what was last seen inside, by isolation (health.go)
@@ -226,7 +227,7 @@ func NewManager(ctx context.Context, st *store.Store, cli Containers, fence Fenc
 		log: logger, hub: newHub(), changes: newChanges(), workRoot: isolation.WorkRoot, home: isolation.AgentHome,
 		runtimes: map[string]*runtime{}, isos: map[string]*isoState{}, fences: map[string]*fenceState{},
 		tunnelPort: func(p int) int { return p }, instances: map[string]map[string]proxy.Instance{},
-		tunnels: map[string]*tunnelState{}, synced: map[string]string{}, swapped: map[string]string{}, versions: map[string]string{}, lastEnv: map[string]string{}, health: map[string]isoHealth{}, ssm: newSSMBook(),
+		tunnels: map[string]*tunnelState{}, synced: map[string]string{}, swapped: map[string]string{}, discarded: map[string]bool{}, versions: map[string]string{}, lastEnv: map[string]string{}, health: map[string]isoHealth{}, ssm: newSSMBook(),
 		mailBuckets: map[string]*proxy.TokenBucket{}, cronWake: make(chan struct{}, 1),
 		teamsDue: map[string]bool{}, teamWake: make(chan struct{}, 1), evaluating: map[string]bool{}, dueSince: map[string]time.Time{}, dueTold: map[string]bool{}, busy: map[string]map[string]bool{}, background: map[string]map[string]bool{},
 		jobWake: make(chan struct{}, 1), jobWaiters: map[string]chan struct{}{}, jobHooks: map[string]func(store.Job){}}
@@ -444,6 +445,7 @@ func (m *Manager) ensureIsolation(ctx context.Context, id string) (*shim.Client,
 		m.syncLocked(tctx, rec)
 		if swap {
 			m.swapLocked(tctx, rec)
+			m.discardLocked(tctx, rec)
 		}
 	}
 	if time.Since(st.healthy) < 5*time.Second {
@@ -889,6 +891,7 @@ func (m *Manager) DeleteIsolation(ctx context.Context, name string, purge bool) 
 	delete(m.fences, iso.ID)
 	delete(m.synced, iso.ID)
 	delete(m.swapped, iso.ID)
+	delete(m.discarded, iso.ID)
 	delete(m.versions, iso.ID)
 	delete(m.lastEnv, iso.ID)
 	m.mu.Unlock()
