@@ -10,6 +10,7 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/hongzio/psps/internal/api"
 	"github.com/hongzio/psps/internal/creds"
@@ -467,4 +468,52 @@ func TestControlRunsACommandWhereAnAgentItMadeWouldRunUnderAuto(t *testing.T) {
 	if code, _, _ := run(asker, "far", map[string]any{"command": "true", "dir": dir}); code != http.StatusForbidden {
 		t.Fatalf("an agent under ask, elsewhere: %d", code)
 	}
+}
+
+// An agent outside a team resets its best through the control service, and
+// the lead hears who did; the team's own agents may not.
+func TestControlResetsATeamsBestOnlyFromOutsideIt(t *testing.T) {
+	e := newTestEnv(t)
+	m, stop := e.daemon()
+	defer stop()
+	ctx := context.Background()
+	if _, err := m.CreateIsolation(ctx, api.CreateIsolation{Name: "ev"}, nil); err != nil {
+		t.Fatal(err)
+	}
+	boss, team := withTeams(t, e, m, api.PutLead{Budget: ptr(int64(1_000_000))})
+	helper, err := m.CreateAgent(ctx, api.CreateAgent{Isolation: "ev", Kind: driver.Codex, Handle: "helper"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	e.waitFor("helper", func() bool { return status(m, helper.ID) == event.StatusIdle })
+	if _, err := m.PutEnv(ctx, "control", "chief", proxy.Patch{Set: map[string]any{"allow": []string{"team.show", "team.reset-best"}}}, true); err != nil {
+		t.Fatal(err)
+	}
+	for _, iso := range []string{"ev", "dev"} {
+		if _, err := m.Expose(ctx, iso, "control", api.Expose{Envs: []string{"chief"}, Settings: proxy.Patch{Set: map[string]any{"reach": map[string][]string{"ev": {"dev"}, "dev": {}}[iso]}}}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, err := m.store.AddEval(store.Eval{Team: team.ID, At: time.Now(), Score: ptr(1.5)}); err != nil {
+		t.Fatal(err)
+	}
+	reset := func(from store.Agent) (int, string) {
+		t.Helper()
+		return mailAs(t, m, from.IsolationID, from.ID, "DELETE", "/control/teams/lab/best", "")
+	}
+	if code, out := reset(boss); code != http.StatusForbidden || !strings.Contains(out, "you are in team") {
+		t.Fatalf("from the team itself: %d %s", code, out)
+	}
+	if run, _ := m.TeamRun("lab"); run.Best == nil {
+		t.Fatal("the team reset its own best")
+	}
+	if code, out := reset(helper); code != 200 {
+		t.Fatalf("%d %s", code, out)
+	}
+	if run, _ := m.TeamRun("lab"); run.Best != nil {
+		t.Fatalf("%+v", run)
+	}
+	e.waitFor("the reset's news", func() bool {
+		return strings.Contains(strings.Join(news(e, boss.ID), "\n"), "Agent helper in isolation ev, through psps's control service, reset the best score: evals up to #1 count no more")
+	})
 }

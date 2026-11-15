@@ -394,7 +394,10 @@ func (m *Manager) EvalTeam(teamRef string) error {
 // ResetBest has a team's run count no eval so far for its best, for its
 // operator: the next scored eval is the best, and the target is reached by
 // what comes after. Its lead is told.
-func (m *Manager) ResetBest(teamRef string) error {
+func (m *Manager) ResetBest(teamRef string) error { return m.resetBest(teamRef, "Your operator") }
+
+// resetBest is ResetBest for who, as the lead's news names them.
+func (m *Manager) resetBest(teamRef, who string) error {
 	t, err := m.store.Team(teamRef)
 	if err != nil {
 		return err
@@ -418,7 +421,7 @@ func (m *Manager) ResetBest(teamRef string) error {
 	if err := m.store.PutLead(l); err != nil {
 		return err
 	}
-	msg := fmt.Sprintf("Your operator reset the best score: evals up to #%d count no more, for the best, the target or the patience; the next scored eval is the best.", l.BestFrom)
+	msg := fmt.Sprintf("%s reset the best score: evals up to #%d count no more, for the best, the target or the patience; the next scored eval is the best.", who, l.BestFrom)
 	if was != nil {
 		msg += fmt.Sprintf(" The best was %g, at eval #%d.", *was.Score, was.ID)
 	}

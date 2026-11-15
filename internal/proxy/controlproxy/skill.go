@@ -156,6 +156,14 @@ As text, as its operator's psps team show prints it, or as JSON without
 	"team.eval": `Run the eval of a team whose lead you reach; its result goes to the lead:
 
     curl -sS -X POST "$PSPS_CONTROL_URL/teams/TEAM/eval"`,
+	"team.reset-best": `Reset the best score of a team whose lead you reach, and that you are not
+in: the evals so far count no more for the best, the target or the patience,
+and the next scored eval is the best. Its lead is told who did it.
+
+    curl -sS -X DELETE "$PSPS_CONTROL_URL/teams/TEAM/best"
+
+- Do it only when the scores before and after can no longer be compared (the
+  eval itself changed), not to keep a run psps would stop going.`,
 	"team.evalset": `Set the eval of a team whose lead you reach (see Team evals below): the
 command, how long it may run (20 minutes when never set), and where; what it
 scores is a copy of eval_dir, the lead's working directory or one in it (the

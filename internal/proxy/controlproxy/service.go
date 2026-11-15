@@ -77,6 +77,7 @@ var Actions = []Action{
 	{"team.rm", "remove a team", true},
 	{"team.eval", "run a team's eval", true},
 	{"team.evalset", "set a team's eval, to run in its own isolation", true},
+	{"team.reset-best", "reset a team's best score, so the next scored eval is the best", true},
 }
 
 // Reads are what an env opens when it is made without saying.

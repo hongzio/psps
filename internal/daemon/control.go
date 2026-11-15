@@ -1284,6 +1284,29 @@ func (m *Manager) controlRoutes(mux *http.ServeMux, iso string) {
 		w.WriteHeader(http.StatusAccepted)
 		reply(w, map[string]string{"eval": "running; its result goes to the team's lead"}, nil)
 	})
+	// team.reset-best: never by the team's own agents, so a run's patience
+	// and target stay its operator's terms for it.
+	route("DELETE /teams/{team}/best", "team.reset-best", func(w http.ResponseWriter, r *http.Request, c controlCall) {
+		t, _, lead, err := m.controlTeam(c, r.PathValue("team"))
+		if err == nil && !lead {
+			err = httpError{http.StatusNotFound, fmt.Errorf("control: team %q has no lead you reach", t.Name)}
+		}
+		if err == nil {
+			var mine string
+			if mine, err = m.store.LineTeam(cmp.Or(c.me.Line, c.me.ID)); err == nil && mine == t.ID {
+				err = httpError{http.StatusForbidden, fmt.Errorf("control: you are in team %q; its best is reset by your operator or an agent outside it", t.Name)}
+			}
+		}
+		if err == nil {
+			err = m.resetBest(t.ID, "Agent "+c.by()+", through psps's control service,")
+		}
+		if err != nil {
+			reply(w, nil, err)
+			return
+		}
+		m.did(c, "team.reset-best", strconv.Quote(t.Name))
+		reply(w, map[string]string{"best": "reset; the next scored eval is the best, and the lead is told"}, nil)
+	})
 	route("PUT /teams/{team}/eval", "team.evalset", func(w http.ResponseWriter, r *http.Request, c controlCall) {
 		var req controlEval
 		if err := controlJSON(r, &req, `{"eval": "sh /home/agent/evaluator/run.sh", "eval_dir": "...", "eval_minutes": 20}`); err != nil {

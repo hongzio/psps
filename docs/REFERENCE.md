@@ -1147,8 +1147,9 @@ The actions: `agent.ls`, `agent.log` (a conversation), `agent.new`,
 `agent.fork`, `agent.rename`, `agent.team`, `agent.set` (model and effort),
 `agent.cron`, `agent.inbox`, `iso.ls`, `iso.services`, `iso.exec` (a
 command in an isolation), `team.ls`,
-`team.show`, `team.new`, `team.rename`, `team.rm`, `team.eval` and
-`team.evalset`. An env made without `--allow` opens the reads alone. Nothing
+`team.show`, `team.new`, `team.rename`, `team.rm`, `team.eval`,
+`team.evalset` and `team.reset-best` (as `psps team reset-best`, never by an
+agent in the team itself). An env made without `--allow` opens the reads alone. Nothing
 that is credentials or rights is among them, so no env opens it: accounts,
 envs and their secrets, services, an isolation's environment and logins,
 approvals (an agent's mode, and approving or answering), a lead and its
