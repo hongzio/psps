@@ -73,6 +73,12 @@ const (
 // counts its spending from now, and the run, stopped or not, starts over:
 // evals so far count no more toward its patience.
 func (m *Manager) SetLead(ctx context.Context, teamRef string, req api.PutLead) (api.TeamRun, error) {
+	return m.setLead(ctx, teamRef, req, "Your operator")
+}
+
+// setLead is SetLead for who, as the lead's news names them when it
+// resumes a run psps stopped.
+func (m *Manager) setLead(ctx context.Context, teamRef string, req api.PutLead, who string) (api.TeamRun, error) {
 	t, err := m.store.Team(teamRef)
 	if err != nil {
 		return api.TeamRun{}, err
@@ -167,7 +173,7 @@ func (m *Manager) SetLead(ctx context.Context, teamRef string, req api.PutLead) 
 		return api.TeamRun{}, err
 	}
 	if resumes {
-		m.resumedNews(l, stopped, evals)
+		m.resumedNews(l, stopped, evals, who)
 	}
 	budget := "none"
 	if l.Settings.Budget > 0 {
@@ -196,11 +202,11 @@ func (m *Manager) stopsAgain(l store.Lead, evals []store.Eval) (string, error) {
 	return "", nil
 }
 
-// resumedNews tells l's lead its operator resumed the run psps had stopped
+// resumedNews tells l's lead who resumed the run psps had stopped
 // for why, and, with nothing of its team at work, asks for the next team:
 // without it the lead would wait, told only that the run stopped.
-func (m *Manager) resumedNews(l store.Lead, why string, evals []store.Eval) {
-	msg := "Your operator resumed the run, which psps had stopped (" + why + ")."
+func (m *Manager) resumedNews(l store.Lead, why string, evals []store.Eval, who string) {
+	msg := who + " resumed the run, which psps had stopped (" + why + ")."
 	if l.Settings.HasEval() {
 		msg += " The evals so far count no more toward its patience."
 		if best, _ := bestOf(evals, l); best != nil {

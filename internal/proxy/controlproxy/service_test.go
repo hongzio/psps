@@ -40,7 +40,7 @@ func TestAnEnvOpensTheReadsUnlessItSays(t *testing.T) {
 // What is credentials or rights is no action, so no env can open it.
 func TestNothingOfRightsIsAnAction(t *testing.T) {
 	for _, never := range []string{"account.add", "env.add", "env.secret", "iso.expose", "iso.env", "iso.login", "iso.shell",
-		"iso.create", "iso.rm", "agent.approve", "agent.answer", "agent.rm", "team.lead", "team.resume", "pf.uninstall", "daemon.stop"} {
+		"iso.create", "iso.rm", "agent.approve", "agent.answer", "agent.rm", "team.lead", "pf.uninstall", "daemon.stop"} {
 		if slices.Contains(names(), never) {
 			t.Errorf("%s is an action", never)
 		}

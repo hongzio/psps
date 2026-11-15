@@ -486,7 +486,7 @@ func TestControlResetsATeamsBestOnlyFromOutsideIt(t *testing.T) {
 		t.Fatal(err)
 	}
 	e.waitFor("helper", func() bool { return status(m, helper.ID) == event.StatusIdle })
-	if _, err := m.PutEnv(ctx, "control", "chief", proxy.Patch{Set: map[string]any{"allow": []string{"team.show", "team.reset-best"}}}, true); err != nil {
+	if _, err := m.PutEnv(ctx, "control", "chief", proxy.Patch{Set: map[string]any{"allow": []string{"team.show", "team.resume", "team.reset-best"}}}, true); err != nil {
 		t.Fatal(err)
 	}
 	for _, iso := range []string{"ev", "dev"} {
@@ -515,5 +515,29 @@ func TestControlResetsATeamsBestOnlyFromOutsideIt(t *testing.T) {
 	}
 	e.waitFor("the reset's news", func() bool {
 		return strings.Contains(strings.Join(news(e, boss.ID), "\n"), "Agent helper in isolation ev, through psps's control service, reset the best score: evals up to #1 count no more")
+	})
+
+	// It resumes a run psps stopped, the same way, and only one stopped.
+	resume := func(from store.Agent) (int, string) {
+		t.Helper()
+		return mailAs(t, m, from.IsolationID, from.ID, "POST", "/control/teams/lab/resume", "")
+	}
+	if code, out := resume(helper); code != http.StatusConflict || !strings.Contains(out, "is not stopped") {
+		t.Fatalf("a run going on: %d %s", code, out)
+	}
+	if err := m.store.SetLeadStopped(team.ID, "the budget is used"); err != nil {
+		t.Fatal(err)
+	}
+	if code, out := resume(boss); code != http.StatusForbidden || !strings.Contains(out, "you are in team") {
+		t.Fatalf("from the team itself: %d %s", code, out)
+	}
+	if code, out := resume(helper); code != 200 {
+		t.Fatalf("%d %s", code, out)
+	}
+	if run, _ := m.TeamRun("lab"); run.Stopped != "" || run.Settings.Budget != 1_000_000 {
+		t.Fatalf("%+v", run)
+	}
+	e.waitFor("the resume's news", func() bool {
+		return strings.Contains(strings.Join(news(e, boss.ID), "\n"), "Agent helper in isolation ev, through psps's control service, resumed the run, which psps had stopped (the budget is used).")
 	})
 }

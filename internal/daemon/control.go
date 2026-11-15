@@ -1284,21 +1284,27 @@ func (m *Manager) controlRoutes(mux *http.ServeMux, iso string) {
 		w.WriteHeader(http.StatusAccepted)
 		reply(w, map[string]string{"eval": "running; its result goes to the team's lead"}, nil)
 	})
-	// team.reset-best: never by the team's own agents, so a run's patience
-	// and target stay its operator's terms for it.
-	route("DELETE /teams/{team}/best", "team.reset-best", func(w http.ResponseWriter, r *http.Request, c controlCall) {
-		t, _, lead, err := m.controlTeam(c, r.PathValue("team"))
+	// outside is the team the path names, where c reaches its lead and is
+	// not in it: a run's patience, target and stops stay terms its own
+	// agents cannot undo.
+	outside := func(c controlCall, ref, what string) (store.Team, error) {
+		t, _, lead, err := m.controlTeam(c, ref)
 		if err == nil && !lead {
 			err = httpError{http.StatusNotFound, fmt.Errorf("control: team %q has no lead you reach", t.Name)}
 		}
 		if err == nil {
 			var mine string
 			if mine, err = m.store.LineTeam(cmp.Or(c.me.Line, c.me.ID)); err == nil && mine == t.ID {
-				err = httpError{http.StatusForbidden, fmt.Errorf("control: you are in team %q; its best is reset by your operator or an agent outside it", t.Name)}
+				err = httpError{http.StatusForbidden, fmt.Errorf("control: you are in team %q; its %s is your operator's, or an agent's outside it", t.Name, what)}
 			}
 		}
+		return t, err
+	}
+	byAgent := func(c controlCall) string { return "Agent " + c.by() + ", through psps's control service," }
+	route("DELETE /teams/{team}/best", "team.reset-best", func(w http.ResponseWriter, r *http.Request, c controlCall) {
+		t, err := outside(c, r.PathValue("team"), "best to reset")
 		if err == nil {
-			err = m.resetBest(t.ID, "Agent "+c.by()+", through psps's control service,")
+			err = m.resetBest(t.ID, byAgent(c))
 		}
 		if err != nil {
 			reply(w, nil, err)
@@ -1306,6 +1312,27 @@ func (m *Manager) controlRoutes(mux *http.ServeMux, iso string) {
 		}
 		m.did(c, "team.reset-best", strconv.Quote(t.Name))
 		reply(w, map[string]string{"best": "reset; the next scored eval is the best, and the lead is told"}, nil)
+	})
+	// team.resume: only a run psps stopped, on its lead and terms as they
+	// are; a run going on is not started over.
+	route("POST /teams/{team}/resume", "team.resume", func(w http.ResponseWriter, r *http.Request, c controlCall) {
+		t, err := outside(c, r.PathValue("team"), "run to resume")
+		var run api.TeamRun
+		if err == nil {
+			run, err = m.TeamRun(t.ID)
+		}
+		if err == nil && run.Stopped == "" {
+			err = httpError{http.StatusConflict, fmt.Errorf("control: team %q's run is not stopped; there is nothing to resume", t.Name)}
+		}
+		if err == nil {
+			run, err = m.setLead(r.Context(), t.ID, api.PutLead{Agent: run.Lead}, byAgent(c))
+		}
+		if err != nil {
+			reply(w, nil, err)
+			return
+		}
+		m.did(c, "team.resume", strconv.Quote(t.Name))
+		reply(w, leadsView(run), nil)
 	})
 	route("PUT /teams/{team}/eval", "team.evalset", func(w http.ResponseWriter, r *http.Request, c controlCall) {
 		var req controlEval

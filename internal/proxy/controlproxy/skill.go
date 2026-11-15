@@ -156,6 +156,14 @@ As text, as its operator's psps team show prints it, or as JSON without
 	"team.eval": `Run the eval of a team whose lead you reach; its result goes to the lead:
 
     curl -sS -X POST "$PSPS_CONTROL_URL/teams/TEAM/eval"`,
+	"team.resume": `Resume the run psps stopped (budget, target, no new best) of a team whose
+lead you reach, and that you are not in, on its lead and terms as they are:
+the evals so far count no more toward its patience. Its lead is told who did it.
+
+    curl -sS -X POST "$PSPS_CONTROL_URL/teams/TEAM/resume"
+
+- A run that would stop again at once (its budget used, its target reached)
+  is refused, with why; its terms are your operator's to change.`,
 	"team.reset-best": `Reset the best score of a team whose lead you reach, and that you are not
 in: the evals so far count no more for the best, the target or the patience,
 and the next scored eval is the best. Its lead is told who did it.

@@ -1148,13 +1148,13 @@ The actions: `agent.ls`, `agent.log` (a conversation), `agent.new`,
 `agent.cron`, `agent.inbox`, `iso.ls`, `iso.services`, `iso.exec` (a
 command in an isolation), `team.ls`,
 `team.show`, `team.new`, `team.rename`, `team.rm`, `team.eval`,
-`team.evalset` and `team.reset-best` (as `psps team reset-best`, never by an
-agent in the team itself). An env made without `--allow` opens the reads alone. Nothing
+`team.evalset`, `team.resume` and `team.reset-best` (as `psps team resume`
+and `psps team reset-best`, never by an agent in the team itself). An env made without `--allow` opens the reads alone. Nothing
 that is credentials or rights is among them, so no env opens it: accounts,
 envs and their secrets, services, an isolation's environment and logins,
 approvals (an agent's mode, and approving or answering), a lead and its
 terms, making, resizing, upgrading and removing isolations, removing agents,
-resuming a run psps stopped, the fence and the daemon.
+the fence and the daemon.
 
 Inside the isolation, `PSPS_CONTROL_URL` is each agent's own address for it
 (on mail's port, so no `psps iso upgrade` is needed), and the `psps-control`
