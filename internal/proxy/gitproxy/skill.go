@@ -78,6 +78,10 @@ no Authorization header:
     curl -sS -X POST "$GITHUB_API_URL/repos/owner/repo/issues/7/comments" \
       -d '{"body": "..."}'
 
+    # the actions family: dispatch, re-run or cancel a workflow
+    curl -sS -X POST "$GITHUB_API_URL/repos/owner/repo/actions/workflows/deploy.yml/dispatches" \
+      -d '{"ref": "main", "inputs": {}}'
+
 Reads (GET) are open for every repository an exposed environment lists, and
 the proxy itself answers which those are, from the allowlist rather than
 GitHub: name, full_name, owner.login, permissions.push and the env each is in.

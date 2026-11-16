@@ -31,6 +31,9 @@ const MaxBody = 1 << 20
 
 const number = `[0-9]+`
 
+// workflowID is a workflow's numeric id or its file name, deploy.yml.
+const workflowID = `[A-Za-z0-9_.-]+`
+
 type route struct {
 	verb string
 	re   *regexp.Regexp
@@ -63,13 +66,21 @@ var WriteFamilies = map[string][]route{
 	"merge": {
 		{"PUT", re(`pulls/` + number + `/merge`)},
 	},
+	"actions": {
+		{"POST", re(`actions/workflows/` + workflowID + `/dispatches`)},
+		{"POST", re(`actions/runs/` + number + `/rerun`)},
+		{"POST", re(`actions/runs/` + number + `/rerun-failed-jobs`)},
+		{"POST", re(`actions/jobs/` + number + `/rerun`)},
+		{"POST", re(`actions/runs/` + number + `/cancel`)},
+	},
 }
 
 func re(s string) *regexp.Regexp { return regexp.MustCompile(`\A` + s + `\z`) }
 
 // DefaultWrites is what an env allows before anyone chooses: the PR
 // workflow. Merge stays off because landing a PR is the one write that
-// changes what everyone else pulls.
+// changes what everyone else pulls; actions too, because a dispatched
+// workflow may deploy.
 var DefaultWrites = []string{"comments", "pulls", "reviews"}
 
 func familyNames() []string {

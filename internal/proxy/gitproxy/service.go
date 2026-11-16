@@ -120,6 +120,9 @@ func (Service) Normalize(name string, env map[string]any) ([]string, error) {
 		if w == "merge" {
 			warn = append(warn, fmt.Sprintf("env %q allows the merge write family: the agent can land pull requests, not just open them", name))
 		}
+		if w == "actions" {
+			warn = append(warn, fmt.Sprintf("env %q allows the actions write family: the agent can dispatch, re-run and cancel workflows, deploys included", name))
+		}
 	}
 	return warn, nil
 }

@@ -120,6 +120,28 @@ func TestADisabledFamilyNamesItselfAndTheFix(t *testing.T) {
 	}
 }
 
+func TestTheActionsFamilyRunsWorkflowsOnlyWhenOpened(t *testing.T) {
+	routes := []string{
+		"actions/workflows/deploy.yml/dispatches", "actions/workflows/248410198/dispatches",
+		"actions/runs/43274190166/rerun", "actions/runs/43274190166/rerun-failed-jobs",
+		"actions/jobs/9/rerun", "actions/runs/43274190166/cancel",
+	}
+	actions := []string{"actions"}
+	for _, tail := range routes {
+		if _, r := apiStatus(t, Allowed(Env{}, "work", "POST", tail)); !strings.Contains(r, "--api-write actions") {
+			t.Error(tail, r)
+		}
+		if err := Allowed(Env{APIWrites: &actions}, "work", "POST", tail); err != nil {
+			t.Error(tail, err)
+		}
+	}
+	for _, tail := range []string{"actions/workflows/a/b/dispatches", "actions/runs/1/rerun/x", "actions/secrets/X"} {
+		if Allowed(Env{APIWrites: &actions}, "work", "POST", tail) == nil {
+			t.Error("allowed", tail)
+		}
+	}
+}
+
 func TestAnUnmodeledWriteIsRefusedWithTheCatalog(t *testing.T) {
 	for _, c := range [][2]string{{"DELETE", "issues/comments/9"}, {"POST", "hooks"}, {"PUT", "contents/README.md"}, {"PATCH", ""}} {
 		_, r := apiStatus(t, Allowed(Env{}, "work", c[0], c[1]))
