@@ -4283,7 +4283,7 @@ function newAgentView() {
   const [team, teams] = teamInput('')
   team.className = ''
   team.placeholder = 'optional; in none otherwise'
-  const workdir = h('input', { placeholder: 'optional; ~/work/<its ID> otherwise', autocomplete: 'off', autocapitalize: 'off', spellcheck: 'false' })
+  const workdir = h('input', { placeholder: 'optional; a new directory under ~/work otherwise', autocomplete: 'off', autocapitalize: 'off', spellcheck: 'false' })
   workdir.value = typeof last.workdir === 'string' ? last.workdir : ''
   const effort = dropdown([], { label: 'Effort' })
   const model = h('input', { placeholder: "optional; the CLI's default otherwise", autocomplete: 'off', autocapitalize: 'off', spellcheck: 'false' })

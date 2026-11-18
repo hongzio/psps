@@ -600,7 +600,7 @@ func newAgentForm(isos []api.Isolation) *agentForm {
 // isolation's directories it could go on to, asked of the isolation as it
 // changes.
 func dirField() *field {
-	fd := textField("Directory", "optional; ~/work/<its ID> otherwise", "~ is the agent's home; made if it is not there")
+	fd := textField("Directory", "optional; a new directory under ~/work otherwise", "~ is the agent's home; made if it is not there")
 	fd.single, fd.pick, fd.looked = true, -1, "\x00"
 	return fd
 }
