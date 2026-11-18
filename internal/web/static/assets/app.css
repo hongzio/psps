@@ -577,6 +577,13 @@ a.btn { display: inline-flex; align-items: center; color: var(--text); text-deco
 .text :last-child { margin-bottom: 0; }
 .reasoning { color: var(--muted); font-style: italic; font-size: 13.5px; white-space: pre-wrap; display: -webkit-box; -webkit-line-clamp: 4; -webkit-box-orient: vertical; overflow: hidden; }
 .tool { border: 1px solid var(--border); border-radius: 8px; background: var(--panel); }
+.steps > summary { display: flex; align-items: center; gap: 6px; color: var(--faint); font-size: 12.5px; cursor: pointer; list-style: none; width: fit-content; }
+.steps > summary::-webkit-details-marker { display: none; }
+.steps > summary:hover { color: var(--muted); }
+.steps > summary .caret { display: inline-flex; transition: transform .12s; }
+.steps[open] > summary .caret { transform: rotate(90deg); }
+.steps > summary .failed { color: var(--err); }
+.steps-body { display: flex; flex-direction: column; gap: 6px; margin-top: 8px; padding-left: 10px; border-left: 2px solid var(--border); }
 .tool summary {
   display: flex;
   gap: 8px;

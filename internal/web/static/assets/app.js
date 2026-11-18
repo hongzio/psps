@@ -178,6 +178,8 @@ const S = {
   edit: null,
   openRewound: new Set(),
   openTools: new Set(),
+  // openSteps: a finished turn's thinking and tools shown unfolded.
+  openSteps: new Set(),
   openLong: new Set(),
 }
 
@@ -574,7 +576,8 @@ function apply(c, e) {
       break
     case 'turn_end':
       if (e.text === 'interrupted') add({ kind: 'interrupted' })
-      for (const en of c.entries) en.live = false
+      // done: its turn is over, so its thinking and tools fold away.
+      for (const en of c.entries) { en.live = false; en.done = true }
       break
     case 'error': add({ kind: 'error', text: e.text }); break
     case 'notice':
@@ -885,6 +888,8 @@ function prepend(c, evs, earlier) {
     c.byItem = all.byItem
   } else {
     for (const e of c.log) if (e.kind === 'approval_done' || e.kind === 'status') apply(before, e)
+    // A turn the earlier ones were part of ended among the later.
+    if (c.log.some((e) => e.kind === 'turn_end')) for (const en of before.entries) en.done = true
     c.entries = before.entries.concat(c.entries)
     for (const [k, en] of before.byItem) c.byItem.set(k, en)
   }
@@ -3078,6 +3083,7 @@ function drawnSig(en, a) {
     case 'assistant': return `assistant|${label(a)}|${en.live}|${en.text.length}|${en.text.slice(-32)}|${en.ev}|${bmIndex.has(bmKey(a.id, en.ev))}`
     case 'tool': return `tool|${en.state}|${en.name}|${en.summary}|${en.output.length}`
     case 'tools': return 'tools|' + en.runs.map((x) => drawnSig(x, a)).join('/')
+    case 'steps': return 'steps|' + en.steps.map((x) => x.kind === 'reasoning' ? 'r' + x.text.length : x.kind === 'approval' ? 'a' : drawnSig(x, a)).join('/')
     case 'approval': return `approval|${en.decision}|${JSON.stringify(en.answers || null)}`
     case 'rewound': return `rewound|${en.entries.length}`
     default: return en.kind
@@ -3085,7 +3091,7 @@ function drawnSig(en, a) {
 }
 
 function drawEntry(en, a) {
-  const key = en.kind === 'tools' ? en.runs[0] : en
+  const key = en.kind === 'steps' ? stepBase(en.steps[0]) : stepBase(en)
   const sig = drawnSig(en, a)
   const was = drawn.get(key)
   if (was && was.sig === sig) return was.node
@@ -3282,7 +3288,9 @@ function showEarlier(c) {
 }
 
 // groupTools folds a run of one tool on one thing in a row (five Edits of
-// the same file) into a 'tools' entry, shown folded until opened.
+// the same file) into a 'tools' entry, shown folded until opened. Then, of
+// a turn that is over, the thinking and tools between two messages fold
+// into one 'steps' entry; those of the turn under way stay open as they come.
 function groupTools(entries) {
   const out = []
   for (const en of entries) {
@@ -3295,8 +3303,30 @@ function groupTools(entries) {
     }
     out.push(en)
   }
-  return out
+  return foldSteps(out)
 }
+
+const stepBase = (en) => en.kind === 'tools' ? en.runs[0] : en
+// A decided approval is one more step: what it asked is over with the turn.
+const isStep = (en) => en.kind === 'reasoning' || en.kind === 'tool' || en.kind === 'tools' || (en.kind === 'approval' && en.decision)
+
+function foldSteps(entries) {
+  const out = []
+  for (const en of entries) {
+    const prev = out[out.length - 1]
+    if (isStep(en) && stepBase(en).done) {
+      if (prev?.kind === 'steps') prev.steps.push(en)
+      else out.push({ kind: 'steps', steps: [en] })
+      continue
+    }
+    out.push(en)
+  }
+  // One tool alone is one line already; folding it would hide nothing.
+  return out.map((en) => en.kind === 'steps' && en.steps.length === 1 && en.steps[0].kind !== 'reasoning' ? en.steps[0] : en)
+}
+
+// stepsKey names a fold of steps by its first, to keep it open over redraws.
+const stepsKey = (a, en) => { const f = stepBase(en.steps[0]); return `${a.id}:${f.src}:${f.item || ''}` }
 
 // stamp is a message's time, MM-DD HH:mm local; none for an event the
 // daemon gave no time.
@@ -3365,6 +3395,25 @@ function entryView(en, a, frozen) {
         h('summary', null, h('span', { class: 'mark ' + state }, icon(toolMarks[state])),
           h('span', { class: 'tname' }, first.name), h('span', { class: 'tsum' }, first.summary), h('span', { class: 'tcount' }, `×${en.runs.length}`)),
         h('div', { class: 'tools-body' }, en.runs.map((x) => entryView(x, a, frozen))))
+    }
+    case 'steps': {
+      const key = stepsKey(a, en)
+      const runs = en.steps.flatMap((x) => x.kind === 'tools' ? x.runs : [x])
+      const thoughts = runs.filter((x) => x.kind === 'reasoning').length
+      const approvals = runs.filter((x) => x.kind === 'approval').length
+      const tools = runs.length - thoughts - approvals
+      const failed = runs.filter((x) => x.state === 'failed').length
+      const parts = []
+      if (thoughts) parts.push(`${thoughts} thought${thoughts === 1 ? '' : 's'}`)
+      if (tools) parts.push(`${tools} tool call${tools === 1 ? '' : 's'}`)
+      if (approvals) parts.push(`${approvals} approval${approvals === 1 ? '' : 's'}`)
+      return h('details', {
+        class: 'steps', open: S.openSteps.has(key),
+        ontoggle: (e) => { if (e.target.open) S.openSteps.add(key); else S.openSteps.delete(key) },
+      },
+        h('summary', null, h('span', { class: 'caret' }, icon('chevron-right')), parts.join(' · '),
+          failed ? h('span', { class: 'failed' }, ` · ${failed} failed`) : null),
+        h('div', { class: 'steps-body' }, en.steps.map((x) => entryView(x, a, frozen)).filter(Boolean)))
     }
     case 'approval': {
       const d = en.decision
