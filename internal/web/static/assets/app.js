@@ -3308,7 +3308,10 @@ function groupTools(entries) {
 
 const stepBase = (en) => en.kind === 'tools' ? en.runs[0] : en
 // A decided approval is one more step: what it asked is over with the turn.
-const isStep = (en) => en.kind === 'reasoning' || en.kind === 'tool' || en.kind === 'tools' || (en.kind === 'approval' && en.decision)
+// A question asked of the person (AskUserQuestion, its call and its answers)
+// is part of the conversation, so it stays out of the fold.
+const isStep = (en) => en.kind === 'reasoning' || ((en.kind === 'tool' || en.kind === 'tools') && stepBase(en).name !== 'AskUserQuestion') ||
+  (en.kind === 'approval' && en.decision && !en.questions)
 
 function foldSteps(entries) {
   const out = []
