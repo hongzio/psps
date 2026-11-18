@@ -253,8 +253,8 @@ An agent is named by its ID (or a prefix of it), a team by its name or ID.
 What is not this service's, where this isolation has the other:
 
 - Asking, telling or answering a peer is mail (the psps-mail skill): it waits
-  in the inbox and is read when the agent is idle. Writing here is an
-  instruction.
+  in the inbox and is read when the agent is idle, and psps tells you nothing
+  of what came of it. Writing here is an instruction, with a receipt.
 - A cron on yourself alone is the psps-cron skill's.
 - A team's lead makes and writes to its own agents through its team (the
   psps-team skill): only those count toward the team, report to the lead and
