@@ -36,9 +36,14 @@ type runtime struct {
 	ctx    context.Context
 	cancel context.CancelFunc
 
-	mu       sync.Mutex
-	agent    store.Agent
-	drv      driver.Driver
+	mu    sync.Mutex
+	agent store.Agent
+	drv   driver.Driver
+	// fold is a second driver that sees the log and nothing else: what is
+	// snapshotted (snapshot.go), so the next attachment goes on from
+	// there. snapSeq is the record of the last snapshot kept.
+	fold     driver.Driver
+	snapSeq  int64
 	client   *shim.Client
 	att      *shim.Attachment
 	lastSeen int64
@@ -195,28 +200,41 @@ func (r *runtime) session() error {
 	if err != nil {
 		return err
 	}
-	att, err := client.Attach(r.ctx, r.agent.ID, 0)
+	snap, err := r.loadSnapshot()
+	if err != nil {
+		return err
+	}
+	att, err := client.Attach(r.ctx, r.agent.ID, snap.Seq)
 	if err != nil {
 		return err
 	}
 	defer att.Close()
-
-	drv, err := driver.New(r.agent.Kind, r.agent.ID, r.agent.SessionID, r.agent.Options)
-	if err != nil {
-		return err
+	if att.LastSeq < snap.Seq {
+		// The log is not the one the snapshot was taken of.
+		if err := r.m.store.DropSnapshot(r.agent.ID); err != nil {
+			return err
+		}
+		return fmt.Errorf("its log ends at record %d, before its snapshot at %d: reading it from the start", att.LastSeq, snap.Seq)
 	}
-	drv.ForkFrom(r.agent.ForkOf)
-	if r.agent.IsolationID == store.HostIsolation {
-		drv.OnHost()
+
+	// Made under the lock, from the agent as it is now: options set
+	// while it attached are in them.
+	r.mu.Lock()
+	drv, fold, err := r.driversLocked(snap)
+	if err != nil {
+		r.mu.Unlock()
+		return err
 	}
 	if wrapDriver != nil {
 		drv = wrapDriver(r.agent.ID, drv)
 	}
-	r.mu.Lock()
-	r.client, r.att, r.drv = client, att, drv
-	r.lastSeen, r.starting, r.stopping = 0, false, false
+	r.client, r.att, r.drv, r.fold = client, att, drv, fold
+	r.lastSeen, r.snapSeq, r.starting, r.stopping = snap.Seq, snap.Seq, false, false
+	if snap.Seq > 0 {
+		r.seenAt, r.answer, r.waits, r.turnSince = snap.SeenAt, snap.Answer, snap.Waits, snap.TurnSince
+	}
 	r.caughtUp = false
-	if att.LastSeq == 0 {
+	if att.LastSeq <= snap.Seq {
 		r.catchUpLocked()
 	}
 	r.mu.Unlock()
@@ -227,6 +245,7 @@ func (r *runtime) session() error {
 	}
 
 	r.mu.Lock()
+	r.keepSnapshotLocked()
 	r.att, r.caughtUp = nil, false
 	r.mu.Unlock()
 	if err := att.Err(); err != nil && !errors.Is(err, io.EOF) {
@@ -246,6 +265,7 @@ func (r *runtime) observe(rec shimproto.Record, liveAfter int64) {
 	prev := r.drv.State()
 	was := prev.Status
 	evs := r.drv.Observe(rec)
+	r.fold.Observe(rec)
 	r.keepModelsLocked(rec.Time)
 	// Not on a replay: what happened then was told then.
 	live := rec.Seq > r.agent.LastSrc
@@ -397,6 +417,9 @@ func (r *runtime) observe(rec shimproto.Record, liveAfter int64) {
 	if r.caughtUp {
 		r.keepSpentLocked()
 	}
+	if (r.caughtUp && turnOver) || rec.Seq-r.snapSeq >= snapEvery {
+		r.keepSnapshotLocked()
+	}
 
 	if !r.caughtUp && rec.Seq >= liveAfter {
 		r.catchUpLocked()
@@ -423,6 +446,7 @@ func (r *runtime) keepModelsLocked(at time.Time) {
 
 func (r *runtime) catchUpLocked() {
 	r.caughtUp = true
+	r.keepSnapshotLocked()
 	defer r.noteBusyLocked()
 	r.keepSpentLocked()
 	for _, m := range r.outbox {

@@ -5,7 +5,9 @@
 // over the shim's log — both what the agent wrote and what was written to it —
 // so a fresh driver fed the same log ends in the same state. That is what lets
 // the daemon crash at any point: on restart it replays the log and knows
-// exactly which handshake step, turn and approval it was in.
+// exactly which handshake step, turn and approval it was in. A snapshot
+// (snapshot.go) of such a fold up to some record lets it go on from there
+// instead of reading the log from its start.
 package driver
 
 import (

@@ -425,7 +425,9 @@ one to ask, so it does not.
   protocol (`codex app-server` JSON-RPC, `claude -p` stream-json), and stores
   the resulting events in SQLite.
 - Daemon restarts lose nothing: agents keep running under the shim and the
-  daemon catches up from the log. A reboot or container stop ends the agent
+  daemon catches up from the log. It keeps a snapshot of where it stood in
+  each agent's log (at every turn's end, and every 2,000 records), so it
+  reads only what came after, not the whole log again. A reboot or container stop ends the agent
   process; the turn in flight shows as `interrupted`, and the next message
   starts a process that resumes the same session.
 - An agent's process lives from turn to turn. psps replaces it, resuming the
