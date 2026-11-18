@@ -61,10 +61,13 @@ checked before an agent runs on them.
 3. The live check, in a new isolation (`psps iso create canary`, its CLIs
    logged in), one agent of each kind on its cheapest model, approvals `ask`:
    - a short answer streams in and it ends idle;
-   - a shell command asks first: allow one, deny one;
+   - a shell command that writes (`touch`; Claude runs `echo` without
+     asking) asks first: allow one, deny one;
    - Claude, asked to put a question with choices to you first, does, and
      your answer reaches it;
-   - a long task (`sleep 300`) stops on `/stop`;
+   - a long reply (the numbers 1 to 3000, no tools) stops on `/stop`;
+     Claude Code puts a foreground `sleep 300` in the background, so a
+     long command no longer holds a turn;
    - after the daemon restarts, it still knows the conversation;
    - rewound to an earlier message, it forgets what came after;
    - `/` lists its commands and models; Codex's `/compact` compacts and `$`
