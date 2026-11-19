@@ -378,7 +378,7 @@ func (m *Manager) SetAdmin(ctx context.Context, req api.SetAdmin) (api.Admin, er
 		return api.Admin{}, err
 	}
 	for _, a := range live {
-		if err := m.Archive(ctx, a.ID); err != nil {
+		if err := m.archiveAnyway(ctx, a.ID); err != nil {
 			return api.Admin{}, fmt.Errorf("archiving admin agent %s: %w", a.ID, err)
 		}
 	}
@@ -465,7 +465,7 @@ func (m *Manager) StopAdmin(ctx context.Context) (api.Admin, error) {
 		return api.Admin{}, err
 	}
 	for _, a := range live {
-		if err := m.Archive(ctx, a.ID); err != nil {
+		if err := m.archiveAnyway(ctx, a.ID); err != nil {
 			return api.Admin{}, fmt.Errorf("archiving admin agent %s: %w", a.ID, err)
 		}
 		m.log.Printf("admin: agent %s archived; admin mode is off", a.ID)

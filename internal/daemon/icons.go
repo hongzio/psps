@@ -44,3 +44,15 @@ func (m *Manager) withIcons(as []api.Agent) error {
 	}
 	return nil
 }
+
+// withGuards marks each agent whose line is kept from archiving.
+func (m *Manager) withGuards(as []api.Agent) error {
+	kept, err := m.store.GuardedLines()
+	if err != nil {
+		return err
+	}
+	for i, a := range as {
+		as[i].NoArchive = kept[cmp.Or(a.Line, a.ID)]
+	}
+	return nil
+}

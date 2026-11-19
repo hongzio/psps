@@ -2627,7 +2627,9 @@ function renderTopbar() {
             })
           },
         }, icon('trash-2'), h('span', { class: 'label' }, ' Delete')) : null,
-        a.archived_at ? null : h('button', { class: 'btn ghost', title: 'Archive (x)', onclick: () => askArchive(a) },
+        a.archived_at ? null : h('button', {
+          class: 'btn ghost', title: a.no_archive ? 'Archiving is prevented in Agent settings' : 'Archive (x)', disabled: !!a.no_archive, onclick: () => askArchive(a),
+        },
           icon('archive'), h('span', { class: 'label' }, ' Archive')))),
     a.host && !a.archived_at ? h('div', { class: 'banner host-banner' }, icon('triangle-alert'),
       ' Runs on this Mac as you, outside every isolation: it can read and change whatever you can.') : null,
@@ -4093,18 +4095,22 @@ function renderSettings(a) {
     { value: 'ask', label: 'ask — the agent asks first' },
     { value: 'default', label: "default — the CLI's own settings decide" },
   ], { value: o.approvals || 'never', label: 'Approvals' })
+  const keep = h('input', { type: 'checkbox', checked: !!a.no_archive })
   slot.replaceChildren(h('div', { class: 'popover' },
     h('h3', null, 'Agent settings'),
     h('div', { class: 'field' }, h('label', null, 'Effort'), effort),
     h('div', { class: 'field' }, h('label', null, 'Model'), model),
     h('div', { class: 'field' }, h('label', null, 'Approvals'), approvals),
     h('div', { class: 'note' }, a.kind === 'claude' ? 'Claude restarts with these when it is idle, with nothing in the background.' : 'Codex uses these from the next turn.'),
+    h('label', { class: 'check', title: 'Archiving it is refused, from here, the CLI or another agent, until this is unticked' },
+      keep, h('span', null, 'Prevent archiving')),
     h('div', { class: 'actions popover-actions' },
       h('button', {
         class: 'btn primary', onclick: async () => {
           const opts = { effort: effort.value || undefined, model: model.value.trim() || undefined, approvals: approvals.value }
           await guarded(async () => {
             await api('PUT', `/v1/agents/${a.id}/options`, opts)
+            if (keep.checked !== !!a.no_archive) await api('PATCH', `/v1/agents/${enc(a.id)}`, { no_archive: keep.checked })
             S.settingsOpen = false
             renderSettings(a)
             toast('Settings saved')
@@ -7867,6 +7873,7 @@ function showShortcuts() {
 
 // askArchive asks before archiving the agent, as its Archive does and x.
 async function askArchive(a) {
+  if (a.no_archive) { toast('Archiving is prevented: untick it in Agent settings first', true); return }
   if (!await ask({ title: `Archive "${agentTitle(a)}"?`, body: 'Its history is kept.', ok: 'Archive' })) return
   await guarded(() => api('POST', `/v1/agents/${a.id}/archive`))
   S.sel = null

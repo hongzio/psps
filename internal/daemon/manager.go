@@ -1144,6 +1144,9 @@ func (m *Manager) Agents() ([]api.Agent, error) {
 	if err := m.withIcons(out); err != nil {
 		return nil, err
 	}
+	if err := m.withGuards(out); err != nil {
+		return nil, err
+	}
 	if err := m.withRuns(out); err != nil {
 		return nil, err
 	}
@@ -1190,6 +1193,9 @@ func (m *Manager) viewOf(a store.Agent) (api.Agent, error) {
 		return v[0], err
 	}
 	if err := m.withIcons(v); err != nil {
+		return v[0], err
+	}
+	if err := m.withGuards(v); err != nil {
 		return v[0], err
 	}
 	if err := m.withAsks(v); err != nil {
@@ -1356,6 +1362,11 @@ func (m *Manager) UpdateAgent(idOrPrefix string, req api.UpdateAgent) (api.Agent
 			return api.Agent{}, err
 		}
 	}
+	if req.NoArchive != nil {
+		if err := m.store.SetLineGuarded(cmp.Or(a.Line, a.ID), *req.NoArchive); err != nil {
+			return api.Agent{}, err
+		}
+	}
 	if req.CutLoose {
 		if err := m.cutLoose(r, a); err != nil {
 			return api.Agent{}, err
@@ -1396,12 +1407,34 @@ func (m *Manager) cutLoose(r *runtime, a store.Agent) error {
 }
 
 // Archive stops the agent and keeps its history. Its session and workspace
-// stay in the isolation's volumes.
+// stay in the isolation's volumes. One whose line is kept from archiving is
+// refused: the operator unticks that in its settings first.
 func (m *Manager) Archive(ctx context.Context, id string) error {
 	r, err := m.runtime(id)
 	if err != nil {
 		return err
 	}
+	if kept, err := m.store.LineGuarded(cmp.Or(r.agent.Line, r.agent.ID)); err != nil {
+		return err
+	} else if kept {
+		return httpError{http.StatusConflict, fmt.Errorf("agent %s is kept from archiving: untick that in its settings first", shownID(r.agent))}
+	}
+	return m.archive(ctx, r)
+}
+
+// archiveAnyway archives agent id even if its line is kept from archiving:
+// for what the operator asked of psps as a whole, such as turning admin
+// mode off.
+func (m *Manager) archiveAnyway(ctx context.Context, id string) error {
+	r, err := m.runtime(id)
+	if err != nil {
+		return err
+	}
+	return m.archive(ctx, r)
+}
+
+// archive archives the agent of runtime r, kept from archiving or not.
+func (m *Manager) archive(ctx context.Context, r *runtime) error {
 	now := time.Now().UTC()
 	if err := m.store.SetArchived(r.agent.ID, &now); err != nil {
 		return err

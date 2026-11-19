@@ -106,6 +106,9 @@ type Agent struct {
 	TeamID string `json:"team_id,omitempty"`
 	// Icon is the one the operator picked for its line, if any.
 	Icon *store.Icon `json:"icon,omitempty"`
+	// NoArchive: its line is kept from archiving, so it is not archived by
+	// mistake; archiving it is refused until this is off.
+	NoArchive bool `json:"no_archive,omitempty"`
 	// Leads is the run of the team it leads, if it leads one.
 	Leads *TeamBrief `json:"leads,omitempty"`
 	// Host: it is the admin agent, on the Mac itself, in no isolation.
@@ -451,6 +454,9 @@ type UpdateAgent struct {
 	// CutLoose takes its line, every session of it, from the agent that
 	// made it, a team's lead or one through the control service: that one
 	// no longer has it as its own.
+	// NoArchive keeps its line, every session of it, from archiving, or
+	// stops keeping it.
+	NoArchive *bool `json:"no_archive,omitempty"`
 	CutLoose bool `json:"cut_loose,omitempty"`
 }
 
