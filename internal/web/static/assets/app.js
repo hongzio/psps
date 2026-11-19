@@ -3168,8 +3168,8 @@ function renderConvo(forceBottom) {
   renderAskJump()
 }
 
-// A message the person sent that the screen shows as longFold lines or more
-// is folded to its first foldPeek, and opens on a click anywhere on it. The
+// A message the person sent, or receipts psps sent the agent, that the
+// screen shows as longFold lines or more is folded to its first foldPeek, and opens on a click anywhere on it. The
 // lines are as drawn, in the bubble's own line height: a paragraph with no
 // break in it folds once it wraps that far, and a narrower window folds
 // more. An open one folds again only from its button, so selecting its
@@ -3188,8 +3188,8 @@ function foldLong() {
   if (foldResize && foldSeen !== box) { foldResize.disconnect(); foldResize.observe(box); foldSeen = box }
   // Every measure first, then every change, so the layout is worked out once.
   const todo = []
-  for (const b of box.querySelectorAll('.msg-user[data-fold]')) {
-    const body = b.firstElementChild
+  for (const b of box.querySelectorAll('[data-fold]')) {
+    const body = b.querySelector(':scope > .msg-body')
     const w = body.clientWidth
     if (!w || foldWidth.get(b) === w) continue
     const lh = parseFloat(getComputedStyle(body).lineHeight) || 22.5
@@ -3218,7 +3218,7 @@ function setFold(b, lines) {
 function toggleFold(e, b, lines) {
   e.stopPropagation()
   // A click that ends a selection of the folded text is not one to open it.
-  if (b.classList.contains('folded') && e.target === b.firstElementChild && String(getSelection()).length) return
+  if (b.classList.contains('folded') && e.target.closest('.msg-body') && String(getSelection()).length) return
   const key = b.dataset.fold
   const wasOpen = S.openLong.has(key)
   if (wasOpen) S.openLong.delete(key)
@@ -3362,7 +3362,7 @@ function entryView(en, a, frozen) {
       const l = letter(en.text)
       if (l) return h('div', { class: 'msg-mail', 'data-ev': en.id }, h('div', { class: 'who' }, icon('mail'), ` Mail #${l.id} from ${l.from} · ${l.iso}`, !frozen && en.id ? bmMark(a, en.id) : null), h('div', { class: 'text' }, markdown(l.body)))
       const rc = receiptsMsg(en.text)
-      if (rc) return h('div', { class: 'msg-cron msg-receipt' }, h('div', { class: 'who' }, icon('target'), ' From psps: what came of what it sent'), h('div', { class: 'text' }, richText(rc.body)))
+      if (rc) return h('div', { class: 'msg-cron msg-receipt', 'data-fold': `${a.id}:${en.id || en.time}` }, h('div', { class: 'who' }, icon('target'), ' From psps: what came of what it sent'), h('div', { class: 'text msg-body' }, richText(rc.body)))
       const am = asksMsg(en.text)
       if (am) return h('div', { class: 'msg-cron msg-ask' }, h('div', { class: 'who' }, icon('message-circle-question'), ' Your answer to its ask', h('button', { type: 'button', class: 'msg-ask-open', onclick: () => openAsks(a.id) }, 'Ask tab')), h('div', { class: 'text' }, richText(am.body)))
       const cm = cronMsg(en.text)

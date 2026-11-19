@@ -498,9 +498,9 @@ a.btn { display: inline-flex; align-items: center; color: var(--text); text-deco
 .stamp { font-size: 11px; font-weight: 400; color: var(--muted); white-space: nowrap; font-variant-numeric: tabular-nums; }
 .msg-agent .who .stamp { margin-left: 6px; }
 .msg-user-row > .stamp { align-self: flex-end; margin-bottom: 2px; }
-/* A long message of yours: its first lines, faded out, until it is opened. */
-.msg-user.long.folded { cursor: pointer; }
-.msg-user.long.folded > .msg-body {
+/* A long message of yours, or long receipts: its first lines, faded out, until it is opened. */
+[data-fold].long.folded { cursor: pointer; }
+[data-fold].long.folded > .msg-body {
   max-height: calc(var(--peek) * 1.5em + .3em); overflow: hidden;
   -webkit-mask-image: linear-gradient(to bottom, #000 55%, transparent);
           mask-image: linear-gradient(to bottom, #000 55%, transparent);
@@ -513,7 +513,7 @@ a.btn { display: inline-flex; align-items: center; color: var(--text); text-deco
 .fold-btn:hover { background: color-mix(in srgb, var(--accent) 12%, transparent); }
 .fold-btn .n { font-weight: 400; color: var(--muted); font-variant-numeric: tabular-nums; }
 .fold-btn .icon { width: 14px; height: 14px; transition: transform .15s; }
-.msg-user.long:not(.folded) .fold-btn .icon { transform: rotate(180deg); }
+[data-fold].long:not(.folded) > .fold-btn .icon { transform: rotate(180deg); }
 @media (prefers-reduced-motion: reduce) { .fold-btn .icon { transition: none; } }
 .msg-agent.live .text::after { content: "▍"; color: var(--accent); animation: pulse 1s infinite; }
 /* An agent at work: three dots that rise in turn, in a bubble under its last word. */
