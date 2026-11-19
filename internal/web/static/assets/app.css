@@ -498,7 +498,7 @@ a.btn { display: inline-flex; align-items: center; color: var(--text); text-deco
 .stamp { font-size: 11px; font-weight: 400; color: var(--muted); white-space: nowrap; font-variant-numeric: tabular-nums; }
 .msg-agent .who .stamp { margin-left: 6px; }
 .msg-user-row > .stamp { align-self: flex-end; margin-bottom: 2px; }
-/* A long message of yours, long receipts or answers to asks, or a long ask in the Ask tab: its first lines, faded out, until it is opened. */
+/* A long message of yours, long receipts or answers to asks, or a long reply of yours in the Ask tab: its first lines, faded out, until it is opened. */
 [data-fold].long.folded { cursor: pointer; }
 [data-fold].long.folded > .msg-body {
   max-height: calc(var(--peek) * 1.5em + .3em); overflow: hidden;

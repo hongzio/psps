@@ -3172,7 +3172,7 @@ function renderConvo(forceBottom) {
 // A message the person sent, receipts psps sent the agent, or answers to
 // its asks, that the screen shows as longFold lines or more is folded to
 // its first foldPeek, and opens on a click anywhere on it; in the Ask tab's
-// narrow column, an ask's body and what was added to it fold sooner. The
+// narrow column, your replies to an ask fold sooner. The
 // lines are as drawn, in the bubble's own line height: a paragraph with no
 // break in it folds once it wraps that far, and a narrower window folds
 // more. An open one folds again only from its button, so selecting its
@@ -7422,11 +7422,12 @@ function askItem(x) {
     body.append(h('div', { class: 'ak-turn' + (waiting ? '' : ' you') }, icon(waiting ? 'clock' : 'message-circle-question'),
       waiting ? (last?.author === 'operator' && !last.delivered_at ? ' Waits on the agent · it hears your reply when next idle' : ' Waits on the agent to add to it') : ' Waits on you'))
   }
-  if (x.body) body.append(h('div', { class: 'ak-body', 'data-fold': `ask:${x.id}` }, h('div', { class: 'text msg-body' }, richText(x.body))))
+  if (x.body) body.append(h('div', { class: 'ak-body text' }, richText(x.body)))
   if (x.options?.length) body.append(optionsView(x.options))
   for (const n of x.notes || []) {
     const mine = n.author === 'operator'
-    body.append(h('div', { class: 'ak-note' + (mine ? ' op' : ''), 'data-fold': `ask:${x.id}:${n.id}` },
+    // Your replies fold when long; what the agent wrote stays whole.
+    body.append(h('div', { class: 'ak-note' + (mine ? ' op' : ''), 'data-fold': mine ? `ask:${x.id}:${n.id}` : null },
       h('div', { class: 'by' }, h('span', null, mine ? 'You · reply' : `${x.agent_id} · added`),
         h('span', null, msgAge(n.created_at) + (mine && !n.delivered_at ? ' · not heard yet' : ''))),
       n.text ? h('div', { class: 'text msg-body' }, richText(n.text)) : null,
