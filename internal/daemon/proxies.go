@@ -20,6 +20,7 @@ import (
 	"github.com/hongzio/psps/internal/driver"
 	"github.com/hongzio/psps/internal/isolation"
 	"github.com/hongzio/psps/internal/proxy"
+	"github.com/hongzio/psps/internal/proxy/askproxy"
 	"github.com/hongzio/psps/internal/proxy/awsproxy"
 	"github.com/hongzio/psps/internal/proxy/controlproxy"
 	"github.com/hongzio/psps/internal/proxy/cronproxy"
@@ -300,6 +301,8 @@ type isoWorkspace struct {
 	mail bool
 	// cron: its agents set crons, each at its own address (cronEnv).
 	cron bool
+	// ask: its agents leave asks, each at its own address (askEnv).
+	ask bool
 	// team: its agents have a team address (teamEnv).
 	team bool
 	// control: its agents have a control address (controlEnv).
@@ -325,6 +328,9 @@ func (w isoWorkspace) signature() string {
 	}
 	if w.cron {
 		sig += "\ncron"
+	}
+	if w.ask {
+		sig += "\nask"
 	}
 	if w.team {
 		sig += "\nteam"
@@ -367,6 +373,7 @@ func (m *Manager) workspace(iso string) (isoWorkspace, error) {
 		}
 		w.mail = w.mail || svc.Name() == mailproxy.Name
 		w.cron = w.cron || svc.Name() == cronproxy.Name
+		w.ask = w.ask || svc.Name() == askproxy.Name
 		w.team = w.team || svc.Name() == teamproxy.Name
 		w.control = w.control || svc.Name() == controlproxy.Name
 		w.job = w.job || svc.Name() == jobproxy.Name

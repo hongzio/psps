@@ -181,8 +181,9 @@ the daemon as a plain background process instead of touching launchd.
 
 #### Bookmarks
 
-The last button of the top bar (or `]`) opens a drawer on the right with three
-tabs, **Bookmarks**, **Files** (below) and **Subagents** (`/btw`): a
+The last button of the top bar (or `]`) opens a drawer on the right with four
+tabs, **Bookmarks**, **Files** (below), **Subagents** (`/btw`) and **Ask**
+(the asks the open agent left you, under [Ask](#ask)): a
 column beside the conversation on a wide screen (its edge drags to resize it),
 the whole screen on a phone. Any message can be kept: one you sent, a mail
 another agent sent, or an agent's reply. On a desktop its bookmark shows when
@@ -773,13 +774,14 @@ Isolations created before the proxies need `psps iso upgrade NAME` once;
 
 ## Agents in psps
 
-Five services give an isolation's agents a part in psps itself. Each is a
+Six services give an isolation's agents a part in psps itself. Each is a
 different kind of right, turned on apart:
 
 | For agents to… | Turn on | What it is |
 |---|---|---|
 | ask, tell and answer each other | `mail` | a peer's letter: it waits in the inbox and is read, one a turn, when its agent is idle; both isolations take mail |
 | come back to something on a schedule | `cron` | crons an agent sets on itself |
+| leave you a question, a go-ahead to give or a thing to do by hand, and go on | `ask` | an ask waits for you, however long; your answer reaches the agent when it is idle |
 | work as a team toward an eval, within a budget | `team` | the agent you make a team's lead makes agents of its own, hears of their turns and has the eval run, within your terms |
 | do some of what you do with the psps command | `control` | the actions its env ticks, on the agents of the isolations it reaches, as itself |
 | have a command of yours run elsewhere on their work | `job` | a runner's command run in the runner's isolation on a copy of a directory of theirs; they get what it leaves them |
@@ -885,6 +887,54 @@ comes between the two. A run that comes due while its message waits on the
 ```sh
 psps agent cron <id> --add @daily --compact "go over yesterday's alerts"
 ```
+
+## Ask
+
+An agent can leave you something to answer, and go on: a question, a
+go-ahead before something it would rather not undo, or a thing only you can
+do (approve an SSM session, log in in a browser). It never waits for you.
+It posts the ask, does what does not need the answer, and ends its turn when
+nothing is left; your answer comes to it later as a turn of its own, when it
+is idle, all answers waiting for it in one message, after yours and the
+auto todos and before mail. An ask stays open until you answer it, close it
+without an answer (the agent is told that too), or the agent withdraws it;
+it has no deadline. A question that must be answered within the turn is
+Claude's own AskUserQuestion (see [Approvals](#approvals)), which is apart
+from this and stays as it is.
+
+```sh
+psps iso expose dev ask                   # dev's agents leave you asks (off until you do)
+psps ask                                  # every ask waiting for you, oldest first
+psps ask --agent reviewer                 # one agent's, answered or not
+psps ask show 42
+psps ask reply 42 --pick 1 "and keep error logs 90 days"   # a question: an option, words, or both
+psps ask yes 41 "batch it 5k at a time"   # a go-ahead: yes or no
+psps ask done 43                          # a thing to do: done, or cant
+psps ask dismiss 44 "not needed"          # closed without an answer
+```
+
+In the web, the sidebar counts each agent's open asks on its second line
+(beside its mail), the drawer button wears a dot while the open agent has
+any, and the drawer's **Ask** tab lists them, those waiting first, each
+answered in place: an option, your words, or both for a question; Approve or
+Decline for a go-ahead; Done or Couldn't for a thing to do; or Close without
+answer. Its answer shows in the conversation, as yours. The page tells of a
+new ask with a browser notification once you allow it (the tab's **Tell me
+of new asks**); it is the page that does, so only while it is open in a
+browser, a hidden tab looking every minute. The TUI counts open asks on an
+agent's row and over its conversation.
+
+Inside the isolation, `PSPS_ASK_URL` is each agent's own address (on mail's
+port, at its mail address, so no `psps iso upgrade` is needed), and the
+`psps-ask` skill says how to use it: `POST` an ask (`{"kind": "question" |
+"confirm" | "task", "title", "body", "options": [{"label", "note"}]}`),
+`GET` its own asks, `GET`/`DELETE $PSPS_ASK_URL/<id>` to read and withdraw
+one. An agent has at most ten open; one whose title is that of an ask of its
+own still open is that ask, not a new one. A title is one line of at most
+200 characters, a body at most 32 KiB, a question has two to six options or
+none. The skill says plainly that an ask is asynchronous: post and go on,
+never poll. Deleting an agent deletes its asks; an archived one's wait, and
+an answer to one reaches it when it is restored.
 
 ## Teams
 

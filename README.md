@@ -215,6 +215,21 @@ due once, not all at once.
 <tr>
 <td colspan="2" valign="top">
 
+### ❓ Ask: agents leave you what only you can decide
+```sh
+psps iso expose dev ask
+psps ask reply 42 --pick 1
+```
+An agent posts a question, a go-ahead to give, or a thing to do by hand,
+and goes on without waiting. The web counts open asks in the sidebar and
+answers them in the drawer's Ask tab; your answer reaches the agent the next
+time it is idle.
+
+</td>
+</tr>
+<tr>
+<td colspan="2" valign="top">
+
 ### 🎛️ Control: hand an agent part of the psps command
 ```sh
 psps env add control ops --allow agent.ls,agent.log,agent.new,agent.send --max-live 3

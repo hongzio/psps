@@ -91,6 +91,10 @@ type runtime struct {
 	// reviews is how many asks wait for it as a team's approver: all of
 	// them go in one message whenever it is free (reviews.go).
 	reviews int
+	// answers is how many of its asks the operator closed that it has not
+	// heard of yet: all of them go in one message whenever it is free
+	// (asks.go).
+	answers int
 	// seenAt is the time of the last record of its log it read.
 	seenAt time.Time
 	// models are the ones its CLI said it runs that were last kept for
@@ -158,6 +162,10 @@ func (m *Manager) newRuntime(a store.Agent) (*runtime, error) {
 	if err != nil {
 		return nil, err
 	}
+	answers, err := m.store.AnswersWaiting(a.ID)
+	if err != nil {
+		return nil, err
+	}
 	tw := store.TeamWait{Agent: a.ID, Mode: store.WatchSettle}
 	if a.MadeBy != "" {
 		if tw, err = m.store.TeamWaitOf(a.ID); err != nil {
@@ -166,7 +174,7 @@ func (m *Manager) newRuntime(a store.Agent) (*runtime, error) {
 	}
 	ctx, cancel := context.WithCancel(m.ctx)
 	return &runtime{m: m, ctx: ctx, cancel: cancel, agent: a, drv: drv, outbox: outbox,
-		decisions: map[string]decision{}, inbox: inbox, crons: crons, compacted: compacted, news: news, spent: spent[a.ID], receipts: receipts, reviews: reviews, tw: tw}, nil
+		decisions: map[string]decision{}, inbox: inbox, crons: crons, compacted: compacted, news: news, spent: spent[a.ID], receipts: receipts, reviews: reviews, answers: answers, tw: tw}, nil
 }
 
 // wrapDriver, if set, wraps each attachment's driver: tests give an agent
@@ -511,6 +519,10 @@ func (r *runtime) kickLocked() {
 		r.deliverReviewsLocked()
 		st = r.drv.State()
 	}
+	if fenced && r.answers > 0 && r.freeLocked(st) {
+		r.deliverAnswersLocked()
+		st = r.drv.State()
+	}
 	if fenced && r.mailDueLocked(st) {
 		r.deliverMailLocked()
 		st = r.drv.State()
@@ -556,6 +568,7 @@ func (r *runtime) kickLocked() {
 			env, mcp = r.m.launchEnv(r.agent.IsolationID)
 			env = append(env, r.m.mailEnv(r.agent)...)
 			env = append(env, r.m.cronEnv(r.agent)...)
+			env = append(env, r.m.askEnv(r.agent)...)
 			env = append(env, r.m.teamEnv(r.agent)...)
 			env = append(env, r.m.controlEnv(r.agent)...)
 			env = append(env, r.m.jobEnv(r.agent)...)

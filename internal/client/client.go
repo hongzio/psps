@@ -374,6 +374,31 @@ func (c *Client) Inbox(ctx context.Context, id string) ([]api.Mail, error) {
 	return v, c.do(ctx, "GET", "/v1/agents/"+url.PathEscape(id)+"/inbox", nil, &v)
 }
 
+// OpenAsks are every agent's asks that wait for the operator, oldest
+// first.
+func (c *Client) OpenAsks(ctx context.Context) ([]api.Ask, error) {
+	var v []api.Ask
+	return v, c.do(ctx, "GET", "/v1/asks", nil, &v)
+}
+
+// AgentAsks are an agent's asks, newest first.
+func (c *Client) AgentAsks(ctx context.Context, id string) ([]api.Ask, error) {
+	var v []api.Ask
+	return v, c.do(ctx, "GET", "/v1/agents/"+url.PathEscape(id)+"/asks", nil, &v)
+}
+
+// Ask is one ask.
+func (c *Client) Ask(ctx context.Context, id int64) (api.Ask, error) {
+	var v api.Ask
+	return v, c.do(ctx, "GET", fmt.Sprintf("/v1/asks/%d", id), nil, &v)
+}
+
+// AnswerAsk closes an ask with the operator's answer, or without one.
+func (c *Client) AnswerAsk(ctx context.Context, id int64, req api.AnswerAsk) (api.Ask, error) {
+	var v api.Ask
+	return v, c.do(ctx, "POST", fmt.Sprintf("/v1/asks/%d/answer", id), req, &v)
+}
+
 // Mail is an agent's mail history, newest first: what it was sent and what
 // it wrote.
 func (c *Client) Mail(ctx context.Context, id string) ([]api.Mail, error) {

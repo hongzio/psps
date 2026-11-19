@@ -93,6 +93,8 @@ type Agent struct {
 	Crons int `json:"crons,omitempty"`
 	// Todos is how many prompts are put aside for it.
 	Todos int `json:"todos,omitempty"`
+	// Asks is how many of its asks wait for the operator's answer.
+	Asks int `json:"asks,omitempty"`
 	// Team is the name of the team its line is in, TeamID its ID; the
 	// sidebar groups a team's live agents.
 	Team   string `json:"team,omitempty"`
@@ -937,4 +939,24 @@ type LoginFinish struct {
 type EventsTail struct {
 	Events  []event.Event `json:"events"`
 	Earlier bool          `json:"earlier"`
+}
+
+// Ask is an ask as the operator sees it: an agent's, by the ID it goes
+// by now, with its name and isolation.
+type Ask struct {
+	store.Ask
+	AgentID   string `json:"agent_id"`
+	AgentName string `json:"agent_name,omitempty"`
+	Isolation string `json:"isolation"`
+	// Verdict is what became of it, in a few words.
+	Verdict string `json:"verdict"`
+}
+
+// AnswerAsk closes an ask. Outcome is yes or no for a confirm, done or
+// cant for a task, empty for a question (which takes Pick, from 1, or
+// Text, or both), and dismiss for any: closed without an answer.
+type AnswerAsk struct {
+	Outcome string `json:"outcome,omitempty"`
+	Pick    int    `json:"pick,omitempty"`
+	Text    string `json:"text,omitempty"`
 }

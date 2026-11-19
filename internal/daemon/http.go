@@ -456,6 +456,29 @@ func (m *Manager) Handler() http.Handler {
 		v, err := m.TakeTodo(r.PathValue("id"), id)
 		reply(w, v, err)
 	})
+	mux.HandleFunc("GET /v1/asks", func(w http.ResponseWriter, r *http.Request) {
+		v, err := m.OpenAsks()
+		reply(w, v, err)
+	})
+	mux.HandleFunc("GET /v1/asks/{ask}", func(w http.ResponseWriter, r *http.Request) {
+		if id, ok := askID(w, r); ok {
+			v, err := m.GetAsk(id)
+			reply(w, v, err)
+		}
+	})
+	mux.HandleFunc("POST /v1/asks/{ask}/answer", func(w http.ResponseWriter, r *http.Request) {
+		id, ok := askID(w, r)
+		var req api.AnswerAsk
+		if !ok || !decode(w, r, &req) {
+			return
+		}
+		v, err := m.AnswerAsk(id, req)
+		reply(w, v, err)
+	})
+	mux.HandleFunc("GET /v1/agents/{id}/asks", func(w http.ResponseWriter, r *http.Request) {
+		v, err := m.AgentAsks(r.PathValue("id"))
+		reply(w, v, err)
+	})
 	mux.HandleFunc("GET /v1/bookmarks", func(w http.ResponseWriter, r *http.Request) {
 		v, err := m.Bookmarks()
 		reply(w, v, err)
@@ -624,6 +647,15 @@ func cronID(w http.ResponseWriter, r *http.Request) (int64, bool) {
 	id, err := strconv.ParseInt(r.PathValue("cron"), 10, 64)
 	if err != nil {
 		reply(w, nil, badRequest(fmt.Errorf("%q is not a cron number", r.PathValue("cron"))))
+		return 0, false
+	}
+	return id, true
+}
+
+func askID(w http.ResponseWriter, r *http.Request) (int64, bool) {
+	id, err := strconv.ParseInt(r.PathValue("ask"), 10, 64)
+	if err != nil {
+		reply(w, nil, badRequest(fmt.Errorf("%q is not an ask number", r.PathValue("ask"))))
 		return 0, false
 	}
 	return id, true

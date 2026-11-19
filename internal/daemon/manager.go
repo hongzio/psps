@@ -1147,6 +1147,9 @@ func (m *Manager) Agents() ([]api.Agent, error) {
 	if err := m.withRuns(out); err != nil {
 		return nil, err
 	}
+	if err := m.withAsks(out); err != nil {
+		return nil, err
+	}
 	if err := m.withWatches(out); err != nil {
 		return nil, err
 	}
@@ -1187,6 +1190,9 @@ func (m *Manager) viewOf(a store.Agent) (api.Agent, error) {
 		return v[0], err
 	}
 	if err := m.withIcons(v); err != nil {
+		return v[0], err
+	}
+	if err := m.withAsks(v); err != nil {
 		return v[0], err
 	}
 	if err := m.withWatches(v); err != nil {

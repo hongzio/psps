@@ -113,7 +113,7 @@ const S = {
   // file being viewed ({ agent, path, file, mode, ... }), none for the
   // list; the list's search and chip and its folders open (agent:dir); and
   // the drawer widened for a file (this browser's).
-  dTab: (() => { try { const t = localStorage.getItem('psps.drawerTab'); return t === 'files' || t === 'subs' ? t : 'bm' } catch { return 'bm' } })(),
+  dTab: (() => { try { const t = localStorage.getItem('psps.drawerTab'); return t === 'files' || t === 'subs' || t === 'asks' ? t : 'bm' } catch { return 'bm' } })(),
   fv: null,
   fQuery: '',
   fChip: 'docs',
@@ -215,6 +215,14 @@ function cronMsg(text) {
 const RECEIPTS = /^\[psps receipts: [^\n]*\]\n\n/
 function receiptsMsg(text) {
   const m = RECEIPTS.exec(text)
+  return m && { body: text.slice(m[0].length) }
+}
+
+// The operator's answers to an agent's asks, as it got them
+// (internal/proxy/askproxy).
+const ASKS = /^\[psps ask: your operator answered [^\n]*\]\n\n/
+function asksMsg(text) {
+  const m = ASKS.exec(text)
   return m && { body: text.slice(m[0].length) }
 }
 
@@ -944,6 +952,8 @@ async function refreshAgents() {
   if (S.view === 'agent' && S.sel && S.drawn !== S.sel && agentById(S.sel)) { render(); return }
   renderSidebar()
   renderSubs()
+  renderAsks()
+  noteAsks()
   if (S.view === 'agent') { renderTopbar(); renderStatusLine() }
   // Its turn started or ended between two events of its stream: the dots under its last word follow.
   if (S.view === 'agent' && before && now && before.state?.status !== now.state?.status) scheduleConvo()
@@ -1356,7 +1366,8 @@ function renderSidebar() {
     const togglable = !a.archived_at && live === 'idle'
     const dot = pickLead(a, st, togglable)
     const meta = a.problem ? h('span', { class: 'problem' }, icon('triangle-alert'), ' ' + a.problem)
-      : [`${shownID(a)} · ${a.isolation}`, a.inbox ? [' · ', icon('mail'), ` ${a.inbox}`] : null]
+      : [`${shownID(a)} · ${a.isolation}`, a.inbox ? [' · ', icon('mail'), ` ${a.inbox}`] : null,
+        a.asks ? [' · ', h('span', { class: 'askn', title: `${a.asks} ask${a.asks === 1 ? '' : 's'} waiting for you` }, icon('message-circle-question'), ` ${a.asks}`)] : null]
     // What it runs beside its turn, as icons alone at the line's end.
     const tasks = liveTasks(a)
     const marks = tasks.length ? h('span', { class: 'tasks-marks', title: tasksSummary(tasks), 'aria-label': tasksSummary(tasks) }, ...taskMarks(tasks, false)) : null
@@ -3352,6 +3363,8 @@ function entryView(en, a, frozen) {
       if (l) return h('div', { class: 'msg-mail', 'data-ev': en.id }, h('div', { class: 'who' }, icon('mail'), ` Mail #${l.id} from ${l.from} · ${l.iso}`, !frozen && en.id ? bmMark(a, en.id) : null), h('div', { class: 'text' }, markdown(l.body)))
       const rc = receiptsMsg(en.text)
       if (rc) return h('div', { class: 'msg-cron msg-receipt' }, h('div', { class: 'who' }, icon('target'), ' From psps: what came of what it sent'), h('div', { class: 'text' }, richText(rc.body)))
+      const am = asksMsg(en.text)
+      if (am) return h('div', { class: 'msg-cron msg-ask' }, h('div', { class: 'who' }, icon('message-circle-question'), ' Your answer to its ask', h('button', { type: 'button', class: 'msg-ask-open', onclick: () => openAsks(a.id) }, 'Ask tab')), h('div', { class: 'text' }, richText(am.body)))
       const cm = cronMsg(en.text)
       if (cm) return h('div', { class: 'msg-cron' }, h('div', { class: 'who' }, icon('clock'), ` Cron #${cm.id}${cm.self ? ' (the agent\'s own)' : cm.by ? ` (set by ${cm.by})` : ''} · ${describeSchedule(cm.schedule)}`), h('div', { class: 'text' }, richText(cm.body)))
       if (!frozen && S.edit?.agent === a.id && S.edit.id === en.id) return editView(en, a)
@@ -4517,7 +4530,7 @@ const SERVICE_GROUPS = [
   { name: 'Into the isolation', note: 'folders, skills and ports of the Mac’s' },
   { name: 'psps’s own', note: 'answered by the daemon itself, at each agent’s own address' },
 ]
-const serviceGroup = (s) => ['share', 'skill', 'port'].includes(s.name) ? 1 : ['mail', 'cron', 'team', 'control', 'job'].includes(s.name) ? 2 : 0
+const serviceGroup = (s) => ['share', 'skill', 'port'].includes(s.name) ? 1 : ['mail', 'cron', 'ask', 'team', 'control', 'job'].includes(s.name) ? 2 : 0
 const grouped = (services) => SERVICE_GROUPS.map((g, n) => ({ ...g, services: services.filter((s) => serviceGroup(s) === n) })).filter((g) => g.services.length)
 
 function isoServices(i) {
@@ -6227,9 +6240,9 @@ function setBmOpen(open) {
 
 function bmButton() {
   return h('button', {
-    type: 'button', class: 'btn ghost bm-btn' + (S.bmOpen ? ' on' : ''), title: 'Bookmarks, files and subagents (])', 'aria-label': 'Bookmarks, files and subagents',
+    type: 'button', class: 'btn ghost bm-btn' + (S.bmOpen ? ' on' : ''), title: 'Bookmarks, files, subagents and asks (])', 'aria-label': 'Bookmarks, files, subagents and asks',
     'aria-pressed': String(S.bmOpen), 'aria-controls': 'bookmarks', onclick: () => setBmOpen(!S.bmOpen),
-  }, icon('panel-right'), S.bmPip && !S.bmOpen ? h('span', { class: 'bm-pip' }) : null)
+  }, icon('panel-right'), (S.bmPip || agentById(S.sel)?.asks) && !S.bmOpen ? h('span', { class: 'bm-pip' }) : null)
 }
 
 function renderBmButtons() {
@@ -6254,11 +6267,12 @@ function bookmarksDrawer() {
     bmResizer(),
     h('div', { class: 'bm-head' },
       h('div', { class: 'dr-tabs', role: 'tablist' }, tab('bm', 'bookmark', 'Bookmarks', h('span', { class: 'bm-count' })), tab('files', 'file-text', 'Files'),
-        tab('subs', 'bot', 'Subagents', h('span', { class: 'bm-count sub-count' }))),
+        tab('subs', 'bot', 'Subagents', h('span', { class: 'bm-count sub-count' })),
+        tab('asks', 'message-circle-question', 'Ask', h('span', { class: 'bm-count ask-count' }))),
       h('button', { type: 'button', class: 'bm-x dr-wide', onclick: () => setDrawerWide(!S.dWide) }),
       h('button', { type: 'button', class: 'bm-x', title: 'Close (])', 'aria-label': 'Close the drawer', onclick: () => setBmOpen(false) }, icon('x'))),
     h('div', { class: 'dr-pane', 'data-pane': 'bm' }, tools, list),
-    filesPane(), viewerPane(), subsPane(), subPane())
+    filesPane(), viewerPane(), subsPane(), subPane(), asksPane())
   list.addEventListener('scroll', () => tools.classList.toggle('scrolled', list.scrollTop > 0), { passive: true })
   // Esc in a file, or a subagent's conversation, goes back to the list,
   // not on to the page.
@@ -6696,6 +6710,7 @@ function renderDrawer() {
   el.querySelector('[data-pane="view"]').hidden = S.dTab !== 'files' || !S.fv
   el.querySelector('[data-pane="subs"]').hidden = S.dTab !== 'subs' || !!S.sub
   el.querySelector('[data-pane="sub"]').hidden = S.dTab !== 'subs' || !S.sub
+  el.querySelector('[data-pane="asks"]').hidden = S.dTab !== 'asks'
   const wide = el.querySelector('.dr-wide')
   wide.hidden = S.dTab !== 'files' || !S.fv || narrow.matches
   wide.replaceChildren(icon(S.dWide ? 'minimize-2' : 'maximize-2'))
@@ -6703,6 +6718,7 @@ function renderDrawer() {
   wide.setAttribute('aria-pressed', String(S.dWide))
   if (S.dTab === 'files') { if (S.fv) renderViewer(true); else renderFiles() }
   renderSubs()
+  renderAsks()
 }
 
 function filesPane() {
@@ -7262,6 +7278,190 @@ function subRow(a, other) {
       a.problem ? h('span', { class: 'problem' }, a.problem) : null,
       used != null ? h('span', { class: 'ctx', title: `context ${used}% used` }, h('span', { class: 'bar' }, h('span', { class: used >= 80 ? 'hi' : null, style: `width:${Math.min(used, 100)}%` })), `${used}%`) : null))
 }
+
+// ---- Ask: the drawer's fourth tab. An agent of an isolation with the ask
+// service leaves its operator a question, a go-ahead to give or a thing to
+// do by hand, and goes on; the open agent's asks are here, those waiting
+// first, each answered in place. The answer reaches the agent when it is
+// next idle (internal/daemon/asks.go). New ones are notified, where the
+// browser lets the page.
+
+const ASK_KINDS = { question: 'Question', confirm: 'Go-ahead', task: 'To do' }
+const askState = { of: null, list: [], open: null, picks: new Map(), notes: new Map(), busy: false, asked: 0 }
+
+function asksPane() {
+  return h('div', { class: 'dr-pane', 'data-pane': 'asks', hidden: true },
+    h('div', { class: 'sa-intro ak-intro' }), h('div', { class: 'ak-list' }))
+}
+
+// openAsks opens the Ask tab on agent id, at its ask n if given.
+function openAsks(id, n) {
+  if (id && id !== S.sel) select(id)
+  if (n) askState.open = n
+  S.dTab = 'asks'
+  try { localStorage.setItem('psps.drawerTab', 'asks') } catch {}
+  if (!S.bmOpen) setBmOpen(true)
+  else renderDrawer()
+}
+
+// loadAsks reads the open agent's asks, and draws them.
+async function loadAsks() {
+  const id = S.sel
+  const n = ++askState.asked
+  const list = id ? await api('GET', `/v1/agents/${encodeURIComponent(id)}/asks`) : []
+  if (n !== askState.asked) return
+  askState.of = id
+  askState.list = list || []
+  askState.count = agentById(id)?.asks || 0
+  if (askState.open == null || !askState.list.some((x) => x.id === askState.open)) askState.open = askState.list.find((x) => x.state === 'open')?.id ?? null
+  drawAsks()
+}
+
+// renderAsks draws the tab: its count, the drawer button's pip, and, shown,
+// the asks, read again when they may have changed.
+function renderAsks() {
+  const el = S.bmEl
+  const a = agentById(S.sel)
+  const n = a?.asks || 0
+  if (el) el.querySelector('.ask-count').textContent = n ? String(n) : ''
+  const pip = !!n && !S.bmOpen
+  if (pip !== askState.pip) { askState.pip = pip; renderBmButtons() }
+  if (!el || !S.bmOpen || S.dTab !== 'asks') return
+  if (askState.of !== S.sel || askState.count !== n || askState.stale) { askState.stale = false; guarded(loadAsks); return }
+  drawAsks()
+}
+
+function drawAsks() {
+  const el = S.bmEl
+  if (!el || S.dTab !== 'asks') return
+  const pane = el.querySelector('[data-pane="asks"]')
+  // What is being typed into an answer stays as it is.
+  if (pane.contains(document.activeElement) && document.activeElement.tagName === 'TEXTAREA') return
+  const a = agentById(S.sel)
+  const intro = el.querySelector('.ak-intro')
+  intro.replaceChildren(a
+    ? h('span', null, 'What ', h('strong', null, shownID(a)), ' left for you. It went on meanwhile; your answer reaches it when it is next idle.',
+      notifyOffer())
+    : 'Open an agent to see its asks.')
+  const list = el.querySelector('.ak-list')
+  if (!a) { list.replaceChildren(); return }
+  const open = askState.list.filter((x) => x.state === 'open')
+  const closed = askState.list.filter((x) => x.state !== 'open')
+  const rows = open.map(askItem)
+  if (!open.length) rows.push(h('div', { class: 'bm-empty' }, askState.list.length ? 'Nothing waits for you.' : 'None yet. With the ask service on, its agents leave you questions, go-aheads and things to do here.'))
+  if (closed.length) rows.push(h('div', { class: 'sa-sep', role: 'separator' }, `Closed · ${closed.length}`), ...closed.map(askItem))
+  list.replaceChildren(...rows)
+}
+
+function askItem(x) {
+  const open = askState.open === x.id
+  const head = h('button', {
+    type: 'button', class: 'ak-h', 'aria-expanded': String(open),
+    onclick: () => { askState.open = open ? null : x.id; drawAsks() },
+  }, h('span', { class: 'ak-kind ' + x.kind }, ASK_KINDS[x.kind] || x.kind), h('span', { class: 't' }, x.title), h('span', { class: 'when' }, msgAge(x.created_at)))
+  const el = h('div', { class: 'ak' + (x.state === 'open' ? '' : ' done') + (open ? ' cur' : ''), 'data-ask': x.id }, head)
+  if (!open) return el
+  const body = h('div', { class: 'ak-b' })
+  if (x.body) body.append(h('div', { class: 'ak-body text' }, richText(x.body)))
+  if (x.state !== 'open') {
+    const picked = x.pick && x.options?.[x.pick - 1]
+    body.append(h('div', { class: 'ak-answered' }, h('div', { class: 'lbl' }, x.verdict + (x.delivered_at || x.state === 'withdrawn' ? '' : ' · it hears of it when next idle')),
+      picked ? h('div', null, 'Picked: ', h('strong', null, picked.label)) : null, x.text ? h('div', null, x.text) : null))
+    el.append(body)
+    return el
+  }
+  if (x.options?.length) {
+    body.append(h('div', { class: 'ak-opts' }, ...x.options.map((o, i) => h('button', {
+      type: 'button', class: 'ak-opt', 'aria-pressed': String(askState.picks.get(x.id) === i + 1),
+      onclick: () => { askState.picks.get(x.id) === i + 1 ? askState.picks.delete(x.id) : askState.picks.set(x.id, i + 1); drawAsks() },
+    }, h('span', { class: 'k' }, String(i + 1)), h('span', null, o.label, o.note ? h('small', null, o.note) : null)))))
+  }
+  const note = h('textarea', {
+    id: 'ak-note-' + x.id, rows: 2, 'aria-label': 'Your words',
+    placeholder: x.kind === 'question' ? (x.options?.length ? 'Your words, with the option or instead of it' : 'Your answer') : x.kind === 'confirm' ? 'Why, or on what terms (optional)' : 'A word for it (optional)',
+    oninput: (e) => askState.notes.set(x.id, e.target.value),
+  })
+  note.value = askState.notes.get(x.id) || ''
+  note.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) { e.preventDefault(); body.querySelector('.btn.primary')?.click() }
+  })
+  const act = (label, outcome, primary) => h('button', {
+    type: 'button', class: 'btn small' + (primary ? ' primary' : outcome === 'dismiss' ? ' ghost' : ''), onclick: () => answerAsk(x, outcome),
+  }, label)
+  const acts = x.kind === 'confirm' ? [act('Approve', 'yes', true), act('Decline', 'no')]
+    : x.kind === 'task' ? [act('Done', 'done', true), act("Couldn't", 'cant')]
+    : [act('Answer', '', true)]
+  body.append(note, h('div', { class: 'ak-acts' }, ...acts, act('Close without answer', 'dismiss')),
+    h('div', { class: 'ak-hint' }, 'It reaches the agent when it is next idle; closing without an answer tells it too.'))
+  el.append(body)
+  return el
+}
+
+async function answerAsk(x, outcome) {
+  if (askState.busy) return
+  const text = (askState.notes.get(x.id) || '').trim()
+  const pick = askState.picks.get(x.id) || 0
+  if (x.kind === 'question' && outcome === '' && !pick && !text) {
+    const t = S.bmEl?.querySelector('#ak-note-' + x.id)
+    if (t) { t.placeholder = x.options?.length ? 'Pick an option or answer in words' : 'Answer in words'; t.focus() }
+    return
+  }
+  askState.busy = true
+  const v = await guarded(() => api('POST', `/v1/asks/${x.id}/answer`, { outcome, pick, text }))
+  askState.busy = false
+  if (!v) return
+  askState.notes.delete(x.id)
+  askState.picks.delete(x.id)
+  askState.open = null
+  document.activeElement?.blur?.()
+  toast(`#${x.id} ${v.verdict}: ${v.agent_id} hears of it when next idle`)
+  await guarded(loadAsks)
+  guarded(refreshAgents)
+}
+
+// ---- New asks, told of where the browser lets the page: the asks seen are
+// kept, so a reload tells of none again. The page's stream is shut while it
+// is hidden; then the open asks are looked at every minute instead.
+
+const askSeen = (() => { try { return new Set(JSON.parse(localStorage.getItem('psps.asksSeen') || 'null') || []) } catch { return new Set() } })()
+let askSeenLoaded = (() => { try { return localStorage.getItem('psps.asksSeen') != null } catch { return false } })()
+let askTotal = -1
+
+function notifyOffer() {
+  if (typeof Notification === 'undefined' || Notification.permission !== 'default') return null
+  return h('button', {
+    type: 'button', class: 'ak-notify', onclick: async () => { await Notification.requestPermission(); drawAsks() },
+  }, ' Tell me of new asks')
+}
+
+// noteAsks looks for new asks once the count of those open changed.
+function noteAsks() {
+  const total = S.agents.reduce((n, a) => n + (a.asks || 0), 0)
+  if (total === askTotal) return
+  askTotal = total
+  guarded(checkAsks)
+}
+
+async function checkAsks() {
+  const open = (await api('GET', '/v1/asks')) || []
+  const fresh = open.filter((x) => !askSeen.has(x.id))
+  for (const x of open) askSeen.add(x.id)
+  for (const id of askSeen) if (!open.some((x) => x.id === id)) askSeen.delete(id)
+  try { localStorage.setItem('psps.asksSeen', JSON.stringify([...askSeen])) } catch {}
+  // The first look only learns what is there.
+  if (!askSeenLoaded) { askSeenLoaded = true; return }
+  if (typeof Notification === 'undefined' || Notification.permission !== 'granted') return
+  for (const x of fresh) {
+    const looking = !document.hidden && S.view === 'agent' && S.sel === x.agent && S.bmOpen && S.dTab === 'asks'
+    if (looking) continue
+    try {
+      const n = new Notification(`${x.agent_name || x.agent_id} · ${ASK_KINDS[x.kind] || 'Ask'}`, { body: x.title, tag: 'psps-ask-' + x.id })
+      n.onclick = () => { window.focus(); n.close(); openAsks(x.agent, x.id) }
+    } catch {}
+  }
+}
+
+setInterval(() => { if (document.hidden && S.authed) guarded(checkAsks) }, 60000)
 
 // listRank orders agents as the list does near enough: by where the
 // daemon's order has them, or their team, then as the daemon sorts them.

@@ -1,11 +1,12 @@
 // Package services lists the credential proxies psps runs, and what is
 // turned on per isolation the way they are: shared folders, the operator's
-// skills, forwarded ports, mail between agents, the crons they set, and
-// the teams their leads run.
+// skills, forwarded ports, mail between agents, the crons they set, the
+// asks they leave the operator, and the teams their leads run.
 package services
 
 import (
 	"github.com/hongzio/psps/internal/proxy"
+	"github.com/hongzio/psps/internal/proxy/askproxy"
 	"github.com/hongzio/psps/internal/proxy/awsproxy"
 	"github.com/hongzio/psps/internal/proxy/chproxy"
 	"github.com/hongzio/psps/internal/proxy/controlproxy"
@@ -42,6 +43,7 @@ func Registry() *proxy.Registry {
 		portproxy.Service{},
 		mailproxy.Service{},
 		cronproxy.Service{},
+		askproxy.Service{},
 		teamproxy.Service{},
 		controlproxy.Service{},
 		jobproxy.Service{},

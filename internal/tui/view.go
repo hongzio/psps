@@ -70,6 +70,9 @@ func (m *Model) renderSidebar(w int) string {
 		if a.Inbox > 0 {
 			meta += fmt.Sprintf(" · ✉ %d", a.Inbox)
 		}
+		if a.Asks > 0 {
+			meta += fmt.Sprintf(" · ? %d", a.Asks)
+		}
 		if a.Problem != "" {
 			meta = "  " + th.err.Render("! ") + truncate(a.Problem, w-6-len(indent))
 		}
@@ -262,6 +265,9 @@ func (m *Model) renderAgent(w int) string {
 	}
 	if a.Inbox > 0 {
 		status = th.dim.Render(fmt.Sprintf("✉ %d waiting  ", a.Inbox)) + status
+	}
+	if a.Asks > 0 {
+		status = th.working.Render(fmt.Sprintf("? %d ask(s) for you: psps ask  ", a.Asks)) + status
 	}
 	facts := fmt.Sprintf("%s · %s · %s", a.Kind, a.Isolation, shownID(a))
 	if a.Team != "" {

@@ -167,7 +167,7 @@ func Open(path string) (*Store, error) {
 	// One writer is all SQLite allows anyway; a single connection turns
 	// contention into queueing instead of SQLITE_BUSY.
 	db.SetMaxOpenConns(1)
-	if _, err := db.Exec(schema + envSchema + accountSchema + mailSchema + cronSchema + todoSchema + bookmarkSchema + orderSchema + teamSchema + leadSchema + reviewSchema + jobSchema + iconSchema + watchSchema + teamWaitSchema + modelSchema + snapshotSchema); err != nil {
+	if _, err := db.Exec(schema + envSchema + accountSchema + mailSchema + cronSchema + todoSchema + bookmarkSchema + orderSchema + teamSchema + leadSchema + reviewSchema + jobSchema + iconSchema + watchSchema + teamWaitSchema + modelSchema + snapshotSchema + askSchema); err != nil {
 		db.Close()
 		return nil, fmt.Errorf("store: schema: %w", err)
 	}
@@ -739,7 +739,7 @@ func (s *Store) DeleteAgent(id string) error {
 	if err := tx.QueryRow(`SELECT COALESCE(line, id) FROM agents WHERE id = ?`, id).Scan(&line); err != nil && !errors.Is(err, sql.ErrNoRows) {
 		return err
 	}
-	for _, q := range []string{`DELETE FROM events WHERE agent = ?`, `DELETE FROM outbox WHERE agent = ?`, `DELETE FROM mail WHERE agent = ?`, `DELETE FROM crons WHERE agent = ?`, `DELETE FROM todos WHERE agent = ?`,
+	for _, q := range []string{`DELETE FROM events WHERE agent = ?`, `DELETE FROM outbox WHERE agent = ?`, `DELETE FROM mail WHERE agent = ?`, `DELETE FROM crons WHERE agent = ?`, `DELETE FROM todos WHERE agent = ?`, `DELETE FROM asks WHERE agent = ?`,
 		`DELETE FROM spent WHERE agent = ?`, `DELETE FROM receipts WHERE agent = ?`, `DELETE FROM team_waits WHERE agent = ?`, `DELETE FROM snapshots WHERE agent = ?`, `DELETE FROM watches WHERE sender = ?1 OR target = ?1`, `DELETE FROM agents WHERE id = ?`} {
 		if _, err := tx.Exec(q, id); err != nil {
 			return err
