@@ -8179,14 +8179,15 @@ function adminRow(a) {
 }
 
 // stepAgent opens the agent by from the open one in the sidebar's live list,
-// a team's agents with it where its fold shows them.
+// a team's agents with it where its fold shows them; past either end it
+// wraps around.
 function stepAgent(by) {
   const live = document.querySelector('#sidebar .sortable:first-of-type')
   const rows = live ? [...live.querySelectorAll(':scope > .agent, :scope > .team .agent')] : []
   if (!rows.length) return
   const ids = rows.map((r) => S.agents.find((a) => !a.archived_at && (a.line || a.id) === r.dataset.line)?.id)
   const at = ids.indexOf(S.view === 'agent' ? S.sel : null)
-  const next = ids[at < 0 ? (by > 0 ? 0 : ids.length - 1) : Math.min(Math.max(at + by, 0), ids.length - 1)]
+  const next = ids[at < 0 ? (by > 0 ? 0 : ids.length - 1) : (at + by + ids.length) % ids.length]
   if (!next) return
   const line = rows[ids.indexOf(next)].dataset.line
   select(next)
