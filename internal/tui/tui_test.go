@@ -1308,3 +1308,18 @@ func TestNewAgentModelUnsaidIsTyped(t *testing.T) {
 		t.Fatalf("created = %+v", h.be.created)
 	}
 }
+
+func TestSidebarSelectionWrapsAround(t *testing.T) {
+	h := newHarness(t)
+	h.drainFeed()
+	items := h.m.items()
+	h.m.selectItem(items[0])
+	h.key("k")
+	if h.m.sel != items[len(items)-1] {
+		t.Fatalf("k at the top: sel %q, want the last item %q", h.m.sel, items[len(items)-1])
+	}
+	h.key("j")
+	if h.m.sel != items[0] {
+		t.Fatalf("j at the bottom: sel %q, want the first item %q", h.m.sel, items[0])
+	}
+}

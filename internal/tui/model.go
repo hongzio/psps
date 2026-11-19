@@ -421,7 +421,7 @@ func (m *Model) moveSel(delta int) tea.Cmd {
 			i = j
 		}
 	}
-	i = max(0, min(len(items)-1, i+delta))
+	i = (i + delta%len(items) + len(items)) % len(items) // past either end, wrap around
 	return m.selectItem(items[i])
 }
 
