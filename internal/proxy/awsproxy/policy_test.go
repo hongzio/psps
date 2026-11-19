@@ -374,14 +374,48 @@ func TestAQueueWithoutADefinitionIsRefused(t *testing.T) {
 func TestABatchOrLogNameCannotCarryAWildcard(t *testing.T) {
 	for _, a := range []Allowlist{
 		{BatchQueues: []string{"*"}, BatchDefinitions: []string{"d"}},
-		{BatchQueues: []string{"q"}, BatchDefinitions: []string{"mtlab-*"}},
+		{BatchQueues: []string{"q"}, BatchDefinitions: []string{"*"}},
+		{BatchQueues: []string{"q"}, BatchDefinitions: []string{"mtlab-*-dev"}},
+		{BatchQueues: []string{"q"}, BatchDefinitions: []string{"mtlab-**"}},
 		{BatchQueues: []string{"q"}, BatchDefinitions: []string{"d:3"}},
+		{BatchQueues: []string{"q"}, BatchDefinitions: []string{"d:*"}},
 		{LogGroups: []string{"/mtlab/*"}},
 		{LogGroups: []string{"/mtlab/replay:log-stream:x"}},
 	} {
 		if _, err := a.Policy(); err == nil {
 			t.Fatalf("accepted %+v", a)
 		}
+	}
+}
+
+func TestABatchNameEndingInAStarIsAPrefix(t *testing.T) {
+	// One ARN takes every queue or definition the name begins, a
+	// definition's revisions included, so it is not written twice.
+	s := batchStatements(t, Allowlist{BatchQueues: []string{"mtlab-*"}, BatchDefinitions: []string{"mtlab-replay*", "d"}})
+	const b = "arn:aws:batch:*:*:"
+	want := []string{b + "job-queue/mtlab-*", b + "job-definition/d", b + "job-definition/d:*", b + "job-definition/mtlab-replay*", b + "job/*"}
+	if !reflect.DeepEqual(s["BatchSubmit"].Resource, want) {
+		t.Fatalf("resources = %v", s["BatchSubmit"].Resource)
+	}
+}
+
+func TestTheEvalAllowlistWithTheBuilderFitsByPrefix(t *testing.T) {
+	// Six queues and six definitions by name are 2284 characters; the
+	// definitions as three prefixes, one per kind of job, are well under.
+	q := []string{"acme-eval-mt-dev", "acme-eval-mt-eval", "acme-eval-mt-eval-ondemand",
+		"acme-eval-sim-dev", "acme-eval-sim-eval", "acme-eval-builder"}
+	d := []string{"acme-eval-mt-dev", "acme-eval-mt-eval", "acme-eval-sim-dev", "acme-eval-sim-eval"}
+	a := Allowlist{
+		Buckets:     []string{"acme-eval-data=read", "acme-eval-work"},
+		BatchQueues: q, BatchDefinitions: append(d, "acme-eval-builder", "acme-eval-builder-seed"),
+		LogGroups: []string{"/acme-eval/mt", "/acme-eval/sim", "/acme-eval/builder"},
+	}
+	if _, err := a.Policy(); err == nil {
+		t.Fatal("by name it should not fit")
+	}
+	a.BatchDefinitions = []string{"acme-eval-mt-*", "acme-eval-sim-*", "acme-eval-builder*"}
+	if _, err := a.Policy(); err != nil {
+		t.Fatal(err)
 	}
 }
 

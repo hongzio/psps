@@ -49,8 +49,9 @@ var (
 	InstanceID = regexp.MustCompile(`^i-[0-9a-f]{8,17}$`)
 	BucketName = regexp.MustCompile(`^[a-z0-9][a-z0-9.-]{1,61}[a-z0-9]$`)
 	// BatchName is a job queue's or a job definition's name, as Batch
-	// allows them.
-	BatchName = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$`)
+	// allows them, or such a name ending in one * for every name it
+	// begins: a prefix the operator wrote, never a bare *.
+	BatchName = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9_-]{0,127}\*?$`)
 	// LogGroupName is CloudWatch Logs' own rule, which has no wildcard in it.
 	LogGroupName = regexp.MustCompile(`^[A-Za-z0-9._/#-]{1,512}$`)
 )
@@ -252,7 +253,8 @@ func SessionPolicy(instances, buckets []string) (Policy, error) {
 //
 // Batch authorizes SubmitJob against the queue, the job definition and the
 // new job together, so a submission is pinned to the named queues and
-// definitions (any revision). What is done to a job once it is there,
+// definitions (any revision); a name ending in * names every queue or
+// definition it begins, which keeps a long list under STS's limit. What is done to a job once it is there,
 // cancelling, terminating and tagging it (tagging is how SubmitJob's tags
 // are put on, and a tagged SubmitJob checks TagResource on the job queue
 // and the job definition as well, so the named queues and definitions are
@@ -357,6 +359,11 @@ func (a Allowlist) Policy() (Policy, error) {
 			res = append(res, batch+"job-queue/"+q)
 		}
 		for _, d := range defs {
+			if strings.HasSuffix(d, "*") {
+				// A prefix's * already takes in every name:revision.
+				res = append(res, batch+"job-definition/"+d)
+				continue
+			}
 			res = append(res, batch+"job-definition/"+d, batch+"job-definition/"+d+":*")
 		}
 		// A SubmitJob that carries tags is checked for TagResource on the

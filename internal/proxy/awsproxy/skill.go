@@ -58,7 +58,8 @@ URI for just that command:
 An entry's ` + "`=`" + ` suffix narrows what it permits — instances: ` + "`session`" + ` (SSM
 sessions), ` + "`command`" + ` (SendCommand); buckets: ` + "`read`, `write`, `delete`" + `. A bare
 name permits its full set. Batch queues and job definitions go together: a job
-is submitted to a named queue with a named definition (any revision), and
+is submitted to a named queue with a named definition (any revision; a name
+ending in * takes every one it begins), and
 cancelling, terminating, tagging and describing jobs are open for any job, as
 Batch cannot narrow those. A log group's streams may be read with
 GetLogEvents. The narrowing is inside the issued credentials

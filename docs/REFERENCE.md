@@ -642,6 +642,13 @@ against no resource, so those reach every Batch job in the role's account,
 what it runs and its environment included. psps warns of it as the env is
 saved. A log group is read with `logs:GetLogEvents` on its streams.
 
+A queue or definition name may end in `*` to take every one it begins:
+`--allow-batch-definition acme-eval-builder*` covers `acme-eval-builder`
+and `acme-eval-builder-seed`, each in any revision, in one ARN. STS caps
+the session policy at 2048 characters and each definition costs two ARNs, so
+a prefix is how a long list fits; it also takes in any later name with that
+prefix, so keep it as long as the names allow. A bare `*` is refused.
+
 The web and TUI forms pick all of it from what the Mac's AWS CLI lists: the
 profile (`aws configure list-profiles`), then with it the role, the instances
 and the buckets, looked up again when the profile changes. Roles are the
