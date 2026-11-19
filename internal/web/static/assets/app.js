@@ -4082,6 +4082,9 @@ function renderStatusLine() {
 }
 
 function renderSettings(a) {
+  // The composer keeps the agent it was made with, so its draft survives
+  // a refresh: what the settings show is the agent as it is now.
+  a = agentById(a.id) || a
   const slot = document.getElementById('settings-slot')
   if (!slot) return
   document.querySelector('.composer .icon-btn')?.classList.toggle('on', S.settingsOpen)
