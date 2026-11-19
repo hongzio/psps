@@ -3169,8 +3169,10 @@ function renderConvo(forceBottom) {
   renderAskJump()
 }
 
-// A message the person sent, or receipts psps sent the agent, that the
-// screen shows as longFold lines or more is folded to its first foldPeek, and opens on a click anywhere on it. The
+// A message the person sent, receipts psps sent the agent, or answers to
+// its asks, that the screen shows as longFold lines or more is folded to
+// its first foldPeek, and opens on a click anywhere on it; in the Ask tab's
+// narrow column, an ask's body and what was added to it fold sooner. The
 // lines are as drawn, in the bubble's own line height: a paragraph with no
 // break in it folds once it wraps that far, and a narrower window folds
 // more. An open one folds again only from its button, so selecting its
@@ -3180,13 +3182,29 @@ const foldPeek = 8
 // foldWidth is the width each bubble was measured at, so a redraw measures
 // only those new or rewrapped.
 const foldWidth = new WeakMap()
-let foldSeen = null
-const foldResize = typeof ResizeObserver === 'function' ? new ResizeObserver(() => foldLong()) : null
+// foldSeen is the box each place folds in is watched as: the conversation
+// and the Ask tab's list, each redrawn as a new element at times.
+const foldSeen = {}
+const foldResize = typeof ResizeObserver === 'function' ? new ResizeObserver((es) => { for (const e of es) foldIn(e.target) }) : null
+
+function watchFold(place, box) {
+  if (!foldResize || foldSeen[place] === box) return
+  if (foldSeen[place]) foldResize.unobserve(foldSeen[place])
+  foldResize.observe(box)
+  foldSeen[place] = box
+}
+
+// foldAt is how many lines fold bubble b, and how many it shows folded.
+const foldAt = (b) => b.closest('.ak-list') ? [12, 5] : [longFold, foldPeek]
 
 function foldLong() {
   const box = document.getElementById('convo')
   if (!box) return
-  if (foldResize && foldSeen !== box) { foldResize.disconnect(); foldResize.observe(box); foldSeen = box }
+  watchFold('convo', box)
+  foldIn(box)
+}
+
+function foldIn(box) {
   // Every measure first, then every change, so the layout is worked out once.
   const todo = []
   for (const b of box.querySelectorAll('[data-fold]')) {
@@ -3203,14 +3221,15 @@ function foldLong() {
 }
 
 function setFold(b, lines) {
-  const long = lines >= longFold
+  const [at, peek] = foldAt(b)
+  const long = lines >= at
   const folded = long && !S.openLong.has(b.dataset.fold)
   b.classList.toggle('long', long)
   b.classList.toggle('folded', folded)
   b.querySelector(':scope > .fold-btn')?.remove()
   b.onclick = folded ? (e) => toggleFold(e, b, lines) : null
   if (!long) return
-  b.style.setProperty('--peek', foldPeek)
+  b.style.setProperty('--peek', peek)
   b.append(h('button', {
     type: 'button', class: 'fold-btn', 'aria-expanded': String(!folded), onclick: (e) => toggleFold(e, b, lines),
   }, icon('chevron-down'), folded ? 'Show all' : 'Show less', folded ? h('span', { class: 'n' }, ` · ${lines} lines`) : null))
@@ -3220,15 +3239,17 @@ function toggleFold(e, b, lines) {
   e.stopPropagation()
   // A click that ends a selection of the folded text is not one to open it.
   if (b.classList.contains('folded') && e.target.closest('.msg-body') && String(getSelection()).length) return
+  // Nor is one on a button or link of its own (an option, the Ask tab).
+  if (!e.target.closest('.fold-btn') && e.target.closest('button, a')) return
   const key = b.dataset.fold
   const wasOpen = S.openLong.has(key)
   if (wasOpen) S.openLong.delete(key)
   else S.openLong.add(key)
-  stick = false
+  const box = b.closest('#convo, .ak-list')
+  if (box?.id === 'convo') stick = false
   setFold(b, lines)
   // Folding a long message back keeps its top in view rather than leaving the reader below it.
-  const box = document.getElementById('convo')
-  if (wasOpen && b.getBoundingClientRect().top < box.getBoundingClientRect().top) b.scrollIntoView({ block: 'start' })
+  if (box && wasOpen && b.getBoundingClientRect().top < box.getBoundingClientRect().top) b.scrollIntoView({ block: 'start' })
   b.querySelector(':scope > .fold-btn')?.focus({ preventScroll: true })
 }
 
@@ -3365,7 +3386,7 @@ function entryView(en, a, frozen) {
       const rc = receiptsMsg(en.text)
       if (rc) return h('div', { class: 'msg-cron msg-receipt', 'data-fold': `${a.id}:${en.id || en.time}` }, h('div', { class: 'who' }, icon('target'), ' From psps: what came of what it sent'), h('div', { class: 'text msg-body' }, richText(rc.body)))
       const am = asksMsg(en.text)
-      if (am) return h('div', { class: 'msg-cron msg-ask' }, h('div', { class: 'who' }, icon('message-circle-question'), am.replied ? ' Your reply on its ask' : ' Your answer to its ask', h('button', { type: 'button', class: 'msg-ask-open', onclick: () => openAsks(a.id) }, 'Ask tab')), h('div', { class: 'text' }, richText(am.body)))
+      if (am) return h('div', { class: 'msg-cron msg-ask', 'data-fold': `${a.id}:${en.id || en.time}` }, h('div', { class: 'who' }, icon('message-circle-question'), am.replied ? ' Your reply on its ask' : ' Your answer to its ask', h('button', { type: 'button', class: 'msg-ask-open', onclick: () => openAsks(a.id) }, 'Ask tab')), h('div', { class: 'text msg-body' }, richText(am.body)))
       const cm = cronMsg(en.text)
       if (cm) return h('div', { class: 'msg-cron' }, h('div', { class: 'who' }, icon('clock'), ` Cron #${cm.id}${cm.self ? ' (the agent\'s own)' : cm.by ? ` (set by ${cm.by})` : ''} · ${describeSchedule(cm.schedule)}`), h('div', { class: 'text' }, richText(cm.body)))
       if (!frozen && S.edit?.agent === a.id && S.edit.id === en.id) return editView(en, a)
@@ -7365,6 +7386,8 @@ function drawAsks() {
   if (!open.length) rows.push(h('div', { class: 'bm-empty' }, askState.list.length ? 'Nothing waits for you.' : 'None yet. With the ask service on, its agents leave you questions, go-aheads and things to do here.'))
   if (closed.length) rows.push(h('div', { class: 'sa-sep', role: 'separator' }, `Closed · ${closed.length}`), ...closed.map(askItem))
   list.replaceChildren(...rows)
+  watchFold('asks', list)
+  foldIn(list)
 }
 
 function askItem(x) {
@@ -7399,14 +7422,14 @@ function askItem(x) {
     body.append(h('div', { class: 'ak-turn' + (waiting ? '' : ' you') }, icon(waiting ? 'clock' : 'message-circle-question'),
       waiting ? (last?.author === 'operator' && !last.delivered_at ? ' Waits on the agent · it hears your reply when next idle' : ' Waits on the agent to add to it') : ' Waits on you'))
   }
-  if (x.body) body.append(h('div', { class: 'ak-body text' }, richText(x.body)))
+  if (x.body) body.append(h('div', { class: 'ak-body', 'data-fold': `ask:${x.id}` }, h('div', { class: 'text msg-body' }, richText(x.body))))
   if (x.options?.length) body.append(optionsView(x.options))
   for (const n of x.notes || []) {
     const mine = n.author === 'operator'
-    body.append(h('div', { class: 'ak-note' + (mine ? ' op' : '') },
+    body.append(h('div', { class: 'ak-note' + (mine ? ' op' : ''), 'data-fold': `ask:${x.id}:${n.id}` },
       h('div', { class: 'by' }, h('span', null, mine ? 'You · reply' : `${x.agent_id} · added`),
         h('span', null, msgAge(n.created_at) + (mine && !n.delivered_at ? ' · not heard yet' : ''))),
-      n.text ? h('div', { class: 'text' }, richText(n.text)) : null,
+      n.text ? h('div', { class: 'text msg-body' }, richText(n.text)) : null,
       n.options?.length ? optionsView(n.options) : null))
   }
   if (x.state !== 'open') {
