@@ -551,10 +551,19 @@ psps env choices git work repos          # the repositories that token opens
 psps env check git work                  # take its credential, ask GitHub who it is
 psps iso expose dev git work             # dev now routes owner/repo with that credential
 psps iso services dev
-psps iso unexpose dev git
+psps iso unexpose dev git work           # that env out; the service stays on
+psps iso unexpose dev git                # the service off
 psps env rename git work personal        # its secret and every isolation exposing it follow
 psps env help git                        # every flag
 ```
+
+`psps iso expose ISO SERVICE ENV,...` adds the envs to what the isolation
+already has and prints what changed and the whole list after it; the
+default stays unless `--default-env` names another. `--only` makes the
+names the whole list instead, taking out the rest. `psps iso unexpose ISO
+SERVICE ENV,...` takes just those out (the default moves to the first that
+remains if it went); without envs it turns the service off. The web and the
+TUI tick the whole list, as before.
 
 Renaming an env (`psps env rename`, or the name in the web's Edit form)
 moves everything that names it at once: its `[service env]` section in the
@@ -679,7 +688,7 @@ shows anyone before they run. **Strict SSM** takes it away from an
 isolation's agents and puts you in the way of each command instead:
 
 ```sh
-psps iso expose dev aws prod --ssm strict       # back with --ssm direct
+psps iso expose dev aws --ssm strict            # back with --ssm direct
 ```
 
 The isolation's credentials then open no SSM at all (sessions, commands,

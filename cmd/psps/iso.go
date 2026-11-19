@@ -7,11 +7,13 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"slices"
 	"strconv"
 	"strings"
 	"text/tabwriter"
 
 	"github.com/hongzio/psps/internal/api"
+	"github.com/hongzio/psps/internal/client"
 	"github.com/hongzio/psps/internal/driver"
 	"github.com/hongzio/psps/internal/isolation"
 	"github.com/hongzio/psps/internal/paths"
@@ -294,68 +296,71 @@ func isoCmd(p paths.Paths, args []string) error {
 
 	case "expose":
 		if len(args) < 3 {
-			return errors.New("usage: psps iso expose NAME SERVICE [ENV,...] [--default-env ENV] [flags]  (psps env help SERVICE)")
+			return errors.New("usage: psps iso expose NAME SERVICE [ENV,...] [--only] [--default-env ENV] [flags]  (psps env help SERVICE)")
 		}
 		svc, err := services.Registry().Get(args[2])
 		if err != nil {
 			return err
 		}
 		var def string
+		var only bool
 		patch, pos, err := parsePatch("iso expose", svc.Settings(), append([]string{args[1]}, args[3:]...), func(fs *flag.FlagSet) {
 			fs.StringVar(&def, "default-env", "", "the env the unsuffixed variables and bare addresses use")
+			fs.BoolVar(&only, "only", false, "make ENV,... the whole list instead of adding to it")
 		})
 		if err != nil {
 			return err
 		}
 		if len(pos) < 1 || len(pos) > 2 {
-			return errors.New("usage: psps iso expose NAME SERVICE [ENV,...] [--default-env ENV]")
+			return errors.New("usage: psps iso expose NAME SERVICE [ENV,...] [--only] [--default-env ENV]")
+		}
+		if only && len(pos) < 2 {
+			return errors.New("--only needs the list: psps iso expose NAME SERVICE ENV,... --only")
 		}
 		req := api.Expose{Default: def, Settings: patch}
+		var change string
 		if len(pos) == 2 {
-			req.Envs = []string{}
-			for _, n := range strings.Split(pos[1], ",") {
-				if n = strings.TrimSpace(n); n != "" {
-					req.Envs = append(req.Envs, n)
-				}
+			cur, err := currentExposure(ctx, c, pos[0], svc.Name())
+			if err != nil {
+				return err
 			}
+			names := splitEnvs(pos[1])
+			req.Envs, change = exposeEnvs(cur, names, only)
 		}
 		x, err := c.Expose(ctx, pos[0], svc.Name(), req)
 		if err != nil {
 			return err
 		}
-		if x.Warning != "" {
-			defer fmt.Fprintln(os.Stderr, "warning: "+x.Warning)
-		}
-		fmt.Printf("%s is on for %s: envs %s%s; settings %s\n", svc.Name(), pos[0], orStr(strings.Join(x.Envs, ","), "(none)"),
-			map[bool]string{true: ", default " + x.Default}[x.Default != ""], compact(x.Settings))
-		if _, ok := svc.(proxy.Mounter); ok {
-			var at []string
-			for _, n := range x.Envs {
-				at = append(at, isolation.SharedRoot+"/"+n)
-			}
-			fmt.Printf("inside the isolation: %s; its container was replaced to mount them if they changed, so running agents ended and start again on their next message\n", orStr(strings.Join(at, ", "), "nothing"))
-			return nil
-		}
-		if _, ok := svc.(proxy.Forwarder); ok {
-			for _, f := range x.Forwards {
-				fmt.Println(portproxy.Describe(f.Forward))
-			}
-			if len(x.Forwards) == 0 {
-				fmt.Println("no port of the isolation's is on the Mac")
-			}
-			return nil
-		}
-		var addrs []string
-		for _, port := range svc.Ports() {
-			addrs = append(addrs, fmt.Sprintf("127.0.0.1:%d", port))
-		}
-		fmt.Printf("inside the isolation: %s; agents pick up its environment at their next idle moment\n", strings.Join(addrs, ", "))
+		printExposure(svc, pos[0], x, change)
 		return nil
 
 	case "unexpose":
 		pos := parse(fs, args[1:])
-		if len(pos) != 2 {
-			return errors.New("usage: psps iso unexpose NAME SERVICE")
+		if len(pos) < 2 || len(pos) > 3 {
+			return errors.New("usage: psps iso unexpose NAME SERVICE [ENV,...]")
+		}
+		if len(pos) == 3 {
+			svc, err := services.Registry().Get(pos[1])
+			if err != nil {
+				return err
+			}
+			cur, err := currentExposure(ctx, c, pos[0], svc.Name())
+			if err != nil {
+				return err
+			}
+			envs, change, err := unexposeEnvs(cur, splitEnvs(pos[2]))
+			if err != nil {
+				return fmt.Errorf("%s for %s: %w", svc.Name(), pos[0], err)
+			}
+			x, err := c.Expose(ctx, pos[0], svc.Name(), api.Expose{Envs: envs})
+			if err != nil {
+				return err
+			}
+			printExposure(svc, pos[0], x, change)
+			if len(x.Envs) == 0 {
+				fmt.Printf("it stays on with no env; psps iso unexpose %s %s turns it off\n", pos[0], svc.Name())
+			}
+			return nil
 		}
 		if err := c.Unexpose(ctx, pos[0], pos[1]); err != nil {
 			return err
@@ -470,4 +475,129 @@ func interactive(ctx context.Context, container string, argv []string) (*exec.Cm
 	}
 	return cli.Exec(ctx, container, isolation.ExecOpts{Interactive: true, TTY: true, User: isolation.AgentUser,
 		Workdir: isolation.AgentHome, Env: []string{"HOME=" + isolation.AgentHome}}, argv...), nil
+}
+
+// currentExposure is what SERVICE serves ISO now; a service that is off
+// has no envs.
+func currentExposure(ctx context.Context, c *client.Client, iso, service string) (api.Exposure, error) {
+	xs, err := c.Exposures(ctx, iso)
+	if err != nil {
+		return api.Exposure{}, err
+	}
+	for _, x := range xs {
+		if x.Service == service && x.Enabled {
+			return x, nil
+		}
+	}
+	return api.Exposure{Service: service}, nil
+}
+
+func splitEnvs(s string) []string {
+	var out []string
+	for _, n := range strings.Split(s, ",") {
+		if n = strings.TrimSpace(n); n != "" && !slices.Contains(out, n) {
+			out = append(out, n)
+		}
+	}
+	return out
+}
+
+// exposeEnvs is the list to send for `iso expose ... ENV,...`: the names
+// added to what is exposed now, or with only, the names alone. Envs no
+// longer defined are dropped from what is kept, since the daemon refuses
+// them. change says what moved, for the user to see.
+func exposeEnvs(cur api.Exposure, names []string, only bool) ([]string, string) {
+	envs := []string{}
+	var added, removed []string
+	if !only {
+		for _, n := range cur.Envs {
+			if !slices.Contains(cur.Missing, n) {
+				envs = append(envs, n)
+			}
+		}
+	}
+	for _, n := range names {
+		if !slices.Contains(envs, n) {
+			envs = append(envs, n)
+		}
+	}
+	for _, n := range envs {
+		if !slices.Contains(cur.Envs, n) {
+			added = append(added, n)
+		}
+	}
+	for _, n := range cur.Envs {
+		if !slices.Contains(envs, n) {
+			removed = append(removed, n)
+		}
+	}
+	return envs, describeChange(added, removed)
+}
+
+// unexposeEnvs is what stays exposed once names are taken out; each name
+// must be exposed now.
+func unexposeEnvs(cur api.Exposure, names []string) ([]string, string, error) {
+	var notThere []string
+	for _, n := range names {
+		if !slices.Contains(cur.Envs, n) {
+			notThere = append(notThere, n)
+		}
+	}
+	if len(notThere) > 0 {
+		return nil, "", fmt.Errorf("%s not exposed (exposed: %s)", strings.Join(notThere, ", "), orStr(strings.Join(cur.Envs, ", "), "none"))
+	}
+	envs := []string{}
+	for _, n := range cur.Envs {
+		if !slices.Contains(names, n) {
+			envs = append(envs, n)
+		}
+	}
+	return envs, describeChange(nil, names), nil
+}
+
+func describeChange(added, removed []string) string {
+	var parts []string
+	if len(added) > 0 {
+		parts = append(parts, "added "+strings.Join(added, ","))
+	}
+	if len(removed) > 0 {
+		parts = append(parts, "removed "+strings.Join(removed, ","))
+	}
+	if len(parts) == 0 {
+		return "no env added"
+	}
+	return strings.Join(parts, ", ")
+}
+
+func printExposure(svc proxy.Service, iso string, x api.Exposure, change string) {
+	if x.Warning != "" {
+		defer fmt.Fprintln(os.Stderr, "warning: "+x.Warning)
+	}
+	if change != "" {
+		change += "; now "
+	}
+	fmt.Printf("%s is on for %s: %senvs %s%s; settings %s\n", svc.Name(), iso, change, orStr(strings.Join(x.Envs, ","), "(none)"),
+		map[bool]string{true: ", default " + x.Default}[x.Default != ""], compact(x.Settings))
+	if _, ok := svc.(proxy.Mounter); ok {
+		var at []string
+		for _, n := range x.Envs {
+			at = append(at, isolation.SharedRoot+"/"+n)
+		}
+		fmt.Printf("inside the isolation: %s; its container was replaced to mount them if they changed, so running agents ended and start again on their next message\n", orStr(strings.Join(at, ", "), "nothing"))
+		return
+	}
+	if _, ok := svc.(proxy.Forwarder); ok {
+		for _, f := range x.Forwards {
+			fmt.Println(portproxy.Describe(f.Forward))
+		}
+		if len(x.Forwards) == 0 {
+			fmt.Println("no port of the isolation's is on the Mac")
+		}
+		return
+	}
+	var addrs []string
+	for _, port := range svc.Ports() {
+		addrs = append(addrs, fmt.Sprintf("127.0.0.1:%d", port))
+	}
+	fmt.Printf("inside the isolation: %s; agents pick up its environment at their next idle moment\n", strings.Join(addrs, ", "))
 }

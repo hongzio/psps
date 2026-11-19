@@ -49,8 +49,8 @@ const usage = `psps — run coding agents in isolated containers
   psps iso kill NAME                   SIGKILL its VM, for one that no longer answers (stop hangs too)
   psps iso start NAME                  bring it up again; one with live agents comes up by itself
   psps iso services NAME        which credential proxies the isolation has
-  psps iso expose NAME SERVICE [ENV,...] [--default-env ENV] [flags]
-  psps iso unexpose NAME SERVICE
+  psps iso expose NAME SERVICE [ENV,...] [--only] [--default-env ENV] [flags]   ENV,... is added; --only makes it the whole list
+  psps iso unexpose NAME SERVICE [ENV,...]   those envs out, or the service off
 
   psps account ls               agent CLI accounts: defined once, used by any number of isolations
   psps account add NAME --kind claude-token|anthropic-api-key   prompts; or one line on stdin

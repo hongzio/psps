@@ -261,8 +261,8 @@ func (m *Manager) verifyServices(ctx context.Context, iso store.Isolation) []api
 			}
 			for _, n := range x.view.Missing {
 				cs = append(cs, fail(fmt.Sprintf("%s env %s defined", name, n), api.SevConfig, "defined", "gone",
-					fmt.Sprintf("exposed to %s but no longer defined: re-create it with `psps env add %s %s ...`, or expose the envs that remain with `psps iso expose %s %s ENV,...`",
-						iso.Name, name, n, iso.Name, name)))
+					fmt.Sprintf("exposed to %s but no longer defined: re-create it with `psps env add %s %s ...`, or take it out with `psps iso unexpose %s %s %s`",
+						iso.Name, name, n, iso.Name, name, n)))
 			}
 			return cs
 		})
