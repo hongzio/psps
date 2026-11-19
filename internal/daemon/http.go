@@ -475,6 +475,15 @@ func (m *Manager) Handler() http.Handler {
 		v, err := m.AnswerAsk(id, req)
 		reply(w, v, err)
 	})
+	mux.HandleFunc("POST /v1/asks/{ask}/reply", func(w http.ResponseWriter, r *http.Request) {
+		id, ok := askID(w, r)
+		var req api.ReplyAsk
+		if !ok || !decode(w, r, &req) {
+			return
+		}
+		v, err := m.ReplyAsk(id, req)
+		reply(w, v, err)
+	})
 	mux.HandleFunc("GET /v1/agents/{id}/asks", func(w http.ResponseWriter, r *http.Request) {
 		v, err := m.AgentAsks(r.PathValue("id"))
 		reply(w, v, err)

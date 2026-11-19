@@ -58,21 +58,52 @@ type agentAsk struct {
 	Body      string            `json:"body,omitempty"`
 	Options   []store.AskOption `json:"options,omitempty"`
 	State     string            `json:"state"`
+	Turn      string            `json:"turn,omitempty"`
 	Verdict   string            `json:"verdict"`
 	Picked    string            `json:"picked,omitempty"`
 	Text      string            `json:"text,omitempty"`
 	CreatedAt time.Time         `json:"created_at"`
 	ClosedAt  *time.Time        `json:"closed_at,omitempty"`
+	Notes     []agentNote       `json:"notes,omitempty"`
 	Note      string            `json:"note,omitempty"`
 }
 
+// agentNote is what was added to an ask, as its agent reads it: by "you"
+// or "operator".
+type agentNote struct {
+	By        string            `json:"by"`
+	Text      string            `json:"text,omitempty"`
+	Options   []store.AskOption `json:"options,omitempty"`
+	CreatedAt time.Time         `json:"created_at"`
+}
+
+// agentAskOf is a as its agent reads it: its options those it offers now.
 func agentAskOf(a store.Ask) agentAsk {
-	v := agentAsk{ID: a.ID, Kind: a.Kind, Title: a.Title, Body: a.Body, Options: a.Options, State: a.State,
+	opts := a.Current()
+	v := agentAsk{ID: a.ID, Kind: a.Kind, Title: a.Title, Body: a.Body, Options: opts, State: a.State,
 		Verdict: askproxy.Verdict(a), Text: a.Text, CreatedAt: a.CreatedAt, ClosedAt: a.ClosedAt}
-	if a.Pick > 0 && a.Pick <= len(a.Options) {
-		v.Picked = a.Options[a.Pick-1].Label
+	if a.State == store.AskOpen {
+		v.Turn = map[string]string{store.TurnOperator: "operator", store.TurnAgent: "yours"}[a.Turn]
+	}
+	if a.Pick > 0 && a.Pick <= len(opts) {
+		v.Picked = opts[a.Pick-1].Label
+	}
+	for _, n := range a.Notes {
+		by := "operator"
+		if n.Author == store.TurnAgent {
+			by = "you"
+		}
+		v.Notes = append(v.Notes, agentNote{By: by, Text: n.Text, Options: n.Options, CreatedAt: n.CreatedAt})
 	}
 	return v
+}
+
+// postedNote is what an agent adds to an ask of its: what it found since,
+// new options for a question, or resolve to close it itself.
+type postedNote struct {
+	Text    string            `json:"text"`
+	Options []store.AskOption `json:"options"`
+	Resolve bool              `json:"resolve"`
 }
 
 // postedAsk is an ask as an agent writes it.
@@ -139,6 +170,24 @@ func (m *Manager) askRoutes(mux *http.ServeMux, iso string) {
 			return
 		}
 		reply(w, agentAskOf(x), nil)
+	})
+	mux.HandleFunc("POST /a/{token}/asks/{id}", func(w http.ResponseWriter, r *http.Request) {
+		a, id, err := m.askOfAgent(iso, r)
+		if err != nil {
+			reply(w, nil, err)
+			return
+		}
+		body, err := io.ReadAll(io.LimitReader(r.Body, askproxy.MaxBody+16<<10))
+		var req postedNote
+		if err == nil {
+			err = json.Unmarshal(body, &req)
+		}
+		if err != nil {
+			reply(w, nil, badRequest(fmt.Errorf(`ask: what you add is JSON, as {"text": "...", "options": [{"label": "..."}], "resolve": false}: %v`, err)))
+			return
+		}
+		v, err := m.addAgentNote(a, id, req)
+		reply(w, v, err)
 	})
 	mux.HandleFunc("DELETE /a/{token}/asks/{id}", func(w http.ResponseWriter, r *http.Request) {
 		a, id, err := m.askOfAgent(iso, r)
@@ -215,6 +264,50 @@ func (m *Manager) postAsk(a store.Agent, req postedAsk) (agentAsk, bool, error) 
 	return v, true, nil
 }
 
+// addAgentNote adds what agent a posts to its open ask id, closing it as
+// resolved if it says so.
+func (m *Manager) addAgentNote(a store.Agent, id int64, req postedNote) (agentAsk, error) {
+	text := strings.TrimSpace(req.Text)
+	switch {
+	case text == "" && len(req.Options) == 0 && !req.Resolve:
+		return agentAsk{}, badRequest(errors.New(`ask: add "text" (what you found, or your answer to their reply), new "options", or "resolve": true`))
+	case len(text) > askproxy.MaxBody:
+		return agentAsk{}, badRequest(fmt.Errorf(`ask: "text" is at most %d bytes; put the rest where your operator can read it and say where`, askproxy.MaxBody))
+	case !utf8.ValidString(text):
+		return agentAsk{}, badRequest(errors.New("ask: what you add is text, in UTF-8"))
+	}
+	var opts []store.AskOption
+	if len(req.Options) > 0 {
+		x, err := m.store.GetAsk(id)
+		if err == nil && x.Agent == a.ID && x.Kind != askproxy.Question {
+			return agentAsk{}, badRequest(fmt.Errorf(`ask: only a question has "options"; #%d is a %s`, id, x.Kind))
+		}
+		if opts, err = checkOptions(req.Options); err != nil {
+			return agentAsk{}, badRequest(err)
+		}
+	}
+	x, err := m.store.AddNote(id, a.ID, store.TurnAgent, text, opts, askproxy.MaxNotes, req.Resolve)
+	switch {
+	case errors.Is(err, store.ErrNotFound):
+		return agentAsk{}, httpError{http.StatusNotFound, fmt.Errorf("ask: you have no ask #%d", id)}
+	case errors.Is(err, store.ErrAskClosed):
+		return agentAsk{}, httpError{http.StatusConflict, fmt.Errorf("ask: #%d is %s already; leave a new ask if you still need them", id, askproxy.Verdict(x))}
+	case errors.Is(err, store.ErrTooManyNotes):
+		return agentAsk{}, httpError{http.StatusTooManyRequests, fmt.Errorf("ask: #%d has %d notes, as many as one may; resolve it, or withdraw it and leave a new one", id, askproxy.MaxNotes)}
+	case err != nil:
+		return agentAsk{}, err
+	}
+	m.log.Printf("agent %s: ask #%d %s", a.ID, id, map[bool]string{true: "resolved", false: "added to"}[req.Resolve])
+	m.pokeChanges()
+	v := agentAskOf(x)
+	if req.Resolve {
+		v.Note = "Resolved; your operator sees it closed, and is not asked any more."
+	} else {
+		v.Note = "Added; the ask waits for your operator again. Go on with what does not need them, and end your turn when nothing is left. Do not poll."
+	}
+	return v, nil
+}
+
 // checkAsk reads an ask as an agent wrote it, refusing what is not one.
 func checkAsk(req postedAsk) (store.Ask, error) {
 	x := store.Ask{Kind: strings.TrimSpace(req.Kind), Title: strings.TrimSpace(req.Title), Body: strings.TrimSpace(req.Body)}
@@ -241,17 +334,28 @@ func checkAsk(req postedAsk) (store.Ask, error) {
 	if len(req.Options) > 0 && x.Kind != askproxy.Question {
 		return x, fmt.Errorf(`ask: only a question has "options"; a %s is answered %s`, x.Kind, map[string]string{askproxy.Confirm: "yes or no", askproxy.Task: "done or not"}[x.Kind])
 	}
-	if len(req.Options) > 0 && (len(req.Options) < askproxy.MinOptions || len(req.Options) > askproxy.MaxOptions) {
-		return x, fmt.Errorf(`ask: a question has no "options", or %d to %d`, askproxy.MinOptions, askproxy.MaxOptions)
+	opts, err := checkOptions(req.Options)
+	x.Options = opts
+	return x, err
+}
+
+// checkOptions reads a question's options as an agent wrote them.
+func checkOptions(in []store.AskOption) ([]store.AskOption, error) {
+	if len(in) == 0 {
+		return nil, nil
 	}
-	for i, o := range req.Options {
+	if len(in) < askproxy.MinOptions || len(in) > askproxy.MaxOptions {
+		return nil, fmt.Errorf(`ask: a question has no "options", or %d to %d`, askproxy.MinOptions, askproxy.MaxOptions)
+	}
+	var out []store.AskOption
+	for i, o := range in {
 		o.Label, o.Note = strings.TrimSpace(o.Label), strings.TrimSpace(o.Note)
 		if o.Label == "" || strings.ContainsAny(o.Label, "\r\n") || utf8.RuneCountInString(o.Label) > askproxy.MaxTitle || utf8.RuneCountInString(o.Note) > 1000 {
-			return x, fmt.Errorf(`ask: option %d needs a "label" of one line, at most %d characters (and a "note" of at most 1000)`, i+1, askproxy.MaxTitle)
+			return nil, fmt.Errorf(`ask: option %d needs a "label" of one line, at most %d characters (and a "note" of at most 1000)`, i+1, askproxy.MaxTitle)
 		}
-		x.Options = append(x.Options, o)
+		out = append(out, o)
 	}
-	return x, nil
+	return out, nil
 }
 
 // --- what the operator asks ------------------------------------------------
@@ -275,8 +379,8 @@ func (m *Manager) askViews(as []store.Ask) []api.Ask {
 	return out
 }
 
-// OpenAsks are every agent's asks that wait for the operator, oldest
-// first.
+// OpenAsks are every agent's open asks, those waiting on the operator
+// first, oldest first.
 func (m *Manager) OpenAsks() ([]api.Ask, error) {
 	as, err := m.store.OpenAsks()
 	if err != nil {
@@ -321,11 +425,11 @@ func (m *Manager) AnswerAsk(id int64, req api.AnswerAsk) (api.Ask, error) {
 	if len(text) > askproxy.MaxText {
 		return api.Ask{}, badRequest(fmt.Errorf("an answer is at most %d bytes", askproxy.MaxText))
 	}
-	if req.Pick != 0 && (x.Kind != askproxy.Question || req.Pick < 1 || req.Pick > len(x.Options)) {
-		if len(x.Options) == 0 {
+	if opts := x.Current(); req.Pick != 0 && (x.Kind != askproxy.Question || req.Pick < 1 || req.Pick > len(opts)) {
+		if len(opts) == 0 {
 			return api.Ask{}, badRequest(fmt.Errorf("ask #%d offers no options to pick", id))
 		}
-		return api.Ask{}, badRequest(fmt.Errorf("ask #%d's options are 1 to %d", id, len(x.Options)))
+		return api.Ask{}, badRequest(fmt.Errorf("ask #%d's options are 1 to %d", id, len(opts)))
 	}
 	switch {
 	case outcome == "dismiss":
@@ -362,14 +466,42 @@ func (m *Manager) AnswerAsk(id int64, req api.AnswerAsk) (api.Ask, error) {
 	return m.askViews([]store.Ask{x})[0], nil
 }
 
-// withAsks gives each agent how many of its asks are open.
+// ReplyAsk adds the operator's words to open ask id and keeps it open:
+// the agent hears them when it is next free, and may add to the ask in
+// turn.
+func (m *Manager) ReplyAsk(id int64, req api.ReplyAsk) (api.Ask, error) {
+	text := strings.TrimSpace(req.Text)
+	switch {
+	case text == "":
+		return api.Ask{}, badRequest(errors.New("a reply needs words; to close the ask, answer it"))
+	case len(text) > askproxy.MaxText:
+		return api.Ask{}, badRequest(fmt.Errorf("a reply is at most %d bytes", askproxy.MaxText))
+	}
+	x, err := m.store.AddNote(id, "", store.TurnOperator, text, nil, askproxy.MaxNotes, false)
+	switch {
+	case errors.Is(err, store.ErrAskClosed):
+		return api.Ask{}, httpError{http.StatusConflict, fmt.Errorf("ask #%d is %s already", id, askproxy.Verdict(x))}
+	case errors.Is(err, store.ErrTooManyNotes):
+		return api.Ask{}, httpError{http.StatusConflict, fmt.Errorf("ask #%d has %d notes, as many as one may: answer it or close it", id, askproxy.MaxNotes)}
+	case err != nil:
+		return api.Ask{}, err
+	}
+	m.log.Printf("agent %s: ask #%d replied to", x.Agent, x.ID)
+	m.answersChanged(x.Agent)
+	m.pokeChanges()
+	return m.askViews([]store.Ask{x})[0], nil
+}
+
+// withAsks gives each agent how many of its open asks wait on the
+// operator, and how many on it.
 func (m *Manager) withAsks(as []api.Agent) error {
 	counts, err := m.store.OpenAskCounts()
 	if err != nil || len(counts) == 0 {
 		return err
 	}
 	for i := range as {
-		as[i].Asks = counts[as[i].ID]
+		c := counts[as[i].ID]
+		as[i].Asks, as[i].AsksWaiting, as[i].AskNotes = c.Operator, c.Agent, c.Notes
 	}
 	return nil
 }

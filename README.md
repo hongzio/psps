@@ -223,7 +223,8 @@ psps ask reply 42 --pick 1
 An agent posts a question, a go-ahead to give, or a thing to do by hand,
 and goes on without waiting. The web counts open asks in the sidebar and
 answers them in the drawer's Ask tab; your answer reaches the agent the next
-time it is idle.
+time it is idle. Reply without closing one (`psps ask say 42 ...`) and the
+agent adds to the same ask.
 
 </td>
 </tr>

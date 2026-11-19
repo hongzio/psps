@@ -3,7 +3,9 @@
 // for the operator: the agent posts, goes on with what it can, and hears
 // the answer later, as a turn of its own when it is idle. A question it
 // cannot go on without is not one for here but its CLI's own (Claude's
-// AskUserQuestion). Like mail it is not a proxy: no credential is involved
+// AskUserQuestion). An ask is a thread while it is open: the operator may
+// reply without closing it, and the agent add what it found since, until
+// the operator answers it or the agent resolves it. Like mail it is not a proxy: no credential is involved
 // and nothing leaves the Mac. It is served on mail's port, at each agent's
 // own address; the daemon answers it itself, since it keeps the asks.
 //
@@ -12,6 +14,8 @@
 //	daemon     the ask is the agent's whose address it is; it waits for
 //	           the operator, and their answer reaches the agent when it is
 //	           idle, all answers waiting in one message
+//	           curl "$PSPS_ASK_URL/42" --json '{"text":"Found the audit logs: ..."}'
+//	           adds to it, and it waits on the operator again
 //
 // An agent sees and withdraws its own asks only. It has at most MaxOpen
 // open; one with the title of another still open is that one.
@@ -47,6 +51,8 @@ const (
 	MaxOptions = 6
 	// MaxText caps what the operator writes back.
 	MaxText = 32 << 10
+	// MaxNotes caps what the two add to one ask while it is open.
+	MaxNotes = 40
 )
 
 // The kinds of ask.
@@ -117,13 +123,33 @@ func (instance) Serve(port int, l net.Listener) error {
 }
 
 // Answers is the message that tells an agent what became of asks of its
-// the operator closed.
+// the operator closed, or replied to and kept open. The replies new to it
+// are the operator's notes not delivered yet.
 func Answers(as []store.Ask) string {
 	var b strings.Builder
-	if len(as) == 1 {
+	answered, replied := 0, 0
+	for _, a := range as {
+		if a.State == store.AskOpen {
+			replied++
+		} else {
+			answered++
+		}
+	}
+	an := func(n int) string {
+		if n == 1 {
+			return "an ask"
+		}
+		return fmt.Sprintf("%d asks", n)
+	}
+	switch {
+	case replied == 0 && answered == 1:
 		b.WriteString("[psps ask: your operator answered an ask of yours. This is their answer; act on it as you would on their message.]")
-	} else {
-		fmt.Fprintf(&b, "[psps ask: your operator answered %d asks of yours. These are their answers; act on them as you would on their message.]", len(as))
+	case replied == 0:
+		fmt.Fprintf(&b, "[psps ask: your operator answered %d asks of yours. These are their answers; act on them as you would on their message.]", answered)
+	case answered == 0:
+		fmt.Fprintf(&b, "[psps ask: your operator replied to %s of yours and kept %s open. Act on what they say as you would on their message.]", an(replied), map[bool]string{true: "it", false: "them"}[replied == 1])
+	default:
+		fmt.Fprintf(&b, "[psps ask: your operator answered %s of yours and replied to %s, kept open. Act on what they say as you would on their message.]", an(answered), an(replied))
 	}
 	for _, a := range as {
 		b.WriteString("\n\n")
@@ -132,15 +158,28 @@ func Answers(as []store.Ask) string {
 	return b.String()
 }
 
-// Answer is what became of one ask, as its agent reads it.
+// Answer is what became of one ask, as its agent reads it: the operator's
+// replies it has not heard yet, and, closed, their answer.
 func Answer(a store.Ask) string {
 	var b strings.Builder
-	fmt.Fprintf(&b, "#%d %s (%s): %s.", a.ID, strconv.Quote(a.Title), a.Kind, Verdict(a))
-	if a.Pick > 0 && a.Pick <= len(a.Options) {
-		fmt.Fprintf(&b, "\nPicked: %s (option %d)", a.Options[a.Pick-1].Label, a.Pick)
+	v := Verdict(a)
+	if a.State == store.AskOpen {
+		v = "still open, your turn"
+	}
+	fmt.Fprintf(&b, "#%d %s (%s): %s.", a.ID, strconv.Quote(a.Title), a.Kind, v)
+	for _, n := range a.Notes {
+		if n.Author == store.TurnOperator && n.DeliveredAt == nil {
+			b.WriteString("\nTheir reply: " + strings.TrimSpace(n.Text))
+		}
+	}
+	if opts := a.Current(); a.Pick > 0 && a.Pick <= len(opts) {
+		fmt.Fprintf(&b, "\nPicked: %s (option %d)", opts[a.Pick-1].Label, a.Pick)
 	}
 	if t := strings.TrimSpace(a.Text); t != "" {
 		b.WriteString("\nTheir words: " + t)
+	}
+	if a.State == store.AskOpen {
+		fmt.Fprintf(&b, "\nAdd to it with POST \"$PSPS_ASK_URL/%d\" (what you found, or your answer to theirs), or resolve it there if this settles it; do not leave a new ask for it.", a.ID)
 	}
 	return b.String()
 }
@@ -152,6 +191,8 @@ func Verdict(a store.Ask) string {
 		return "closed without an answer"
 	case a.State == store.AskWithdrawn:
 		return "withdrawn"
+	case a.State == store.AskResolved:
+		return "resolved by the agent"
 	case a.State == store.AskOpen:
 		return "open"
 	case a.Outcome == Yes:
@@ -166,7 +207,7 @@ func Verdict(a store.Ask) string {
 	return "answered"
 }
 
-var answersHead = regexp.MustCompile(`^\[psps ask: your operator answered [^\n]*\]\n\n`)
+var answersHead = regexp.MustCompile(`^\[psps ask: your operator (?:answered|replied) [^\n]*\]\n\n`)
 
 // IsAnswers is whether text is a message Answers made.
 func IsAnswers(text string) bool { return answersHead.MatchString(text) }

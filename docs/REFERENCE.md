@@ -906,30 +906,43 @@ It posts the ask, does what does not need the answer, and ends its turn when
 nothing is left; your answer comes to it later as a turn of its own, when it
 is idle, all answers waiting for it in one message, after yours and the
 auto todos and before mail. An ask stays open until you answer it, close it
-without an answer (the agent is told that too), or the agent withdraws it;
-it has no deadline. A question that must be answered within the turn is
+without an answer (the agent is told that too), or the agent withdraws or
+resolves it; it has no deadline.
+
+While it is open an ask is a thread. You may reply without closing it: to
+ask the agent something back, or to say what you want to see before you
+decide. Your reply reaches it like an answer, and the ask then waits on
+the agent, which adds to the same ask (an answer to yours, an interim
+result, new options for a question that replace the old ones) and hands it
+back to you. The agent may also add to an ask still waiting on you, or
+resolve one your reply settled. An ask holds at most forty replies and
+additions. A question that must be answered within the turn is
 Claude's own AskUserQuestion (see [Approvals](#approvals)), which is apart
 from this and stays as it is.
 
 ```sh
 psps iso expose dev ask                   # dev's agents leave you asks (off until you do)
-psps ask                                  # every ask waiting for you, oldest first
+psps ask                                  # every open ask, those waiting for you first
 psps ask --agent reviewer                 # one agent's, answered or not
-psps ask show 42
+psps ask show 42                          # with what you and the agent added to it
+psps ask say 42 "where do audit logs live?"   # reply and keep it open
 psps ask reply 42 --pick 1 "and keep error logs 90 days"   # a question: an option, words, or both
 psps ask yes 41 "batch it 5k at a time"   # a go-ahead: yes or no
 psps ask done 43                          # a thing to do: done, or cant
 psps ask dismiss 44 "not needed"          # closed without an answer
 ```
 
-In the web, the sidebar counts each agent's open asks on its second line
-(beside its mail), the drawer button wears a dot while the open agent has
-any, and the drawer's **Ask** tab lists them, those waiting first, each
-answered in place: an option, your words, or both for a question; Approve or
-Decline for a go-ahead; Done or Couldn't for a thing to do; or Close without
-answer. Its answer shows in the conversation, as yours. The page tells of a
+In the web, the sidebar counts each agent's asks waiting on you on its
+second line (beside its mail), and, faint beside a clock, those you replied
+to that wait on the agent; the drawer button wears a dot while the open
+agent has any waiting on you, and the drawer's **Ask** tab lists them, those
+waiting on you first, each a thread of what you and the agent added,
+answered in place: **Reply, keep open** (⌘↵) with your words; or an option,
+your words, or both for a question; Approve or Decline for a go-ahead; Done
+or Couldn't for a thing to do; or Close without answer. Its answer shows in the conversation, as yours. The page tells of a
 new ask with a browser notification once you allow it (the tab's **Tell me
-of new asks**); it is the page that does, so only while it is open in a
+of new asks**), and of an ask the agent added to, once it waits on you
+again; it is the page that does, so only while it is open in a
 browser, a hidden tab looking every minute. The TUI counts open asks on an
 agent's row and over its conversation.
 
@@ -938,7 +951,8 @@ port, at its mail address, so no `psps iso upgrade` is needed), and the
 `psps-ask` skill says how to use it: `POST` an ask (`{"kind": "question" |
 "confirm" | "task", "title", "body", "options": [{"label", "note"}]}`),
 `GET` its own asks, `GET`/`DELETE $PSPS_ASK_URL/<id>` to read and withdraw
-one. An agent has at most ten open; one whose title is that of an ask of its
+one, `POST $PSPS_ASK_URL/<id>` (`{"text", "options", "resolve"}`) to add to
+one still open or resolve it. An agent has at most ten open; one whose title is that of an ask of its
 own still open is that ask, not a new one. A title is one line of at most
 200 characters, a body at most 32 KiB, a question has two to six options or
 none. The skill says plainly that an ask is asynchronous: post and go on,

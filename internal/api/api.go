@@ -93,8 +93,13 @@ type Agent struct {
 	Crons int `json:"crons,omitempty"`
 	// Todos is how many prompts are put aside for it.
 	Todos int `json:"todos,omitempty"`
-	// Asks is how many of its asks wait for the operator's answer.
-	Asks int `json:"asks,omitempty"`
+	// Asks is how many of its open asks wait on the operator, AsksWaiting
+	// how many on the agent (the operator replied).
+	Asks        int `json:"asks,omitempty"`
+	AsksWaiting int `json:"asks_waiting,omitempty"`
+	// AskNotes is how many replies and additions its open asks hold: the
+	// web reads them again when it changes.
+	AskNotes int `json:"ask_notes,omitempty"`
 	// Team is the name of the team its line is in, TeamID its ID; the
 	// sidebar groups a team's live agents.
 	Team   string `json:"team,omitempty"`
@@ -959,4 +964,9 @@ type AnswerAsk struct {
 	Outcome string `json:"outcome,omitempty"`
 	Pick    int    `json:"pick,omitempty"`
 	Text    string `json:"text,omitempty"`
+}
+
+// ReplyAsk adds the operator's words to an open ask and keeps it open.
+type ReplyAsk struct {
+	Text string `json:"text"`
 }

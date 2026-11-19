@@ -228,6 +228,7 @@ var added = []struct{ table, column, def string }{
 	{"team_leads", "compact", "TEXT NOT NULL DEFAULT ''"},
 	{"agents", "last_message_at", "TEXT"},
 	{"agents", "side_of", "TEXT NOT NULL DEFAULT ''"},
+	{"asks", "turn", "TEXT NOT NULL DEFAULT 'operator'"},
 }
 
 func hasColumn(db interface {
@@ -739,7 +740,7 @@ func (s *Store) DeleteAgent(id string) error {
 	if err := tx.QueryRow(`SELECT COALESCE(line, id) FROM agents WHERE id = ?`, id).Scan(&line); err != nil && !errors.Is(err, sql.ErrNoRows) {
 		return err
 	}
-	for _, q := range []string{`DELETE FROM events WHERE agent = ?`, `DELETE FROM outbox WHERE agent = ?`, `DELETE FROM mail WHERE agent = ?`, `DELETE FROM crons WHERE agent = ?`, `DELETE FROM todos WHERE agent = ?`, `DELETE FROM asks WHERE agent = ?`,
+	for _, q := range []string{`DELETE FROM events WHERE agent = ?`, `DELETE FROM outbox WHERE agent = ?`, `DELETE FROM mail WHERE agent = ?`, `DELETE FROM crons WHERE agent = ?`, `DELETE FROM todos WHERE agent = ?`, `DELETE FROM ask_notes WHERE ask IN (SELECT id FROM asks WHERE agent = ?)`, `DELETE FROM asks WHERE agent = ?`,
 		`DELETE FROM spent WHERE agent = ?`, `DELETE FROM receipts WHERE agent = ?`, `DELETE FROM team_waits WHERE agent = ?`, `DELETE FROM snapshots WHERE agent = ?`, `DELETE FROM watches WHERE sender = ?1 OR target = ?1`, `DELETE FROM agents WHERE id = ?`} {
 		if _, err := tx.Exec(q, id); err != nil {
 			return err

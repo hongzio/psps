@@ -393,6 +393,12 @@ func (c *Client) Ask(ctx context.Context, id int64) (api.Ask, error) {
 	return v, c.do(ctx, "GET", fmt.Sprintf("/v1/asks/%d", id), nil, &v)
 }
 
+// ReplyAsk adds the operator's words to an open ask and keeps it open.
+func (c *Client) ReplyAsk(ctx context.Context, id int64, req api.ReplyAsk) (api.Ask, error) {
+	var v api.Ask
+	return v, c.do(ctx, "POST", fmt.Sprintf("/v1/asks/%d/reply", id), req, &v)
+}
+
 // AnswerAsk closes an ask with the operator's answer, or without one.
 func (c *Client) AnswerAsk(ctx context.Context, id int64, req api.AnswerAsk) (api.Ask, error) {
 	var v api.Ask
