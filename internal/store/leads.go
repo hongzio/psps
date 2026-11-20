@@ -56,7 +56,8 @@ CREATE TABLE IF NOT EXISTS team_eval_runs (
 	isolation  TEXT NOT NULL DEFAULT '',
 	private    INTEGER NOT NULL DEFAULT 0,
 	limit_s    INTEGER NOT NULL DEFAULT 0,
-	job        TEXT NOT NULL DEFAULT ''
+	job        TEXT NOT NULL DEFAULT '',
+	elapsed_s  INTEGER NOT NULL DEFAULT 0
 );
 CREATE TABLE IF NOT EXISTS spent (
 	agent  TEXT PRIMARY KEY REFERENCES agents(id),
@@ -419,6 +420,8 @@ type EvalRun struct {
 	Private   bool          `json:"private,omitempty"`
 	Limit     time.Duration `json:"limit"`
 	Job       string        `json:"job,omitempty"`
+	// Elapsed is how long its command has run with the Mac awake.
+	Elapsed time.Duration `json:"elapsed,omitempty"`
 }
 
 // PutEvalRun keeps r as its team's eval under way.
@@ -430,9 +433,15 @@ func (s *Store) PutEvalRun(r EvalRun) error {
 	return err
 }
 
+// PutEvalRunElapsed keeps how long team's eval run has run awake.
+func (s *Store) PutEvalRunElapsed(team, run string, d time.Duration) error {
+	_, err := s.db.Exec(`UPDATE team_eval_runs SET elapsed_s = ? WHERE team = ? AND run = ?`, int64(d/time.Second), team, run)
+	return err
+}
+
 // EvalRuns are the evals under way.
 func (s *Store) EvalRuns() ([]EvalRun, error) {
-	rows, err := s.db.Query(`SELECT team, at, why, run, isolation, private, limit_s, job FROM team_eval_runs ORDER BY at`)
+	rows, err := s.db.Query(`SELECT team, at, why, run, isolation, private, limit_s, job, elapsed_s FROM team_eval_runs ORDER BY at`)
 	if err != nil {
 		return nil, err
 	}
@@ -441,11 +450,11 @@ func (s *Store) EvalRuns() ([]EvalRun, error) {
 	for rows.Next() {
 		var r EvalRun
 		var at string
-		var limit int64
-		if err := rows.Scan(&r.Team, &at, &r.Why, &r.Run, &r.Isolation, &r.Private, &limit, &r.Job); err != nil {
+		var limit, elapsed int64
+		if err := rows.Scan(&r.Team, &at, &r.Why, &r.Run, &r.Isolation, &r.Private, &limit, &r.Job, &elapsed); err != nil {
 			return nil, err
 		}
-		r.At, r.Limit = parseTS(at), time.Duration(limit)*time.Second
+		r.At, r.Limit, r.Elapsed = parseTS(at), time.Duration(limit)*time.Second, time.Duration(elapsed)*time.Second
 		out = append(out, r)
 	}
 	return out, rows.Err()

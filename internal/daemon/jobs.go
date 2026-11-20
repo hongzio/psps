@@ -573,6 +573,7 @@ func (m *Manager) followJob(j store.Job) (store.Job, *jobEnd) {
 	}
 	killed := false
 	var st isolation.JobState
+	last := time.Now()
 	for {
 		ctx, cancel := context.WithTimeout(m.ctx, 30*time.Second)
 		state, serr := m.cli.State(ctx, iso.Container)
@@ -593,7 +594,14 @@ func (m *Manager) followJob(j store.Job) (store.Job, *jobEnd) {
 			j.CancelAt = cur.CancelAt
 		}
 		now := time.Now()
-		over := j.StartedAt != nil && now.After(j.StartedAt.Add(j.Limit+jobGrace+30*time.Second))
+		// The limit counts the time it runs awake, as its timeout(1) does:
+		// the isolation's clock stops while the Mac sleeps.
+		j.Elapsed += awake(last, now, 2*jobPoll)
+		last = now
+		if err := m.store.PutJobElapsed(j.ID, j.Elapsed); err != nil {
+			m.log.Printf("job %s: %v", j.ID, err)
+		}
+		over := j.StartedAt != nil && j.Elapsed > j.Limit+jobGrace+30*time.Second
 		stop := j.CancelAt != nil && now.After(j.CancelAt.Add(jobGrace))
 		if over || stop {
 			ctx, cancel := context.WithTimeout(m.ctx, 30*time.Second)
@@ -623,6 +631,13 @@ func (m *Manager) followJob(j store.Job) (store.Job, *jobEnd) {
 		m.log.Printf("job %s: %v", j.ID, ferr)
 	}
 	return j, end
+}
+
+// awake is how much of the time from last to now counts as run with the
+// Mac awake: a gap longer than most is the Mac asleep, or the daemon
+// stopped, and counts as most.
+func awake(last, now time.Time, most time.Duration) time.Duration {
+	return max(0, min(now.Sub(last), most))
 }
 
 // jobEnd is how a job's command ended, and what it left.
@@ -808,6 +823,9 @@ func (m *Manager) callerJob(j store.Job, places map[string]int) api.CallerJob {
 	}
 	if j.StartedAt != nil {
 		d := j.StartedAt.Add(j.Limit)
+		if j.Status == store.JobRunning {
+			d = time.Now().UTC().Add(max(0, j.Limit-j.Elapsed)).Truncate(time.Second)
+		}
 		v.Deadline = &d
 	}
 	return v

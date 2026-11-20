@@ -524,6 +524,54 @@ func TestAJobRunsOnWhileTheDaemonStopsAndTheNextFollowsIt(t *testing.T) {
 	}
 }
 
+// A job's limit counts the time it runs with the Mac awake, as its
+// timeout(1) does in an isolation whose clock stops while the Mac sleeps:
+// one started hours ago by the clock, the Mac asleep since, runs on; one
+// past its limit awake is ended.
+func TestAJobsLimitCountsTheTimeTheMacIsAwake(t *testing.T) {
+	e := newTestEnv(t)
+	m, stop := e.daemon()
+	gate := filepath.Join(t.TempDir(), "go")
+	a, _ := withJobs(t, e, m, fmt.Sprintf(`while [ ! -f %s ]; do sleep 0.02; done`, gate), nil)
+	dir := t.TempDir()
+	j := askJob(t, m, a.ID, api.PostJob{Dir: dir})
+	e.waitFor("it to run", func() bool { s, _ := e.st.Job(j.ID); return s.Status == store.JobRunning })
+	e.waitFor("its awake time kept", func() bool { s, _ := e.st.Job(j.ID); return s.Elapsed > 0 })
+	stop()
+	s, _ := e.st.Job(j.ID)
+	asleep := time.Now().UTC().Add(-10 * time.Hour)
+	s.StartedAt = &asleep
+	if err := e.st.PutJob(s); err != nil {
+		t.Fatal(err)
+	}
+	if again, _ := e.st.Job(j.ID); again.Elapsed != s.Elapsed {
+		t.Fatalf("PutJob changed its awake time: %v, not %v", again.Elapsed, s.Elapsed)
+	}
+	m, stop = e.daemon()
+	jobService(t, m)
+	time.Sleep(10 * jobPoll)
+	got := jobNow(t, m, a.ID, j.ID, 0)
+	if got.Status != store.JobRunning {
+		t.Fatalf("ended for the time the Mac slept: %+v", got)
+	}
+	if got.Deadline == nil || got.Deadline.Before(time.Now().Add(59*time.Minute)) {
+		t.Fatalf("its deadline counts the time it slept: %v", got.Deadline)
+	}
+	stop()
+
+	// Past its limit, the time it ran awake, it is ended.
+	if err := e.st.PutJobElapsed(j.ID, time.Hour+jobGrace+time.Minute); err != nil {
+		t.Fatal(err)
+	}
+	m, stop = e.daemon()
+	defer stop()
+	jobService(t, m)
+	e.waitFor("it ended", func() bool { s, _ := e.st.Job(j.ID); return store.JobEnded(s.Status) })
+	if s, _ := e.st.Job(j.ID); s.Status != store.JobFailed || s.Error != "still running past its 1h0m0s; ended" {
+		t.Fatalf("%+v", s)
+	}
+}
+
 // A team's eval may be a job of a runner's: psps asks for it as itself,
 // the score is result.json's "score", and the lead hears that alone.
 func TestATeamsEvalIsAJobOfARunner(t *testing.T) {

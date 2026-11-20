@@ -229,6 +229,8 @@ var added = []struct{ table, column, def string }{
 	{"agents", "last_message_at", "TEXT"},
 	{"agents", "side_of", "TEXT NOT NULL DEFAULT ''"},
 	{"asks", "turn", "TEXT NOT NULL DEFAULT 'operator'"},
+	{"jobs", "elapsed_s", "INTEGER NOT NULL DEFAULT 0"},
+	{"team_eval_runs", "elapsed_s", "INTEGER NOT NULL DEFAULT 0"},
 }
 
 func hasColumn(db interface {

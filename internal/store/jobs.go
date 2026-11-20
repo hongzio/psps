@@ -31,7 +31,8 @@ CREATE TABLE IF NOT EXISTS jobs (
 	cancel_at    TEXT,
 	exit         INTEGER,
 	result       TEXT,
-	output       TEXT NOT NULL DEFAULT ''
+	output       TEXT NOT NULL DEFAULT '',
+	elapsed_s    INTEGER NOT NULL DEFAULT 0
 );
 CREATE INDEX IF NOT EXISTS jobs_status ON jobs(status, requested_at);
 `
@@ -90,9 +91,12 @@ type Job struct {
 	Exit        *int          `json:"exit,omitempty"`
 	Result      string        `json:"result,omitempty"`
 	Output      string        `json:"output,omitempty"`
+	// Elapsed is how long its command has run with the Mac awake, as the
+	// daemon counted it; Limit is held against it, not the clock.
+	Elapsed time.Duration `json:"elapsed,omitempty"`
 }
 
-const jobCols = `id, runner, isolation, caller, agent, from_iso, team, dir, why, options, status, error, note, requested_at, started_at, ended_at, limit_s, cancel_at, exit, result, output`
+const jobCols = `id, runner, isolation, caller, agent, from_iso, team, dir, why, options, status, error, note, requested_at, started_at, ended_at, limit_s, cancel_at, exit, result, output, elapsed_s`
 
 func optTS(t *time.Time) any {
 	if t == nil {
@@ -110,11 +114,18 @@ func (s *Store) PutJob(j Job) error {
 	if j.Result != "" {
 		result = j.Result
 	}
-	_, err := s.db.Exec(`INSERT INTO jobs (`+jobCols+`) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+	_, err := s.db.Exec(`INSERT INTO jobs (`+jobCols+`) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 		ON CONFLICT(id) DO UPDATE SET isolation=excluded.isolation, status=excluded.status, error=excluded.error, note=excluded.note, started_at=excluded.started_at,
 			ended_at=excluded.ended_at, limit_s=excluded.limit_s, cancel_at=excluded.cancel_at, exit=excluded.exit, result=excluded.result, output=excluded.output`,
 		j.ID, j.Runner, j.Isolation, j.Caller, j.Agent, j.From, j.Team, j.Dir, j.Why, j.Options, j.Status, j.Error, j.Note,
-		ts(j.RequestedAt), optTS(j.StartedAt), optTS(j.EndedAt), int64(j.Limit/time.Second), optTS(j.CancelAt), exit, result, j.Output)
+		ts(j.RequestedAt), optTS(j.StartedAt), optTS(j.EndedAt), int64(j.Limit/time.Second), optTS(j.CancelAt), exit, result, j.Output, int64(j.Elapsed/time.Second))
+	return err
+}
+
+// PutJobElapsed keeps how long job id has run awake; PutJob leaves it as
+// it is on a job kept already.
+func (s *Store) PutJobElapsed(id string, d time.Duration) error {
+	_, err := s.db.Exec(`UPDATE jobs SET elapsed_s = ? WHERE id = ?`, int64(d/time.Second), id)
 	return err
 }
 
@@ -125,12 +136,12 @@ func scanJob(r scanner) (Job, error) {
 	var req string
 	var started, ended, cancel, result sql.NullString
 	var exit sql.NullInt64
-	var limit int64
+	var limit, elapsed int64
 	if err := r.Scan(&j.ID, &j.Runner, &j.Isolation, &j.Caller, &j.Agent, &j.From, &j.Team, &j.Dir, &j.Why, &j.Options, &j.Status, &j.Error, &j.Note,
-		&req, &started, &ended, &limit, &cancel, &exit, &result, &j.Output); err != nil {
+		&req, &started, &ended, &limit, &cancel, &exit, &result, &j.Output, &elapsed); err != nil {
 		return j, err
 	}
-	j.RequestedAt, j.Limit = parseTS(req), time.Duration(limit)*time.Second
+	j.RequestedAt, j.Limit, j.Elapsed = parseTS(req), time.Duration(limit)*time.Second, time.Duration(elapsed)*time.Second
 	for _, p := range []struct {
 		s  sql.NullString
 		to **time.Time

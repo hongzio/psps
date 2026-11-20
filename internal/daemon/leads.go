@@ -1387,8 +1387,10 @@ func (m *Manager) waitEvalRun(run store.EvalRun) (string, error) {
 		return "", notRun{fmt.Errorf("the eval's isolation: %w", err)}
 	}
 	// Its timeout(1) ends it at run.Limit, and what is past that by much
-	// is ended here.
-	deadline := run.At.Add(2*run.Limit + 3*time.Minute)
+	// is ended here. Both count the time it runs awake: the isolation's
+	// clock stops while the Mac sleeps.
+	most := 2*run.Limit + 3*time.Minute
+	last := time.Now()
 	var st isolation.EvalState
 	for {
 		ctx, cancel := context.WithTimeout(m.ctx, 30*time.Second)
@@ -1405,11 +1407,17 @@ func (m *Manager) waitEvalRun(run store.EvalRun) (string, error) {
 		if err == nil && !st.Running {
 			break
 		}
-		if time.Now().After(deadline) {
+		now := time.Now()
+		run.Elapsed += awake(last, now, 2*evalPoll)
+		last = now
+		if perr := m.store.PutEvalRunElapsed(run.Team, run.Run, run.Elapsed); perr != nil {
+			m.log.Printf("team %s: %v", run.Team, perr)
+		}
+		if run.Elapsed > most {
 			ctx, cancel := context.WithTimeout(m.ctx, time.Minute)
 			m.cli.EvalStop(ctx, iso.Container, run.Run)
 			cancel()
-			st, err = isolation.EvalState{}, fmt.Errorf("the eval: still running %s after it started; ended", time.Since(run.At).Round(time.Second))
+			st, err = isolation.EvalState{}, fmt.Errorf("the eval: still running %s awake after it started; ended", run.Elapsed.Round(time.Second))
 			break
 		}
 		select {
