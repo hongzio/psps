@@ -7347,6 +7347,7 @@ async function loadAsks() {
   askState.list = list || []
   askState.count = askKey(agentById(id))
   if (askState.open == null || !askState.list.some((x) => x.id === askState.open)) askState.open = askState.list.find((x) => x.state === 'open')?.id ?? null
+  askState.drawn = null
   drawAsks()
 }
 
@@ -7362,7 +7363,9 @@ function askOptions(x) {
 }
 
 // renderAsks draws the tab: its count, the drawer button's pip, and, shown,
-// the asks, read again when they may have changed.
+// the asks, read again when they may have changed. Asks already drawn as
+// they are are left alone: a redraw on every change of any agent moved the
+// list's scroll.
 function renderAsks() {
   const el = S.bmEl
   const a = agentById(S.sel)
@@ -7372,6 +7375,7 @@ function renderAsks() {
   if (pip !== askState.pip) { askState.pip = pip; renderBmButtons() }
   if (!el || !S.bmOpen || S.dTab !== 'asks') return
   if (askState.of !== S.sel || askState.count !== askKey(a) || askState.stale) { askState.stale = false; guarded(loadAsks); return }
+  if (askState.drawn && askState.drawn === el.querySelector('.ak-list')) return
   drawAsks()
 }
 
@@ -7394,9 +7398,14 @@ function drawAsks() {
   const rows = open.map(askItem)
   if (!open.length) rows.push(h('div', { class: 'bm-empty' }, askState.list.length ? 'Nothing waits for you.' : 'None yet. With the ask service on, its agents leave you questions, go-aheads and things to do here.'))
   if (closed.length) rows.push(h('div', { class: 'sa-sep', role: 'separator' }, `Closed · ${closed.length}`), ...closed.map(askItem))
+  // The new rows fold only once measured, so the list is taller for a
+  // moment: where it was scrolled to is put back after.
+  const top = list.scrollTop
   list.replaceChildren(...rows)
   watchFold('asks', list)
   foldIn(list)
+  list.scrollTop = top
+  askState.drawn = list
 }
 
 function askItem(x) {
