@@ -8326,7 +8326,8 @@ const KB_COLS = [['todo', 'To Do'], ['doing', 'In Progress'], ['done', 'Done']]
 const KB_STATUS = Object.fromEntries(KB_COLS)
 const kbColor = (c) => `var(--ic-${c && c !== 'gray' ? c : 'default'})`
 const kbHash = (iso, tail) => '#/kanban' + (iso ? '/' + enc(iso) : '') + (tail ? '/' + tail : '')
-const kbKey = (id) => 'K-' + id
+// A card's key: its board's slug and its number there (ACME-12).
+const KB_KEY = /^[A-Za-z][A-Za-z0-9]{0,9}-\d+$/
 // The history's kinds, as its filter offers them.
 const KB_KINDS = [['', 'All'], ['created', 'Made'], ['title,body,checked,unchecked', 'Edited'], ['status', 'Moved'], ['assignee', 'Assigned'],
   ['board', 'Board'], ['comment,comment_edited,comment_deleted', 'Comments'], ['deleted,restored', 'Deleted']]
@@ -8348,15 +8349,15 @@ function saveKbHidden() {
   try { localStorage.setItem('psps.kbHidden', JSON.stringify([...S.kb.hidden])) } catch {}
 }
 
-// kbRoute reads #/kanban[/ISO][/K-12|/log] into S.kb.
+// kbRoute reads #/kanban[/ISO][/ACME-12|/log] into S.kb.
 function kbRoute(a, b) {
   let iso = a ? decodeURIComponent(a) : null
   let tail = b
-  if (iso && !b && (iso === 'log' || /^K-\d+$/.test(iso))) { tail = iso; iso = null }
+  if (iso && !b && (iso === 'log' || KB_KEY.test(iso))) { tail = iso; iso = null }
   if (S.kb.iso !== iso) { S.kb.data = null; S.kb.logData = null }
   S.kb.iso = iso
   S.kb.log = tail === 'log'
-  const sel = tail && /^K-\d+$/.test(tail) ? Number(tail.slice(2)) : null
+  const sel = tail && KB_KEY.test(tail) ? tail.toUpperCase() : null
   if (sel !== S.kb.sel) { S.kb.detail = null; S.kb.draft = '' }
   S.kb.sel = sel
 }
@@ -8369,7 +8370,16 @@ async function refreshKanban() {
   if (S.view !== 'kanban') return
   const k = S.kb
   k.data = k.iso ? await api('GET', '/v1/kanban?iso=' + enc(k.iso)) : all
-  if (k.sel) k.detail = await api('GET', `/v1/kanban/cards/${k.sel}`).catch(() => ({ missing: true }))
+  if (k.sel) {
+    k.detail = await api('GET', `/v1/kanban/cards/${enc(k.sel)}`).catch(() => ({ missing: true }))
+    // A key it had (on a board it left, or K-12 from before slugs) is
+    // its key now in the address.
+    if (k.detail?.key && k.detail.key !== k.sel) {
+      k.sel = k.detail.key
+      history.replaceState(null, '', kbHash(k.iso, k.sel))
+      S.routed = location.hash
+    }
+  }
   if (k.log) await kbLoadLog(false)
   if (!editing('kanban')) renderKanban()
 }
@@ -8425,7 +8435,7 @@ function kbToolbar(d) {
     return h('button', {
       type: 'button', class: 'kb-chip' + (on ? ' on' : ''), 'aria-pressed': String(on),
       style: on ? `--kb: ${kbColor(b.color)}` : null,
-      title: (b.isolations.length ? 'Given to ' + b.isolations.join(', ') : 'Given to no isolation') + (b.default ? ' · the default' : ''),
+      title: `${b.slug}-1, ${b.slug}-2, … · ` + (b.isolations.length ? 'given to ' + b.isolations.join(', ') : 'given to no isolation') + (b.default ? ' · the default' : ''),
       onclick: () => { if (on) k.hidden.add(b.name); else k.hidden.delete(b.name); saveKbHidden(); renderKanban() },
     }, h('span', { class: 'kb-dot', style: `background: ${kbColor(b.color)}` }), b.name,
     k.log ? null : h('span', { class: 'kb-count' }, String(counts[b.name] || 0)))
@@ -8498,9 +8508,9 @@ function kbFillCols(el, d) {
 function kbCardEl(c) {
   const k = S.kb
   const el = h('a', {
-    class: 'kb-card' + (k.sel === c.id ? ' on' : ''), href: kbHash(k.iso, c.key), draggable: 'true',
-    'aria-current': k.sel === c.id ? 'true' : null,
-    onclick: (e) => { if (e.button || e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return; e.preventDefault(); go(kbHash(k.iso, k.sel === c.id ? null : c.key)) },
+    class: 'kb-card' + (k.sel === c.key ? ' on' : ''), href: kbHash(k.iso, c.key), draggable: 'true',
+    'aria-current': k.sel === c.key ? 'true' : null,
+    onclick: (e) => { if (e.button || e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return; e.preventDefault(); go(kbHash(k.iso, k.sel === c.key ? null : c.key)) },
     ondragstart: (e) => { kbDragging = c; e.dataTransfer.effectAllowed = 'move'; e.dataTransfer.setData('text/plain', c.key) },
     ondragend: () => { kbDragging = null },
   },
@@ -8535,7 +8545,7 @@ function kbDetail(d) {
   const close = navLink(kbHash(k.iso), 'kb-x', icon('x'))
   close.setAttribute('aria-label', 'Close the card')
   if (!x) return h('aside', { class: 'kb-detail', 'aria-label': 'Card' }, h('div', { class: 'kb-d-head' }, close), h('p', { class: 'note' }, 'Reading the card…'))
-  if (x.missing) return h('aside', { class: 'kb-detail', 'aria-label': 'Card' }, h('div', { class: 'kb-d-head' }, close), h('p', { class: 'note' }, `There is no card ${kbKey(k.sel)}.`))
+  if (x.missing) return h('aside', { class: 'kb-detail', 'aria-label': 'Card' }, h('div', { class: 'kb-d-head' }, close), h('p', { class: 'note' }, `There is no card ${k.sel}.`))
   const deleted = !!x.deleted_at
   const edit = (title, key, multi) => () => {
     const input = multi ? h('textarea', { class: 'dialog-input', rows: '8' }) : h('input', { class: 'dialog-input', value: x[key] || '' })

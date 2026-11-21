@@ -40,11 +40,12 @@ func (c *Client) KanbanLog(ctx context.Context, iso, board string, limit int) ([
 	return v, c.do(ctx, "GET", "/v1/kanban/log?"+q.Encode(), nil, &v)
 }
 
-func cardPath(id int64) string { return fmt.Sprintf("/v1/kanban/cards/%d", id) }
+// cardPath is a card's, by its key (ACME-12) or psps's own ID.
+func cardPath(ref string) string { return "/v1/kanban/cards/" + url.PathEscape(ref) }
 
-func (c *Client) KanbanCard(ctx context.Context, id int64) (api.KanbanCardDetail, error) {
+func (c *Client) KanbanCard(ctx context.Context, ref string) (api.KanbanCardDetail, error) {
 	var v api.KanbanCardDetail
-	return v, c.do(ctx, "GET", cardPath(id), nil, &v)
+	return v, c.do(ctx, "GET", cardPath(ref), nil, &v)
 }
 
 func (c *Client) AddKanbanCard(ctx context.Context, req api.NewCard) (api.KanbanCard, error) {
@@ -52,31 +53,31 @@ func (c *Client) AddKanbanCard(ctx context.Context, req api.NewCard) (api.Kanban
 	return v, c.do(ctx, "POST", "/v1/kanban/cards", req, &v)
 }
 
-func (c *Client) UpdateKanbanCard(ctx context.Context, id int64, p store.CardPatch) (api.KanbanCard, error) {
+func (c *Client) UpdateKanbanCard(ctx context.Context, ref string, p store.CardPatch) (api.KanbanCard, error) {
 	var v api.KanbanCard
-	return v, c.do(ctx, "PATCH", cardPath(id), p, &v)
+	return v, c.do(ctx, "PATCH", cardPath(ref), p, &v)
 }
 
-func (c *Client) DeleteKanbanCard(ctx context.Context, id int64) (api.KanbanCard, error) {
+func (c *Client) DeleteKanbanCard(ctx context.Context, ref string) (api.KanbanCard, error) {
 	var v api.KanbanCard
-	return v, c.do(ctx, "DELETE", cardPath(id), nil, &v)
+	return v, c.do(ctx, "DELETE", cardPath(ref), nil, &v)
 }
 
-func (c *Client) RestoreKanbanCard(ctx context.Context, id int64) (api.KanbanCard, error) {
+func (c *Client) RestoreKanbanCard(ctx context.Context, ref string) (api.KanbanCard, error) {
 	var v api.KanbanCard
-	return v, c.do(ctx, "POST", cardPath(id)+"/restore", nil, &v)
+	return v, c.do(ctx, "POST", cardPath(ref)+"/restore", nil, &v)
 }
 
 // CheckKanbanTask checks the item-th item (from 0) of a card's checklist,
 // or unchecks it.
-func (c *Client) CheckKanbanTask(ctx context.Context, id int64, req api.CheckTask) (api.KanbanCard, error) {
+func (c *Client) CheckKanbanTask(ctx context.Context, ref string, req api.CheckTask) (api.KanbanCard, error) {
 	var v api.KanbanCard
-	return v, c.do(ctx, "POST", cardPath(id)+"/check", req, &v)
+	return v, c.do(ctx, "POST", cardPath(ref)+"/check", req, &v)
 }
 
-func (c *Client) AddKanbanComment(ctx context.Context, card int64, text string) (store.KanbanComment, error) {
+func (c *Client) AddKanbanComment(ctx context.Context, ref string, text string) (store.KanbanComment, error) {
 	var v store.KanbanComment
-	return v, c.do(ctx, "POST", cardPath(card)+"/comments", api.KanbanText{Text: text}, &v)
+	return v, c.do(ctx, "POST", cardPath(ref)+"/comments", api.KanbanText{Text: text}, &v)
 }
 
 // ChangeKanbanComment edits a comment of the operator's, or deletes it

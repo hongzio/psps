@@ -980,8 +980,10 @@ type ReplyAsk struct {
 // KanbanBoard is a kanban env as a board: its color, the isolations given
 // it, and whether it is an isolation's default.
 type KanbanBoard struct {
-	Name       string   `json:"name"`
-	Color      string   `json:"color"`
+	Name  string `json:"name"`
+	Color string `json:"color"`
+	// Slug names its cards: ACME-12.
+	Slug       string   `json:"slug"`
 	Default    bool     `json:"default,omitempty"`
 	Isolations []string `json:"isolations"`
 }

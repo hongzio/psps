@@ -7,7 +7,7 @@ const skill = `---
 name: psps-kanban
 description: How to read and keep the kanban boards psps gives this
   isolation - cards in To Do, In Progress and Done, with an assignee and
-  comments. Use when your operator or another agent mentions a card (K-12),
+  comments. Use when your operator or another agent mentions a card (ACME-12),
   a board or the kanban, when you take on, finish or hand over a piece of
   work that has a card, and to leave a card for work that should not be
   lost.
@@ -21,7 +21,11 @@ you change is recorded as yours, in a history your operator reads; nothing
 removes a line from it.
 
 A board is a project (psps names it, as an env); an isolation may see
-several. A card is on one board, in one column: "todo" (To Do), "doing"
+several. Each board has a slug, and a card is known by it and its number
+on the board: ACME-12 is the twelfth card on the board whose slug is ACME
+(the boards' slugs are in what GET "$PSPS_KANBAN_URL" answers). Name cards
+by key, in the address and in what you write. A card moved to another board
+is given that board's next number; its old key still finds it. A card is on one board, in one column: "todo" (To Do), "doing"
 (In Progress) or "done" (Done). It has a title, a body, maybe an assignee
 (an agent, by ID) and comments.
 
@@ -43,7 +47,7 @@ The boards you see, what you may do on them, and their cards:
 
 One card, with its comments and its history:
 
-    curl -sS "$PSPS_KANBAN_URL/K-12"
+    curl -sS "$PSPS_KANBAN_URL/ACME-12"
 
 Make one (201, the card; "board" may be left out for the default board,
 "status" for todo; "assignee" is an agent's ID, or "me"):
@@ -56,23 +60,23 @@ Make one (201, the card; "board" may be left out for the default board,
 Change one: any of "title", "body", "status", "assignee" ("" for none),
 "board" (another board you see):
 
-    curl -sS -X PATCH "$PSPS_KANBAN_URL/K-12" --json '{"status": "doing", "assignee": "me"}'
+    curl -sS -X PATCH "$PSPS_KANBAN_URL/ACME-12" --json '{"status": "doing", "assignee": "me"}'
 
 Check an item of its checklist, or uncheck it ("item" counts from 0, in the
 order they are in the body; "text" is the item as you read it, so a
 checklist changed since is refused rather than checked in the wrong place):
 
-    curl -sS "$PSPS_KANBAN_URL/K-12/check" --json '{"item": 1, "checked": true, "text": "rerun tape 3"}'
+    curl -sS "$PSPS_KANBAN_URL/ACME-12/check" --json '{"item": 1, "checked": true, "text": "rerun tape 3"}'
 
 Comment on one, and edit or delete a comment of yours:
 
-    curl -sS "$PSPS_KANBAN_URL/K-12/comments" --json '{"text": "Pinned the tokenizer: back to baseline."}'
+    curl -sS "$PSPS_KANBAN_URL/ACME-12/comments" --json '{"text": "Pinned the tokenizer: back to baseline."}'
     curl -sS -X PATCH "$PSPS_KANBAN_URL/comments/7" --json '{"text": "..."}'
     curl -sS -X DELETE "$PSPS_KANBAN_URL/comments/7"
 
 Delete a card (where allowed), and read the boards' history, newest first:
 
-    curl -sS -X DELETE "$PSPS_KANBAN_URL/K-12"
+    curl -sS -X DELETE "$PSPS_KANBAN_URL/ACME-12"
     curl -sS "$PSPS_KANBAN_URL/log?board=psps&limit=50"
 
 ## Keeping the board true

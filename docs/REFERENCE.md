@@ -1410,9 +1410,18 @@ blue, violet, pink). The service is off for an isolation until it is given
 boards, one or several; its agents then see those boards alone, and the web
 tells their cards apart by their boards' colors.
 
+A board's slug, which it must have, names its cards: an upper-case letter
+and up to nine letters and digits (`--slug ACME`), no other board's, and
+the cards on it are ACME-1, ACME-2 and on. A card moved to another board is
+that board's next card there; a slug changed keys the board's cards anew.
+Either way the keys a card had still find it, in the CLI, the web's
+addresses and an agent's requests. Boards from before slugs were given
+their name's (acme became ACME) and their cards kept their numbers (K-12
+became ACME-12; K-12 still finds it).
+
 ```sh
-psps env add kanban psps --color violet       # a board
-psps env edit kanban psps --color pink
+psps env add kanban psps --slug PSPS --color violet   # a board: its cards are PSPS-1, PSPS-2, ...
+psps env edit kanban psps --color pink        # --slug too: its cards are known by both
 psps iso expose dev kanban psps,infra         # dev's agents keep cards on both; psps is the default
 psps iso expose dev kanban --allow create --allow move --allow comment   # what they may do
 psps iso expose dev kanban --clear-allow      # read only
@@ -1427,13 +1436,13 @@ What agents may do besides reading is the exposure's `--allow`: `create`
 ```sh
 psps kanban                                   # every board's cards; --iso dev for dev's, --board, --status
 psps kanban new psps "Pin the tokenizer" --body "..." --status doing --assignee lead
-psps kanban show K-12                         # the card, its comments and its history
-psps kanban mv K-12 done                      # todo, doing or done
-psps kanban edit K-12 --title ... --assignee "" --board infra
-psps kanban check K-12 2                      # check its body's 2nd checklist item; uncheck K-12 2
-psps kanban comment K-12 "..."                # comment-edit N / comment-rm N for one of yours
-psps kanban rm K-12                           # off its board; restore K-12 puts it back
-psps kanban log [K-12] [--iso dev] [--board psps]   # the history, newest first
+psps kanban show ACME-12                         # the card, its comments and its history
+psps kanban mv ACME-12 done                      # todo, doing or done
+psps kanban edit ACME-12 --title ... --assignee "" --board infra
+psps kanban check ACME-12 2                      # check its body's 2nd checklist item; uncheck ACME-12 2
+psps kanban comment ACME-12 "..."                # comment-edit N / comment-rm N for one of yours
+psps kanban rm ACME-12                           # off its board; restore ACME-12 puts it back
+psps kanban log [ACME-12] [--iso dev] [--board psps]   # the history, newest first
 ```
 
 A card's body and comments are markdown. A body's task items (`- [ ] ...`,
@@ -1460,8 +1469,8 @@ Inside the isolation, `PSPS_KANBAN_URL` is each agent's own address for its
 boards (on mail's port, so no `psps iso upgrade` is needed), and the
 `psps-kanban` skill says how to use it: `GET` the boards and their cards
 (`?board=`, `?status=`, `?mine=1`), `POST` a card, `GET`, `PATCH` and
-`DELETE` `$PSPS_KANBAN_URL/K-12`, `POST $PSPS_KANBAN_URL/K-12/check`
-(`{"item": 0, "checked": true}`), `POST $PSPS_KANBAN_URL/K-12/comments`,
+`DELETE` `$PSPS_KANBAN_URL/ACME-12`, `POST $PSPS_KANBAN_URL/ACME-12/check`
+(`{"item": 0, "checked": true}`), `POST $PSPS_KANBAN_URL/ACME-12/comments`,
 `PATCH`/`DELETE $PSPS_KANBAN_URL/comments/N` and `GET $PSPS_KANBAN_URL/log`.
 What an agent does there is recorded as that agent's.
 

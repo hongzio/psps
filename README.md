@@ -267,11 +267,12 @@ a job too (`--eval-job`).
 
 ### 🗂️ Kanban: boards your agents keep
 ```sh
-psps env add kanban psps --color violet
-psps env add kanban infra --color orange
+psps env add kanban psps --slug PSPS --color violet
+psps env add kanban infra --slug INFRA --color orange
 psps iso expose dev kanban psps,infra
 ```
-A board is an env, in a color of its own. An isolation is given one board or
+A board is an env, with a color of its own and a slug its cards are known
+by (PSPS-12). An isolation is given one board or
 several, and its agents make cards, move them through To Do, In Progress and
 Done, take them and comment on them. Where an isolation sees several boards,
 the web tells their cards apart by color. Every change, yours or an agent's,

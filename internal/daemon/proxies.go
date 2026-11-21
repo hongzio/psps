@@ -676,11 +676,23 @@ func (m *Manager) PutEnv(ctx context.Context, service, name string, p proxy.Patc
 	if err != nil {
 		return api.Env{}, badRequest(err)
 	}
+	if service == kanbanproxy.Name {
+		if err := m.checkSlug(name, cfg); err != nil {
+			return api.Env{}, err
+		}
+	}
 	b, _ := json.Marshal(cfg)
 	e := store.Env{Service: service, Name: name, Config: b, CreatedAt: cur.CreatedAt}
 	before := m.forwardErrs()
 	if err := m.store.PutEnv(e); err != nil {
 		return api.Env{}, err
+	}
+	if service == kanbanproxy.Name {
+		// Its cards are known by its slug as it is now, and as it was.
+		if err := m.store.ReslugBoard(name); err != nil {
+			return api.Env{}, err
+		}
+		m.pokeChanges()
 	}
 	holders, _ := m.store.Exposing(service, name)
 	if _, ok := svc.(proxy.Forwarder); ok {

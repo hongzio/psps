@@ -231,6 +231,7 @@ var added = []struct{ table, column, def string }{
 	{"asks", "turn", "TEXT NOT NULL DEFAULT 'operator'"},
 	{"jobs", "elapsed_s", "INTEGER NOT NULL DEFAULT 0"},
 	{"team_eval_runs", "elapsed_s", "INTEGER NOT NULL DEFAULT 0"},
+	{"kanban_cards", "num", "INTEGER NOT NULL DEFAULT 0"},
 }
 
 func hasColumn(db interface {
@@ -305,7 +306,10 @@ func migrate(db *sql.DB) error {
 			return err
 		}
 	}
-	return migrateIsolationIDs(db)
+	if err := migrateIsolationIDs(db); err != nil {
+		return err
+	}
+	return migrateKanbanKeys(db)
 }
 
 // migrateIsolationIDs gives isolations from before IDs one: the name their

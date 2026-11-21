@@ -15,7 +15,6 @@ import (
 	"github.com/hongzio/psps/internal/driver"
 	"github.com/hongzio/psps/internal/event"
 	"github.com/hongzio/psps/internal/proxy"
-	"github.com/hongzio/psps/internal/proxy/kanbanproxy"
 	"github.com/hongzio/psps/internal/store"
 )
 
@@ -515,13 +514,13 @@ func (m *Manager) Handler() http.Handler {
 		reply(w, v, err)
 	})
 	mux.HandleFunc("GET /v1/kanban/cards/{card}", func(w http.ResponseWriter, r *http.Request) {
-		if id, ok := kanbanCardID(w, r); ok {
+		if id, ok := m.kanbanCardID(w, r); ok {
 			v, err := m.KanbanCard(id)
 			reply(w, v, err)
 		}
 	})
 	mux.HandleFunc("PATCH /v1/kanban/cards/{card}", func(w http.ResponseWriter, r *http.Request) {
-		id, ok := kanbanCardID(w, r)
+		id, ok := m.kanbanCardID(w, r)
 		var req store.CardPatch
 		if !ok || !decode(w, r, &req) {
 			return
@@ -530,19 +529,19 @@ func (m *Manager) Handler() http.Handler {
 		reply(w, v, err)
 	})
 	mux.HandleFunc("DELETE /v1/kanban/cards/{card}", func(w http.ResponseWriter, r *http.Request) {
-		if id, ok := kanbanCardID(w, r); ok {
+		if id, ok := m.kanbanCardID(w, r); ok {
 			v, err := m.DeleteKanbanCard(id, false)
 			reply(w, v, err)
 		}
 	})
 	mux.HandleFunc("POST /v1/kanban/cards/{card}/restore", func(w http.ResponseWriter, r *http.Request) {
-		if id, ok := kanbanCardID(w, r); ok {
+		if id, ok := m.kanbanCardID(w, r); ok {
 			v, err := m.DeleteKanbanCard(id, true)
 			reply(w, v, err)
 		}
 	})
 	mux.HandleFunc("POST /v1/kanban/cards/{card}/check", func(w http.ResponseWriter, r *http.Request) {
-		id, ok := kanbanCardID(w, r)
+		id, ok := m.kanbanCardID(w, r)
 		var req api.CheckTask
 		if !ok || !decode(w, r, &req) {
 			return
@@ -551,7 +550,7 @@ func (m *Manager) Handler() http.Handler {
 		reply(w, v, err)
 	})
 	mux.HandleFunc("POST /v1/kanban/cards/{card}/comments", func(w http.ResponseWriter, r *http.Request) {
-		id, ok := kanbanCardID(w, r)
+		id, ok := m.kanbanCardID(w, r)
 		var req api.KanbanText
 		if !ok || !decode(w, r, &req) {
 			return
@@ -756,10 +755,10 @@ func askID(w http.ResponseWriter, r *http.Request) (int64, bool) {
 	return id, true
 }
 
-func kanbanCardID(w http.ResponseWriter, r *http.Request) (int64, bool) {
-	id, err := kanbanproxy.ParseCard(r.PathValue("card"))
+func (m *Manager) kanbanCardID(w http.ResponseWriter, r *http.Request) (int64, bool) {
+	id, err := m.resolveCard(r.PathValue("card"))
 	if err != nil {
-		reply(w, nil, badRequest(err))
+		reply(w, nil, err)
 		return 0, false
 	}
 	return id, true

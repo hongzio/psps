@@ -17,17 +17,18 @@ import (
 
 const kanbanUsage = `usage:
   psps kanban [ls] [--iso ISO] [--board B] [--status S]   the cards: an isolation's boards, or every board
-  psps kanban show K-12                  a card, its comments and its history
+  psps kanban show ACME-12                  a card, its comments and its history
   psps kanban new BOARD TITLE... [--body TEXT] [--status S] [--assignee AGENT]
-  psps kanban mv K-12 todo|doing|done    move it to another column
-  psps kanban edit K-12 [--title T] [--body TEXT] [--assignee AGENT|""] [--board B]
-  psps kanban check K-12 N               check the N-th item of its checklist (- [ ] in its body); uncheck K-12 N
-  psps kanban comment K-12 TEXT...       write on it
+  psps kanban mv ACME-12 todo|doing|done    move it to another column
+  psps kanban edit ACME-12 [--title T] [--body TEXT] [--assignee AGENT|""] [--board B]
+  psps kanban check ACME-12 N               check the N-th item of its checklist (- [ ] in its body); uncheck ACME-12 N
+  psps kanban comment ACME-12 TEXT...       write on it
   psps kanban comment-edit N TEXT...     change a comment of yours; comment-rm N deletes it
-  psps kanban rm K-12                    take it off its board (its history stays); restore K-12 puts it back
-  psps kanban log [K-12] [--iso ISO] [--board B] [--limit N]   the history, newest first
+  psps kanban rm ACME-12                    take it off its board (its history stays); restore ACME-12 puts it back
+  psps kanban log [ACME-12] [--iso ISO] [--board B] [--limit N]   the history, newest first
 
-A board is a kanban env: psps env add kanban NAME --color COLOR; an
+A board is a kanban env: psps env add kanban NAME --slug SLUG --color COLOR; its slug
+names its cards (ACME-12); an
 isolation's agents work on the boards it is given: psps iso expose ISO kanban BOARD,...`
 
 // kanbanCmd reads and keeps the kanban boards, as the operator.
@@ -47,11 +48,15 @@ func kanbanCmd(p paths.Paths, args []string) error {
 	ctx, cancel := signalContext()
 	defer cancel()
 	fs := flag.NewFlagSet("kanban "+verb, flag.ExitOnError)
-	card := func(pos []string, usage string) (int64, error) {
+	// A card is named by its key (ACME-12); the daemon finds it.
+	card := func(pos []string, usage string) (string, error) {
 		if len(pos) == 0 {
-			return 0, errors.New("usage: " + usage)
+			return "", errors.New("usage: " + usage)
 		}
-		return kanbanproxy.ParseCard(pos[0])
+		if _, err := kanbanproxy.ParseKey(pos[0]); err != nil {
+			return "", err
+		}
+		return strings.ToUpper(strings.TrimPrefix(pos[0], "#")), nil
 	}
 
 	switch verb {
@@ -70,7 +75,7 @@ func kanbanCmd(p paths.Paths, args []string) error {
 			if *iso != "" {
 				fmt.Printf("Isolation %s has no boards: psps iso expose %s kanban BOARD,...\n", *iso, *iso)
 			} else {
-				fmt.Println("No boards yet: psps env add kanban NAME --color COLOR")
+				fmt.Println("No boards yet: psps env add kanban NAME --slug SLUG --color COLOR")
 			}
 			return nil
 		}
@@ -91,7 +96,7 @@ func kanbanCmd(p paths.Paths, args []string) error {
 		return tw.Flush()
 
 	case "show":
-		id, err := card(parse(fs, args), "psps kanban show K-12")
+		id, err := card(parse(fs, args), "psps kanban show ACME-12")
 		if err != nil {
 			return err
 		}
@@ -120,7 +125,7 @@ func kanbanCmd(p paths.Paths, args []string) error {
 	case "mv":
 		pos := parse(fs, args)
 		if len(pos) != 2 {
-			return errors.New("usage: psps kanban mv K-12 todo|doing|done")
+			return errors.New("usage: psps kanban mv ACME-12 todo|doing|done")
 		}
 		id, err := card(pos, "")
 		if err != nil {
@@ -139,7 +144,7 @@ func kanbanCmd(p paths.Paths, args []string) error {
 		body := fs.String("body", "", "its text")
 		assignee := fs.String("assignee", "", `an agent's ID, or "" for none`)
 		board := fs.String("board", "", "the board to move it to")
-		id, err := card(parse(fs, args), "psps kanban edit K-12 [--title T] [--body TEXT] [--assignee AGENT] [--board B]")
+		id, err := card(parse(fs, args), "psps kanban edit ACME-12 [--title T] [--body TEXT] [--assignee AGENT] [--board B]")
 		if err != nil {
 			return err
 		}
@@ -165,7 +170,7 @@ func kanbanCmd(p paths.Paths, args []string) error {
 	case "check", "uncheck":
 		pos := parse(fs, args)
 		if len(pos) != 2 {
-			return fmt.Errorf("usage: psps kanban %s K-12 N", verb)
+			return fmt.Errorf("usage: psps kanban %s ACME-12 N", verb)
 		}
 		id, err := card(pos, "")
 		if err != nil {
@@ -185,7 +190,7 @@ func kanbanCmd(p paths.Paths, args []string) error {
 	case "comment":
 		pos := parse(fs, args)
 		if len(pos) < 2 {
-			return errors.New("usage: psps kanban comment K-12 TEXT...")
+			return errors.New("usage: psps kanban comment ACME-12 TEXT...")
 		}
 		id, err := card(pos, "")
 		if err != nil {
@@ -195,7 +200,7 @@ func kanbanCmd(p paths.Paths, args []string) error {
 		if err != nil {
 			return err
 		}
-		fmt.Printf("Comment %d on K-%d.\n", cm.ID, id)
+		fmt.Printf("Comment %d on %s.\n", cm.ID, id)
 		return nil
 
 	case "comment-edit", "comment-rm":
@@ -218,7 +223,7 @@ func kanbanCmd(p paths.Paths, args []string) error {
 		return nil
 
 	case "rm", "restore":
-		id, err := card(parse(fs, args), "psps kanban "+verb+" K-12")
+		id, err := card(parse(fs, args), "psps kanban "+verb+" ACME-12")
 		if err != nil {
 			return err
 		}

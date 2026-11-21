@@ -3,6 +3,7 @@ package store
 import (
 	"encoding/json"
 	"errors"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -164,5 +165,91 @@ func TestCheckingItemsIsALineEachNotTheBodyTwice(t *testing.T) {
 	want := "body " + more + ",unchecked three,checked one,created todo"
 	if strings.Join(lines, ",") != want {
 		t.Fatalf("history %q\nwant    %q", strings.Join(lines, ","), want)
+	}
+}
+
+func TestACardIsKnownByItsBoardsSlugAndANumberThere(t *testing.T) {
+	s := open(t)
+	s.PutEnv(Env{Service: "kanban", Name: "acme", Config: []byte(`{"slug":"ACME"}`)})
+	s.PutEnv(Env{Service: "kanban", Name: "eval", Config: []byte(`{"slug":"EVAL"}`)})
+	a1, _ := s.AddCard(KanbanCard{Board: "acme", Title: "a", Status: CardTodo}, Operator)
+	a2, _ := s.AddCard(KanbanCard{Board: "acme", Title: "b", Status: CardTodo}, Operator)
+	e1, _ := s.AddCard(KanbanCard{Board: "eval", Title: "c", Status: CardTodo}, Operator)
+	if a1.Num != 1 || a2.Num != 2 || e1.Num != 1 {
+		t.Fatalf("numbers %d %d %d", a1.Num, a2.Num, e1.Num)
+	}
+	// Moved, it is the next card on its new board; its old key still finds it.
+	eval := "eval"
+	moved, _ := s.UpdateCard(a2.ID, CardPatch{Board: &eval}, Operator)
+	if moved.Num != 2 {
+		t.Fatalf("moved to %d", moved.Num)
+	}
+	for _, k := range []struct {
+		slug string
+		num  int64
+	}{{"ACME", 2}, {"EVAL", 2}} {
+		if c, err := s.CardByKey(k.slug, k.num); err != nil || c.ID != a2.ID {
+			t.Fatalf("%s-%d: %+v %v", k.slug, k.num, c, err)
+		}
+	}
+	// A slug is not one another board's cards are known by.
+	if used, _ := s.SlugUsed("ACME", "eval"); !used {
+		t.Fatal("ACME is how a card now on eval was known")
+	}
+	// A new slug keys the board's cards anew; the old keys still work.
+	s.PutEnv(Env{Service: "kanban", Name: "acme", Config: []byte(`{"slug":"AX"}`)})
+	if err := s.ReslugBoard("acme"); err != nil {
+		t.Fatal(err)
+	}
+	if c, err := s.CardByKey("AX", 1); err != nil || c.ID != a1.ID {
+		t.Fatalf("AX-1: %+v %v", c, err)
+	}
+	if c, err := s.CardByKey("ACME", 1); err != nil || c.ID != a1.ID {
+		t.Fatalf("ACME-1 after the new slug: %+v %v", c, err)
+	}
+	// The next on acme is after every number its slug has had.
+	a3, _ := s.AddCard(KanbanCard{Board: "acme", Title: "d", Status: CardTodo}, Operator)
+	if a3.Num != 2 {
+		t.Fatalf("next on AX is %d", a3.Num)
+	}
+}
+
+func TestBoardsFromBeforeSlugsAreGivenTheirNameAndCardsKeepTheirNumbers(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "psps.db")
+	s, err := Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	s.PutEnv(Env{Service: "kanban", Name: "acme", Config: []byte(`{"color":"gray"}`)})
+	s.PutEnv(Env{Service: "kanban", Name: "eval", Config: []byte(`{"color":"red"}`)})
+	var ids []int64
+	for _, b := range []string{"acme", "eval", "acme"} {
+		c, _ := s.AddCard(KanbanCard{Board: b, Title: b, Status: CardTodo}, Operator)
+		ids = append(ids, c.ID)
+	}
+	// As it was: no slug, no numbers, no keys.
+	s.db.Exec(`UPDATE envs SET config = json_remove(config, '$.slug')`)
+	s.db.Exec(`UPDATE kanban_cards SET num = 0`)
+	s.db.Exec(`DELETE FROM kanban_keys`)
+	s.db.Close()
+
+	s, err = Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.db.Close()
+	for name, want := range map[string]string{"acme": `{"color":"gray","slug":"ACME"}`, "eval": `{"color":"red","slug":"EVAL"}`} {
+		e, _ := s.Env("kanban", name)
+		if string(e.Config) != want {
+			t.Fatalf("%s: %s, want %s", name, e.Config, want)
+		}
+	}
+	for i, k := range []string{"ACME", "EVAL", "ACME"} {
+		if c, err := s.CardByKey(k, ids[i]); err != nil || c.ID != ids[i] || c.Num != ids[i] {
+			t.Fatalf("%s-%d: %+v %v", k, ids[i], c, err)
+		}
+	}
+	if c, _ := s.AddCard(KanbanCard{Board: "acme", Title: "new", Status: CardTodo}, Operator); c.Num != ids[2]+1 {
+		t.Fatalf("the next on ACME is %d", c.Num)
 	}
 }

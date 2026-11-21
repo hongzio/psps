@@ -22,6 +22,8 @@ import (
 	"fmt"
 	"net"
 	"net/http"
+	"regexp"
+	"strconv"
 	"strings"
 
 	"github.com/hongzio/psps/internal/creds"
@@ -48,9 +50,11 @@ var Colors = []string{"gray", "red", "orange", "yellow", "green", "teal", "blue"
 // DefaultColor is a board's when its env does not say.
 const DefaultColor = "gray"
 
-// Env is an env as stored: a board.
+// Env is an env as stored: a board. Its slug names its cards: ACME-12 is
+// the twelfth card on the board whose slug is ACME.
 type Env struct {
 	Color string `json:"color"`
+	Slug  string `json:"slug"`
 }
 
 // The rights an exposure gives its agents, besides reading the boards.
@@ -120,14 +124,26 @@ func ParseStatus(s string) (string, error) {
 	return "", fmt.Errorf("a card's status is todo, doing or done, not %q", s)
 }
 
-// ParseCard reads a card's number: 12, #12 or K-12.
-func ParseCard(s string) (int64, error) {
-	t := strings.TrimPrefix(strings.TrimPrefix(strings.TrimPrefix(strings.TrimSpace(s), "#"), "K-"), "k-")
-	var id int64
-	if _, err := fmt.Sscanf(t, "%d", &id); err != nil || id <= 0 || fmt.Sprint(id) != t {
-		return 0, fmt.Errorf("%q is not a card's number (K-12, or 12)", s)
+var keyRe = regexp.MustCompile(`^([A-Za-z][A-Za-z0-9]{0,9})-([1-9][0-9]{0,17})$`)
+
+// A Key names a card: by its board's slug and its number there (ACME-12),
+// or, Slug empty, by psps's own ID (a bare number, as links have it).
+type Key struct {
+	Slug string
+	Num  int64
+}
+
+// ParseKey reads a card's key: ACME-12 (any case), or psps's own ID.
+func ParseKey(s string) (Key, error) {
+	t := strings.TrimPrefix(strings.TrimSpace(s), "#")
+	if m := keyRe.FindStringSubmatch(t); m != nil {
+		n, _ := strconv.ParseInt(m[2], 10, 64)
+		return Key{Slug: strings.ToUpper(m[1]), Num: n}, nil
 	}
-	return id, nil
+	if n, err := strconv.ParseInt(t, 10, 64); err == nil && n > 0 {
+		return Key{Num: n}, nil
+	}
+	return Key{}, fmt.Errorf("%q is not a card's key (its board's slug and its number, as ACME-12)", s)
 }
 
 type Service struct{}
@@ -143,6 +159,8 @@ func (Service) Summary() string {
 
 func (Service) Fields() []proxy.Field {
 	return []proxy.Field{
+		{Key: "slug", Kind: proxy.String, Flag: "slug", Metavar: "SLUG",
+			Help: "required: what its cards are called by, with their number (ACME gives ACME-1, ACME-2, ...): an upper-case letter, then up to nine letters and digits"},
 		{Key: "color", Kind: proxy.String, Flag: "color", Metavar: "COLOR", Choices: Colors,
 			Help: "the board's color, telling its cards apart where an isolation sees several (default " + DefaultColor + ")"},
 	}
@@ -172,6 +190,15 @@ func (Service) Normalize(name string, env map[string]any) ([]string, error) {
 		return nil, fmt.Errorf("--color is one of %s, not %q", strings.Join(Colors, ", "), c)
 	}
 	env["color"] = c
+	slug, _ := env["slug"].(string)
+	slug = strings.ToUpper(strings.TrimSpace(slug))
+	switch {
+	case slug == "":
+		return nil, fmt.Errorf("a board needs --slug, what its cards are called by (--slug %s gives %s-1, %s-2, ...)", store.DefaultSlug(name), store.DefaultSlug(name), store.DefaultSlug(name))
+	case !store.ValidSlug(slug):
+		return nil, fmt.Errorf("--slug is an upper-case letter, then up to nine letters and digits (as ACME or MT2), not %q", slug)
+	}
+	env["slug"] = slug
 	return nil, nil
 }
 
@@ -221,7 +248,7 @@ func (Service) Check(_ context.Context, name string, cfg json.RawMessage, _ *cre
 	if err := json.Unmarshal(cfg, &e); err != nil {
 		return "", err
 	}
-	return fmt.Sprintf("board %s, in %s; it reaches nothing outside psps", name, e.Color), nil
+	return fmt.Sprintf("board %s (%s-1, %s-2, ...), in %s; it reaches nothing outside psps", name, e.Slug, e.Slug, e.Color), nil
 }
 
 // Refusals: an address whose token is no agent's.

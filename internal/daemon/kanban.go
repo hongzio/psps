@@ -91,13 +91,13 @@ func (m *Manager) kanbanEnv(a store.Agent) []string {
 	return proxy.AgentEnv("KANBAN_URL", kanbanproxy.URL(tok), m.fromGero(a.IsolationID))
 }
 
-// kanbanColors are every board's color, by name.
-func (m *Manager) kanbanColors() (map[string]string, []string, error) {
+// kanbanColors are every board's env (its color and slug), by name.
+func (m *Manager) kanbanColors() (map[string]kanbanproxy.Env, []string, error) {
 	envs, err := m.store.Envs(kanbanproxy.Name)
 	if err != nil {
 		return nil, nil, err
 	}
-	colors := map[string]string{}
+	colors := map[string]kanbanproxy.Env{}
 	var names []string
 	for _, e := range envs {
 		var v kanbanproxy.Env
@@ -105,7 +105,10 @@ func (m *Manager) kanbanColors() (map[string]string, []string, error) {
 		if v.Color == "" {
 			v.Color = kanbanproxy.DefaultColor
 		}
-		colors[e.Name] = v.Color
+		if v.Slug == "" {
+			v.Slug = store.DefaultSlug(e.Name)
+		}
+		colors[e.Name] = v
 		names = append(names, e.Name)
 	}
 	return colors, names, nil
@@ -144,7 +147,7 @@ func operatorKanban() kanbanScope { return kanbanScope{by: store.Operator} }
 
 // kanbanBoards are the boards s sees, those of isolation iso when the
 // operator names one.
-func (m *Manager) kanbanBoards(s kanbanScope, iso string) ([]api.KanbanBoard, map[string]string, error) {
+func (m *Manager) kanbanBoards(s kanbanScope, iso string) ([]api.KanbanBoard, map[string]kanbanproxy.Env, error) {
 	colors, names, err := m.kanbanColors()
 	if err != nil {
 		return nil, nil, err
@@ -174,7 +177,7 @@ func (m *Manager) kanbanBoards(s kanbanScope, iso string) ([]api.KanbanBoard, ma
 		if !ok {
 			continue
 		}
-		b := api.KanbanBoard{Name: n, Color: c, Default: n == def, Isolations: []string{}}
+		b := api.KanbanBoard{Name: n, Color: c.Color, Slug: c.Slug, Default: n == def, Isolations: []string{}}
 		ids, _ := m.store.Exposing(kanbanproxy.Name, n)
 		b.Isolations = append(b.Isolations, m.isoNames(ids)...)
 		out = append(out, b)
@@ -190,7 +193,46 @@ func agentLabel(a store.Agent) string {
 	return shownID(a)
 }
 
-func cardKey(id int64) string { return "K-" + strconv.FormatInt(id, 10) }
+// keyOf is c's key: its board's slug and its number there (ACME-12).
+func keyOf(c store.KanbanCard, boards map[string]kanbanproxy.Env) string {
+	slug := boards[c.Board].Slug
+	if slug == "" {
+		slug = store.DefaultSlug(c.Board)
+	}
+	return slug + "-" + strconv.FormatInt(c.Num, 10)
+}
+
+// cardKey is card id's key, for what is said of it.
+func (m *Manager) cardKey(id int64) string {
+	c, err := m.store.Card(id)
+	if err != nil {
+		return "#" + strconv.FormatInt(id, 10)
+	}
+	boards, _, _ := m.kanbanColors()
+	return keyOf(c, boards)
+}
+
+// resolveCard is the card ref names: its key (ACME-12), one it had, or
+// psps's own ID; K-12, from before slugs, is the card whose ID was 12.
+func (m *Manager) resolveCard(ref string) (int64, error) {
+	k, err := kanbanproxy.ParseKey(ref)
+	if err != nil {
+		return 0, badRequest(fmt.Errorf("kanban: %w", err))
+	}
+	if k.Slug == "" {
+		return k.Num, nil
+	}
+	c, err := m.store.CardByKey(k.Slug, k.Num)
+	switch {
+	case err == nil:
+		return c.ID, nil
+	case errors.Is(err, store.ErrNotFound) && k.Slug == "K":
+		return k.Num, nil
+	case errors.Is(err, store.ErrNotFound):
+		return 0, httpError{http.StatusNotFound, fmt.Errorf("kanban: no card %s-%d on the boards here", k.Slug, k.Num)}
+	}
+	return 0, err
+}
 
 // agentName is an agent's name as it is now, or what it was when it acted.
 func (m *Manager) agentName(id, was string) string {
@@ -203,8 +245,8 @@ func (m *Manager) agentName(id, was string) string {
 	return id
 }
 
-func (m *Manager) apiCard(c store.KanbanCard, colors map[string]string) api.KanbanCard {
-	v := api.KanbanCard{KanbanCard: c, Key: cardKey(c.ID), Color: colors[c.Board]}
+func (m *Manager) apiCard(c store.KanbanCard, colors map[string]kanbanproxy.Env) api.KanbanCard {
+	v := api.KanbanCard{KanbanCard: c, Key: keyOf(c, colors), Color: colors[c.Board].Color}
 	if v.Color == "" {
 		v.Color = kanbanproxy.DefaultColor
 	}
@@ -225,21 +267,20 @@ func (m *Manager) apiCard(c store.KanbanCard, colors map[string]string) api.Kanb
 
 // kanbanEvents are es as they are shown: with their cards' keys and
 // titles now, and names as they are now.
-func (m *Manager) kanbanEvents(es []store.KanbanEvent, colors map[string]string) []api.KanbanEvent {
-	titles := map[int64]string{}
+func (m *Manager) kanbanEvents(es []store.KanbanEvent, colors map[string]kanbanproxy.Env) []api.KanbanEvent {
+	cards := map[int64]store.KanbanCard{}
 	out := make([]api.KanbanEvent, 0, len(es))
 	for _, e := range es {
-		t, ok := titles[e.Card]
+		c, ok := cards[e.Card]
 		if !ok {
-			if c, err := m.store.Card(e.Card); err == nil {
-				t = c.Title
-			}
-			titles[e.Card] = t
+			c, _ = m.store.Card(e.Card)
+			cards[e.Card] = c
 		}
+		t, key := c.Title, keyOf(c, colors)
 		if e.By.Agent != "" {
 			e.By.Name = m.agentName(e.By.Agent, e.By.Name)
 		}
-		v := api.KanbanEvent{KanbanEvent: e, Key: cardKey(e.Card), CardTitle: t, Color: colors[e.Board]}
+		v := api.KanbanEvent{KanbanEvent: e, Key: key, CardTitle: t, Color: colors[e.Board].Color}
 		if e.Kind == store.KanbanAssignee {
 			if e.From != "" {
 				v.FromName = m.agentName(e.From, "")
@@ -309,7 +350,7 @@ func boardList(bs []api.KanbanBoard) string {
 func (m *Manager) kanbanCard(s kanbanScope, id int64) (store.KanbanCard, error) {
 	c, err := m.store.Card(id)
 	if err != nil || !s.sees(c.Board) || (c.DeletedAt != nil && !s.operator()) {
-		return c, httpError{http.StatusNotFound, fmt.Errorf("kanban: no card %s on the boards here", cardKey(id))}
+		return c, httpError{http.StatusNotFound, fmt.Errorf("kanban: no card %s on the boards here", m.cardKey(id))}
 	}
 	return c, nil
 }
@@ -447,7 +488,7 @@ func (m *Manager) updateKanbanCard(s kanbanScope, id int64, p store.CardPatch) (
 		return api.KanbanCard{}, err
 	}
 	if cur.DeletedAt != nil {
-		return api.KanbanCard{}, httpError{http.StatusConflict, fmt.Errorf("card %s is deleted; restore it first", cardKey(id))}
+		return api.KanbanCard{}, httpError{http.StatusConflict, fmt.Errorf("card %s is deleted; restore it first", m.cardKey(id))}
 	}
 	if p.Title == nil && p.Body == nil && p.Status == nil && p.Assignee == nil && p.Board == nil {
 		return api.KanbanCard{}, badRequest(errors.New(`kanban: nothing to change; send any of "title", "body", "status", "assignee", "board"`))
@@ -543,14 +584,14 @@ func (m *Manager) checkKanbanTask(s kanbanScope, id int64, req api.CheckTask) (a
 		return api.KanbanCard{}, err
 	}
 	if c.DeletedAt != nil {
-		return api.KanbanCard{}, httpError{http.StatusConflict, fmt.Errorf("card %s is deleted; restore it first", cardKey(id))}
+		return api.KanbanCard{}, httpError{http.StatusConflict, fmt.Errorf("card %s is deleted; restore it first", m.cardKey(id))}
 	}
 	ts := store.CardTasks(c.Body)
 	if req.Item < 0 || req.Item >= len(ts) {
-		return api.KanbanCard{}, badRequest(fmt.Errorf(`kanban: %s's checklist has %d items; "item" counts them from 0`, cardKey(id), len(ts)))
+		return api.KanbanCard{}, badRequest(fmt.Errorf(`kanban: %s's checklist has %d items; "item" counts them from 0`, m.cardKey(id), len(ts)))
 	}
 	if req.Text != "" && strings.TrimSpace(req.Text) != ts[req.Item].Text {
-		return api.KanbanCard{}, httpError{http.StatusConflict, fmt.Errorf("kanban: %s's checklist changed since you read it (item %d is %q now); read the card again", cardKey(id), req.Item, ts[req.Item].Text)}
+		return api.KanbanCard{}, httpError{http.StatusConflict, fmt.Errorf("kanban: %s's checklist changed since you read it (item %d is %q now); read the card again", m.cardKey(id), req.Item, ts[req.Item].Text)}
 	}
 	colors, _, _ := m.kanbanColors()
 	if ts[req.Item].Done == req.Checked {
@@ -588,7 +629,7 @@ func (m *Manager) addKanbanComment(s kanbanScope, card int64, text string) (stor
 		return store.KanbanComment{}, err
 	}
 	if c.DeletedAt != nil {
-		return store.KanbanComment{}, httpError{http.StatusConflict, fmt.Errorf("card %s is deleted; restore it first", cardKey(card))}
+		return store.KanbanComment{}, httpError{http.StatusConflict, fmt.Errorf("card %s is deleted; restore it first", m.cardKey(card))}
 	}
 	if text, err = checkComment(text); err != nil {
 		return store.KanbanComment{}, err
@@ -709,9 +750,9 @@ func (m *Manager) kanbanRoutes(mux *http.ServeMux, iso string) {
 		return s, true
 	}
 	card := func(w http.ResponseWriter, r *http.Request) (int64, bool) {
-		id, err := kanbanproxy.ParseCard(r.PathValue("card"))
+		id, err := m.resolveCard(r.PathValue("card"))
 		if err != nil {
-			reply(w, nil, badRequest(fmt.Errorf("kanban: %w", err)))
+			reply(w, nil, err)
 			return 0, false
 		}
 		return id, true
@@ -851,4 +892,27 @@ func (m *Manager) kanbanRoutes(mux *http.ServeMux, iso string) {
 			reply(w, v, err)
 		}
 	})
+}
+
+// checkSlug refuses a board a slug another board has, or that cards on
+// another board are known by.
+func (m *Manager) checkSlug(name string, cfg map[string]any) error {
+	slug, _ := cfg["slug"].(string)
+	boards, _, err := m.kanbanColors()
+	if err != nil {
+		return err
+	}
+	for n, b := range boards {
+		if n != name && b.Slug == slug {
+			return httpError{http.StatusConflict, fmt.Errorf("board %s's slug is %s already; give %s another", n, slug, name)}
+		}
+	}
+	used, err := m.store.SlugUsed(slug, name)
+	if err != nil {
+		return err
+	}
+	if used {
+		return httpError{http.StatusConflict, fmt.Errorf("cards on other boards are known by %s (%s-1, ...) from before; give %s another slug", slug, slug, name)}
+	}
+	return nil
 }

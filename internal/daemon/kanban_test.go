@@ -55,10 +55,13 @@ func TestAgentsKeepCardsOnTheBoardsTheirIsolationIsGiven(t *testing.T) {
 		t.Fatalf("off: %d %s", code, out)
 	}
 
+	if _, err := m.PutEnv(ctx, "kanban", "noslug", proxy.Patch{}, true); err == nil || !strings.Contains(err.Error(), "--slug NOSLUG") {
+		t.Fatalf("a board without a slug: %v", err)
+	}
 	for name, color := range map[string]string{"psps": "violet", "mtlab": "teal", "infra": ""} {
-		p := proxy.Patch{Set: map[string]any{"color": color}}
+		p := proxy.Patch{Set: map[string]any{"color": color, "slug": strings.ToLower(name)}}
 		if color == "" {
-			p = proxy.Patch{}
+			p = proxy.Patch{Set: map[string]any{"slug": name}}
 		}
 		v, err := m.PutEnv(ctx, "kanban", name, p, true)
 		if err != nil {
@@ -69,6 +72,12 @@ func TestAgentsKeepCardsOnTheBoardsTheirIsolationIsGiven(t *testing.T) {
 		if want := map[string]string{"psps": "violet", "mtlab": "teal", "infra": "gray"}[name]; cfg.Color != want {
 			t.Fatalf("%s's color %q, want %q", name, cfg.Color, want)
 		}
+		if cfg.Slug != strings.ToUpper(name) {
+			t.Fatalf("%s's slug %q", name, cfg.Slug)
+		}
+	}
+	if _, err := m.PutEnv(ctx, "kanban", "other", proxy.Patch{Set: map[string]any{"slug": "PSPS"}}, true); err == nil || !strings.Contains(err.Error(), "slug is PSPS already") {
+		t.Fatalf("a slug taken: %v", err)
 	}
 	if _, err := m.PutEnv(ctx, "kanban", "bad", proxy.Patch{Set: map[string]any{"color": "#ff0000"}}, true); err == nil {
 		t.Fatal("a color not in the palette")
@@ -103,7 +112,7 @@ func TestAgentsKeepCardsOnTheBoardsTheirIsolationIsGiven(t *testing.T) {
 	var c api.KanbanCard
 	code, out = kb(lead, "POST", "", `{"title":"Find why BLEU drops","assignee":"me"}`)
 	json.Unmarshal([]byte(out), &c)
-	if code != http.StatusCreated || c.Board != "psps" || c.Status != store.CardTodo || c.Assignee != lead.ID || c.Key != "K-1" || c.Color != "violet" {
+	if code != http.StatusCreated || c.Board != "psps" || c.Status != store.CardTodo || c.Assignee != lead.ID || c.Key != "PSPS-1" || c.Color != "violet" {
 		t.Fatalf("made: %d %s", code, out)
 	}
 	for _, body := range []string{`{}`, `{"title":"two\nlines"}`, `{"title":"x","board":"infra"}`, `{"title":"x","status":"later"}`,
@@ -114,27 +123,31 @@ func TestAgentsKeepCardsOnTheBoardsTheirIsolationIsGiven(t *testing.T) {
 	}
 	// lab's grader does not see psps: it cannot be assigned a card there,
 	// nor see one.
-	if code, out := kb(lead, "PATCH", "/K-1", `{"assignee":"grader"}`); code != http.StatusBadRequest || !strings.Contains(out, "does not see that board") {
+	if code, out := kb(lead, "PATCH", "/PSPS-1", `{"assignee":"grader"}`); code != http.StatusBadRequest || !strings.Contains(out, "does not see that board") {
 		t.Fatalf("assigned out of sight: %d %s", code, out)
 	}
-	if code, _ := kb(grader, "GET", "/K-1", ""); code != http.StatusNotFound {
+	if code, _ := kb(grader, "GET", "/PSPS-1", ""); code != http.StatusNotFound {
 		t.Fatalf("lab saw a psps card: %d", code)
 	}
+	if code, _ := kb(lead, "GET", "/NOPE-1", ""); code != http.StatusNotFound {
+		t.Fatalf("a key no card has: %d", code)
+	}
 	// Moved to mtlab, which lab sees: the assignee is kept (dev sees it too).
-	code, out = kb(lead, "PATCH", "/1", `{"status":"In Progress","board":"mtlab"}`)
+	// It is MTLAB-1 there; PSPS-1 still finds it.
+	code, out = kb(lead, "PATCH", "/psps-1", `{"status":"In Progress","board":"mtlab"}`)
 	json.Unmarshal([]byte(out), &c)
-	if code != 200 || c.Status != store.CardDoing || c.Board != "mtlab" || c.Assignee != lead.ID {
+	if code != 200 || c.Status != store.CardDoing || c.Board != "mtlab" || c.Assignee != lead.ID || c.Key != "MTLAB-1" {
 		t.Fatalf("moved: %d %s", code, out)
 	}
 	// lab may comment, and nothing more.
-	if code, out := kb(grader, "PATCH", "/K-1", `{"status":"done"}`); code != http.StatusForbidden || !strings.Contains(out, "may not move") {
+	if code, out := kb(grader, "PATCH", "/PSPS-1", `{"status":"done"}`); code != http.StatusForbidden || !strings.Contains(out, "may not move") {
 		t.Fatalf("lab moved a card: %d %s", code, out)
 	}
 	if code, out := kb(grader, "POST", "", `{"title":"x"}`); code != http.StatusForbidden {
 		t.Fatalf("lab made a card: %d %s", code, out)
 	}
 	var cm store.KanbanComment
-	code, out = kb(grader, "POST", "/K-1/comments", `{"text":"tape 3 only"}`)
+	code, out = kb(grader, "POST", "/PSPS-1/comments", `{"text":"tape 3 only"}`)
 	json.Unmarshal([]byte(out), &cm)
 	if code != http.StatusCreated || cm.By.Agent != grader.ID {
 		t.Fatalf("comment: %d %s", code, out)
@@ -145,27 +158,27 @@ func TestAgentsKeepCardsOnTheBoardsTheirIsolationIsGiven(t *testing.T) {
 	if code, out := kb(grader, "PATCH", "/comments/"+itoa(cm.ID), `{"text":"tape 3 only, since the tokenizer bump"}`); code != 200 {
 		t.Fatalf("edit: %d %s", code, out)
 	}
-	if code, out := kb(lead, "DELETE", "/K-1", ""); code != http.StatusForbidden {
+	if code, out := kb(lead, "DELETE", "/PSPS-1", ""); code != http.StatusForbidden {
 		t.Fatalf("deleted without the right: %d %s", code, out)
 	}
 
 	// A checklist in the body: an item checked by number, guarded by its
 	// text; counted on the card.
-	if code, out := kb(lead, "PATCH", "/K-1", `{"body":"- [ ] pin the tokenizer\n- [ ] rerun tape 3"}`); code != 200 {
+	if code, out := kb(lead, "PATCH", "/PSPS-1", `{"body":"- [ ] pin the tokenizer\n- [ ] rerun tape 3"}`); code != 200 {
 		t.Fatalf("body: %d %s", code, out)
 	}
-	code, out = kb(lead, "POST", "/K-1/check", `{"item":1,"checked":true,"text":"rerun tape 3"}`)
+	code, out = kb(lead, "POST", "/PSPS-1/check", `{"item":1,"checked":true,"text":"rerun tape 3"}`)
 	json.Unmarshal([]byte(out), &c)
 	if code != 200 || c.Tasks != 2 || c.TasksDone != 1 || !strings.Contains(c.Body, "- [x] rerun tape 3") {
 		t.Fatalf("check: %d %s", code, out)
 	}
-	if code, out := kb(lead, "POST", "/K-1/check", `{"item":0,"checked":true,"text":"something else"}`); code != http.StatusConflict {
+	if code, out := kb(lead, "POST", "/PSPS-1/check", `{"item":0,"checked":true,"text":"something else"}`); code != http.StatusConflict {
 		t.Fatalf("a stale checklist: %d %s", code, out)
 	}
-	if code, _ := kb(lead, "POST", "/K-1/check", `{"item":2,"checked":true}`); code != http.StatusBadRequest {
+	if code, _ := kb(lead, "POST", "/PSPS-1/check", `{"item":2,"checked":true}`); code != http.StatusBadRequest {
 		t.Fatalf("an item there is not: %d", code)
 	}
-	if code, _ := kb(grader, "POST", "/K-1/check", `{"item":0,"checked":true}`); code != http.StatusForbidden {
+	if code, _ := kb(grader, "POST", "/PSPS-1/check", `{"item":0,"checked":true}`); code != http.StatusForbidden {
 		t.Fatalf("lab checked without edit: %d", code)
 	}
 
@@ -193,11 +206,11 @@ func TestAgentsKeepCardsOnTheBoardsTheirIsolationIsGiven(t *testing.T) {
 	if strings.Join(lines, ",") != want {
 		t.Fatalf("history %s\nwant    %s", strings.Join(lines, ","), want)
 	}
-	if code, _ := kb(lead, "GET", "/K-1", ""); code != http.StatusNotFound {
+	if code, _ := kb(lead, "GET", "/PSPS-1", ""); code != http.StatusNotFound {
 		t.Fatalf("an agent saw a deleted card: %d", code)
 	}
 	log, _ := m.KanbanLog("dev", "", nil, 0, 0)
-	if len(log) != 9 || log[0].Key != "K-1" || log[0].CardTitle != "Find why BLEU drops" || log[0].Color != "teal" {
+	if len(log) != 9 || log[0].Key != "MTLAB-1" || log[0].CardTitle != "Find why BLEU drops" || log[0].Color != "teal" {
 		t.Fatalf("dev's log: %+v", log)
 	}
 

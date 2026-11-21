@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"regexp"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -55,10 +56,15 @@ type KanbanActor struct {
 // Operator is the operator as an actor.
 var Operator = KanbanActor{Name: "operator"}
 
-// A KanbanCard is one card on one board.
+// A KanbanCard is one card on one board. It is known by its board's slug
+// and its number there (ACME-12); ID is psps's own, for links that must
+// outlive a move.
 type KanbanCard struct {
-	ID     int64  `json:"id"`
-	Board  string `json:"board"`
+	ID    int64  `json:"id"`
+	Board string `json:"board"`
+	// Num is its number on its board: a card moved to another board is
+	// given the next number there.
+	Num    int64  `json:"num"`
 	Title  string `json:"title"`
 	Body   string `json:"body,omitempty"`
 	Status string `json:"status"`
@@ -117,6 +123,7 @@ CREATE TABLE IF NOT EXISTS kanban_cards (
 	title       TEXT NOT NULL,
 	body        TEXT NOT NULL DEFAULT '',
 	status      TEXT NOT NULL,
+	num         INTEGER NOT NULL DEFAULT 0,
 	assignee    TEXT NOT NULL DEFAULT '',
 	by_agent    TEXT NOT NULL DEFAULT '',
 	by_name     TEXT NOT NULL DEFAULT '',
@@ -151,19 +158,26 @@ CREATE TABLE IF NOT EXISTS kanban_events (
 );
 CREATE INDEX IF NOT EXISTS kanban_events_card ON kanban_events(card, id);
 CREATE INDEX IF NOT EXISTS kanban_events_board ON kanban_events(board, id);
+CREATE TABLE IF NOT EXISTS kanban_keys (
+	slug  TEXT NOT NULL,
+	num   INTEGER NOT NULL,
+	card  INTEGER NOT NULL REFERENCES kanban_cards(id),
+	PRIMARY KEY (slug, num)
+);
+CREATE INDEX IF NOT EXISTS kanban_keys_card ON kanban_keys(card);
 `
 
 // ErrCommentNotYours refuses editing or deleting another's comment.
 var ErrCommentNotYours = errors.New("not your comment")
 
-const cardCols = `c.id, c.board, c.title, c.body, c.status, c.assignee, c.by_agent, c.by_name, c.created_at, c.updated_at, c.moved_at, c.deleted_at,
+const cardCols = `c.id, c.board, c.num, c.title, c.body, c.status, c.assignee, c.by_agent, c.by_name, c.created_at, c.updated_at, c.moved_at, c.deleted_at,
 	(SELECT COUNT(*) FROM kanban_comments k WHERE k.card = c.id AND k.deleted_at IS NULL)`
 
 func scanCard(row interface{ Scan(...any) error }) (KanbanCard, error) {
 	var c KanbanCard
 	var created, updated, moved string
 	var deleted sql.NullString
-	err := row.Scan(&c.ID, &c.Board, &c.Title, &c.Body, &c.Status, &c.Assignee, &c.CreatedBy.Agent, &c.CreatedBy.Name,
+	err := row.Scan(&c.ID, &c.Board, &c.Num, &c.Title, &c.Body, &c.Status, &c.Assignee, &c.CreatedBy.Agent, &c.CreatedBy.Name,
 		&created, &updated, &moved, &deleted, &c.Comments)
 	if errors.Is(err, sql.ErrNoRows) {
 		return c, ErrNotFound
@@ -185,6 +199,7 @@ func kanbanNow() time.Time { return time.Now().UTC() }
 
 type kanbanTx interface {
 	Exec(string, ...any) (sql.Result, error)
+	QueryRow(string, ...any) *sql.Row
 }
 
 func addKanbanEvent(tx kanbanTx, e KanbanEvent) error {
@@ -208,6 +223,9 @@ func (s *Store) AddCard(c KanbanCard, by KanbanActor) (KanbanCard, error) {
 	}
 	id, err := res.LastInsertId()
 	if err != nil {
+		return c, err
+	}
+	if _, err := numberCard(tx, id, c.Board); err != nil {
 		return c, err
 	}
 	if err := addKanbanEvent(tx, KanbanEvent{Card: id, Board: c.Board, By: by, Kind: KanbanCreated, To: c.Status, At: now}); err != nil {
@@ -322,6 +340,13 @@ func (s *Store) UpdateCard(id int64, p CardPatch, by KanbanActor) (KanbanCard, e
 		}
 		if kind == KanbanStatus {
 			if _, err := tx.Exec(`UPDATE kanban_cards SET moved_at = ? WHERE id = ?`, ts(now), id); err != nil {
+				return err
+			}
+		}
+		// On another board it is that board's next card; its old key
+		// still finds it.
+		if kind == KanbanBoard {
+			if _, err := numberCard(tx, id, *to); err != nil {
 				return err
 			}
 		}
@@ -678,4 +703,183 @@ func taskToggles(old, new string) []CardTask {
 		out = append(out, nt[j])
 	}
 	return out
+}
+
+// --- keys: a board's slug and a card's number on it ---------------------
+
+var slugRe = regexp.MustCompile(`^[A-Z][A-Z0-9]{0,9}$`)
+
+// ValidSlug is a board's slug as it may be: an upper-case letter, then up
+// to nine upper-case letters and digits.
+func ValidSlug(s string) bool { return slugRe.MatchString(s) }
+
+// DefaultSlug is a slug made of a board's name: its letters and digits,
+// upper case (acme -> ACME).
+func DefaultSlug(name string) string {
+	var b strings.Builder
+	for _, r := range strings.ToUpper(name) {
+		if (r >= 'A' && r <= 'Z') || (r >= '0' && r <= '9') {
+			b.WriteRune(r)
+		}
+	}
+	s := b.String()
+	if s == "" || s[0] < 'A' || s[0] > 'Z' {
+		s = "B" + s
+	}
+	if len(s) > 10 {
+		s = s[:10]
+	}
+	return s
+}
+
+// boardSlug is board's slug, as its env says, or one made of its name.
+func boardSlug(q kanbanTx, board string) string {
+	var slug sql.NullString
+	q.QueryRow(`SELECT json_extract(config, '$.slug') FROM envs WHERE service = 'kanban' AND name = ?`, board).Scan(&slug)
+	if slug.Valid && slug.String != "" {
+		return slug.String
+	}
+	return DefaultSlug(board)
+}
+
+// numberCard gives card the next number on board, under its slug, and
+// keeps the key.
+func numberCard(tx kanbanTx, card int64, board string) (int64, error) {
+	slug := boardSlug(tx, board)
+	var max sql.NullInt64
+	if err := tx.QueryRow(`SELECT MAX(num) FROM kanban_keys WHERE slug = ?`, slug).Scan(&max); err != nil {
+		return 0, err
+	}
+	num := max.Int64 + 1
+	if _, err := tx.Exec(`UPDATE kanban_cards SET num = ? WHERE id = ?`, num, card); err != nil {
+		return 0, err
+	}
+	_, err := tx.Exec(`INSERT INTO kanban_keys (slug, num, card) VALUES (?, ?, ?)`, slug, num, card)
+	return num, err
+}
+
+// CardByKey is the card slug-num names: its key now, or one it had (on a
+// board it left, or under its board's slug before).
+func (s *Store) CardByKey(slug string, num int64) (KanbanCard, error) {
+	var id int64
+	err := s.db.QueryRow(`SELECT card FROM kanban_keys WHERE slug = ? AND num = ?`, slug, num).Scan(&id)
+	if errors.Is(err, sql.ErrNoRows) {
+		return KanbanCard{}, fmt.Errorf("no card %s-%d: %w", slug, num, ErrNotFound)
+	}
+	if err != nil {
+		return KanbanCard{}, err
+	}
+	return s.Card(id)
+}
+
+// SlugUsed is whether slug is, or was, how cards not on board are known.
+func (s *Store) SlugUsed(slug, board string) (bool, error) {
+	var n int
+	err := s.db.QueryRow(`SELECT COUNT(*) FROM kanban_keys k JOIN kanban_cards c ON c.id = k.card WHERE k.slug = ? AND c.board != ?`, slug, board).Scan(&n)
+	return n > 0, err
+}
+
+// ReslugBoard keys board's cards under its slug as its env has it now:
+// each keeps its number there, or, where another card has that key, is
+// given the next one. The keys they had still find them.
+func (s *Store) ReslugBoard(board string) error {
+	tx, err := s.db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	if err := reslug(tx, board); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
+func reslug(tx *sql.Tx, board string) error {
+	slug := boardSlug(tx, board)
+	rows, err := tx.Query(`SELECT id, num FROM kanban_cards WHERE board = ? ORDER BY num, id`, board)
+	if err != nil {
+		return err
+	}
+	type card struct{ id, num int64 }
+	var cs []card
+	for rows.Next() {
+		var c card
+		rows.Scan(&c.id, &c.num)
+		cs = append(cs, c)
+	}
+	rows.Close()
+	for _, c := range cs {
+		var owner sql.NullInt64
+		tx.QueryRow(`SELECT card FROM kanban_keys WHERE slug = ? AND num = ?`, slug, c.num).Scan(&owner)
+		switch {
+		case c.num > 0 && owner.Valid && owner.Int64 == c.id:
+		case c.num > 0 && !owner.Valid:
+			if _, err := tx.Exec(`INSERT INTO kanban_keys (slug, num, card) VALUES (?, ?, ?)`, slug, c.num, c.id); err != nil {
+				return err
+			}
+		default:
+			if _, err := numberCard(tx, c.id, board); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
+// migrateKanbanKeys gives boards from before slugs one made of their name
+// (acme -> ACME), and their cards a number on them: the number they had
+// (K-12 is ACME-12), so what was said of them still finds them.
+func migrateKanbanKeys(db *sql.DB) error {
+	tx, err := db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	rows, err := tx.Query(`SELECT name FROM envs WHERE service = 'kanban' AND COALESCE(json_extract(config, '$.slug'), '') = '' ORDER BY name`)
+	if err != nil {
+		return err
+	}
+	var names []string
+	for rows.Next() {
+		var n string
+		rows.Scan(&n)
+		names = append(names, n)
+	}
+	rows.Close()
+	for _, n := range names {
+		slug, base := DefaultSlug(n), DefaultSlug(n)
+		for i := 2; ; i++ {
+			var taken int
+			tx.QueryRow(`SELECT COUNT(*) FROM envs WHERE service = 'kanban' AND json_extract(config, '$.slug') = ?`, slug).Scan(&taken)
+			if taken == 0 {
+				break
+			}
+			suffix := strconv.Itoa(i)
+			slug = base[:min(len(base), 10-len(suffix))] + suffix
+		}
+		if _, err := tx.Exec(`UPDATE envs SET config = json_set(config, '$.slug', ?) WHERE service = 'kanban' AND name = ?`, slug, n); err != nil {
+			return err
+		}
+	}
+	// Cards from before numbers keep theirs.
+	if _, err := tx.Exec(`UPDATE kanban_cards SET num = id WHERE num = 0`); err != nil {
+		return err
+	}
+	rows, err = tx.Query(`SELECT DISTINCT c.board FROM kanban_cards c WHERE NOT EXISTS (SELECT 1 FROM kanban_keys k WHERE k.card = c.id)`)
+	if err != nil {
+		return err
+	}
+	var boards []string
+	for rows.Next() {
+		var b string
+		rows.Scan(&b)
+		boards = append(boards, b)
+	}
+	rows.Close()
+	for _, b := range boards {
+		if err := reslug(tx, b); err != nil {
+			return err
+		}
+	}
+	return tx.Commit()
 }
