@@ -8401,9 +8401,14 @@ function renderKanban() {
   if (!page) return
   const d = S.kb.data
   if (!d) { page.replaceChildren(h('p', { class: 'note kb-note' }, 'Reading the boards…')); return }
+  // A redraw (a change on the board) keeps where the page and the columns
+  // were scrolled: on a phone the columns scroll sideways.
   const scrolled = page.scrollTop
+  const across = document.getElementById('kb-cols')?.scrollLeft || 0
   page.replaceChildren(kbToolbar(d), S.kb.log ? kbLogView(d) : kbBoardView(d))
   page.scrollTop = scrolled
+  const cols = document.getElementById('kb-cols')
+  if (cols && across) cols.scrollLeft = across
 }
 
 function kbToolbar(d) {

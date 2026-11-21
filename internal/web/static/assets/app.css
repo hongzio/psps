@@ -1687,7 +1687,10 @@ textarea.dialog-input { resize: vertical; font: inherit; font-weight: 400; }
    room for both does the card take the page instead. */
 .kb-wrap { display: grid; grid-template-columns: minmax(0, 1fr); align-items: start; gap: 16px; padding: 16px; }
 .kb-wrap.chosen { grid-template-columns: minmax(0, 1fr) clamp(300px, 36%, 460px); }
-.kb-cols { min-width: 0; display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 14px; align-items: start; }
+/* The columns stay side by side: where the three do not fit, they scroll
+   sideways (never wrap, which would put Done under To Do). */
+.kb-cols { min-width: 0; display: flex; gap: 14px; align-items: flex-start; overflow-x: auto; overscroll-behavior-x: contain; padding-bottom: 6px; }
+.kb-cols > .kb-col { flex: 1 0 230px; min-width: 0; }
 .kb-col { display: flex; flex-direction: column; gap: 8px; padding: 10px; border-radius: 12px; background: var(--sidebar); min-height: 240px; border: 1px dashed transparent; }
 .kb-col.drop { border-color: var(--accent); background: var(--accent-soft); }
 .kb-col-head { display: flex; align-items: center; gap: 8px; padding: 2px 4px 4px; }
@@ -1792,7 +1795,12 @@ a.kb-key:hover { color: var(--accent); }
 }
 
 @container (max-width: 620px) {
-  .kb-wrap.chosen { grid-template-columns: minmax(0, 1fr); }
+  /* A phone: one column at a time, the next showing at the edge, each
+     scroll stopping on a column. */
+  .kb-wrap { padding: 12px 0; }
+  .kb-cols { scroll-snap-type: x mandatory; scroll-padding: 0 16px; padding: 0 16px 6px; gap: 10px; }
+  .kb-cols > .kb-col { flex: 0 0 84%; scroll-snap-align: start; }
+  .kb-wrap.chosen { grid-template-columns: minmax(0, 1fr); padding: 12px 16px; }
   .kb-wrap.chosen .kb-cols { display: none; }
   .kb-detail { position: static; max-height: none; }
 }
