@@ -1430,10 +1430,16 @@ psps kanban new psps "Pin the tokenizer" --body "..." --status doing --assignee 
 psps kanban show K-12                         # the card, its comments and its history
 psps kanban mv K-12 done                      # todo, doing or done
 psps kanban edit K-12 --title ... --assignee "" --board infra
+psps kanban check K-12 2                      # check its body's 2nd checklist item; uncheck K-12 2
 psps kanban comment K-12 "..."                # comment-edit N / comment-rm N for one of yours
 psps kanban rm K-12                           # off its board; restore K-12 puts it back
 psps kanban log [K-12] [--iso dev] [--board psps]   # the history, newest first
 ```
+
+A card's body and comments are markdown. A body's task items (`- [ ] ...`,
+`- [x] ...`) are its checklist: the card shows how many are checked, the
+web checks one with its box, and checking one, alone, is a line of history
+of its own ("checked ...") rather than the body before and after.
 
 A card's assignee is an agent of an isolation given its board; moved to a
 board its assignee does not see, the card is let go of. Every change to a
@@ -1454,7 +1460,8 @@ Inside the isolation, `PSPS_KANBAN_URL` is each agent's own address for its
 boards (on mail's port, so no `psps iso upgrade` is needed), and the
 `psps-kanban` skill says how to use it: `GET` the boards and their cards
 (`?board=`, `?status=`, `?mine=1`), `POST` a card, `GET`, `PATCH` and
-`DELETE` `$PSPS_KANBAN_URL/K-12`, `POST $PSPS_KANBAN_URL/K-12/comments`,
+`DELETE` `$PSPS_KANBAN_URL/K-12`, `POST $PSPS_KANBAN_URL/K-12/check`
+(`{"item": 0, "checked": true}`), `POST $PSPS_KANBAN_URL/K-12/comments`,
 `PATCH`/`DELETE $PSPS_KANBAN_URL/comments/N` and `GET $PSPS_KANBAN_URL/log`.
 What an agent does there is recorded as that agent's.
 

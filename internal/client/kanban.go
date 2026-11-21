@@ -67,6 +67,13 @@ func (c *Client) RestoreKanbanCard(ctx context.Context, id int64) (api.KanbanCar
 	return v, c.do(ctx, "POST", cardPath(id)+"/restore", nil, &v)
 }
 
+// CheckKanbanTask checks the item-th item (from 0) of a card's checklist,
+// or unchecks it.
+func (c *Client) CheckKanbanTask(ctx context.Context, id int64, req api.CheckTask) (api.KanbanCard, error) {
+	var v api.KanbanCard
+	return v, c.do(ctx, "POST", cardPath(id)+"/check", req, &v)
+}
+
 func (c *Client) AddKanbanComment(ctx context.Context, card int64, text string) (store.KanbanComment, error) {
 	var v store.KanbanComment
 	return v, c.do(ctx, "POST", cardPath(card)+"/comments", api.KanbanText{Text: text}, &v)

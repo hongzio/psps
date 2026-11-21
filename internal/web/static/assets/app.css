@@ -1723,13 +1723,21 @@ a.kb-key:hover { color: var(--accent); }
   background: var(--panel); border: 1px solid var(--border); border-radius: 12px; box-shadow: var(--shadow);
   position: sticky; top: 74px; max-height: calc(100vh - 140px); overflow-y: auto;
 }
+/* The panel scrolls: what is in it keeps its height, never squeezed. */
+.kb-detail > * { flex-shrink: 0; }
 .kb-d-head { display: flex; align-items: center; gap: 8px; }
 .kb-d-head .kb-key { margin-left: 0; }
 .kb-x { margin-left: auto; display: grid; place-items: center; width: 32px; height: 32px; border-radius: 8px; color: var(--muted); }
 .kb-x:hover { background: var(--code); }
 .kb-d-title { display: flex; align-items: flex-start; gap: 6px; }
 .kb-d-title h2 { margin: 0; font-size: 18px; line-height: 1.4; overflow-wrap: anywhere; }
-.kb-d-body { white-space: pre-wrap; color: var(--text); line-height: 1.55; overflow-wrap: anywhere; }
+.kb-d-body { color: var(--text); line-height: 1.55; overflow-wrap: anywhere; }
+.kb-d-body.none { white-space: pre-wrap; }
+.kb-md > :first-child, .kb-c-text > :first-child { margin-top: 0; }
+.kb-md > :last-child, .kb-c-text > :last-child { margin-bottom: 0; }
+.kb-md li.task > input:not(:disabled), .kb-md li.task > p > input:not(:disabled) { cursor: pointer; accent-color: var(--accent); }
+.kb-n.all { color: var(--ok); }
+.kb-n + .kb-n { margin-left: 0; }
 .kb-d-body.none { color: var(--faint); }
 .kb-link { border: 0; background: none; padding: 0 0 0 8px; color: var(--accent); font-size: 12.5px; cursor: pointer; }
 .kb-status { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); }
@@ -1745,7 +1753,7 @@ a.kb-key:hover { color: var(--accent); }
 .kb-c-kind { color: var(--muted); font-size: 11.5px; font-weight: 400; margin-left: 4px; }
 .kb-c-head .kb-age { color: var(--muted); }
 .kb-c-tools { margin-left: auto; }
-.kb-c-text { margin: 4px 0 0; white-space: pre-wrap; line-height: 1.55; overflow-wrap: anywhere; }
+.kb-c-text { margin: 4px 0 0; line-height: 1.55; overflow-wrap: anywhere; }
 .kb-c-form { display: flex; gap: 8px; align-items: flex-end; margin-top: 12px; }
 .kb-c-form textarea { flex: 1; min-width: 0; resize: vertical; padding: 8px 10px; border: 1px solid var(--border); border-radius: 8px; background: var(--panel); color: var(--text); font: inherit; }
 .kb-d-foot { display: flex; justify-content: flex-end; padding-top: 4px; border-top: 1px solid var(--border); }

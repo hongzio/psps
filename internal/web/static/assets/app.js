@@ -8328,7 +8328,7 @@ const kbColor = (c) => `var(--ic-${c && c !== 'gray' ? c : 'default'})`
 const kbHash = (iso, tail) => '#/kanban' + (iso ? '/' + enc(iso) : '') + (tail ? '/' + tail : '')
 const kbKey = (id) => 'K-' + id
 // The history's kinds, as its filter offers them.
-const KB_KINDS = [['', 'All'], ['created', 'Made'], ['title,body', 'Edited'], ['status', 'Moved'], ['assignee', 'Assigned'],
+const KB_KINDS = [['', 'All'], ['created', 'Made'], ['title,body,checked,unchecked', 'Edited'], ['status', 'Moved'], ['assignee', 'Assigned'],
   ['board', 'Board'], ['comment,comment_edited,comment_deleted', 'Comments'], ['deleted,restored', 'Deleted']]
 
 S.kb = {
@@ -8508,6 +8508,7 @@ function kbCardEl(c) {
   h('span', { class: 'kb-card-title' }, c.title),
   h('span', { class: 'kb-card-foot' },
     c.assignee_name ? h('span', { class: 'kb-who' }, icon('bot'), c.assignee_name) : h('span', { class: 'kb-who none' }, 'Unassigned'),
+    c.tasks ? h('span', { class: 'kb-n' + (c.tasks_done === c.tasks ? ' all' : ''), title: `${c.tasks_done} of ${c.tasks} checked` }, icon('list-todo'), `${c.tasks_done || 0}/${c.tasks}`) : null,
     c.comments ? h('span', { class: 'kb-n', title: plural(c.comments, 'comment') }, icon('message-circle'), String(c.comments)) : null,
     h('span', { class: 'kb-age', title: new Date(c.updated_at).toLocaleString() }, msgAge(c.updated_at))))
   return el
@@ -8564,7 +8565,7 @@ function kbDetail(d) {
       deleted ? h('span', { class: 'chip error' }, 'Deleted') : null, close),
     h('div', { class: 'kb-d-title' }, h('h2', null, x.title),
       deleted ? null : h('button', { type: 'button', class: 'title-tool', 'aria-label': 'Edit the title', title: 'Edit the title', onclick: edit('Title', 'title') }, icon('pencil'))),
-    h('div', { class: 'kb-d-body' + (x.body ? '' : ' none') }, x.body || 'No description.',
+    h('div', { class: 'kb-d-body' + (x.body ? '' : ' none') }, x.body ? kbBody(x, deleted) : 'No description.',
       deleted ? null : h('button', { type: 'button', class: 'kb-link', onclick: edit('Description', 'body', true) }, x.body ? 'Edit' : 'Add one')),
     status,
     kv([['Assignee', who], ['Board', board], ['Made by', `${x.created_by.agent ? x.created_by.name : 'You'}, ${new Date(x.created_at).toLocaleString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit', hourCycle: 'h23' })}`]]),
@@ -8600,7 +8601,7 @@ function kbComments(x, deleted) {
             if (!await ask({ title: 'Delete your comment?', body: 'Its text stays in the history.', ok: 'Delete', danger: true })) return
             guarded(async () => { await api('DELETE', `/v1/kanban/comments/${c.id}`); await refreshKanban() })
           } }, 'Delete')) : null),
-      h('p', { class: 'kb-c-text' }, c.text))
+      h('div', { class: 'kb-c-text text' }, markdown(c.text)))
   }) : h('p', { class: 'note' }, 'No comments yet.'))
   if (deleted) return list
   const ta = h('textarea', { rows: '2', placeholder: 'Write a comment', 'aria-label': 'Comment', value: k.draft })
@@ -8627,6 +8628,44 @@ function kbComments(x, deleted) {
   return h('div', null, list, form)
 }
 
+// kbTasks are the checklist items of a card's body, as the daemon counts
+// them (store.CardTasks): markdown task items outside fenced code.
+function kbTasks(body) {
+  const out = []
+  let fence = ''
+  for (const l of body.split('\n')) {
+    const f = l.match(/^\s*(```|~~~)/)
+    if (f) { fence = !fence ? f[1] : fence === f[1] ? '' : fence; continue }
+    if (fence) continue
+    const m = l.match(/^\s*(?:>\s*)*(?:[-*+]|\d{1,9}[.)])\s+\[([ xX])\]\s+(\S.*?)\s*$/)
+    if (m) out.push({ done: m[1] !== ' ', text: m[2] })
+  }
+  return out
+}
+
+// kbBody is a card's body as markdown; its checklist's boxes check the
+// item, where they are the items the daemon counts.
+function kbBody(x, deleted) {
+  const el = h('div', { class: 'text kb-md' }, markdown(x.body))
+  const boxes = [...el.querySelectorAll('li.task > input[type="checkbox"], li.task > p > input[type="checkbox"]')]
+  const tasks = kbTasks(x.body)
+  if (deleted || boxes.length !== tasks.length) return el
+  boxes.forEach((box, i) => {
+    box.disabled = false
+    box.setAttribute('aria-label', tasks[i].text)
+    box.addEventListener('change', () => guarded(async () => {
+      try {
+        await api('POST', `/v1/kanban/cards/${x.id}/check`, { item: i, checked: box.checked, text: tasks[i].text })
+      } catch (e) {
+        box.checked = !box.checked
+        throw e
+      }
+      await refreshKanban()
+    }))
+  })
+  return el
+}
+
 // kbWhat is what a line of history says, and the change it shows.
 function kbWhat(e) {
   const col = (s) => KB_STATUS[s] || s
@@ -8637,6 +8676,8 @@ function kbWhat(e) {
     case 'status': return ['moved it', col(e.from), col(e.to)]
     case 'assignee': return [e.to ? 'assigned it' : 'unassigned it', e.from_name || 'nobody', e.to_name || 'nobody']
     case 'board': return ['moved it to another board', e.from, e.to]
+    case 'checked': return [`checked “${e.to}”`]
+    case 'unchecked': return [`unchecked “${e.to}”`]
     case 'deleted': return ['deleted it']
     case 'restored': return ['restored it']
     case 'comment': return ['commented', null, e.to, true]

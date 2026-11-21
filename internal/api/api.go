@@ -993,6 +993,9 @@ type KanbanCard struct {
 	Key          string `json:"key"`
 	Color        string `json:"color"`
 	AssigneeName string `json:"assignee_name,omitempty"`
+	// Tasks and TasksDone count the checklist in its body.
+	Tasks     int `json:"tasks,omitempty"`
+	TasksDone int `json:"tasks_done,omitempty"`
 }
 
 // Kanban is what an isolation sees (or, without one, every board): its
@@ -1031,6 +1034,15 @@ type NewCard struct {
 	Body     string `json:"body"`
 	Status   string `json:"status"`
 	Assignee string `json:"assignee"`
+}
+
+// CheckTask checks the item-th item (from 0) of a card's checklist, or
+// unchecks it; Text, when given, is the item's text as the caller saw it,
+// so a checklist changed since is not checked in the wrong place.
+type CheckTask struct {
+	Item    int    `json:"item"`
+	Checked bool   `json:"checked"`
+	Text    string `json:"text"`
 }
 
 // KanbanText is a comment's text.

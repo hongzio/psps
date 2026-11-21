@@ -211,6 +211,12 @@ func (m *Manager) apiCard(c store.KanbanCard, colors map[string]string) api.Kanb
 	if c.Assignee != "" {
 		v.AssigneeName = m.agentName(c.Assignee, "")
 	}
+	for _, t := range store.CardTasks(c.Body) {
+		v.Tasks++
+		if t.Done {
+			v.TasksDone++
+		}
+	}
 	if c.CreatedBy.Agent != "" {
 		v.CreatedBy.Name = m.agentName(c.CreatedBy.Agent, c.CreatedBy.Name)
 	}
@@ -527,6 +533,41 @@ func (m *Manager) deleteKanbanCard(s kanbanScope, id int64, restore bool) (api.K
 	return m.apiCard(c, colors), nil
 }
 
+// checkKanbanTask checks an item of a card's checklist, or unchecks it.
+func (m *Manager) checkKanbanTask(s kanbanScope, id int64, req api.CheckTask) (api.KanbanCard, error) {
+	if err := s.need(kanbanproxy.Edit); err != nil {
+		return api.KanbanCard{}, err
+	}
+	c, err := m.kanbanCard(s, id)
+	if err != nil {
+		return api.KanbanCard{}, err
+	}
+	if c.DeletedAt != nil {
+		return api.KanbanCard{}, httpError{http.StatusConflict, fmt.Errorf("card %s is deleted; restore it first", cardKey(id))}
+	}
+	ts := store.CardTasks(c.Body)
+	if req.Item < 0 || req.Item >= len(ts) {
+		return api.KanbanCard{}, badRequest(fmt.Errorf(`kanban: %s's checklist has %d items; "item" counts them from 0`, cardKey(id), len(ts)))
+	}
+	if req.Text != "" && strings.TrimSpace(req.Text) != ts[req.Item].Text {
+		return api.KanbanCard{}, httpError{http.StatusConflict, fmt.Errorf("kanban: %s's checklist changed since you read it (item %d is %q now); read the card again", cardKey(id), req.Item, ts[req.Item].Text)}
+	}
+	colors, _, _ := m.kanbanColors()
+	if ts[req.Item].Done == req.Checked {
+		return m.apiCard(c, colors), nil
+	}
+	body, err := store.CheckTask(c.Body, req.Item, req.Checked)
+	if err != nil {
+		return api.KanbanCard{}, badRequest(err)
+	}
+	c, err = m.store.UpdateCard(id, store.CardPatch{Body: &body}, s.by)
+	if err != nil {
+		return api.KanbanCard{}, err
+	}
+	m.pokeChanges()
+	return m.apiCard(c, colors), nil
+}
+
 func checkComment(t string) (string, error) {
 	t = strings.TrimSpace(t)
 	switch {
@@ -640,6 +681,10 @@ func (m *Manager) DeleteKanbanCard(id int64, restore bool) (api.KanbanCard, erro
 	return m.deleteKanbanCard(operatorKanban(), id, restore)
 }
 
+func (m *Manager) CheckKanbanTask(id int64, req api.CheckTask) (api.KanbanCard, error) {
+	return m.checkKanbanTask(operatorKanban(), id, req)
+}
+
 func (m *Manager) AddKanbanComment(card int64, text string) (store.KanbanComment, error) {
 	return m.addKanbanComment(operatorKanban(), card, text)
 }
@@ -744,6 +789,19 @@ func (m *Manager) kanbanRoutes(mux *http.ServeMux, iso string) {
 			v, err := m.deleteKanbanCard(s, id, false)
 			reply(w, v, err)
 		}
+	})
+	mux.HandleFunc("POST /a/{token}/kanban/{card}/check", func(w http.ResponseWriter, r *http.Request) {
+		s, ok := scope(w, r)
+		if !ok {
+			return
+		}
+		id, ok := card(w, r)
+		var req api.CheckTask
+		if !ok || !body(w, r, &req, `{"item": 0, "checked": true, "text": "..."}`) {
+			return
+		}
+		v, err := m.checkKanbanTask(s, id, req)
+		reply(w, v, err)
 	})
 	mux.HandleFunc("POST /a/{token}/kanban/{card}/comments", func(w http.ResponseWriter, r *http.Request) {
 		s, ok := scope(w, r)

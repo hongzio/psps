@@ -149,6 +149,26 @@ func TestAgentsKeepCardsOnTheBoardsTheirIsolationIsGiven(t *testing.T) {
 		t.Fatalf("deleted without the right: %d %s", code, out)
 	}
 
+	// A checklist in the body: an item checked by number, guarded by its
+	// text; counted on the card.
+	if code, out := kb(lead, "PATCH", "/K-1", `{"body":"- [ ] pin the tokenizer\n- [ ] rerun tape 3"}`); code != 200 {
+		t.Fatalf("body: %d %s", code, out)
+	}
+	code, out = kb(lead, "POST", "/K-1/check", `{"item":1,"checked":true,"text":"rerun tape 3"}`)
+	json.Unmarshal([]byte(out), &c)
+	if code != 200 || c.Tasks != 2 || c.TasksDone != 1 || !strings.Contains(c.Body, "- [x] rerun tape 3") {
+		t.Fatalf("check: %d %s", code, out)
+	}
+	if code, out := kb(lead, "POST", "/K-1/check", `{"item":0,"checked":true,"text":"something else"}`); code != http.StatusConflict {
+		t.Fatalf("a stale checklist: %d %s", code, out)
+	}
+	if code, _ := kb(lead, "POST", "/K-1/check", `{"item":2,"checked":true}`); code != http.StatusBadRequest {
+		t.Fatalf("an item there is not: %d", code)
+	}
+	if code, _ := kb(grader, "POST", "/K-1/check", `{"item":0,"checked":true}`); code != http.StatusForbidden {
+		t.Fatalf("lab checked without edit: %d", code)
+	}
+
 	// The operator sees every board, and the card's whole history.
 	all, err := m.Kanban("", "", "")
 	if err != nil || len(all.Boards) != 3 || len(all.Cards) != 1 {
@@ -169,7 +189,7 @@ func TestAgentsKeepCardsOnTheBoardsTheirIsolationIsGiven(t *testing.T) {
 	for _, h := range d.History {
 		lines = append(lines, h.By.Name+" "+h.Kind)
 	}
-	want := "operator deleted,grader comment_edited,grader comment,lead status,lead board,lead assignee,lead created"
+	want := "operator deleted,lead checked,lead body,grader comment_edited,grader comment,lead status,lead board,lead assignee,lead created"
 	if strings.Join(lines, ",") != want {
 		t.Fatalf("history %s\nwant    %s", strings.Join(lines, ","), want)
 	}
@@ -177,7 +197,7 @@ func TestAgentsKeepCardsOnTheBoardsTheirIsolationIsGiven(t *testing.T) {
 		t.Fatalf("an agent saw a deleted card: %d", code)
 	}
 	log, _ := m.KanbanLog("dev", "", nil, 0, 0)
-	if len(log) != 7 || log[0].Key != "K-1" || log[0].CardTitle != "Find why BLEU drops" || log[0].Color != "teal" {
+	if len(log) != 9 || log[0].Key != "K-1" || log[0].CardTitle != "Find why BLEU drops" || log[0].Color != "teal" {
 		t.Fatalf("dev's log: %+v", log)
 	}
 

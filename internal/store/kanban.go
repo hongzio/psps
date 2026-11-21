@@ -4,6 +4,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"regexp"
 	"strings"
 	"time"
 )
@@ -38,6 +39,10 @@ const (
 	KanbanCommented      = "comment"
 	KanbanCommentEdited  = "comment_edited"
 	KanbanCommentDeleted = "comment_deleted"
+	// A checklist item in the body checked or unchecked, and nothing else
+	// changed: To is the item's text.
+	KanbanChecked   = "checked"
+	KanbanUnchecked = "unchecked"
 )
 
 // A KanbanActor is who did something on a board: an agent (by ID, with
@@ -298,6 +303,22 @@ func (s *Store) UpdateCard(id int64, p CardPatch, by KanbanActor) (KanbanCard, e
 		}
 		if _, err := tx.Exec(`UPDATE kanban_cards SET `+col+` = ? WHERE id = ?`, *to, id); err != nil {
 			return err
+		}
+		// Checking items of its checklist is a line for each, not the
+		// whole body twice.
+		if kind == KanbanBody {
+			if ts := taskToggles(old, *to); ts != nil {
+				for _, t := range ts {
+					k := KanbanUnchecked
+					if t.Done {
+						k = KanbanChecked
+					}
+					if err := addKanbanEvent(tx, KanbanEvent{Card: id, Board: board, By: by, Kind: k, To: t.Text, At: now}); err != nil {
+						return err
+					}
+				}
+				return nil
+			}
 		}
 		if kind == KanbanStatus {
 			if _, err := tx.Exec(`UPDATE kanban_cards SET moved_at = ? WHERE id = ?`, ts(now), id); err != nil {
@@ -575,4 +596,86 @@ func renameBoard(tx kanbanTx, name, to string) error {
 	}
 	_, err := tx.Exec(`UPDATE kanban_events SET board = ? WHERE board = ?`, to, name)
 	return err
+}
+
+// A CardTask is an item of a checklist in a card's body: a markdown task
+// list item, "- [ ] text" or "- [x] text".
+type CardTask struct {
+	// Line is its line in the body, from 0.
+	Line int    `json:"-"`
+	Done bool   `json:"done"`
+	Text string `json:"text"`
+}
+
+var taskLine = regexp.MustCompile(`^(\s*(?:>\s*)*(?:[-*+]|\d{1,9}[.)])\s+\[)([ xX])(\]\s+)(\S.*?)\s*$`)
+var fenceLine = regexp.MustCompile("^\\s*(```|~~~)")
+
+// CardTasks are the checklist items in body, in order; those in a fenced
+// code block are not.
+func CardTasks(body string) []CardTask {
+	var out []CardTask
+	fence := ""
+	for i, l := range strings.Split(body, "\n") {
+		if m := fenceLine.FindStringSubmatch(l); m != nil {
+			switch fence {
+			case "":
+				fence = m[1]
+			case m[1]:
+				fence = ""
+			}
+			continue
+		}
+		if fence != "" {
+			continue
+		}
+		if m := taskLine.FindStringSubmatch(l); m != nil {
+			out = append(out, CardTask{Line: i, Done: m[2] != " ", Text: m[4]})
+		}
+	}
+	return out
+}
+
+// CheckTask is body with its item-th checklist item (from 0) checked or
+// not.
+func CheckTask(body string, item int, done bool) (string, error) {
+	ts := CardTasks(body)
+	if item < 0 || item >= len(ts) {
+		return body, fmt.Errorf("the card's checklist has %d items, not an item %d", len(ts), item+1)
+	}
+	lines := strings.Split(body, "\n")
+	mark := " "
+	if done {
+		mark = "x"
+	}
+	lines[ts[item].Line] = taskLine.ReplaceAllString(lines[ts[item].Line], "${1}"+mark+"${3}${4}")
+	return strings.Join(lines, "\n"), nil
+}
+
+// taskToggles are the items checked or unchecked between old and new, when
+// that is all that changed; nil otherwise.
+func taskToggles(old, new string) []CardTask {
+	ol, nl := strings.Split(old, "\n"), strings.Split(new, "\n")
+	if len(ol) != len(nl) {
+		return nil
+	}
+	ot, nt := CardTasks(old), CardTasks(new)
+	if len(ot) != len(nt) {
+		return nil
+	}
+	byLine := map[int]int{}
+	for i, t := range ot {
+		byLine[t.Line] = i
+	}
+	var out []CardTask
+	for i := range ol {
+		if ol[i] == nl[i] {
+			continue
+		}
+		j, ok := byLine[i]
+		if !ok || j >= len(nt) || nt[j].Line != i || nt[j].Text != ot[j].Text || nt[j].Done == ot[j].Done {
+			return nil
+		}
+		out = append(out, nt[j])
+	}
+	return out
 }

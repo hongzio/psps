@@ -21,6 +21,7 @@ const kanbanUsage = `usage:
   psps kanban new BOARD TITLE... [--body TEXT] [--status S] [--assignee AGENT]
   psps kanban mv K-12 todo|doing|done    move it to another column
   psps kanban edit K-12 [--title T] [--body TEXT] [--assignee AGENT|""] [--board B]
+  psps kanban check K-12 N               check the N-th item of its checklist (- [ ] in its body); uncheck K-12 N
   psps kanban comment K-12 TEXT...       write on it
   psps kanban comment-edit N TEXT...     change a comment of yours; comment-rm N deletes it
   psps kanban rm K-12                    take it off its board (its history stays); restore K-12 puts it back
@@ -78,10 +79,14 @@ func kanbanCmd(p paths.Paths, args []string) error {
 			return nil
 		}
 		tw := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
-		fmt.Fprintln(tw, "CARD\tBOARD\tSTATUS\tASSIGNEE\tCOMMENTS\tUPDATED\tTITLE")
+		fmt.Fprintln(tw, "CARD\tBOARD\tSTATUS\tASSIGNEE\tCHECKED\tCOMMENTS\tUPDATED\tTITLE")
 		for _, x := range v.Cards {
-			fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%d\t%s\t%s\n", x.Key, x.Board, kanbanproxy.StatusNames[x.Status], orDash(x.AssigneeName),
-				x.Comments, x.UpdatedAt.Local().Format("Jan 2 15:04"), x.Title)
+			checked := "-"
+			if x.Tasks > 0 {
+				checked = fmt.Sprintf("%d/%d", x.TasksDone, x.Tasks)
+			}
+			fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\t%d\t%s\t%s\n", x.Key, x.Board, kanbanproxy.StatusNames[x.Status], orDash(x.AssigneeName),
+				checked, x.Comments, x.UpdatedAt.Local().Format("Jan 2 15:04"), x.Title)
 		}
 		return tw.Flush()
 
@@ -155,6 +160,26 @@ func kanbanCmd(p paths.Paths, args []string) error {
 			return err
 		}
 		fmt.Printf("%s: %s, on %s, in %s.\n", x.Key, x.Title, x.Board, kanbanproxy.StatusNames[x.Status])
+		return nil
+
+	case "check", "uncheck":
+		pos := parse(fs, args)
+		if len(pos) != 2 {
+			return fmt.Errorf("usage: psps kanban %s K-12 N", verb)
+		}
+		id, err := card(pos, "")
+		if err != nil {
+			return err
+		}
+		n, err := strconv.Atoi(pos[1])
+		if err != nil || n < 1 {
+			return fmt.Errorf("%q is not an item's number (1 is the first)", pos[1])
+		}
+		x, err := c.CheckKanbanTask(ctx, id, api.CheckTask{Item: n - 1, Checked: verb == "check"})
+		if err != nil {
+			return err
+		}
+		fmt.Printf("%s: %d of %d checked.\n", x.Key, x.TasksDone, x.Tasks)
 		return nil
 
 	case "comment":
@@ -262,6 +287,10 @@ func kanbanChange(e api.KanbanEvent) string {
 		return "assignee " + orDash(e.FromName) + " → " + orDash(e.ToName)
 	case store.KanbanBoard:
 		return "board " + e.From + " → " + e.To
+	case store.KanbanChecked:
+		return "checked " + q(e.To)
+	case store.KanbanUnchecked:
+		return "unchecked " + q(e.To)
 	case store.KanbanDeleted:
 		return "deleted it"
 	case store.KanbanRestored:

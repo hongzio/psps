@@ -3,6 +3,7 @@ package store
 import (
 	"encoding/json"
 	"errors"
+	"strings"
 	"testing"
 )
 
@@ -122,5 +123,46 @@ func TestABoardListsItsColumnsInOrderAndMovedCardsLast(t *testing.T) {
 	want, _ := json.Marshal([]int64{b.ID, c.ID, a.ID})
 	if string(got) != string(want) {
 		t.Fatalf("order %s, want %s", got, want)
+	}
+}
+
+func TestACardsChecklistIsItsBodysTaskItemsOutsideCode(t *testing.T) {
+	body := "Steps:\n- [ ] pin the tokenizer\n- [x] rerun tape 3\n```\n- [ ] not an item\n```\n  * [X] nested, done\n> - [ ] quoted\n1. [ ] numbered\n- [ ]\n- [] no"
+	ts := CardTasks(body)
+	got, _ := json.Marshal(ts)
+	want := `[{"done":false,"text":"pin the tokenizer"},{"done":true,"text":"rerun tape 3"},{"done":true,"text":"nested, done"},{"done":false,"text":"quoted"},{"done":false,"text":"numbered"}]`
+	if string(got) != want {
+		t.Fatalf("tasks %s\nwant  %s", got, want)
+	}
+	b, err := CheckTask(body, 0, true)
+	if err != nil || CardTasks(b)[0].Done != true || strings.Count(b, "\n") != strings.Count(body, "\n") {
+		t.Fatalf("checked: %q %v", b, err)
+	}
+	if b2, _ := CheckTask(b, 2, false); !strings.Contains(b2, "  * [ ] nested, done") {
+		t.Fatalf("unchecked: %q", b2)
+	}
+	if _, err := CheckTask(body, 5, true); err == nil {
+		t.Fatal("checked an item there is not")
+	}
+}
+
+func TestCheckingItemsIsALineEachNotTheBodyTwice(t *testing.T) {
+	s := open(t)
+	c, _ := s.AddCard(KanbanCard{Board: "b", Title: "t", Status: CardTodo, Body: "- [ ] one\n- [ ] two\n- [x] three"}, Operator)
+	b, _ := CheckTask(c.Body, 0, true)
+	b, _ = CheckTask(b, 2, false)
+	if _, err := s.UpdateCard(c.ID, CardPatch{Body: &b}, Operator); err != nil {
+		t.Fatal(err)
+	}
+	more := b + "\n- [ ] four"
+	s.UpdateCard(c.ID, CardPatch{Body: &more}, Operator)
+	es, _ := s.KanbanEvents(KanbanFilter{Card: c.ID})
+	var lines []string
+	for _, e := range es {
+		lines = append(lines, e.Kind+" "+e.To)
+	}
+	want := "body " + more + ",unchecked three,checked one,created todo"
+	if strings.Join(lines, ",") != want {
+		t.Fatalf("history %q\nwant    %q", strings.Join(lines, ","), want)
 	}
 }

@@ -25,6 +25,16 @@ several. A card is on one board, in one column: "todo" (To Do), "doing"
 (In Progress) or "done" (Done). It has a title, a body, maybe an assignee
 (an agent, by ID) and comments.
 
+A card's body and comments are markdown, drawn as such where your operator
+reads them: headings, lists, **bold**, ` + "`code`" + `, code blocks, tables
+and links. A body's steps are best a checklist, one task item a line:
+
+    - [ ] pin the tokenizer
+    - [x] rerun tape 3
+
+The card shows how many are checked (1/2), and checking one is a line of its
+own in the history.
+
 The boards you see, what you may do on them, and their cards:
 
     curl -sS "$PSPS_KANBAN_URL"
@@ -47,6 +57,12 @@ Change one: any of "title", "body", "status", "assignee" ("" for none),
 "board" (another board you see):
 
     curl -sS -X PATCH "$PSPS_KANBAN_URL/K-12" --json '{"status": "doing", "assignee": "me"}'
+
+Check an item of its checklist, or uncheck it ("item" counts from 0, in the
+order they are in the body; "text" is the item as you read it, so a
+checklist changed since is refused rather than checked in the wrong place):
+
+    curl -sS "$PSPS_KANBAN_URL/K-12/check" --json '{"item": 1, "checked": true, "text": "rerun tape 3"}'
 
 Comment on one, and edit or delete a comment of yours:
 

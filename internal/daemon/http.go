@@ -541,6 +541,15 @@ func (m *Manager) Handler() http.Handler {
 			reply(w, v, err)
 		}
 	})
+	mux.HandleFunc("POST /v1/kanban/cards/{card}/check", func(w http.ResponseWriter, r *http.Request) {
+		id, ok := kanbanCardID(w, r)
+		var req api.CheckTask
+		if !ok || !decode(w, r, &req) {
+			return
+		}
+		v, err := m.CheckKanbanTask(id, req)
+		reply(w, v, err)
+	})
 	mux.HandleFunc("POST /v1/kanban/cards/{card}/comments", func(w http.ResponseWriter, r *http.Request) {
 		id, ok := kanbanCardID(w, r)
 		var req api.KanbanText
