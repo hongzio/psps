@@ -409,6 +409,14 @@ body.resizing { cursor: col-resize; user-select: none; -webkit-user-select: none
 .more-btn.has-badge::after { content: ''; position: absolute; top: 5px; right: 6px; width: 7px; height: 7px; border-radius: 50%; background: var(--accent); }
 .more-menu .btn { text-align: left; }
 .topbar h1 { margin: 0; font-size: 16px; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* The agent's own tools (Edit, Archive) sit right after its name, faint till pointed at. */
+.topbar .title-row { display: flex; align-items: center; gap: 2px; min-width: 0; }
+.topbar .title-row h1 { min-width: 0; margin-right: 2px; }
+.title-tool { display: inline-flex; align-items: center; justify-content: center; flex: none; width: 26px; height: 26px; padding: 0; border: 0; border-radius: 6px; background: transparent; color: var(--faint); }
+.title-tool .icon { width: 15px; height: 15px; stroke-width: 1.75; }
+.title-tool:hover:not(:disabled) { background: var(--code); color: var(--text); }
+.title-tool:disabled { opacity: .45; cursor: default; }
+@media (hover: none) { .title-tool { width: 32px; height: 32px; } }
 .topbar .sub { color: var(--muted); font-size: 12.5px; font-family: var(--mono); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .menu-btn { display: none; border: 0; background: transparent; font-size: 20px; padding: 4px 6px; }
 .chip {

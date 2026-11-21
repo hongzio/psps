@@ -1289,10 +1289,15 @@ function render() {
   renderToast()
 }
 
+// topbar's title is the name, or [name, ...tools]: small icon buttons right
+// after the name, that stay by it however crowded the bar gets.
 function topbar(title, sub, ...extra) {
+  const [name, ...tools] = [].concat(title)
   return h('header', { class: 'topbar', id: 'topbar' },
     h('button', { class: 'menu-btn', 'aria-label': 'Agents', onclick: () => { S.drawer = true; render() } }, icon('menu')),
-    h('div', { class: 'title' }, h('h1', null, title), sub ? h('div', { class: 'sub' }, sub) : null),
+    h('div', { class: 'title' },
+      tools.length ? h('div', { class: 'title-row' }, h('h1', null, name), ...tools.filter(Boolean)) : h('h1', null, name),
+      sub ? h('div', { class: 'sub' }, sub) : null),
     ...extra, h('span', { class: 'bm-sep' }), bmButton())
 }
 
@@ -2561,7 +2566,12 @@ function renderTopbar() {
   const working = st === 'working'
   // replaceChildren turns null into the text "null"; keep only nodes.
   slot.replaceChildren(...[
-    topbar(agentTitle(a), a.host ? `${a.kind} · on the Mac · ${tildeHome(a.workdir)}`
+    topbar([agentTitle(a),
+      h('button', { type: 'button', class: 'title-tool', title: 'Name, ID and team', 'aria-label': 'Edit agent', onclick: () => editAgent(a) }, icon('pencil')),
+      a.archived_at ? null : h('button', {
+        type: 'button', class: 'title-tool', title: a.no_archive ? 'Archiving is prevented in Agent settings' : 'Archive (x)', 'aria-label': 'Archive agent',
+        disabled: !!a.no_archive, onclick: () => askArchive(a),
+      }, icon('archive'))], a.host ? `${a.kind} · on the Mac · ${tildeHome(a.workdir)}`
       : `${a.kind} · ${a.isolation} · ${shownID(a)}` + (a.team ? ` · team ${a.team}` : '') + (forkedFrom(a) ? ` · fork of ${forkedFrom(a)}` : ''),
       h('span', { class: 'chip ' + st }, st),
       a.host ? h('span', { class: 'chip host', title: 'It runs on this Mac, outside every isolation' }, icon('monitor'), 'host') : null,
@@ -2575,7 +2585,6 @@ function renderTopbar() {
           icon('clock'), h('span', { class: 'label' }, ' Cron'), a.crons ? h('span', { class: 'badge' }, String(a.crons)) : null),
         a.archived_at ? null : h('button', { class: 'btn ghost', title: 'TODO: prompts put aside to send it later', onclick: () => openTodos(a) },
           icon('list-todo'), h('span', { class: 'label' }, ' TODO'), a.todos ? h('span', { class: 'badge' }, String(a.todos)) : null),
-        h('button', { class: 'btn ghost', title: 'Name, ID and team', onclick: () => editAgent(a) }, icon('pencil'), h('span', { class: 'label' }, ' Edit')),
         a.host ? null : h('button', {
           class: 'btn ghost', title: 'Fork: a new agent in its directory that knows its conversation so far', onclick: async () => {
             if (!await ask({
@@ -2626,11 +2635,7 @@ function renderTopbar() {
               render()
             })
           },
-        }, icon('trash-2'), h('span', { class: 'label' }, ' Delete')) : null,
-        a.archived_at ? null : h('button', {
-          class: 'btn ghost', title: a.no_archive ? 'Archiving is prevented in Agent settings' : 'Archive (x)', disabled: !!a.no_archive, onclick: () => askArchive(a),
-        },
-          icon('archive'), h('span', { class: 'label' }, ' Archive')))),
+        }, icon('trash-2'), h('span', { class: 'label' }, ' Delete')) : null)),
     a.host && !a.archived_at ? h('div', { class: 'banner host-banner' }, icon('triangle-alert'),
       ' Runs on this Mac as you, outside every isolation: it can read and change whatever you can.') : null,
     a.problem ? h('div', { class: 'banner' }, a.problem) : null,
@@ -2661,13 +2666,15 @@ function fitTopbar() {
   actions.append(more)
   bar.classList.remove('compact')
   more.hidden = true
-  const crowded = () => bar.querySelector('.title').getBoundingClientRect().width < titleMin || bar.scrollWidth > bar.clientWidth
+  // The name's tools (Edit, Archive) sit in the title too; the room is the name's.
+  const tools = [...bar.querySelectorAll('.title-tool')].reduce((w, b) => w + b.getBoundingClientRect().width, 0)
+  const crowded = () => bar.querySelector('.title').getBoundingClientRect().width - tools < titleMin || bar.scrollWidth > bar.clientWidth
   if (crowded()) bar.classList.add('compact')
   if (crowded()) {
     more.hidden = false
     // Stop stays out: it is wanted at once.
     let b
-    while (crowded() && (b = more.previousElementSibling) && actions.firstElementChild !== b) menu.prepend(b)
+    while (crowded() && (b = more.previousElementSibling) && !b.classList.contains('stop')) menu.prepend(b)
   }
   // A count behind ⋯ (mail, crons, TODO) still shows that there is one.
   more.classList.toggle('has-badge', !!menu.querySelector('.badge'))
