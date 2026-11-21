@@ -8,12 +8,14 @@ import (
 	"net/http"
 	"os"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/hongzio/psps/internal/api"
 	"github.com/hongzio/psps/internal/driver"
 	"github.com/hongzio/psps/internal/event"
 	"github.com/hongzio/psps/internal/proxy"
+	"github.com/hongzio/psps/internal/proxy/kanbanproxy"
 	"github.com/hongzio/psps/internal/store"
 )
 
@@ -488,6 +490,81 @@ func (m *Manager) Handler() http.Handler {
 		v, err := m.AgentAsks(r.PathValue("id"))
 		reply(w, v, err)
 	})
+	mux.HandleFunc("GET /v1/kanban", func(w http.ResponseWriter, r *http.Request) {
+		q := r.URL.Query()
+		v, err := m.Kanban(q.Get("iso"), q.Get("board"), q.Get("status"))
+		reply(w, v, err)
+	})
+	mux.HandleFunc("GET /v1/kanban/log", func(w http.ResponseWriter, r *http.Request) {
+		q := r.URL.Query()
+		limit, _ := strconv.Atoi(q.Get("limit"))
+		before, _ := strconv.ParseInt(q.Get("before"), 10, 64)
+		var kinds []string
+		if k := q.Get("kind"); k != "" {
+			kinds = strings.Split(k, ",")
+		}
+		v, err := m.KanbanLog(q.Get("iso"), q.Get("board"), kinds, before, limit)
+		reply(w, v, err)
+	})
+	mux.HandleFunc("POST /v1/kanban/cards", func(w http.ResponseWriter, r *http.Request) {
+		var req api.NewCard
+		if !decode(w, r, &req) {
+			return
+		}
+		v, err := m.AddKanbanCard(req)
+		reply(w, v, err)
+	})
+	mux.HandleFunc("GET /v1/kanban/cards/{card}", func(w http.ResponseWriter, r *http.Request) {
+		if id, ok := kanbanCardID(w, r); ok {
+			v, err := m.KanbanCard(id)
+			reply(w, v, err)
+		}
+	})
+	mux.HandleFunc("PATCH /v1/kanban/cards/{card}", func(w http.ResponseWriter, r *http.Request) {
+		id, ok := kanbanCardID(w, r)
+		var req store.CardPatch
+		if !ok || !decode(w, r, &req) {
+			return
+		}
+		v, err := m.UpdateKanbanCard(id, req)
+		reply(w, v, err)
+	})
+	mux.HandleFunc("DELETE /v1/kanban/cards/{card}", func(w http.ResponseWriter, r *http.Request) {
+		if id, ok := kanbanCardID(w, r); ok {
+			v, err := m.DeleteKanbanCard(id, false)
+			reply(w, v, err)
+		}
+	})
+	mux.HandleFunc("POST /v1/kanban/cards/{card}/restore", func(w http.ResponseWriter, r *http.Request) {
+		if id, ok := kanbanCardID(w, r); ok {
+			v, err := m.DeleteKanbanCard(id, true)
+			reply(w, v, err)
+		}
+	})
+	mux.HandleFunc("POST /v1/kanban/cards/{card}/comments", func(w http.ResponseWriter, r *http.Request) {
+		id, ok := kanbanCardID(w, r)
+		var req api.KanbanText
+		if !ok || !decode(w, r, &req) {
+			return
+		}
+		v, err := m.AddKanbanComment(id, req.Text)
+		reply(w, v, err)
+	})
+	mux.HandleFunc("PATCH /v1/kanban/comments/{comment}", func(w http.ResponseWriter, r *http.Request) {
+		id, ok := kanbanCommentID(w, r)
+		var req api.KanbanText
+		if !ok || !decode(w, r, &req) {
+			return
+		}
+		v, err := m.ChangeKanbanComment(id, &req.Text)
+		reply(w, v, err)
+	})
+	mux.HandleFunc("DELETE /v1/kanban/comments/{comment}", func(w http.ResponseWriter, r *http.Request) {
+		if id, ok := kanbanCommentID(w, r); ok {
+			v, err := m.ChangeKanbanComment(id, nil)
+			reply(w, v, err)
+		}
+	})
 	mux.HandleFunc("GET /v1/bookmarks", func(w http.ResponseWriter, r *http.Request) {
 		v, err := m.Bookmarks()
 		reply(w, v, err)
@@ -665,6 +742,24 @@ func askID(w http.ResponseWriter, r *http.Request) (int64, bool) {
 	id, err := strconv.ParseInt(r.PathValue("ask"), 10, 64)
 	if err != nil {
 		reply(w, nil, badRequest(fmt.Errorf("%q is not an ask number", r.PathValue("ask"))))
+		return 0, false
+	}
+	return id, true
+}
+
+func kanbanCardID(w http.ResponseWriter, r *http.Request) (int64, bool) {
+	id, err := kanbanproxy.ParseCard(r.PathValue("card"))
+	if err != nil {
+		reply(w, nil, badRequest(err))
+		return 0, false
+	}
+	return id, true
+}
+
+func kanbanCommentID(w http.ResponseWriter, r *http.Request) (int64, bool) {
+	id, err := strconv.ParseInt(r.PathValue("comment"), 10, 64)
+	if err != nil || id <= 0 {
+		reply(w, nil, badRequest(fmt.Errorf("%q is not a comment number", r.PathValue("comment"))))
 		return 0, false
 	}
 	return id, true

@@ -262,6 +262,24 @@ a job too (`--eval-job`).
 
 </td>
 </tr>
+<tr>
+<td colspan="2" valign="top">
+
+### 🗂️ Kanban: boards your agents keep
+```sh
+psps env add kanban psps --color violet
+psps env add kanban infra --color orange
+psps iso expose dev kanban psps,infra
+```
+A board is an env, in a color of its own. An isolation is given one board or
+several, and its agents make cards, move them through To Do, In Progress and
+Done, take them and comment on them. Where an isolation sees several boards,
+the web tells their cards apart by color. Every change, yours or an agent's,
+is a line in the history, and nothing removes it: a deleted card or comment
+keeps its lines. Kanban in the sidebar opens the boards.
+
+</td>
+</tr>
 </table>
 
 ## Never lose a run

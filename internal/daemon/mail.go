@@ -190,9 +190,10 @@ func (m *Manager) mailHandler(iso string) http.Handler {
 	m.approverRoutes(mux, iso)
 	m.controlRoutes(mux, iso)
 	m.jobRoutes(mux, iso)
+	m.kanbanRoutes(mux, iso)
 	m.awsRoutes(mux, iso)
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
-		reply(w, nil, httpError{http.StatusNotFound, errors.New(`mail: there is GET "$PSPS_MAIL_URL/agents" and POST "$PSPS_MAIL_URL/send?to=AGENT" (the psps-mail skill), "$PSPS_CRON_URL" (the psps-cron skill), "$PSPS_ASK_URL" (the psps-ask skill), "$PSPS_TEAM_URL" (the psps-team skill), "$PSPS_CONTROL_URL" (the psps-control skill), and "$PSPS_JOB_URL" (the psps-job skill)`)})
+		reply(w, nil, httpError{http.StatusNotFound, errors.New(`mail: there is GET "$PSPS_MAIL_URL/agents" and POST "$PSPS_MAIL_URL/send?to=AGENT" (the psps-mail skill), "$PSPS_CRON_URL" (the psps-cron skill), "$PSPS_ASK_URL" (the psps-ask skill), "$PSPS_TEAM_URL" (the psps-team skill), "$PSPS_CONTROL_URL" (the psps-control skill), "$PSPS_JOB_URL" (the psps-job skill), and "$PSPS_KANBAN_URL" (the psps-kanban skill)`)})
 	})
 	return mux
 }

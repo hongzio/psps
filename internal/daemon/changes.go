@@ -146,6 +146,7 @@ func (m *Manager) changeLooks(all bool) map[string]func() (any, error) {
 			return []any{agents, order}, err
 		},
 		"bookmarks": func() (any, error) { return m.store.Bookmarks() },
+		"kanban":    func() (any, error) { return m.store.LastKanbanEvent() },
 		"services": func() (any, error) {
 			envs, err := m.Envs("")
 			if err != nil {

@@ -277,6 +277,12 @@ func (s *Store) RenameEnv(service, name, to string) ([]string, error) {
 	if _, err := tx.Exec(`UPDATE tokens SET env = ? WHERE service = ? AND env = ?`, to, service, name); err != nil {
 		return nil, err
 	}
+	// "kanban" is kanbanproxy.Name: a board's cards and history follow it.
+	if service == "kanban" {
+		if err := renameBoard(tx, name, to); err != nil {
+			return nil, err
+		}
+	}
 	// "job" is jobproxy.Name, which imports this package.
 	if service == "job" {
 		if _, err := tx.Exec(`UPDATE jobs SET runner = ? WHERE runner = ?`, to, name); err != nil {

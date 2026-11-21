@@ -457,7 +457,7 @@ type UpdateAgent struct {
 	// NoArchive keeps its line, every session of it, from archiving, or
 	// stops keeping it.
 	NoArchive *bool `json:"no_archive,omitempty"`
-	CutLoose bool `json:"cut_loose,omitempty"`
+	CutLoose  bool  `json:"cut_loose,omitempty"`
 }
 
 type CreateAgent struct {
@@ -974,5 +974,66 @@ type AnswerAsk struct {
 
 // ReplyAsk adds the operator's words to an open ask and keeps it open.
 type ReplyAsk struct {
+	Text string `json:"text"`
+}
+
+// KanbanBoard is a kanban env as a board: its color, the isolations given
+// it, and whether it is an isolation's default.
+type KanbanBoard struct {
+	Name       string   `json:"name"`
+	Color      string   `json:"color"`
+	Default    bool     `json:"default,omitempty"`
+	Isolations []string `json:"isolations"`
+}
+
+// KanbanCard is a card with what it is shown with: its key (K-12), its
+// board's color and its assignee's name.
+type KanbanCard struct {
+	store.KanbanCard
+	Key          string `json:"key"`
+	Color        string `json:"color"`
+	AssigneeName string `json:"assignee_name,omitempty"`
+}
+
+// Kanban is what an isolation sees (or, without one, every board): its
+// boards and their cards, and what its agents may do on them.
+type Kanban struct {
+	Isolation string        `json:"isolation,omitempty"`
+	Boards    []KanbanBoard `json:"boards"`
+	Cards     []KanbanCard  `json:"cards"`
+	Allow     []string      `json:"allow,omitempty"`
+}
+
+// KanbanEvent is a line of a board's history, with its card's key and
+// title as they are now.
+type KanbanEvent struct {
+	store.KanbanEvent
+	Key       string `json:"key"`
+	CardTitle string `json:"card_title"`
+	Color     string `json:"color"`
+	// FromName and ToName are an assignee change's agents, by name.
+	FromName string `json:"from_name,omitempty"`
+	ToName   string `json:"to_name,omitempty"`
+}
+
+// KanbanCardDetail is a card with its comments and its history.
+type KanbanCardDetail struct {
+	KanbanCard
+	Comments []store.KanbanComment `json:"comments"`
+	History  []KanbanEvent         `json:"history"`
+}
+
+// NewCard makes a card; Status is todo when left out, Board the
+// isolation's default (an agent's) when left out.
+type NewCard struct {
+	Board    string `json:"board"`
+	Title    string `json:"title"`
+	Body     string `json:"body"`
+	Status   string `json:"status"`
+	Assignee string `json:"assignee"`
+}
+
+// KanbanText is a comment's text.
+type KanbanText struct {
 	Text string `json:"text"`
 }

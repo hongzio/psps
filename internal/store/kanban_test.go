@@ -1,0 +1,126 @@
+package store
+
+import (
+	"encoding/json"
+	"errors"
+	"testing"
+)
+
+func kinds(es []KanbanEvent) []string {
+	out := make([]string, len(es))
+	for i, e := range es {
+		out[i] = e.Kind
+	}
+	return out
+}
+
+func TestEveryChangeToACardIsALineOfItsHistory(t *testing.T) {
+	s := open(t)
+	agent := KanbanActor{Agent: "a1", Name: "lead"}
+	c, err := s.AddCard(KanbanCard{Board: "psps", Title: "BLEU drops", Status: CardTodo}, agent)
+	if err != nil {
+		t.Fatal(err)
+	}
+	title, status, who := "Find the BLEU regression", CardDoing, "a1"
+	same := "psps"
+	c, err = s.UpdateCard(c.ID, CardPatch{Title: &title, Status: &status, Assignee: &who, Board: &same}, Operator)
+	if err != nil || c.Title != title || c.Status != CardDoing || c.Assignee != "a1" {
+		t.Fatalf("updated %+v, %v", c, err)
+	}
+	// Nothing changes: no line.
+	if _, err := s.UpdateCard(c.ID, CardPatch{Title: &title}, Operator); err != nil {
+		t.Fatal(err)
+	}
+	cm, err := s.AddComment(c.ID, "tape 3 only", agent)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.EditComment(cm.ID, "tape 3 only", Operator); !errors.Is(err, ErrCommentNotYours) {
+		t.Fatalf("the operator edited the agent's comment: %v", err)
+	}
+	if _, err := s.EditComment(cm.ID, "tape 3 only, since the tokenizer bump", agent); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.DeleteComment(cm.ID, agent); err != nil {
+		t.Fatal(err)
+	}
+	if cs, _ := s.Comments(c.ID); len(cs) != 0 {
+		t.Fatalf("a deleted comment is still shown: %+v", cs)
+	}
+	if _, err := s.DeleteCard(c.ID, Operator); err != nil {
+		t.Fatal(err)
+	}
+	if cs, _ := s.Cards([]string{"psps"}); len(cs) != 0 {
+		t.Fatalf("a deleted card is still on its board: %+v", cs)
+	}
+	if _, err := s.UpdateCard(c.ID, CardPatch{Title: &title}, Operator); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("a deleted card was changed: %v", err)
+	}
+
+	es, err := s.KanbanEvents(KanbanFilter{Card: c.ID})
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, _ := json.Marshal(kinds(es))
+	want := `["deleted","comment_deleted","comment_edited","comment","assignee","status","title","created"]`
+	if string(got) != want {
+		t.Fatalf("history %s, want %s", got, want)
+	}
+	if es[1].From != "tape 3 only, since the tokenizer bump" || es[2].From != "tape 3 only" {
+		t.Fatalf("a comment's history lost its text: %+v", es[1:3])
+	}
+	if es[5].From != CardTodo || es[5].To != CardDoing || es[5].By != Operator {
+		t.Fatalf("status line %+v", es[5])
+	}
+	if es[7].By != agent {
+		t.Fatalf("made by %+v, want %+v", es[7].By, agent)
+	}
+
+	if _, err := s.RestoreCard(c.ID, Operator); err != nil {
+		t.Fatal(err)
+	}
+	if cs, _ := s.Cards([]string{"psps"}); len(cs) != 1 {
+		t.Fatalf("a restored card is not back: %+v", cs)
+	}
+}
+
+func TestABoardsCardsAndHistoryFollowItsEnvsRename(t *testing.T) {
+	s := open(t)
+	if err := s.PutEnv(Env{Service: "kanban", Name: "psps"}); err != nil {
+		t.Fatal(err)
+	}
+	c, _ := s.AddCard(KanbanCard{Board: "psps", Title: "a", Status: CardTodo}, Operator)
+	s.AddCard(KanbanCard{Board: "other", Title: "b", Status: CardDone}, Operator)
+	if _, err := s.RenameEnv("kanban", "psps", "gero"); err != nil {
+		t.Fatal(err)
+	}
+	cs, _ := s.Cards([]string{"gero"})
+	if len(cs) != 1 || cs[0].ID != c.ID {
+		t.Fatalf("cards on gero: %+v", cs)
+	}
+	if es, _ := s.KanbanEvents(KanbanFilter{Boards: []string{"gero"}}); len(es) != 1 {
+		t.Fatalf("gero's history: %+v", es)
+	}
+	if n, _ := s.LiveCards("psps"); n != 0 {
+		t.Fatalf("%d cards left on psps", n)
+	}
+}
+
+func TestABoardListsItsColumnsInOrderAndMovedCardsLast(t *testing.T) {
+	s := open(t)
+	a, _ := s.AddCard(KanbanCard{Board: "b", Title: "a", Status: CardDone}, Operator)
+	b, _ := s.AddCard(KanbanCard{Board: "b", Title: "b", Status: CardTodo}, Operator)
+	c, _ := s.AddCard(KanbanCard{Board: "b", Title: "c", Status: CardTodo}, Operator)
+	todo := CardTodo
+	s.UpdateCard(a.ID, CardPatch{Status: &todo}, Operator)
+	cs, _ := s.Cards([]string{"b"})
+	var ids []int64
+	for _, x := range cs {
+		ids = append(ids, x.ID)
+	}
+	got, _ := json.Marshal(ids)
+	want, _ := json.Marshal([]int64{b.ID, c.ID, a.ID})
+	if string(got) != string(want) {
+		t.Fatalf("order %s, want %s", got, want)
+	}
+}

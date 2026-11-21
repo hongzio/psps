@@ -1021,6 +1021,7 @@ function startPolling() {
   let retry = null
   const all = async () => {
     guarded(refreshBookmarks)
+    guarded(refreshKanban)
     await guarded(refreshAgents)
     await guarded(refreshIsolations)
     if (S.view === 'services') await guarded(refreshServices)
@@ -1031,7 +1032,9 @@ function startPolling() {
     isolations: () => guarded(refreshIsolations),
     bookmarks: () => guarded(refreshBookmarks),
     // The services' envs and which isolations have each.
-    services: () => S.view === 'services' ? guarded(refreshServices) : S.view === 'isolations' ? guarded(refreshIsolations) : null,
+    services: () => { guarded(refreshKanban); return S.view === 'services' ? guarded(refreshServices) : S.view === 'isolations' ? guarded(refreshIsolations) : null },
+    // A card or a comment changed, on any board.
+    kanban: () => guarded(refreshKanban),
   }
   const open = () => {
     clearTimeout(retry)
@@ -1121,7 +1124,7 @@ function select(id, closeDrawer = true) {
 }
 
 function show(view) {
-  setHash({ new: '#/new', isolations: '#/isolations', services: '#/services', setup: '#/setup' }[view] || location.hash)
+  setHash({ new: '#/new', isolations: '#/isolations', services: '#/services', setup: '#/setup', kanban: S.kb.iso ? kbHash(S.kb.iso) : '#/kanban' }[view] || location.hash)
   route()
 }
 
@@ -1150,6 +1153,9 @@ function route() {
   } else if ((m = hash.match(/^#\/services(?:\/([^/]+))?$/))) {
     S.view = 'services'
     S.svcSel = m[1] ? decodeURIComponent(m[1]) : null
+  } else if ((m = hash.match(/^#\/kanban(?:\/([^/]+))?(?:\/([^/]+))?$/))) {
+    S.view = 'kanban'
+    kbRoute(m[1], m[2])
   } else if ((m = hash.match(/^#\/setup(?:\/(iso|account|new)(?:\/([^/]+))?)?$/))) {
     S.view = 'setup'
     S.setupSel = m[1] ? { kind: m[1], name: m[2] ? decodeURIComponent(m[2]) : null } : null
@@ -1169,7 +1175,8 @@ function route() {
   if (S.view === 'new' && was !== 'new' && !coarse) document.getElementById('new-prompt')?.focus()
   if (S.view !== 'agent') guarded(refreshIsolations)
   if (S.view === 'services') guarded(refreshServices)
-  document.getElementById('main')?.querySelector('.page')?.scrollTo?.(0, 0)
+  if (S.view === 'kanban') guarded(refreshKanban)
+  if (!(S.view === 'kanban' && was === 'kanban')) document.getElementById('main')?.querySelector('.page')?.scrollTo?.(0, 0)
 }
 window.addEventListener('popstate', route)
 
@@ -1280,10 +1287,12 @@ function render() {
   else if (S.view === 'isolations') main.append(topbar('Isolations'), h('div', { class: 'page split', id: 'isolations' }))
   else if (S.view === 'services') main.append(topbar('Services'), h('div', { class: 'page split', id: 'services' }))
   else if (S.view === 'setup') main.append(topbar('Accounts'), h('div', { class: 'page split', id: 'setup' }))
+  else if (S.view === 'kanban') main.append(topbar('Kanban', S.kb.iso ? 'isolation ' + S.kb.iso : 'every board'), h('div', { class: 'page kb-page', id: 'kanban' }))
   else main.append(agentView())
   if (S.view === 'isolations') renderIsolations()
   if (S.view === 'services') renderServices()
   if (S.view === 'setup') renderSetup()
+  if (S.view === 'kanban') renderKanban()
   const box = document.getElementById('convo')
   if (box) floatScroll('convo', box)
   renderToast()
@@ -1438,7 +1447,8 @@ function sideFoot() {
   return h('div', { class: 'side-foot' },
     h('button', { class: S.view === 'isolations' ? 'active' : '', onclick: () => show('isolations') }, icon('box'), ' Isolations'),
     h('button', { class: S.view === 'services' ? 'active' : '', onclick: () => show('services') }, icon('key-round'), ' Services'),
-    h('button', { class: S.view === 'setup' ? 'active' : '', onclick: () => show('setup') }, icon('user-round'), ' Accounts'))
+    h('button', { class: S.view === 'setup' ? 'active' : '', onclick: () => show('setup') }, icon('user-round'), ' Accounts'),
+    S.kbOn || S.view === 'kanban' ? h('button', { class: S.view === 'kanban' ? 'active' : '', onclick: () => show('kanban') }, icon('square-kanban'), ' Kanban') : null)
 }
 
 // ---- Picking agents in the sidebar, to archive, restore or delete them at
@@ -4568,7 +4578,7 @@ const SERVICE_GROUPS = [
   { name: 'Into the isolation', note: 'folders, skills and ports of the Mac’s' },
   { name: 'psps’s own', note: 'answered by the daemon itself, at each agent’s own address' },
 ]
-const serviceGroup = (s) => ['share', 'skill', 'port'].includes(s.name) ? 1 : ['mail', 'cron', 'ask', 'team', 'control', 'job'].includes(s.name) ? 2 : 0
+const serviceGroup = (s) => ['share', 'skill', 'port'].includes(s.name) ? 1 : ['mail', 'cron', 'ask', 'team', 'control', 'job', 'kanban'].includes(s.name) ? 2 : 0
 const grouped = (services) => SERVICE_GROUPS.map((g, n) => ({ ...g, services: services.filter((s) => serviceGroup(s) === n) })).filter((g) => g.services.length)
 
 function isoServices(i) {
@@ -4974,6 +4984,16 @@ function fieldControls(fields, cur, adding, lookup, self) {
         if (got.length) p.set[f.key] = got
         else if (have.length) p.clear.push(f.key)
       }
+    } else if (f.kind === 'string' && f.key === 'color' && f.choices?.length && f.choices.every((c) => ICON_COLOR_NAMES.includes(c))) {
+      // A color of the icons' palette (a kanban board's): swatches.
+      let picked = typeof v === 'string' ? v : ''
+      const sws = f.choices.map((c) => h('button', {
+        type: 'button', class: 'swatch' + (c === picked ? ' on' : ''), 'aria-pressed': String(c === picked), 'aria-label': c, title: c,
+        style: `--sw: ${kbColor(c)}`,
+        onclick: () => { picked = c; for (const b of sws) { const on = b.title === c; b.classList.toggle('on', on); b.setAttribute('aria-pressed', String(on)) } },
+      }))
+      ctl = h('div', { class: 'swatches', role: 'group', 'aria-label': f.key }, sws)
+      read = (p) => { if (picked && picked !== v) p.set[f.key] = picked }
     } else if (f.kind === 'string' && f.choices?.length) {
       ctl = dropdown([DEFAULT, ...f.choices], { value: v || DEFAULT, label: f.key })
       read = (p) => { if (ctl.value !== DEFAULT) p.set[f.key] = ctl.value }
@@ -5275,6 +5295,7 @@ function envConfig(s, cfg) {
   const known = new Set(fields.map((f) => f.key))
   const shown = (f, v) => {
     if (typeof v === 'boolean') return v ? 'yes' : 'no'
+    if (f.key === 'color' && ICON_COLOR_NAMES.includes(v)) return h('span', { class: 'kb-pill' }, h('span', { class: 'kb-dot', style: `background: ${kbColor(v)}` }), v)
     if (Array.isArray(v)) return f.kind === 'list' ? h('span', { class: 'tags' }, v.map((x) => h('code', { class: 'tag' }, x))) : h('code', null, v.join(' '))
     if (v && typeof v === 'object') return h('code', null, JSON.stringify(v))
     return typeof v === 'string' && /^[~/]/.test(v) ? h('code', null, v) : String(v)
@@ -8291,6 +8312,405 @@ document.addEventListener('keydown', (e) => {
   e.preventDefault()
   act()
 })
+
+// ---- Kanban: the boards of the kanban service
+//
+// A board is a kanban env, in a color of its own; an isolation is given
+// some, and its agents keep the cards on them. The page shows one
+// isolation's boards, or every board, in three columns, a card's comments
+// and history beside them, and the history of all of them. Every change
+// made here is the operator's in that history.
+
+const ICON_COLOR_NAMES = ['gray', 'red', 'orange', 'yellow', 'green', 'teal', 'blue', 'violet', 'pink']
+const KB_COLS = [['todo', 'To Do'], ['doing', 'In Progress'], ['done', 'Done']]
+const KB_STATUS = Object.fromEntries(KB_COLS)
+const kbColor = (c) => `var(--ic-${c && c !== 'gray' ? c : 'default'})`
+const kbHash = (iso, tail) => '#/kanban' + (iso ? '/' + enc(iso) : '') + (tail ? '/' + tail : '')
+const kbKey = (id) => 'K-' + id
+// The history's kinds, as its filter offers them.
+const KB_KINDS = [['', 'All'], ['created', 'Made'], ['title,body', 'Edited'], ['status', 'Moved'], ['assignee', 'Assigned'],
+  ['board', 'Board'], ['comment,comment_edited,comment_deleted', 'Comments'], ['deleted,restored', 'Deleted']]
+
+S.kb = {
+  // The isolation whose boards show, or null for every board; the card
+  // open beside them; the history instead of the columns.
+  iso: null, sel: null, log: false,
+  data: null, detail: null, tab: 'comments', q: '', draft: '',
+  logData: null, logKind: '', logMore: false,
+  // Boards hidden from the page, by name: this browser's.
+  hidden: new Set((() => { try { return JSON.parse(localStorage.getItem('psps.kbHidden') || '[]') } catch { return [] } })()),
+}
+// Every board (for the sidebar's way in) and whether there is one.
+S.kbBoards = []
+S.kbOn = false
+
+function saveKbHidden() {
+  try { localStorage.setItem('psps.kbHidden', JSON.stringify([...S.kb.hidden])) } catch {}
+}
+
+// kbRoute reads #/kanban[/ISO][/K-12|/log] into S.kb.
+function kbRoute(a, b) {
+  let iso = a ? decodeURIComponent(a) : null
+  let tail = b
+  if (iso && !b && (iso === 'log' || /^K-\d+$/.test(iso))) { tail = iso; iso = null }
+  if (S.kb.iso !== iso) { S.kb.data = null; S.kb.logData = null }
+  S.kb.iso = iso
+  S.kb.log = tail === 'log'
+  const sel = tail && /^K-\d+$/.test(tail) ? Number(tail.slice(2)) : null
+  if (sel !== S.kb.sel) { S.kb.detail = null; S.kb.draft = '' }
+  S.kb.sel = sel
+}
+
+async function refreshKanban() {
+  const all = await api('GET', '/v1/kanban')
+  S.kbBoards = all.boards || []
+  const on = S.kbBoards.length > 0
+  if (on !== S.kbOn) { S.kbOn = on; renderSidebar() }
+  if (S.view !== 'kanban') return
+  const k = S.kb
+  k.data = k.iso ? await api('GET', '/v1/kanban?iso=' + enc(k.iso)) : all
+  if (k.sel) k.detail = await api('GET', `/v1/kanban/cards/${k.sel}`).catch(() => ({ missing: true }))
+  if (k.log) await kbLoadLog(false)
+  if (!editing('kanban')) renderKanban()
+}
+
+async function kbLoadLog(more) {
+  const k = S.kb
+  const q = new URLSearchParams({ limit: '100' })
+  if (k.iso) q.set('iso', k.iso)
+  if (k.logKind) q.set('kind', k.logKind)
+  if (more && k.logData?.length) q.set('before', String(k.logData[k.logData.length - 1].id))
+  const got = await api('GET', '/v1/kanban/log?' + q) || []
+  k.logData = more ? (k.logData || []).concat(got) : got
+  k.logMore = got.length === 100
+}
+
+// kbIsos are the isolations given a board.
+function kbIsos() {
+  const names = new Set()
+  for (const b of S.kbBoards) for (const i of b.isolations || []) names.add(i)
+  return [...names].sort()
+}
+
+function kbPill(board, color) {
+  return h('span', { class: 'kb-pill' }, h('span', { class: 'kb-dot', style: `background: ${kbColor(color)}` }), board)
+}
+
+function renderKanban() {
+  const page = document.getElementById('kanban')
+  if (!page) return
+  const d = S.kb.data
+  if (!d) { page.replaceChildren(h('p', { class: 'note kb-note' }, 'Reading the boards…')); return }
+  const scrolled = page.scrollTop
+  page.replaceChildren(kbToolbar(d), S.kb.log ? kbLogView(d) : kbBoardView(d))
+  page.scrollTop = scrolled
+}
+
+function kbToolbar(d) {
+  const k = S.kb
+  const isos = kbIsos()
+  if (k.iso && !isos.includes(k.iso)) isos.unshift(k.iso)
+  const which = dropdown([{ value: '', label: 'Every board' }, ...isos.map((i) => ({ value: i, label: i }))],
+    { value: k.iso || '', label: 'Isolation' })
+  which.addEventListener('change', () => go(kbHash(which.value, k.log ? 'log' : null)))
+  const counts = {}
+  for (const c of d.cards) counts[c.board] = (counts[c.board] || 0) + 1
+  const chips = d.boards.map((b) => {
+    const on = !k.hidden.has(b.name)
+    return h('button', {
+      type: 'button', class: 'kb-chip' + (on ? ' on' : ''), 'aria-pressed': String(on),
+      style: on ? `--kb: ${kbColor(b.color)}` : null,
+      title: (b.isolations.length ? 'Given to ' + b.isolations.join(', ') : 'Given to no isolation') + (b.default ? ' · the default' : ''),
+      onclick: () => { if (on) k.hidden.add(b.name); else k.hidden.delete(b.name); saveKbHidden(); renderKanban() },
+    }, h('span', { class: 'kb-dot', style: `background: ${kbColor(b.color)}` }), b.name,
+    k.log ? null : h('span', { class: 'kb-count' }, String(counts[b.name] || 0)))
+  })
+  const search = k.log ? null : h('label', { class: 'kb-search' }, icon('search'),
+    h('input', {
+      type: 'search', placeholder: 'Find a card', value: k.q, 'aria-label': 'Find a card',
+      oninput: (e) => { k.q = e.target.value; const cols = document.getElementById('kb-cols'); if (cols) kbFillCols(cols, d) },
+    }))
+  return h('div', { class: 'kb-bar' },
+    h('div', { class: 'kb-which' }, which),
+    h('div', { class: 'kb-chips', role: 'group', 'aria-label': 'Boards shown' },
+      chips.length ? chips : h('span', { class: 'note' }, k.iso ? `${k.iso} is given no board.` : 'No boards yet.')),
+    h('div', { class: 'kb-bar-end' }, search,
+      navLink(kbHash(k.iso, k.log ? null : 'log'), 'btn kb-btn', icon(k.log ? 'square-kanban' : 'history'), k.log ? 'Board' : 'History'),
+      k.log || !d.boards.length ? null : h('button', { type: 'button', class: 'btn primary kb-btn', onclick: () => kbNewCard(d) }, icon('plus'), 'New card')))
+}
+
+function kbEmpty(d) {
+  const k = S.kb
+  if (d.boards.length) return null
+  return h('div', { class: 'kb-empty' },
+    h('p', null, k.iso ? `Isolation ${k.iso} is given no board.` : 'There is no board yet.'),
+    h('p', { class: 'note' }, 'A board is a kanban env, in a color of its own: add one on ',
+      navLink(svcHash('kanban'), null, 'Services › kanban'), ', then turn kanban on for an isolation and give it boards there.'))
+}
+
+function kbBoardView(d) {
+  const k = S.kb
+  const empty = kbEmpty(d)
+  if (empty) return empty
+  const cols = h('div', { class: 'kb-cols', id: 'kb-cols' })
+  kbFillCols(cols, d)
+  return h('div', { class: 'kb-wrap' + (k.sel ? ' chosen' : '') }, cols, k.sel ? kbDetail(d) : null)
+}
+
+// kbShown is whether a card shows: its board not hidden, and it matches
+// what is searched for.
+function kbShown(c) {
+  const k = S.kb
+  if (k.hidden.has(c.board)) return false
+  const q = k.q.trim().toLowerCase()
+  return !q || c.title.toLowerCase().includes(q) || c.key.toLowerCase() === q || (c.assignee_name || '').toLowerCase().includes(q)
+}
+
+let kbDragging = null
+
+function kbFillCols(el, d) {
+  const k = S.kb
+  el.replaceChildren(...KB_COLS.map(([status, name]) => {
+    const cards = d.cards.filter((c) => c.status === status && kbShown(c))
+    const col = h('section', { class: 'kb-col kb-' + status, 'aria-label': name },
+      h('header', { class: 'kb-col-head' }, h('span', { class: 'kb-col-dot' }), h('h2', null, name), h('span', { class: 'kb-count' }, String(cards.length))),
+      cards.map((c) => kbCardEl(c)),
+      cards.length ? null : h('p', { class: 'kb-col-empty' }, 'No cards'))
+    // A card dropped on a column moves there.
+    col.addEventListener('dragover', (e) => { if (kbDragging) { e.preventDefault(); col.classList.add('drop') } })
+    col.addEventListener('dragleave', (e) => { if (!col.contains(e.relatedTarget)) col.classList.remove('drop') })
+    col.addEventListener('drop', (e) => {
+      e.preventDefault()
+      col.classList.remove('drop')
+      const c = kbDragging
+      kbDragging = null
+      if (c && c.status !== status) kbPatch(c.id, { status })
+    })
+    return col
+  }))
+}
+
+function kbCardEl(c) {
+  const k = S.kb
+  const el = h('a', {
+    class: 'kb-card' + (k.sel === c.id ? ' on' : ''), href: kbHash(k.iso, c.key), draggable: 'true',
+    'aria-current': k.sel === c.id ? 'true' : null,
+    onclick: (e) => { if (e.button || e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return; e.preventDefault(); go(kbHash(k.iso, k.sel === c.id ? null : c.key)) },
+    ondragstart: (e) => { kbDragging = c; e.dataTransfer.effectAllowed = 'move'; e.dataTransfer.setData('text/plain', c.key) },
+    ondragend: () => { kbDragging = null },
+  },
+  h('span', { class: 'kb-card-top' }, kbPill(c.board, c.color), h('span', { class: 'kb-key' }, c.key)),
+  h('span', { class: 'kb-card-title' }, c.title),
+  h('span', { class: 'kb-card-foot' },
+    c.assignee_name ? h('span', { class: 'kb-who' }, icon('bot'), c.assignee_name) : h('span', { class: 'kb-who none' }, 'Unassigned'),
+    c.comments ? h('span', { class: 'kb-n', title: plural(c.comments, 'comment') }, icon('message-circle'), String(c.comments)) : null,
+    h('span', { class: 'kb-age', title: new Date(c.updated_at).toLocaleString() }, msgAge(c.updated_at))))
+  return el
+}
+
+async function kbPatch(id, patch) {
+  await guarded(async () => {
+    await api('PATCH', `/v1/kanban/cards/${id}`, patch)
+    await refreshKanban()
+  })
+}
+
+// kbAgents are the live agents that may be given a card on board: those
+// of the isolations given it.
+function kbAgents(board) {
+  const b = S.kbBoards.find((x) => x.name === board)
+  const isos = new Set(b?.isolations || [])
+  return S.agents.filter((a) => !a.archived_at && !a.side_of && isos.has(a.isolation))
+}
+
+function kbDetail(d) {
+  const k = S.kb
+  const x = k.detail
+  const close = navLink(kbHash(k.iso), 'kb-x', icon('x'))
+  close.setAttribute('aria-label', 'Close the card')
+  if (!x) return h('aside', { class: 'kb-detail', 'aria-label': 'Card' }, h('div', { class: 'kb-d-head' }, close), h('p', { class: 'note' }, 'Reading the card…'))
+  if (x.missing) return h('aside', { class: 'kb-detail', 'aria-label': 'Card' }, h('div', { class: 'kb-d-head' }, close), h('p', { class: 'note' }, `There is no card ${kbKey(k.sel)}.`))
+  const deleted = !!x.deleted_at
+  const edit = (title, key, multi) => () => {
+    const input = multi ? h('textarea', { class: 'dialog-input', rows: '8' }) : h('input', { class: 'dialog-input', value: x[key] || '' })
+    if (multi) input.value = x[key] || ''
+    ask({ title, ok: 'Save', fields: [h('div', { class: 'dialog-field' }, input)], wide: multi,
+      onOk: async () => { await api('PATCH', `/v1/kanban/cards/${x.id}`, { [key]: input.value }); await refreshKanban() } })
+  }
+  const status = h('div', { class: 'segmented kb-status', role: 'group', 'aria-label': 'Column' },
+    KB_COLS.map(([s, name]) => h('button', {
+      type: 'button', class: x.status === s ? 'on' : '', 'aria-pressed': String(x.status === s), disabled: deleted,
+      onclick: () => { if (x.status !== s) kbPatch(x.id, { status: s }) },
+    }, name)))
+  const agents = kbAgents(x.board)
+  const who = dropdown([{ value: '', label: 'Nobody' }, ...agents.map((a) => ({ value: a.id, label: `${agentTitle(a)} · ${shownID(a)}` })),
+    ...(x.assignee && !agents.some((a) => a.id === x.assignee) ? [{ value: x.assignee, label: x.assignee_name || x.assignee }] : [])],
+  { value: x.assignee || '', label: 'Assignee', disabled: deleted })
+  who.addEventListener('change', () => kbPatch(x.id, { assignee: who.value }))
+  const boards = d.boards.some((b) => b.name === x.board) ? d.boards : [{ name: x.board }, ...d.boards]
+  const board = dropdown(boards.map((b) => b.name), { value: x.board, label: 'Board', disabled: deleted })
+  board.addEventListener('change', () => kbPatch(x.id, { board: board.value }))
+  const tab = (key, label) => h('button', {
+    type: 'button', role: 'tab', class: 'kb-tab' + (k.tab === key ? ' on' : ''), 'aria-selected': String(k.tab === key),
+    onclick: () => { k.tab = key; renderKanban() },
+  }, label)
+  return h('aside', { class: 'kb-detail', 'aria-label': 'Card ' + x.key },
+    h('div', { class: 'kb-d-head' }, kbPill(x.board, x.color), h('span', { class: 'kb-key' }, x.key),
+      deleted ? h('span', { class: 'chip error' }, 'Deleted') : null, close),
+    h('div', { class: 'kb-d-title' }, h('h2', null, x.title),
+      deleted ? null : h('button', { type: 'button', class: 'title-tool', 'aria-label': 'Edit the title', title: 'Edit the title', onclick: edit('Title', 'title') }, icon('pencil'))),
+    h('div', { class: 'kb-d-body' + (x.body ? '' : ' none') }, x.body || 'No description.',
+      deleted ? null : h('button', { type: 'button', class: 'kb-link', onclick: edit('Description', 'body', true) }, x.body ? 'Edit' : 'Add one')),
+    status,
+    kv([['Assignee', who], ['Board', board], ['Made by', `${x.created_by.agent ? x.created_by.name : 'You'}, ${new Date(x.created_at).toLocaleString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit', hourCycle: 'h23' })}`]]),
+    h('div', { class: 'kb-tabs', role: 'tablist' }, tab('comments', `Comments ${x.comments.length}`), tab('history', 'History')),
+    k.tab === 'history'
+      ? h('ol', { class: 'kb-history' }, x.history.map((e) => kbEventEl(e, false)))
+      : kbComments(x, deleted),
+    h('div', { class: 'kb-d-foot' }, deleted
+      ? h('button', { type: 'button', class: 'btn', onclick: () => guarded(async () => { await api('POST', `/v1/kanban/cards/${x.id}/restore`); await refreshKanban() }) }, icon('archive-restore'), ' Restore')
+      : h('button', {
+        type: 'button', class: 'btn danger', onclick: async () => {
+          if (!await ask({ title: `Delete ${x.key}?`, body: 'It leaves its board; it and its history stay, and Restore puts it back.', ok: 'Delete', danger: true })) return
+          guarded(async () => { await api('DELETE', `/v1/kanban/cards/${x.id}`); await refreshKanban() })
+        },
+      }, icon('trash-2'), ' Delete')))
+}
+
+function kbComments(x, deleted) {
+  const k = S.kb
+  const list = h('div', { class: 'kb-comments' }, x.comments.length ? x.comments.map((c) => {
+    const mine = !c.by.agent
+    return h('div', { class: 'kb-comment' },
+      h('div', { class: 'kb-c-head' }, h('strong', null, mine ? 'You' : c.by.name), mine ? null : h('span', { class: 'kb-c-kind' }, 'agent'),
+        h('span', { class: 'kb-age', title: new Date(c.created_at).toLocaleString() }, msgAge(c.created_at) + (c.edited_at ? ' · edited' : '')),
+        mine && !deleted ? h('span', { class: 'kb-c-tools' },
+          h('button', { type: 'button', class: 'kb-link', onclick: () => {
+            const input = h('textarea', { class: 'dialog-input', rows: '5' })
+            input.value = c.text
+            ask({ title: 'Edit your comment', ok: 'Save', fields: [h('div', { class: 'dialog-field' }, input)],
+              onOk: async () => { await api('PATCH', `/v1/kanban/comments/${c.id}`, { text: input.value }); await refreshKanban() } })
+          } }, 'Edit'),
+          h('button', { type: 'button', class: 'kb-link', onclick: async () => {
+            if (!await ask({ title: 'Delete your comment?', body: 'Its text stays in the history.', ok: 'Delete', danger: true })) return
+            guarded(async () => { await api('DELETE', `/v1/kanban/comments/${c.id}`); await refreshKanban() })
+          } }, 'Delete')) : null),
+      h('p', { class: 'kb-c-text' }, c.text))
+  }) : h('p', { class: 'note' }, 'No comments yet.'))
+  if (deleted) return list
+  const ta = h('textarea', { rows: '2', placeholder: 'Write a comment', 'aria-label': 'Comment', value: k.draft })
+  ta.value = k.draft
+  const send = h('button', { type: 'submit', class: 'btn primary' }, 'Send')
+  const form = h('form', {
+    class: 'kb-c-form',
+    onsubmit: (e) => {
+      e.preventDefault()
+      const text = ta.value.trim()
+      if (!text) return
+      send.disabled = true
+      guarded(async () => {
+        try {
+          await api('POST', `/v1/kanban/cards/${x.id}/comments`, { text })
+          k.draft = ''
+          await refreshKanban()
+        } finally { send.disabled = false }
+      })
+    },
+  }, ta, send)
+  ta.addEventListener('input', () => { k.draft = ta.value })
+  ta.addEventListener('keydown', (e) => { if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) { e.preventDefault(); form.requestSubmit() } })
+  return h('div', null, list, form)
+}
+
+// kbWhat is what a line of history says, and the change it shows.
+function kbWhat(e) {
+  const col = (s) => KB_STATUS[s] || s
+  switch (e.kind) {
+    case 'created': return ['made it, in ' + col(e.to)]
+    case 'title': return ['changed the title', e.from, e.to]
+    case 'body': return ['changed the description', e.from || '(none)', e.to || '(none)', true]
+    case 'status': return ['moved it', col(e.from), col(e.to)]
+    case 'assignee': return [e.to ? 'assigned it' : 'unassigned it', e.from_name || 'nobody', e.to_name || 'nobody']
+    case 'board': return ['moved it to another board', e.from, e.to]
+    case 'deleted': return ['deleted it']
+    case 'restored': return ['restored it']
+    case 'comment': return ['commented', null, e.to, true]
+    case 'comment_edited': return ['edited a comment', e.from, e.to, true]
+    case 'comment_deleted': return ['deleted a comment', e.from, null, true]
+  }
+  return [e.kind]
+}
+
+function kbEventEl(e, withCard) {
+  const [what, from, to, long] = kbWhat(e)
+  const who = e.by.agent ? e.by.name : 'You'
+  let change = null
+  if (long) {
+    change = h('div', { class: 'kb-quote' },
+      from != null ? h('p', { class: to != null ? 'kb-was' : 'kb-gone' }, from) : null,
+      to != null ? h('p', null, to) : null)
+  } else if (from != null || to != null) {
+    change = h('span', { class: 'kb-diff' }, h('span', { class: 'kb-from' }, from), icon('chevron-right'), h('span', { class: 'kb-to' }, to))
+  }
+  const k = S.kb
+  return h('li', { class: 'kb-event' },
+    h('span', { class: 'kb-ev-time', title: new Date(e.at).toLocaleString() },
+      withCard ? new Date(e.at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hourCycle: 'h23' }) : new Date(e.at).toLocaleString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit', hourCycle: 'h23' })),
+    h('div', { class: 'kb-ev-main' },
+      withCard ? h('div', { class: 'kb-ev-card' }, kbPill(e.board, e.color),
+        navLink(kbHash(k.iso, e.key), 'kb-key', e.key), h('span', { class: 'kb-ev-title' }, e.card_title)) : null,
+      h('div', { class: 'kb-ev-what' }, h('strong', null, who), e.by.agent ? h('span', { class: 'kb-c-kind' }, 'agent') : null, ' ', what, change && !long ? [' ', change] : null),
+      long ? change : null))
+}
+
+function kbLogView(d) {
+  const k = S.kb
+  const empty = kbEmpty(d)
+  if (empty) return empty
+  const kinds = h('div', { class: 'kb-kinds', role: 'group', 'aria-label': 'Kinds of change' }, KB_KINDS.map(([v, label]) =>
+    h('button', {
+      type: 'button', class: 'kb-kind' + (k.logKind === v ? ' on' : ''), 'aria-pressed': String(k.logKind === v),
+      onclick: () => { k.logKind = v; guarded(async () => { await kbLoadLog(false); renderKanban() }) },
+    }, label)))
+  if (!k.logData) return h('div', { class: 'kb-log' }, kinds, h('p', { class: 'note' }, 'Reading the history…'))
+  const rows = k.logData.filter((e) => !k.hidden.has(e.board))
+  const days = []
+  for (const e of rows) {
+    const day = new Date(e.at).toLocaleDateString([], { weekday: 'short', month: 'long', day: 'numeric', year: 'numeric' })
+    if (!days.length || days[days.length - 1].day !== day) days.push({ day, rows: [] })
+    days[days.length - 1].rows.push(e)
+  }
+  return h('div', { class: 'kb-log' }, kinds,
+    days.length ? days.map((g) => h('section', { class: 'kb-day' }, h('h2', null, g.day), h('ol', { class: 'kb-history' }, g.rows.map((e) => kbEventEl(e, true)))))
+      : h('p', { class: 'note' }, 'Nothing has changed on these boards yet.'),
+    k.logMore ? h('button', { type: 'button', class: 'btn kb-more', onclick: () => guarded(async () => { await kbLoadLog(true); renderKanban() }) }, 'Older') : null,
+    h('p', { class: 'note kb-log-note' }, 'Every change to a card or a comment is here, by whoever made it; a deleted card or comment keeps its lines.'))
+}
+
+function kbNewCard(d) {
+  const k = S.kb
+  const boards = d.boards.filter((b) => !k.hidden.has(b.name))
+  const def = (boards.find((b) => b.default) || boards[0] || d.boards[0]).name
+  const board = dropdown(d.boards.map((b) => b.name), { value: def, label: 'Board' })
+  const title = h('input', { class: 'dialog-input', placeholder: 'What is to be done', 'aria-label': 'Title' })
+  const body = h('textarea', { class: 'dialog-input', rows: '5', placeholder: 'What someone picking it up needs to know (optional)', 'aria-label': 'Description' })
+  const status = dropdown(KB_COLS.map(([value, label]) => ({ value, label })), { value: 'todo', label: 'Column' })
+  ask({
+    title: 'New card', ok: 'Make it', wide: true,
+    fields: [
+      h('div', { class: 'dialog-field' }, h('label', null, 'Board'), board),
+      h('div', { class: 'dialog-field' }, h('label', null, 'Title'), title),
+      h('div', { class: 'dialog-field' }, h('label', null, 'Description'), body),
+      h('div', { class: 'dialog-field' }, h('label', null, 'Column'), status),
+    ],
+    onOk: async () => {
+      const c = await api('POST', '/v1/kanban/cards', { board: board.value, title: title.value, body: body.value, status: status.value })
+      k.hidden.delete(c.board)
+      saveKbHidden()
+      go(kbHash(k.iso, c.key))
+    },
+  })
+}
 
 route()
 startPolling()

@@ -790,7 +790,7 @@ Isolations created before the proxies need `psps iso upgrade NAME` once;
 
 ## Agents in psps
 
-Six services give an isolation's agents a part in psps itself. Each is a
+Seven services give an isolation's agents a part in psps itself. Each is a
 different kind of right, turned on apart:
 
 | For agents to… | Turn on | What it is |
@@ -801,6 +801,7 @@ different kind of right, turned on apart:
 | work as a team toward an eval, within a budget | `team` | the agent you make a team's lead makes agents of its own, hears of their turns and has the eval run, within your terms |
 | do some of what you do with the psps command | `control` | the actions its env ticks, on the agents of the isolations it reaches, as itself |
 | have a command of yours run elsewhere on their work | `job` | a runner's command run in the runner's isolation on a copy of a directory of theirs; they get what it leaves them |
+| keep track of work on a board | `kanban` | cards on the boards its exposure names, in To Do, In Progress and Done, with comments; every change in a history |
 
 Each puts a skill in the isolation, and each skill sends what is another's
 there: a question to a peer to mail, an instruction to control, a lead's own
@@ -1400,6 +1401,62 @@ runners open to it, `POST /jobs` asks for one
 and `DELETE /jobs/ID` cancels it. An agent sees the jobs asked for from its
 own isolation, never psps's or yours, and only the runners its exposure names
 (`psps iso expose dev job sim,quick --default-env quick`).
+
+## Kanban
+
+A kanban board is an env of the kanban service, in a color of its own, one
+of the nine the web's icons take (gray, red, orange, yellow, green, teal,
+blue, violet, pink). The service is off for an isolation until it is given
+boards, one or several; its agents then see those boards alone, and the web
+tells their cards apart by their boards' colors.
+
+```sh
+psps env add kanban psps --color violet       # a board
+psps env edit kanban psps --color pink
+psps iso expose dev kanban psps,infra         # dev's agents keep cards on both; psps is the default
+psps iso expose dev kanban --allow create --allow move --allow comment   # what they may do
+psps iso expose dev kanban --clear-allow      # read only
+psps iso unexpose dev kanban                  # the service off
+```
+
+What agents may do besides reading is the exposure's `--allow`: `create`
+(make cards), `edit` (title, body, assignee, board), `move` (the column),
+`comment` (write, and edit and delete their own) and `delete`; all but
+`delete` when it does not say. You may do all of it on every board:
+
+```sh
+psps kanban                                   # every board's cards; --iso dev for dev's, --board, --status
+psps kanban new psps "Pin the tokenizer" --body "..." --status doing --assignee lead
+psps kanban show K-12                         # the card, its comments and its history
+psps kanban mv K-12 done                      # todo, doing or done
+psps kanban edit K-12 --title ... --assignee "" --board infra
+psps kanban comment K-12 "..."                # comment-edit N / comment-rm N for one of yours
+psps kanban rm K-12                           # off its board; restore K-12 puts it back
+psps kanban log [K-12] [--iso dev] [--board psps]   # the history, newest first
+```
+
+A card's assignee is an agent of an isolation given its board; moved to a
+board its assignee does not see, the card is let go of. Every change to a
+card or a comment is a line of history, by whoever made it, you or an agent,
+and nothing removes one: a deleted card or comment stays in the store, out
+of sight, its lines and text kept. A board with cards on it is not removed
+(`psps env rm`) until they are moved or deleted; a renamed one takes its
+cards and history with it.
+
+In the web, Kanban at the foot of the sidebar (there once a board is) shows
+an isolation's boards, or every board: the three columns, each board's
+cards toggled by its chip, a search, and a card's comments and history
+beside them. A card is moved with its column buttons or by dragging it;
+History shows the history of the boards shown, by kind of change. The color
+of a board is picked from swatches in its env's form on the Services page.
+
+Inside the isolation, `PSPS_KANBAN_URL` is each agent's own address for its
+boards (on mail's port, so no `psps iso upgrade` is needed), and the
+`psps-kanban` skill says how to use it: `GET` the boards and their cards
+(`?board=`, `?status=`, `?mine=1`), `POST` a card, `GET`, `PATCH` and
+`DELETE` `$PSPS_KANBAN_URL/K-12`, `POST $PSPS_KANBAN_URL/K-12/comments`,
+`PATCH`/`DELETE $PSPS_KANBAN_URL/comments/N` and `GET $PSPS_KANBAN_URL/log`.
+What an agent does there is recorded as that agent's.
 
 ## Shared folders
 

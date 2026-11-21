@@ -25,6 +25,7 @@ import (
 	"github.com/hongzio/psps/internal/proxy/controlproxy"
 	"github.com/hongzio/psps/internal/proxy/cronproxy"
 	"github.com/hongzio/psps/internal/proxy/jobproxy"
+	"github.com/hongzio/psps/internal/proxy/kanbanproxy"
 	"github.com/hongzio/psps/internal/proxy/mailproxy"
 	"github.com/hongzio/psps/internal/proxy/teamproxy"
 	"github.com/hongzio/psps/internal/shimproto"
@@ -309,6 +310,8 @@ type isoWorkspace struct {
 	control bool
 	// job: its agents have a job address (jobEnv).
 	job bool
+	// kanban: its agents have a kanban address (kanbanEnv).
+	kanban bool
 	// awsStrict: its agents ask psps to run SSM commands (awsEnv).
 	awsStrict bool
 	// skills are the files of the services whose files come and go
@@ -340,6 +343,9 @@ func (w isoWorkspace) signature() string {
 	}
 	if w.job {
 		sig += "\njob"
+	}
+	if w.kanban {
+		sig += "\nkanban"
 	}
 	if w.awsStrict {
 		sig += "\naws-strict"
@@ -377,6 +383,7 @@ func (m *Manager) workspace(iso string) (isoWorkspace, error) {
 		w.team = w.team || svc.Name() == teamproxy.Name
 		w.control = w.control || svc.Name() == controlproxy.Name
 		w.job = w.job || svc.Name() == jobproxy.Name
+		w.kanban = w.kanban || svc.Name() == kanbanproxy.Name
 		if svc.Name() == awsService {
 			_, w.awsStrict = m.awsStrict(iso)
 		}
@@ -699,6 +706,13 @@ func (m *Manager) DeleteEnv(ctx context.Context, service, name string, force boo
 	svc, err := m.registry().Get(service)
 	if err != nil {
 		return badRequest(err)
+	}
+	if service == kanbanproxy.Name {
+		if n, err := m.store.LiveCards(name); err != nil {
+			return err
+		} else if n > 0 {
+			return httpError{409, fmt.Errorf("board %s has %d cards; move them to another board or delete them first", name, n)}
+		}
 	}
 	holders, _ := m.store.Exposing(service, name)
 	if err := m.store.DeleteEnv(service, name, force); err != nil {

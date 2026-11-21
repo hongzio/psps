@@ -101,6 +101,9 @@ const usage = `psps — run coding agents in isolated containers
   psps ask show N
   psps ask reply N [--pick K] [TEXT...] | yes|no N [TEXT...] | done|cant N [TEXT...] | dismiss N [TEXT...]
 
+  psps kanban [--iso ISO]       the kanban boards' cards (the kanban service): show, new, mv, edit, comment, rm, log
+  psps kanban help
+
   psps job ls [--live]          jobs: a runner's command run in its isolation on a copy of a directory
   psps job show ID [--json] [--wait SECONDS]
   psps job run RUNNER --from ISO [--options JSON|@FILE] [--wait] DIR
@@ -167,6 +170,8 @@ func run(args []string) error {
 		return jobCmd(p, args[1:])
 	case "ask":
 		return askCmd(p, args[1:])
+	case "kanban":
+		return kanbanCmd(p, args[1:])
 	case "pf":
 		return pfCmd(args[1:])
 	case "pfd":
