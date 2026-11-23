@@ -531,6 +531,12 @@ type Files struct {
 	Ignored []string `json:"ignored,omitempty"`
 	// Truncated: there are more than these.
 	Truncated bool `json:"truncated,omitempty"`
+	// Root is the folder listed, whole: the workspace unless another was
+	// asked for.
+	Root string `json:"root,omitempty"`
+	// Shallow: Root is out of a repository, and Files is what is in it
+	// itself, a folder's name ending in /, listed when it is opened.
+	Shallow bool `json:"shallow,omitempty"`
 }
 
 // File kinds: how the web's viewer shows a file.

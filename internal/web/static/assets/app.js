@@ -118,6 +118,8 @@ const S = {
   fQuery: '',
   fChip: 'docs',
   fOpen: new Set(),
+  // The folder the Files tab lists, by agent, when not its workspace.
+  fRoot: new Map(),
   dWide: (() => { try { return localStorage.getItem('psps.drawerWide') === '1' } catch { return false } })(),
   convos: new Map(),
   // Side agents (/btw): forked from an agent to answer a question on the
@@ -6661,8 +6663,8 @@ function fpLookup(a, cand) {
   if (r && (r.pending || r.abs || Date.now() - r.at < 60000)) return r
   // One in the workspace's list is a file; the list leaves out what git
   // ignores, so one not in it is asked of the daemon.
-  const fs = completions.files.get(a.id)
-  if (fs?.data && !cand.startsWith('/') && !cand.startsWith('~') && fileSet(fs.data).has(cand)) {
+  const fs = completions.files.get(a.id)?.data || listings.get(listingKey(a.id, a.workdir))?.data
+  if (fs && !fs.shallow && !cand.startsWith('/') && !cand.startsWith('~') && fileSet(fs).has(cand)) {
     const known = { abs: joinPath(a.workdir, cand), at: Date.now() }
     fpKnown.set(k, known)
     return known
@@ -6821,7 +6823,8 @@ function filesPane() {
 
 // The tree of a list of files, made once per list and chip. What git
 // ignores is in it too, marked: a file in its folder's ign, a folder by its
-// name alone, as lazy, its files listed when it is opened (dirListing).
+// name alone, as lazy, its files listed when it is opened (listing). Of a
+// folder out of a repository (shallow), its folders are all lazy.
 const fileTrees = new WeakMap()
 function fileTree(data, chip) {
   let byChip = fileTrees.get(data)
@@ -6830,6 +6833,7 @@ function fileTree(data, chip) {
   const keep = FILE_CHIPS.find(([k]) => k === chip)[2]
   const root = { dirs: new Map(), files: [], n: 0 }
   for (const f of data.files) {
+    if (data.shallow && f.endsWith('/')) { root.dirs.set(f.slice(0, -1), { dirs: new Map(), files: [], n: 0, lazy: f.slice(0, -1) }); continue }
     if (!keep(f)) continue
     let node = root
     root.n++
@@ -6851,7 +6855,7 @@ function fileTree(data, chip) {
       node = node.dirs.get(d)
     }
     const name = parts[parts.length - 1]
-    if (dir) node.dirs.set(name, { dirs: new Map(), files: [], n: 0, lazy: parts.join('/') })
+    if (dir) node.dirs.set(name, { dirs: new Map(), files: [], n: 0, lazy: parts.join('/'), ign: true })
     else { node.files.push(name); (node.ign ||= new Set()).add(name) }
   }
   byChip.set(chip, root)
@@ -6864,15 +6868,17 @@ function extBadge(p) {
   return h('span', { class: 'fl-ext' + (isMd(p) ? ' md' : isHtml(p) ? ' html' : FILE_IMG.test(p) ? ' img' : '') }, e || '—')
 }
 
-// dirListing is what is in the folder dir of an agent's workspace, one git
-// ignores: asked for when it is opened, and again as it stays open.
-const dirListings = new Map()
-function dirListing(id, dir) {
-  const key = id + '\n' + dir
-  let c = dirListings.get(key)
-  if (!c) dirListings.set(key, (c = { at: 0, data: null, error: null, ready: null }))
+// listing is what the Files tab has of the folder root in an agent's
+// isolation, or with dir of the folder dir in it (one git ignores, or any
+// out of a repository): asked for when it is shown, and again as it stays.
+const listings = new Map()
+const listingKey = (id, root, dir = '') => id + '\n' + root + '\n' + dir
+function listing(id, root, dir = '') {
+  const key = listingKey(id, root, dir)
+  let c = listings.get(key)
+  if (!c) listings.set(key, (c = { at: 0, data: null, error: null, ready: null }))
   if (!c.ready && Date.now() - c.at >= 15000) {
-    c.ready = api('GET', `/v1/agents/${id}/files?dir=${encodeURIComponent(dir)}`)
+    c.ready = api('GET', `/v1/agents/${id}/files?root=${encodeURIComponent(root)}${dir ? '&dir=' + encodeURIComponent(dir) : ''}`)
       .then((d) => { c.data = d; c.error = null }, (e) => { c.error = e })
       .finally(() => { c.at = Date.now(); c.ready = null })
     c.ready.then(() => renderFiles())
@@ -6880,12 +6886,40 @@ function dirListing(id, dir) {
   return c
 }
 
-// listedIgnored are the files of an agent's ignored folders listed so far.
-function listedIgnored(id) {
+// listedLazy are the files of root's lazy folders listed so far.
+function listedLazy(id, root) {
   const out = []
-  for (const [k, c] of dirListings) if (k.startsWith(id + '\n') && c.data) out.push(...c.data.files.filter((f) => !f.endsWith('/')))
+  const pre = listingKey(id, root)
+  for (const [k, c] of listings) if (k.startsWith(pre) && k !== pre && c.data) out.push(...c.data.files.filter((f) => !f.endsWith('/')))
   return out
 }
+
+// fileRoot is the folder the Files tab lists for a: its workspace, unless
+// another was gone to.
+const fileRoot = (a) => S.fRoot.get(a.id) || a.workdir || ''
+
+// setFileRoot lists the folder p (whole, ~, or in the workspace) instead,
+// once the daemon says it is one; the workspace again with none.
+async function setFileRoot(a, p) {
+  p = (p || '').trim()
+  if (!p || p === a.workdir) { S.fRoot.delete(a.id); renderFiles(); return }
+  try {
+    const d = await api('GET', `/v1/agents/${a.id}/files?root=${encodeURIComponent(p)}`)
+    if (d.root === a.workdir) S.fRoot.delete(a.id)
+    else S.fRoot.set(a.id, d.root)
+    listings.set(listingKey(a.id, d.root), { at: Date.now(), data: d, error: null, ready: null })
+    S.fQuery = ''
+    const q = S.bmEl?.querySelector('[data-pane="files"] input')
+    if (q) q.value = ''
+  } catch (e) {
+    if (e instanceof Unauthorized) { S.authed = false; render(); return }
+    toast(e.message, true)
+  }
+  renderFiles()
+  S.bmEl?.querySelector('.fl-list')?.scrollTo(0, 0)
+}
+
+const parentPath = (p) => p.replace(/\/+$/, '').replace(/\/[^/]*$/, '') || '/'
 
 function fileRow(a, abs, { dir, meta, depth = 0, cur, ign } = {}) {
   return h('button', {
@@ -6894,7 +6928,9 @@ function fileRow(a, abs, { dir, meta, depth = 0, cur, ign } = {}) {
   }, extBadge(abs), h('span', { class: 'nm' }, baseName(abs)), dir ? h('span', { class: 'dir' }, dir) : null, meta ? h('span', { class: 'meta' }, meta) : null)
 }
 
-let filesHooked = null
+// openKey names a folder of the list (path in root) open.
+const openKey = (a, root, path) => root === a.workdir ? `${a.id}:${path}` : `${a.id}:${root}:${path}`
+
 function renderFiles() {
   const el = S.bmEl
   if (!el || !S.bmOpen || S.dTab !== 'files' || S.fv) return
@@ -6906,26 +6942,51 @@ function renderFiles() {
     list.replaceChildren(h('div', { class: 'bm-empty' }, 'Pick an agent: its files are listed here.'))
     return
   }
-  scope.replaceChildren(h('span', { class: 'iso' }, icon(a.host ? 'monitor' : 'box'), a.host ? 'Mac' : a.isolation),
-    h('span', { class: 'path', title: a.workdir }, shownPath(a, a.workdir || '')))
-  const fs = a.archived_at ? null : fetched('files', a.id, 15000)
-  if (fs?.ready && filesHooked !== fs.ready) { filesHooked = fs.ready; fs.ready.then(() => { linkPaths(); renderFiles() }) }
+  const root = fileRoot(a)
+  const away = root !== a.workdir
+  // Where it is: the folder up, the folder typed, or the workspace again.
+  if (!scope.querySelector('input')) {
+    const shown = a.host ? tildeHome(root) : root.replace(/^\/home\/agent(?=\/|$)/, '~')
+    const path = h('button', {
+      type: 'button', class: 'path', title: `${root}\nClick to list another folder`,
+      onclick: () => {
+        const input = h('input', {
+          class: 'path', value: shown, spellcheck: 'false', autocomplete: 'off',
+          'aria-label': 'A folder to list: whole, ~/…, or in the workspace',
+        })
+        let done = false
+        const end = (go) => { if (done) return; done = true; input.remove(); if (go && input.value.trim() !== shown) setFileRoot(a, input.value); else renderFiles() }
+        input.addEventListener('keydown', (e) => {
+          if (e.key === 'Enter') { e.preventDefault(); end(true) }
+          if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); end(false) }
+        })
+        input.addEventListener('blur', () => end(false))
+        path.replaceWith(input)
+        input.focus()
+        input.select()
+      },
+    }, shown)
+    scope.replaceChildren(...[h('span', { class: 'iso' }, icon(a.host ? 'monitor' : 'box'), a.host ? 'Mac' : a.isolation), path,
+      root !== '/' ? h('button', { type: 'button', class: 'fl-up', title: 'The folder up', 'aria-label': 'List the folder up', onclick: () => setFileRoot(a, parentPath(root)) }, icon('corner-left-up')) : null,
+      away ? h('button', { type: 'button', class: 'fl-up', title: 'Back to the workspace', 'aria-label': 'List the workspace', onclick: () => setFileRoot(a, '') }, icon('folder')) : null].filter(Boolean))
+  }
+  const fs = a.archived_at ? null : listing(a.id, root)
   const data = fs?.data
-  const ignored = data ? (data.ignored || []).filter((f) => !f.endsWith('/')).concat(listedIgnored(a.id)) : []
-  const docs = data ? data.files.concat(ignored) : []
+  const ignored = data ? (data.ignored || []).filter((f) => !f.endsWith('/')).concat(listedLazy(a.id, root)) : []
+  const docs = data ? data.files.filter((f) => !f.endsWith('/')).concat(ignored) : []
   chips.replaceChildren(...FILE_CHIPS.map(([k, l, keep]) => h('button', {
     type: 'button', 'aria-pressed': String(S.fChip === k), onclick: () => { S.fChip = k; renderFiles() },
   }, l, data ? h('span', { class: 'n' }, String(docs.filter(keep).length)) : null)))
   const keep = FILE_CHIPS.find(([k]) => k === S.fChip)[2]
   const rows = []
   const changed = changedFiles(a).filter(([p]) => keep(p))
-  const away = elsewhereFiles(a).filter(keep)
+  const elsewhere = elsewhereFiles(a).filter(keep)
   const q = S.fQuery.trim()
   if (q) {
     const pool = new Map()
-    for (const f of docs) if (keep(f)) pool.set(joinPath(a.workdir, f), f)
+    for (const f of docs) if (keep(f)) pool.set(joinPath(root, f), away ? shownPath(a, joinPath(root, f)) : f)
     for (const [p] of changed) pool.set(p, shownPath(a, p))
-    for (const p of away) pool.set(p, shownPath(a, p))
+    for (const p of elsewhere) pool.set(p, shownPath(a, p))
     const hits = []
     for (const [abs, shown] of pool) {
       // By its name; by its path when one is typed (with a slash).
@@ -6934,7 +6995,7 @@ function renderFiles() {
     }
     hits.sort((x, y) => y[0] - x[0] || x[2].length - y[2].length)
     rows.push(h('div', { class: 'fl-sec' }, hits.length ? `${hits.length > 100 ? '100+' : hits.length} found` : 'No file matches.'))
-    const ign = new Set(ignored.map((f) => joinPath(a.workdir, f)))
+    const ign = new Set(data?.shallow ? [] : ignored.map((f) => joinPath(root, f)))
     for (const [, abs, shown] of hits.slice(0, 100)) {
       const d = shown.slice(0, shown.length - baseName(shown).length)
       rows.push(fileRow(a, abs, { dir: d, ign: ign.has(abs) }))
@@ -6947,34 +7008,34 @@ function renderFiles() {
         rows.push(fileRow(a, abs, { dir: shown.slice(0, shown.length - baseName(shown).length), meta: t ? msgAge(t) : null }))
       }
     }
-    if (away.length) {
+    if (elsewhere.length) {
       rows.push(h('div', { class: 'fl-sec', title: 'Outside the workspace, named in this conversation' }, 'Elsewhere · named here'))
-      for (const abs of away) { const shown = shownPath(a, abs); rows.push(fileRow(a, abs, { dir: shown.slice(0, shown.length - baseName(shown).length) })) }
+      for (const abs of elsewhere) { const shown = shownPath(a, abs); rows.push(fileRow(a, abs, { dir: shown.slice(0, shown.length - baseName(shown).length) })) }
     }
-    rows.push(h('div', { class: 'fl-sec' }, baseName((a.workdir || '').replace(/\/+$/, '')) || 'Workspace'))
+    rows.push(h('div', { class: 'fl-sec', title: root }, baseName(root.replace(/\/+$/, '')) || (root === '/' ? '/' : 'Workspace')))
     if (a.archived_at) rows.push(h('div', { class: 'bm-empty' }, 'This agent is archived: its workspace is not listed.'))
     else if (!data) rows.push(h('div', { class: 'bm-empty' }, fs.error ? `Can't list its files: ${fs.error.message}` : 'Listing files…'))
     else {
       const tree = fileTree(data, S.fChip)
       const pad = (depth) => (depth ? `padding-left: ${8 + depth * 14}px` : null)
       const dirRow = (path, depth, meta, ign) => {
-        const key = `${a.id}:${path}`
+        const key = openKey(a, root, path)
         const open = S.fOpen.has(key)
         rows.push(h('button', {
           type: 'button', class: 'fl-row fl-dir' + (ign ? ' ign' : ''), 'aria-expanded': String(open), style: pad(depth),
-          title: ign ? 'Ignored by git: listed as it is opened' : null,
+          title: ign ? 'Ignored by git: listed as it is opened' : data.shallow ? 'Listed as it is opened' : null,
           onclick: () => { if (S.fOpen.has(key)) S.fOpen.delete(key); else S.fOpen.add(key); renderFiles() },
         }, h('span', { class: 'tw' }, icon(open ? 'chevron-down' : 'chevron-right')), h('span', { class: 'nm' }, baseName(path) + '/'), meta != null ? h('span', { class: 'meta' }, String(meta)) : null))
         return open
       }
       const fileRows = (names, at, depth, ign) => {
         const files = [...names].sort((x, y) => x.localeCompare(y))
-        for (const f of files.slice(0, 500)) rows.push(fileRow(a, joinPath(a.workdir, at(f)), { depth, ign: ign(f) }))
+        for (const f of files.slice(0, 500)) rows.push(fileRow(a, joinPath(root, at(f)), { depth, ign: ign(f) }))
         if (files.length > 500) rows.push(h('div', { class: 'fl-more', style: pad(depth) }, `${files.length - 500} more: find them by name`))
       }
-      // An ignored folder's own, as listed: all of it ignored.
-      const walkLazy = (dir, depth) => {
-        const c = dirListing(a.id, dir)
+      // A lazy folder's own, as listed: all of it ignored, or none.
+      const walkLazy = (dir, depth, ign) => {
+        const c = listing(a.id, root, dir)
         if (!c.data) {
           rows.push(h('div', { class: 'fl-more', style: pad(depth) }, c.error ? `Can't list it: ${c.error.message}` : 'Listing…'))
           return
@@ -6982,22 +7043,22 @@ function renderFiles() {
         const ents = c.data.files
         for (const d of ents.filter((e) => e.endsWith('/')).sort((x, y) => x.localeCompare(y))) {
           const path = d.slice(0, -1)
-          if (dirRow(path, depth, null, true)) walkLazy(path, depth + 1)
+          if (dirRow(path, depth, null, ign)) walkLazy(path, depth + 1, ign)
         }
-        fileRows(ents.filter((e) => !e.endsWith('/') && keep(e)).map(baseName), (f) => dir + '/' + f, depth, () => true)
+        fileRows(ents.filter((e) => !e.endsWith('/') && keep(e)).map(baseName), (f) => dir + '/' + f, depth, () => ign)
         if (!ents.length) rows.push(h('div', { class: 'fl-more', style: pad(depth) }, 'Nothing in it.'))
         if (c.data.truncated) rows.push(h('div', { class: 'fl-more', style: pad(depth) }, `Only its first ${ents.length} are listed.`))
       }
       const walk = (node, dir, depth) => {
         for (const [d, sub] of [...node.dirs].sort(([x], [y]) => x.localeCompare(y))) {
           const path = dir + d
-          if (sub.lazy) { if (dirRow(path, depth, null, true)) walkLazy(path, depth + 1) }
+          if (sub.lazy) { if (dirRow(path, depth, null, sub.ign)) walkLazy(path, depth + 1, sub.ign) }
           else if (dirRow(path, depth, sub.n)) walk(sub, path + '/', depth + 1)
         }
         fileRows(node.files, (f) => dir + f, depth, (f) => node.ign?.has(f))
       }
       walk(tree, '', 0)
-      if (!tree.n && !tree.dirs.size) rows.push(h('div', { class: 'bm-empty' }, data.files.length ? 'No file of this kind here.' : 'No files here yet.'))
+      if (!tree.n && !tree.dirs.size) rows.push(h('div', { class: 'bm-empty' }, data.files.length ? 'No file of this kind here.' : away ? 'Nothing in it.' : 'No files here yet.'))
       if (data.truncated) rows.push(h('div', { class: 'fl-more' }, `Only the first ${data.files.length} files are listed.`))
     }
   }
@@ -7150,7 +7211,16 @@ function renderViewer(keep) {
       path.append('/', h('button', { type: 'button', onclick: () => showFolder(a, dir) }, d))
     })
     path.append('/' + parts[parts.length - 1])
-  } else path.append(a ? shownPath(a, v.path) : v.path)
+  } else if (a) {
+    // Out of it, a folder lists it.
+    const sp = shownPath(a, v.path).split('/'), ap = v.path.split('/'), off = ap.length - sp.length
+    const sep = (i) => (i > 0 && !(i === 1 && sp[0] === '') ? '/' : '')
+    sp.slice(0, -1).forEach((d, i) => {
+      const dir = ap.slice(0, i + 1 + off).join('/') || '/'
+      path.append(sep(i), h('button', { type: 'button', onclick: () => { closeFile(); setFileRoot(a, dir) } }, d || '/'))
+    })
+    path.append(sep(sp.length - 1) + sp[sp.length - 1])
+  } else path.append(v.path)
   const fresh = v.upd && Date.now() - v.upd < 3000
   const meta = v.gone ? 'Deleted' : fresh ? 'Updated · just now' : f ? `${fmtSize(f.size)} · ${msgAge(f.mtime)}` : ''
   crumbs.replaceChildren(...[a && S.sel !== a.id ? h('span', { class: 'who' }, agentTitle(a)) : null, path,
@@ -7216,7 +7286,8 @@ function renderViewer(keep) {
 // showFolder goes back to the list with dir (in the workspace) open.
 function showFolder(a, dir) {
   const parts = dir ? dir.split('/') : []
-  for (let i = 1; i <= parts.length; i++) S.fOpen.add(`${a.id}:${parts.slice(0, i).join('/')}`)
+  S.fRoot.delete(a.id)
+  for (let i = 1; i <= parts.length; i++) S.fOpen.add(openKey(a, a.workdir, parts.slice(0, i).join('/')))
   S.fQuery = ''
   const q = S.bmEl?.querySelector('[data-pane="files"] input')
   if (q) q.value = ''

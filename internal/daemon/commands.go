@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net/http"
 	"path"
 	"slices"
 	"strconv"
@@ -14,6 +15,7 @@ import (
 	"github.com/hongzio/psps/internal/api"
 	"github.com/hongzio/psps/internal/driver"
 	"github.com/hongzio/psps/internal/proxy/skillproxy"
+	"github.com/hongzio/psps/internal/store"
 )
 
 // Commands, for a message box to offer as they are typed: psps's own, which
@@ -356,6 +358,24 @@ else
 	find . -name .git -prune -o -name node_modules -prune -exec printf 'i %s/\n' {} \; -o -type f -print 2>/dev/null | sed 's|^i \./|i |; s|^\./|f |'
 fi | head -n ` + strconv.Itoa(filesMax+1)
 
+// rootScript lists the folder $1 for the Files tab: in a repository, and
+// not in a part of it git ignores, as filesScript does; else what is in
+// the folder itself, after a "psps:shallow" line, a folder's name ending
+// in /, its own listed when it is opened (dirScript). A large folder out
+// of a repository (a home, /) costs a level of it, not all of it.
+var rootScript = `[ -d "$1" ] || { echo psps:nodir; exit 0; }
+cd "$1" 2>/dev/null || { echo psps:unreadable; exit 0; }
+if git rev-parse --is-inside-work-tree >/dev/null 2>&1 && ! git check-ignore -q . 2>/dev/null; then
+	git -c core.quotepath=off ls-files -co --exclude-standard 2>/dev/null | sed 's/^/f /'
+	git -c core.quotepath=off ls-files -oi --exclude-standard --directory 2>/dev/null | sed 's/^/i /'
+else
+	echo psps:shallow
+	for f in .[!.]* ..?* *; do
+		if [ -d "$f" ] && [ ! -L "$f" ]; then echo "f $f/"
+		elif [ -e "$f" ] || [ -L "$f" ]; then echo "f $f"; fi
+	done
+fi | head -n ` + strconv.Itoa(filesMax+2)
+
 // dirScript lists what is in the folder $2 of the workspace $1, by paths
 // in the workspace, a folder's ending in /.
 var dirScript = `cd "$1" 2>/dev/null && cd "./$2" 2>/dev/null || exit 0
@@ -365,37 +385,55 @@ for f in .[!.]* ..?* *; do
 done | head -n ` + strconv.Itoa(filesMax+1)
 
 // Files are the files in the agent's workspace; with dir, what is in that
-// folder of it (one git ignores, say). The isolation is not started for
-// them: one that is stopped has none to offer.
-func (m *Manager) Files(ctx context.Context, id, dir string) (api.Files, error) {
+// folder of it (one git ignores, say). With root, the folder listed is
+// that one (~ is the home, relative is to the workspace), and one out of a
+// repository is listed a level at a time (Shallow). The isolation is not
+// started for them: one that is stopped has none to offer.
+func (m *Manager) Files(ctx context.Context, id, root, dir string) (api.Files, error) {
 	if dir != "" {
 		dir = path.Clean(dir)
 		if path.IsAbs(dir) || dir == "." || dir == ".." || strings.HasPrefix(dir, "../") {
 			return api.Files{}, badRequest(fmt.Errorf("%q is not a folder in the workspace", dir))
 		}
 	}
-	a, err := m.storedAgent(id)
+	a, container, home, err := m.viewerAgent(id)
 	if err != nil {
 		return api.Files{}, err
 	}
 	if a.ArchivedAt != nil {
 		return api.Files{}, badRequest(errors.New("an archived agent is sent nothing"))
 	}
-	iso, err := m.store.Isolation(a.IsolationID)
-	if err != nil {
-		return api.Files{}, err
+	base := a.Workdir
+	if root != "" {
+		if base, err = agentPath(a, home, root); err != nil {
+			return api.Files{}, badRequest(err)
+		}
 	}
 	ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
 	defer cancel()
-	argv := []string{"sh", "-c", filesScript, "sh", a.Workdir}
-	if dir != "" {
-		argv = []string{"sh", "-c", dirScript, "sh", a.Workdir, dir}
+	argv := []string{"sh", "-c", filesScript, "sh", base}
+	switch {
+	case dir != "":
+		argv = []string{"sh", "-c", dirScript, "sh", base, dir}
+	case root != "":
+		argv = []string{"sh", "-c", rootScript, "sh", base}
 	}
-	out, err := m.cli.RunAsAgent(ctx, iso.Container, argv...)
+	out, err := m.cli.RunAsAgent(ctx, container, argv...)
 	if err != nil {
-		return api.Files{}, fmt.Errorf("listing the workspace: %w", err)
+		return api.Files{}, fmt.Errorf("listing %s: %w", base, err)
 	}
-	fs := api.Files{Files: []string{}}
+	fs := api.Files{Files: []string{}, Root: base}
+	if root != "" && dir == "" {
+		head, rest, _ := strings.Cut(out, "\n")
+		switch head {
+		case "psps:nodir":
+			return api.Files{}, fmt.Errorf("%s is not a folder: %w", base, store.ErrNotFound)
+		case "psps:unreadable":
+			return api.Files{}, httpError{http.StatusForbidden, fmt.Errorf("%s: the agent may not read it", base)}
+		case "psps:shallow":
+			fs.Shallow, out = true, rest
+		}
+	}
 	n := 0
 	for l := range strings.SplitSeq(out, "\n") {
 		if l == "" {

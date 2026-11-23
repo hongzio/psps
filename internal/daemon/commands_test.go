@@ -13,6 +13,7 @@ import (
 	"github.com/hongzio/psps/internal/api"
 	"github.com/hongzio/psps/internal/driver"
 	"github.com/hongzio/psps/internal/event"
+	"github.com/hongzio/psps/internal/store"
 )
 
 func commandNames(cs api.Commands) []string {
@@ -126,7 +127,7 @@ func TestFiles(t *testing.T) {
 	}
 	list := func(dir string) api.Files {
 		t.Helper()
-		fs, err := m.Files(context.Background(), a.ID, dir)
+		fs, err := m.Files(context.Background(), a.ID, "", dir)
 		if err != nil || fs.Truncated {
 			t.Fatalf("%+v %v", fs, err)
 		}
@@ -170,9 +171,43 @@ func TestFiles(t *testing.T) {
 		t.Fatalf("%q", got)
 	}
 	for _, dir := range []string{"..", "../x", "/etc", "build/../.."} {
-		if _, err := m.Files(context.Background(), a.ID, dir); err == nil {
+		if _, err := m.Files(context.Background(), a.ID, "", dir); err == nil {
 			t.Fatalf("%q was listed", dir)
 		}
+	}
+
+	// Another folder: a repository's git lists whole; one out of one, or
+	// in what git ignores, a level at a time.
+	at := func(root, dir string) api.Files {
+		t.Helper()
+		fs, err := m.Files(context.Background(), a.ID, root, dir)
+		if err != nil {
+			t.Fatalf("%s %s: %v", root, dir, err)
+		}
+		slices.Sort(fs.Files)
+		return fs
+	}
+	if got := at(a.Workdir, ""); got.Shallow || got.Root != a.Workdir || !slices.Contains(got.Files, "src/a b.go") {
+		t.Fatalf("%+v", got)
+	}
+	if got := at("src", ""); got.Shallow || got.Root != filepath.Join(a.Workdir, "src") || !slices.Equal(got.Files, []string{"a b.go"}) {
+		t.Fatalf("%+v", got)
+	}
+	if got := at(filepath.Join(a.Workdir, "build"), ""); !got.Shallow || !slices.Equal(got.Files, []string{".hidden", "out.bin", "sub/"}) {
+		t.Fatalf("%+v", got)
+	}
+	if got := at(filepath.Join(a.Workdir, "build"), "sub").Files; !slices.Equal(got, []string{"sub/x.txt"}) {
+		t.Fatalf("%q", got)
+	}
+	plain := t.TempDir()
+	os.MkdirAll(filepath.Join(plain, "deep", "er"), 0o755)
+	os.WriteFile(filepath.Join(plain, "deep", "er", "x.md"), nil, 0o644)
+	os.WriteFile(filepath.Join(plain, "top.md"), nil, 0o644)
+	if got := at(plain, ""); !got.Shallow || !slices.Equal(got.Files, []string{"deep/", "top.md"}) {
+		t.Fatalf("%+v", got)
+	}
+	if _, err := m.Files(context.Background(), a.ID, filepath.Join(plain, "nope"), ""); !errors.Is(err, store.ErrNotFound) {
+		t.Fatalf("a missing folder: %v", err)
 	}
 }
 

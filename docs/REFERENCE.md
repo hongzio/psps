@@ -207,10 +207,16 @@ in `GET /v1/agents/ID/events`) and `PATCH|DELETE /v1/bookmarks/N`
 
 The drawer's other tab, **Files**, reads the files of the agent shown, as
 that agent: nothing it could not read itself, and nothing is ever changed.
-It lists the agent's workspace as a tree, what git ignores dimmed (out of a
-repository, `node_modules`): an ignored folder is listed by its name alone
-and what is in it only as it is opened, so a large one costs nothing
-unopened, and search finds only its files listed so far. Above the tree
+It lists the agent's workspace as a tree, what git ignores dimmed: an
+ignored folder is listed by its name alone and what is in it only as it is
+opened, so a large one costs nothing unopened, and search finds only its
+files listed so far. Another folder is listed in its place by clicking the
+path above the tree and typing one (whole, `~/…`, or in the workspace), by
+the folder-up button, or by a folder of a file shown from outside the
+workspace; the folder button goes back. A folder in a repository is listed
+whole by git, like the workspace; one out of a repository (a workspace that
+is not one too) a level at a time, each folder as it is opened, its counts
+those of what is listed so far. Above the tree
 are **Changed here** (what its tools wrote in the conversation) and
 **Elsewhere · named here** (files outside the workspace the conversation
 names). The list is searched by name (by path once you type a slash) and
@@ -239,6 +245,10 @@ image, binary or too_large)`, "type", "text" | "data"` (base64)`,
 a sandboxed page), `GET /v1/agents/ID/download?path=P` (the file whole, as
 an attachment; 413 over 100 MiB) and `POST /v1/agents/ID/stat`
 (`{"paths": [...]}`, at most 200: those that are files, with `"abs"`, size and mtime).
+The list is `GET /v1/agents/ID/files?root=DIR[&dir=SUB]`: `{"root"` (DIR
+whole)`, "files", "ignored", "shallow"}`, `shallow` when DIR is out of a
+repository and `files` is what is in it, a folder ending in `/`; with `dir`,
+what is in the folder SUB of DIR.
 
 #### Autocompact
 
