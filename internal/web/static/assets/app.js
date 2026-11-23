@@ -1268,16 +1268,20 @@ function render() {
   const scrolled = document.querySelector('#sidebar .agent-list')?.scrollTop || 0
   const bmScrolled = S.bmEl?.querySelector('.bm-list')?.scrollTop || 0
   hideBmPop()
-  root.replaceChildren()
+  // The drawer is kept in the page, not taken out and put back: taken out,
+  // a file's page in its frame loaded again and the file lost its place.
+  const kept = S.authed && S.bmEl?.parentNode === root ? S.bmEl : null
+  for (const n of [...root.children]) if (n !== kept) n.remove()
   if (!S.authed) {
     root.style.display = 'block'
     root.append(loginView())
     return
   }
   root.style.display = ''
-  root.append(h('aside', { class: 'sidebar', id: 'sidebar' }), sidebarResizer(), h('div', { class: 'scrim', onclick: () => { S.drawer = false; render() } }))
   const main = h('main', { class: 'main', id: 'main' })
-  root.append(main, bookmarksDrawer())
+  const before = [h('aside', { class: 'sidebar', id: 'sidebar' }), sidebarResizer(), h('div', { class: 'scrim', onclick: () => { S.drawer = false; render() } }), main]
+  if (kept) kept.before(...before)
+  else root.append(...before, bookmarksDrawer())
   renderDrawer()
   if (bmScrolled) S.bmEl.querySelector('.bm-list').scrollTop = bmScrolled
   renderSidebar()
@@ -7170,6 +7174,10 @@ function renderViewer(keep) {
   const frame = body.querySelector('iframe')
   const src = f && v.mode === 'page' ? `/v1/agents/${v.agent}/page?path=${encodeURIComponent(v.path)}${v.scripts ? '&scripts=1' : ''}&v=${encodeURIComponent(f.mtime + ':' + f.size)}` : null
   if (src && frame && frame.dataset.src === src) return
+  // Nor is what is shown drawn again when none of it changed.
+  const shown = [f, v.mode, v.wrap, v.scripts, v.err, v.path]
+  if (keep && body._shown && body.firstChild && shown.every((x, i) => x === body._shown[i])) return
+  body._shown = shown
   body.className = 'fv-body fs' + (v.mode === 'page' ? ' fv-page' : '')
   let view
   if (v.err) view = h('div', { class: 'fv-empty' }, v.err, h('button', { type: 'button', class: 'btn', onclick: () => { v.err = null; v.loading = true; renderViewer(); loadFile() } }, 'Try again'))
