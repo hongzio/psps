@@ -2873,6 +2873,7 @@ async function openCrons(a) {
       h('button', { type: 'button', class: 'btn small', onclick: () => { editing = c; draw() } }, 'Edit'),
       h('button', { type: 'button', class: 'btn small', onclick: () => set(c, { enabled: !c.enabled }) }, c.enabled ? 'Turn off' : 'Turn on'),
       h('button', { type: 'button', class: 'btn small ghost danger', onclick: () => remove(c) }, 'Delete')))
+  let scrolled = 0
   const draw = () => {
     // The form has its own Back; the dialog's Close waits for the list.
     box.closest('dialog')?.querySelector(':scope > form > .dialog-actions')?.toggleAttribute('hidden', !!editing)
@@ -2880,10 +2881,16 @@ async function openCrons(a) {
       box.replaceChildren(cronForm(a, editing, zone, changed, () => { editing = null; draw() }))
       return
     }
+    // The list is drawn anew on every poll and after the form; it keeps
+    // where it was scrolled.
+    const prev = box.querySelector('.cron-list')
+    if (prev) scrolled = prev.scrollTop
+    const list = crons.length ? h('div', { class: 'cron-list' }, crons.map(row)) : null
     box.replaceChildren(
       h('p', { class: 'mail-lead' }, `Times are the Mac's: ${zone}.`),
-      crons.length ? h('div', { class: 'cron-list' }, crons.map(row)) : h('p', { class: 'mail-lead' }, 'It has no cron yet.'),
+      list || h('p', { class: 'mail-lead' }, 'It has no cron yet.'),
       h('div', null, h('button', { type: 'button', class: 'btn', onclick: () => { editing = {}; draw() } }, '+ New cron')))
+    if (list && scrolled) list.scrollTop = scrolled
   }
   await load()
   draw()
