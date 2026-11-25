@@ -1776,6 +1776,67 @@ func TestDeletingAnAgent(t *testing.T) {
 	}
 }
 
+// Deleting archived agents in bulk takes those archived before the cutoff,
+// and leaves the newer archived and the live.
+func TestDeletingArchivedAgentsBeforeACutoff(t *testing.T) {
+	e := newTestEnv(t)
+	ctx := context.Background()
+	m, stop := e.daemon()
+	defer stop()
+	newAgent := func(prompt string) store.Agent {
+		t.Helper()
+		a, err := m.CreateAgent(ctx, api.CreateAgent{Isolation: "dev", Kind: driver.Codex, Prompt: prompt})
+		if err != nil {
+			t.Fatal(err)
+		}
+		e.waitFor("an answer", func() bool { return e.hasAssistant(a.ID, "echo: "+prompt) && status(m, a.ID) == event.StatusIdle })
+		return a
+	}
+	archivedAgo := func(prompt string, d time.Duration) store.Agent {
+		t.Helper()
+		a := newAgent(prompt)
+		if err := m.Archive(ctx, a.ID); err != nil {
+			t.Fatal(err)
+		}
+		e.waitFor("its process to end", func() bool {
+			m.mu.Lock()
+			defer m.mu.Unlock()
+			_, live := m.runtimes[a.ID]
+			return !live
+		})
+		at := time.Now().Add(-d)
+		if err := e.st.SetArchived(a.ID, &at); err != nil {
+			t.Fatal(err)
+		}
+		return a
+	}
+	old := archivedAgo("old", 10*24*time.Hour)
+	recent := archivedAgo("recent", 2*24*time.Hour)
+	live := newAgent("live")
+
+	var res api.DeletedArchived
+	e.waitFor("the old one to go", func() bool {
+		var err error
+		res, err = m.DeleteArchived(ctx, time.Now().Add(-7*24*time.Hour), false)
+		return err == nil && len(res.Failed) == 0 && len(res.Deleted) == 1
+	})
+	if res.Deleted[0] != old.ID {
+		t.Fatalf("deleted %v, want %s", res.Deleted, old.ID)
+	}
+	if _, err := e.st.Agent(old.ID); !errors.Is(err, store.ErrNotFound) {
+		t.Fatalf("old agent still stored: %v", err)
+	}
+	for _, a := range []store.Agent{recent, live} {
+		if _, err := e.st.Agent(a.ID); err != nil {
+			t.Fatalf("agent %s went: %v", a.ID, err)
+		}
+	}
+	res, err := m.DeleteArchived(ctx, time.Now().Add(-7*24*time.Hour), false)
+	if err != nil || len(res.Deleted) != 0 {
+		t.Fatalf("second run deleted %v: %v", res.Deleted, err)
+	}
+}
+
 func TestPurgingAClaudeAgentTouchesOnlyItsOwnPaths(t *testing.T) {
 	e := newTestEnv(t)
 	ctx := context.Background()

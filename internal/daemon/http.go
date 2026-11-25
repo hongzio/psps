@@ -721,6 +721,17 @@ func (m *Manager) Handler() http.Handler {
 		v, err := m.Restore(r.Context(), r.PathValue("id"))
 		reply(w, v, err)
 	})
+	// Every agent archived before a time, as RFC 3339: the asker fixes it
+	// when it counts them, so what goes is what it counted.
+	mux.HandleFunc("DELETE /v1/agents", func(w http.ResponseWriter, r *http.Request) {
+		before, err := time.Parse(time.RFC3339, r.URL.Query().Get("archived_before"))
+		if err != nil {
+			reply(w, nil, badRequest(fmt.Errorf("archived_before: an RFC 3339 time, as 2026-11-18T09:00:00Z")))
+			return
+		}
+		v, err := m.DeleteArchived(r.Context(), before, r.URL.Query().Get("purge") == "1")
+		reply(w, v, err)
+	})
 	mux.HandleFunc("DELETE /v1/agents/{id}", func(w http.ResponseWriter, r *http.Request) {
 		reply(w, nil, m.DeleteAgent(r.Context(), r.PathValue("id"), r.URL.Query().Get("purge") == "1"))
 	})

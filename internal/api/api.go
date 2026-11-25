@@ -185,6 +185,19 @@ type SetAdmin struct {
 	Account string      `json:"account,omitempty"`
 }
 
+// DeletedArchived is what deleting archived agents in bulk did: Deleted
+// are the IDs that went, Failed those that stayed, each with why.
+type DeletedArchived struct {
+	Deleted []string       `json:"deleted"`
+	Failed  []FailedDelete `json:"failed,omitempty"`
+}
+
+// FailedDelete is an archived agent a bulk delete left, and why.
+type FailedDelete struct {
+	ID    string `json:"id"`
+	Error string `json:"error"`
+}
+
 // AgentOrder is a sidebar list's lines, from the top.
 type AgentOrder struct {
 	Lines []string `json:"lines"`

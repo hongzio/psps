@@ -1327,6 +1327,15 @@ kbd {
 .autocompact-said.pending { color: var(--warn); }
 .autocompact-actions { display: flex; gap: 8px; margin-left: auto; }
 .autocompact-actions .btn[hidden] { display: none; }
+.cleanup-said { color: var(--muted); font-size: 13px; font-variant-numeric: tabular-nums; }
+.cleanup-said strong { color: var(--text); font-weight: 600; }
+.cleanup-list { margin: 12px 0 0; padding: 0; list-style: none; max-height: min(196px, 35vh); overflow-y: auto; border: 1px solid var(--border); border-radius: 8px; background: var(--bg); font-size: 13px; }
+.cleanup-list li { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 10px; padding: 7px 10px; border-top: 1px solid var(--border); }
+.cleanup-list li:first-child { border-top: 0; }
+.cleanup-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.cleanup-iso { color: var(--muted); font-family: var(--mono); font-size: 12px; }
+.cleanup-age { color: var(--muted); font-variant-numeric: tabular-nums; }
+.check.cleanup-purge { margin-top: 12px; font-size: 14px; }
 .admin-setting .admin-head { flex-wrap: nowrap; align-items: flex-start; }
 .admin-setting .admin-text { min-width: 0; }
 .admin-setting .admin-text .note { margin-top: 2px; }

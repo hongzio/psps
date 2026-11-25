@@ -8057,8 +8057,89 @@ function openSettings() {
       h('hr', { class: 'settings-rule' }),
       autocompactSetting(),
       h('hr', { class: 'settings-rule' }),
-      adminSetting()),
+      adminSetting(),
+      h('hr', { class: 'settings-rule' }),
+      cleanupSetting()),
   })
+}
+
+// cleanupSetting is Settings' part that deletes, in one go, the agents
+// archived more than so many days ago. The days are kept in this browser.
+// The confirm lists what goes; the cutoff is fixed as it opens, so what is
+// deleted is what it listed.
+const DAY_MS = 24 * 60 * 60 * 1000
+function savedCleanupDays() {
+  try { const n = Number(localStorage.getItem('psps.cleanupDays')); return Number.isInteger(n) && n >= 1 ? n : 7 } catch { return 7 }
+}
+function cleanupSetting() {
+  const days = h('input', {
+    id: 'cleanup-days', class: 'dialog-input', type: 'number', min: '1', step: '1', inputmode: 'numeric', value: String(savedCleanupDays()),
+    // Password managers take a lone number field for a code to fill.
+    autocomplete: 'off', 'data-1p-ignore': '', 'data-lpignore': 'true', 'data-bwignore': '', 'data-form-type': 'other',
+  })
+  const err = h('p', { class: 'form-error', role: 'alert', hidden: true }, 'A whole number of days, 1 or more.')
+  const said = h('span', { class: 'cleanup-said', role: 'status' })
+  const go = h('button', { type: 'button', class: 'btn small danger' })
+  const n = () => Number(days.value)
+  const valid = () => Number.isInteger(n()) && n() >= 1
+  const archived = () => S.agents.filter((a) => a.archived_at)
+  const matching = (before) => archived().filter((a) => new Date(a.archived_at).getTime() < before)
+    .sort((a, b) => new Date(a.archived_at) - new Date(b.archived_at))
+  const draw = () => {
+    err.hidden = valid() || days.value === ''
+    const all = archived().length
+    const k = valid() ? matching(Date.now() - n() * DAY_MS).length : 0
+    said.replaceChildren(!valid() ? '' : !all ? 'Archived is empty.'
+      : k ? h('span', null, h('strong', null, String(k)), ` of ${all} archived agent${all === 1 ? '' : 's'}`)
+      : `None of ${all} archived agent${all === 1 ? '' : 's'}`)
+    go.disabled = !k
+    go.replaceChildren(...(k ? [icon('trash-2'), ` Delete ${k}…`] : ['Nothing to delete']))
+  }
+  const confirm = async () => {
+    if (!valid()) return
+    const before = Date.now() - n() * DAY_MS
+    const doomed = matching(before)
+    const k = doomed.length
+    if (!k) return
+    const purge = h('input', { type: 'checkbox' })
+    const these = k === 1 ? 'It was' : 'These were'
+    await ask({
+      title: `Delete ${k} archived agent${k === 1 ? '' : 's'}?`,
+      body: `${these} archived more than ${n()} day${n() === 1 ? '' : 's'} ago. Their history and logs are removed. This cannot be undone.`,
+      extra: h('div', null,
+        h('ul', { class: 'cleanup-list' }, ...doomed.map((a) => h('li', null,
+          h('span', { class: 'cleanup-name' }, agentTitle(a), ' ', h('span', { class: 'cleanup-iso' }, a.isolation)),
+          h('span', { class: 'cleanup-age' }, agoShort(a.archived_at))))),
+        h('label', { class: 'check cleanup-purge' }, purge, 'Also remove their workspaces and session transcripts')),
+      ok: `Delete ${k}`, danger: true,
+      onOk: async () => {
+        const res = await api('DELETE', `/v1/agents?archived_before=${enc(new Date(before).toISOString())}` + (purge.checked ? '&purge=1' : ''))
+        const d = res.deleted.length, f = res.failed?.length || 0
+        if (res.deleted.includes(S.sel)) S.sel = null
+        await refreshAgents()
+        render()
+        draw()
+        if (f) toast(`Deleted ${d}; ${f} could not be: ${res.failed[0].error}`, true)
+        else toast(`Deleted ${d} archived agent${d === 1 ? '' : 's'}` + (purge.checked ? ', with workspaces' : ''))
+      },
+    })
+  }
+  days.addEventListener('input', () => {
+    if (valid()) try { localStorage.setItem('psps.cleanupDays', String(n())) } catch {}
+    draw()
+  })
+  // Enter in the dialog's form would close it: it asks instead.
+  days.addEventListener('keydown', (e) => { if (e.key === 'Enter' && !e.isComposing) { e.preventDefault(); confirm() } })
+  go.addEventListener('click', (e) => { e.preventDefault(); confirm() })
+  draw()
+  return h('div', { class: 'admin-setting' },
+    h('div', { class: 'admin-text' },
+      h('div', { class: 'setting-name' }, 'Delete old archived agents'),
+      h('div', { class: 'note' }, 'Clear out agents that have sat in Archived for a while.')),
+    h('div', { class: 'autocompact-detail' },
+      h('label', { class: 'autocompact-when', for: 'cleanup-days' }, h('span', null, 'Archived more than'), days, h('span', null, 'days ago')),
+      err,
+      h('div', { class: 'autocompact-foot' }, said, h('div', { class: 'autocompact-actions' }, go))))
 }
 
 // autocompactSetting is autocompact's part of Settings: its switch and,

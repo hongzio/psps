@@ -1700,6 +1700,55 @@ func (m *Manager) DeleteAgent(ctx context.Context, idOrPrefix string, purge bool
 	if a.ArchivedAt == nil || live {
 		return httpError{http.StatusConflict, fmt.Errorf("agent %s is live; archive it first (`psps agent archive %s`)", a.ID, a.ID)}
 	}
+	if err := m.deleteArchived(ctx, a, purge); err != nil {
+		return err
+	}
+	// Its conversation is gone from the file too, not left in free pages.
+	if err := m.store.Vacuum(); err != nil {
+		m.log.Printf("store: vacuum: %v", err)
+	}
+	return nil
+}
+
+// DeleteArchived deletes every agent archived before cutoff, the way
+// DeleteAgent deletes one, and vacuums the store once at the end. A fixed
+// cutoff deletes what the asker counted: no agent is archived in the past.
+// One that fails stays and is reported; the rest go on. Side agents are
+// not its: they are deleted with the agent they are beside.
+func (m *Manager) DeleteArchived(ctx context.Context, before time.Time, purge bool) (api.DeletedArchived, error) {
+	res := api.DeletedArchived{Deleted: []string{}}
+	all, err := m.store.Agents()
+	if err != nil {
+		return res, err
+	}
+	for _, a := range all {
+		if a.ArchivedAt == nil || !a.ArchivedAt.Before(before) || a.SideOf != "" {
+			continue
+		}
+		m.mu.Lock()
+		_, live := m.runtimes[a.ID]
+		m.mu.Unlock()
+		if live {
+			continue
+		}
+		if err := m.deleteArchived(ctx, a, purge); err != nil {
+			res.Failed = append(res.Failed, api.FailedDelete{ID: a.ID, Error: err.Error()})
+			continue
+		}
+		res.Deleted = append(res.Deleted, a.ID)
+	}
+	if len(res.Deleted) > 0 {
+		if err := m.store.Vacuum(); err != nil {
+			m.log.Printf("store: vacuum: %v", err)
+		}
+	}
+	return res, nil
+}
+
+// deleteArchived forgets archived agent a, which nothing runs: its log in
+// the isolation, then its history here; with purge, first what it left in
+// the isolation's home.
+func (m *Manager) deleteArchived(ctx context.Context, a store.Agent, purge bool) error {
 	iso, err := m.store.Isolation(a.IsolationID)
 	if err != nil {
 		return err
@@ -1733,10 +1782,6 @@ func (m *Manager) DeleteAgent(ctx context.Context, idOrPrefix string, purge bool
 	}
 	if err := m.store.DeleteAgent(a.ID); err != nil {
 		return err
-	}
-	// Its conversation is gone from the file too, not left in free pages.
-	if err := m.store.Vacuum(); err != nil {
-		m.log.Printf("store: vacuum: %v", err)
 	}
 	m.log.Printf("agent %s: deleted (purge %v)", a.ID, purge)
 	return nil
