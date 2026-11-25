@@ -49,8 +49,9 @@ const (
 	// any.
 	MinOptions = 2
 	MaxOptions = 6
-	// MaxText caps what the operator writes back.
-	MaxText = 32 << 10
+	// MaxText caps what the operator writes back: room for a pasted log
+	// or document, which in Korean is 3 bytes a character.
+	MaxText = 128 << 10
 	// MaxNotes caps what the two add to one ask while it is open.
 	MaxNotes = 40
 )
