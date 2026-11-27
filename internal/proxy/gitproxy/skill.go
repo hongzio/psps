@@ -20,10 +20,16 @@ description: How git and GitHub work inside this psps isolation. Use when a git
 
 # git in this isolation
 
-There is no GitHub credential here, and there is not meant to be one. Git works
-because url.insteadOf rewrites https://github.com/... to a proxy outside the
-isolation, which injects the credential on the way out. Use normal GitHub URLs;
-the rewrite is automatic.
+No GitHub token is stored in this isolation, but that does not mean you lack
+access: a proxy outside it holds the credential and adds it on the way out.
+Git reaches it because url.insteadOf rewrites https://github.com/... to the
+proxy, so use normal GitHub URLs; the rewrite is automatic. What you may do is
+what the list below grants — judge your access by it, not by the missing token,
+and when unsure, try the call and read the refusal.
+
+Credentialed from here (public repositories are read-only regardless):
+
+%[2]s
 
 **Public repositories clone normally.** The proxy forwards them with no
 credential attached, exactly as an anonymous clone would, so no allowlist entry
@@ -45,12 +51,10 @@ The proxy answers with the reason, and git prints it after ` + "`remote:`" + `.
 - an error naming a read-only environment — push is disabled for the env that
   repository belongs to. Commit locally and report that push was refused; do
   not try to work around it.
-- a refusal of a push that touches .github/workflows/ comes from GitHub, not the
-  proxy: the credential lacks the workflow scope. Report it to the operator.
-
-Credentialed from here (public repositories are read-only regardless):
-
-%[2]s
+- a refusal of a push that changes files under .github/workflows/ comes from
+  GitHub, not the proxy: the credential lacks the workflow scope, which only
+  governs editing workflow files. Running a workflow is a separate grant, the
+  API's ` + "`actions`" + ` write family. Report the refused push to the operator.
 
 ## Do not try to route around it
 
@@ -64,9 +68,10 @@ anonymously.
 
 const apiSection = `## GitHub API work (pull requests, reviews, comments)
 
-There is no API token here either. GITHUB_API_URL points at a proxy that
-injects the credential on the way out, scoped to the same repositories as git
-plus a per-environment set of write families. ` + "`gh`" + ` cannot use this proxy (it
+As with git, no token is stored here: GITHUB_API_URL points at a proxy that
+adds the credential on the way out, scoped to the same repositories as git
+plus each environment's write families (the "api writes" in the list above —
+` + "`actions`" + ` there means you can dispatch workflows, deploys included). ` + "`gh`" + ` cannot use this proxy (it
 insists on TLS to a custom API host); plain curl works with no setup and needs
 no Authorization header:
 
