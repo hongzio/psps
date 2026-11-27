@@ -477,7 +477,7 @@ func agentCmd(p paths.Paths, args []string) error {
 		return nil
 
 	case "rm":
-		purge := fs.Bool("purge", false, "also remove its workspace and its CLI's session transcript from the isolation")
+		purge := fs.Bool("purge", false, "also remove its CLI's session transcript and, if psps made it and no other agent works there, its workspace")
 		pos := parse(fs, args[1:])
 		if len(pos) != 1 {
 			return errors.New("usage: psps agent rm ID [--purge]   (an archived agent)")
@@ -487,10 +487,13 @@ func agentCmd(p paths.Paths, args []string) error {
 			return err
 		}
 		// The daemon resolves the prefix itself, refusing an ambiguous one.
-		if err := c.DeleteAgent(ctx, pos[0], *purge); err != nil {
+		res, err := c.DeleteAgentKept(ctx, pos[0], *purge)
+		if err != nil {
 			return err
 		}
-		if *purge {
+		if *purge && res.KeptWorkspace != "" {
+			fmt.Printf("deleted agent %s, with its session transcript; its workspace %s stays in %s (psps did not make it, or another agent works there)\n", shownID(a), res.KeptWorkspace, a.Isolation)
+		} else if *purge {
 			fmt.Printf("deleted agent %s, with its workspace and session transcript in %s\n", shownID(a), a.Isolation)
 		} else {
 			fmt.Printf("deleted agent %s; its workspace %s stays in %s (--purge removes it)\n", shownID(a), a.Workdir, a.Isolation)

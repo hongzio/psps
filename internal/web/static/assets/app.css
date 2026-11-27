@@ -1336,6 +1336,13 @@ kbd {
 .cleanup-iso { color: var(--muted); font-family: var(--mono); font-size: 12px; }
 .cleanup-age { color: var(--muted); font-variant-numeric: tabular-nums; }
 .check.cleanup-purge { margin-top: 12px; font-size: 14px; }
+.cleanup-progress { display: flex; align-items: center; gap: 10px; margin-top: 12px; }
+.cleanup-progress[hidden] { display: none; }
+.cleanup-bar { flex: 1; min-width: 0; height: 6px; appearance: none; border: 0; border-radius: 3px; background: var(--border); overflow: hidden; }
+.cleanup-bar::-webkit-progress-bar { background: var(--border); border-radius: 3px; }
+.cleanup-bar::-webkit-progress-value { background: var(--accent); border-radius: 3px; transition: width .2s; }
+.cleanup-bar::-moz-progress-bar { background: var(--accent); border-radius: 3px; }
+.cleanup-count { color: var(--muted); font-size: 13px; font-variant-numeric: tabular-nums; white-space: nowrap; }
 .admin-setting .admin-head { flex-wrap: nowrap; align-items: flex-start; }
 .admin-setting .admin-text { min-width: 0; }
 .admin-setting .admin-text .note { margin-top: 2px; }

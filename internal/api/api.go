@@ -186,16 +186,41 @@ type SetAdmin struct {
 }
 
 // DeletedArchived is what deleting archived agents in bulk did: Deleted
-// are the IDs that went, Failed those that stayed, each with why.
+// are the IDs that went, Failed those that stayed, each with why. Kept are
+// the deleted whose workspace a purge left: psps did not make it, or
+// another agent works there. Stopped is set when it was stopped before the
+// end.
 type DeletedArchived struct {
-	Deleted []string       `json:"deleted"`
-	Failed  []FailedDelete `json:"failed,omitempty"`
+	Deleted []string        `json:"deleted"`
+	Failed  []FailedDelete  `json:"failed,omitempty"`
+	Kept    []KeptWorkspace `json:"kept,omitempty"`
+	Stopped bool            `json:"stopped,omitempty"`
 }
 
 // FailedDelete is an archived agent a bulk delete left, and why.
 type FailedDelete struct {
 	ID    string `json:"id"`
 	Error string `json:"error"`
+}
+
+// KeptWorkspace is a deleted agent's workspace its purge left.
+type KeptWorkspace struct {
+	ID        string `json:"id"`
+	Workspace string `json:"workspace"`
+}
+
+// DeletedAgent is what deleting one agent did: KeptWorkspace is its
+// workspace if a purge left it.
+type DeletedAgent struct {
+	KeptWorkspace string `json:"kept_workspace,omitempty"`
+}
+
+// DeleteStep is a line of a bulk delete's progress, one per agent as it is
+// done with it: Error if it stayed, KeptWorkspace if its purge left that.
+type DeleteStep struct {
+	ID            string `json:"id"`
+	Error         string `json:"error,omitempty"`
+	KeptWorkspace string `json:"kept_workspace,omitempty"`
 }
 
 // AgentOrder is a sidebar list's lines, from the top.

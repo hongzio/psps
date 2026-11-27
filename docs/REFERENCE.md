@@ -110,6 +110,8 @@ bin/psps agent restore <id>               # an archived one carries on where it 
                                           # under its line's ID; a live session there is archived
 bin/psps agent rm <id> [--purge]          # an archived one: gone from psps; --purge also
                                           # removes its workspace and session transcript
+                                          # (a workspace psps did not make, or another agent
+                                          # works in, stays: only the transcript goes)
 ```
 
 ### TUI

@@ -1684,43 +1684,49 @@ func forkHandle(base string) string {
 // DeleteAgent forgets an archived agent: its history here and its log in
 // the isolation. Its workspace and the CLI's transcript of its session stay
 // in the isolation's volume unless purge, the way an isolation's volumes
-// stay unless it is deleted with purge.
-func (m *Manager) DeleteAgent(ctx context.Context, idOrPrefix string, purge bool) error {
+// stay unless it is deleted with purge. Even with purge, a workspace psps
+// did not make or another agent works in stays: kept names it.
+func (m *Manager) DeleteAgent(ctx context.Context, idOrPrefix string, purge bool) (kept string, err error) {
 	a, err := m.storedAgent(idOrPrefix)
 	if err != nil {
-		return err
+		return "", err
 	}
 	m.mu.Lock()
 	_, live := m.runtimes[a.ID]
 	m.mu.Unlock()
 	// A side agent is deleted live: it is never kept archived.
 	if a.SideOf != "" && (a.ArchivedAt == nil || live) {
-		return m.deleteSide(a)
+		return "", m.deleteSide(a)
 	}
 	if a.ArchivedAt == nil || live {
-		return httpError{http.StatusConflict, fmt.Errorf("agent %s is live; archive it first (`psps agent archive %s`)", a.ID, a.ID)}
+		return "", httpError{http.StatusConflict, fmt.Errorf("agent %s is live; archive it first (`psps agent archive %s`)", a.ID, a.ID)}
 	}
-	if err := m.deleteArchived(ctx, a, purge); err != nil {
-		return err
+	if kept, err = m.deleteArchived(ctx, a, purge); err != nil {
+		return "", err
 	}
 	// Its conversation is gone from the file too, not left in free pages.
 	if err := m.store.Vacuum(); err != nil {
 		m.log.Printf("store: vacuum: %v", err)
 	}
-	return nil
+	return kept, nil
 }
 
 // DeleteArchived deletes every agent archived before cutoff, the way
-// DeleteAgent deletes one, and vacuums the store once at the end. A fixed
-// cutoff deletes what the asker counted: no agent is archived in the past.
-// One that fails stays and is reported; the rest go on. Side agents are
-// not its: they are deleted with the agent they are beside.
-func (m *Manager) DeleteArchived(ctx context.Context, before time.Time, purge bool) (api.DeletedArchived, error) {
+// DeleteAgent deletes one, oldest first, and vacuums the store once at the
+// end. A fixed cutoff deletes what the asker counted: no agent is archived
+// in the past. One that fails stays and is reported; the rest go on. Side
+// agents are not its: they are deleted with the agent they are beside.
+//
+// started, if given, hears how many it is about to delete, and each, as it
+// is done with one. Once ctx is done it stops before the next: the one it
+// is on is finished, not left half purged.
+func (m *Manager) DeleteArchived(ctx context.Context, before time.Time, purge bool, started func(total int), each func(api.DeleteStep)) (api.DeletedArchived, error) {
 	res := api.DeletedArchived{Deleted: []string{}}
 	all, err := m.store.Agents()
 	if err != nil {
 		return res, err
 	}
+	var doomed []store.Agent
 	for _, a := range all {
 		if a.ArchivedAt == nil || !a.ArchivedAt.Before(before) || a.SideOf != "" {
 			continue
@@ -1728,14 +1734,35 @@ func (m *Manager) DeleteArchived(ctx context.Context, before time.Time, purge bo
 		m.mu.Lock()
 		_, live := m.runtimes[a.ID]
 		m.mu.Unlock()
-		if live {
-			continue
+		if !live {
+			doomed = append(doomed, a)
 		}
-		if err := m.deleteArchived(ctx, a, purge); err != nil {
-			res.Failed = append(res.Failed, api.FailedDelete{ID: a.ID, Error: err.Error()})
-			continue
+	}
+	slices.SortStableFunc(doomed, func(a, b store.Agent) int { return a.ArchivedAt.Compare(*b.ArchivedAt) })
+	if started != nil {
+		started(len(doomed))
+	}
+	for _, a := range doomed {
+		if ctx.Err() != nil {
+			res.Stopped = true
+			break
 		}
-		res.Deleted = append(res.Deleted, a.ID)
+		step := api.DeleteStep{ID: a.ID}
+		kept, err := m.deleteArchived(context.WithoutCancel(ctx), a, purge)
+		switch {
+		case err != nil:
+			step.Error = err.Error()
+			res.Failed = append(res.Failed, api.FailedDelete{ID: a.ID, Error: step.Error})
+		default:
+			step.KeptWorkspace = kept
+			res.Deleted = append(res.Deleted, a.ID)
+			if kept != "" {
+				res.Kept = append(res.Kept, api.KeptWorkspace{ID: a.ID, Workspace: kept})
+			}
+		}
+		if each != nil {
+			each(step)
+		}
 	}
 	if len(res.Deleted) > 0 {
 		if err := m.store.Vacuum(); err != nil {
@@ -1747,44 +1774,44 @@ func (m *Manager) DeleteArchived(ctx context.Context, before time.Time, purge bo
 
 // deleteArchived forgets archived agent a, which nothing runs: its log in
 // the isolation, then its history here; with purge, first what it left in
-// the isolation's home.
-func (m *Manager) deleteArchived(ctx context.Context, a store.Agent, purge bool) error {
+// the isolation's home. kept is its workspace, if purge left it.
+func (m *Manager) deleteArchived(ctx context.Context, a store.Agent, purge bool) (kept string, err error) {
 	iso, err := m.store.Isolation(a.IsolationID)
 	if err != nil {
-		return err
+		return "", err
 	}
 	client, err := m.ensureIsolation(ctx, iso.ID)
 	if err != nil {
-		return err
+		return "", err
 	}
 	// Its log goes only once nothing writes to it.
 	infos, err := client.List(ctx)
 	if err != nil {
-		return err
+		return "", err
 	}
 	for _, in := range infos {
 		if in.ID == a.ID && in.Running {
-			return httpError{http.StatusConflict, fmt.Errorf("agent %s's process is still exiting; try again in a moment", a.ID)}
+			return "", httpError{http.StatusConflict, fmt.Errorf("agent %s's process is still exiting; try again in a moment", a.ID)}
 		}
 	}
 	if purge {
-		if err := m.purgeAgent(ctx, iso, a); err != nil {
-			return err
+		if kept, err = m.purgeAgent(ctx, iso, a); err != nil {
+			return "", err
 		}
 	}
 	if iso.ID == store.HostIsolation {
 		// The host shim keeps its log on the Mac, where the daemon is.
 		if err := os.RemoveAll(filepath.Join(m.hostRoot, "agents", a.ID)); err != nil {
-			return err
+			return "", err
 		}
 	} else if _, err := m.cli.Sync(ctx, iso.Container, shimproto.SyncRequest{Remove: []string{isolation.AgentStateDir(iso.Container, a.ID)}}); err != nil {
-		return err
+		return "", err
 	}
 	if err := m.store.DeleteAgent(a.ID); err != nil {
-		return err
+		return "", err
 	}
-	m.log.Printf("agent %s: deleted (purge %v)", a.ID, purge)
-	return nil
+	m.log.Printf("agent %s: deleted (purge %v, kept %q)", a.ID, purge, kept)
+	return kept, nil
 }
 
 // storedAgent is the agent, live or archived, whose own ID or key is
@@ -1824,13 +1851,14 @@ var (
 // workspace and its CLI's transcript of the session. Every path is derived
 // from the agent's own ID, workspace and session, nothing else.
 //
-// A workspace another agent works in too, a session of its line before or
-// after it, stays, and so does what its CLI keeps per directory: only this
-// session's own transcript goes.
-func (m *Manager) purgeAgent(ctx context.Context, iso store.Isolation, a store.Agent) error {
+// A workspace psps did not make, or another agent works in too, a session
+// of its line before or after it, stays, and so does what its CLI keeps per
+// directory: only this session's own transcript goes. kept is then the
+// workspace.
+func (m *Manager) purgeAgent(ctx context.Context, iso store.Isolation, a store.Agent) (kept string, err error) {
 	all, err := m.store.Agents()
 	if err != nil {
-		return err
+		return "", err
 	}
 	// One psps made: the agent's, or the one it shares with the agents it
 	// took over from or, a fork, was forked from.
@@ -1844,12 +1872,12 @@ func (m *Manager) purgeAgent(ctx context.Context, iso store.Isolation, a store.A
 		}
 		b = all[i]
 	}
-	if !made {
-		return badRequest(fmt.Errorf("agent %s's workspace %s is not where psps makes one; delete it without purge and remove that yourself", a.ID, a.Workdir))
-	}
-	shared := slices.ContainsFunc(all, func(b store.Agent) bool {
+	shared := !made || slices.ContainsFunc(all, func(b store.Agent) bool {
 		return b.ID != a.ID && b.IsolationID == a.IsolationID && b.Workdir == a.Workdir
 	})
+	if shared {
+		kept = a.Workdir
+	}
 	var steps [][]string
 	if !shared {
 		steps = append(steps, []string{"rm", "-rf", "--", a.Workdir})
@@ -1878,8 +1906,8 @@ func (m *Manager) purgeAgent(ctx context.Context, iso store.Isolation, a store.A
 	}
 	for _, argv := range steps {
 		if _, err := m.cli.RunAsAgent(ctx, iso.Container, argv...); err != nil {
-			return err
+			return "", err
 		}
 	}
-	return nil
+	return kept, nil
 }

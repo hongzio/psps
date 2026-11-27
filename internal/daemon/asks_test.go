@@ -175,7 +175,7 @@ Their words: but errors for 90`
 	if err := m.Archive(ctx, a.ID); err != nil {
 		t.Fatal(err)
 	}
-	e.waitFor("the agent deleted", func() bool { return m.DeleteAgent(ctx, a.ID, false) == nil })
+	e.waitFor("the agent deleted", func() bool { return errOf(m.DeleteAgent(ctx, a.ID, false)) == nil })
 	if all, _ := m.OpenAsks(); len(all) != 0 {
 		t.Fatalf("%d open after the agent was deleted", len(all))
 	}
@@ -314,7 +314,7 @@ Add to it with POST "$PSPS_ASK_URL/` + fmt.Sprint(q.ID) + `" (what you found, or
 	if err := m.Archive(ctx, a.ID); err != nil {
 		t.Fatal(err)
 	}
-	e.waitFor("the agent deleted", func() bool { return m.DeleteAgent(ctx, a.ID, false) == nil })
+	e.waitFor("the agent deleted", func() bool { return errOf(m.DeleteAgent(ctx, a.ID, false)) == nil })
 	if all, err := m.store.AsksOf(a.ID, 100); err != nil || len(all) != 0 {
 		t.Fatalf("asks left: %d %v", len(all), err)
 	}

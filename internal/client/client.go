@@ -264,13 +264,21 @@ func (c *Client) UpdateAgent(ctx context.Context, id string, req api.UpdateAgent
 }
 
 // DeleteAgent forgets an archived agent; purge also removes its workspace
-// and its CLI's session transcript from the isolation.
+// and session transcript, unless psps did not make that workspace or
+// another agent works there.
 func (c *Client) DeleteAgent(ctx context.Context, id string, purge bool) error {
+	_, err := c.DeleteAgentKept(ctx, id, purge)
+	return err
+}
+
+// DeleteAgentKept is DeleteAgent, saying which workspace a purge left.
+func (c *Client) DeleteAgentKept(ctx context.Context, id string, purge bool) (api.DeletedAgent, error) {
 	q := ""
 	if purge {
 		q = "?purge=1"
 	}
-	return c.do(ctx, "DELETE", "/v1/agents/"+url.PathEscape(id)+q, nil, nil)
+	var v api.DeletedAgent
+	return v, c.do(ctx, "DELETE", "/v1/agents/"+url.PathEscape(id)+q, nil, &v)
 }
 
 func (c *Client) Teams(ctx context.Context) ([]store.Team, error) {

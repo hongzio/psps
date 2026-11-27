@@ -722,18 +722,40 @@ func (m *Manager) Handler() http.Handler {
 		reply(w, v, err)
 	})
 	// Every agent archived before a time, as RFC 3339: the asker fixes it
-	// when it counts them, so what goes is what it counted.
+	// when it counts them, so what goes is what it counted. Its progress
+	// comes as NDJSON: {"total":N}, a DeleteStep per agent, then
+	// {"done":DeletedArchived}. The asker going away stops it before the
+	// next agent.
 	mux.HandleFunc("DELETE /v1/agents", func(w http.ResponseWriter, r *http.Request) {
 		before, err := time.Parse(time.RFC3339, r.URL.Query().Get("archived_before"))
 		if err != nil {
 			reply(w, nil, badRequest(fmt.Errorf("archived_before: an RFC 3339 time, as 2026-11-18T09:00:00Z")))
 			return
 		}
-		v, err := m.DeleteArchived(r.Context(), before, r.URL.Query().Get("purge") == "1")
-		reply(w, v, err)
+		flusher, _ := w.(http.Flusher)
+		enc := json.NewEncoder(w)
+		line := func(v any) {
+			enc.Encode(v)
+			if flusher != nil {
+				flusher.Flush()
+			}
+		}
+		started := func(total int) {
+			w.Header().Set("Content-Type", "application/x-ndjson")
+			w.Header().Set("Cache-Control", "no-cache")
+			line(map[string]int{"total": total})
+		}
+		res, err := m.DeleteArchived(r.Context(), before, r.URL.Query().Get("purge") == "1", started, func(s api.DeleteStep) { line(s) })
+		if err != nil {
+			// Before it started: nothing is written yet.
+			reply(w, nil, err)
+			return
+		}
+		line(map[string]api.DeletedArchived{"done": res})
 	})
 	mux.HandleFunc("DELETE /v1/agents/{id}", func(w http.ResponseWriter, r *http.Request) {
-		reply(w, nil, m.DeleteAgent(r.Context(), r.PathValue("id"), r.URL.Query().Get("purge") == "1"))
+		kept, err := m.DeleteAgent(r.Context(), r.PathValue("id"), r.URL.Query().Get("purge") == "1")
+		reply(w, api.DeletedAgent{KeptWorkspace: kept}, err)
 	})
 	return m.noteChanges(mux)
 }

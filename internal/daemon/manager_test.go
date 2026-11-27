@@ -11,7 +11,9 @@ import (
 	"log"
 	"net"
 	"net/http"
+	"net/http/httptest"
 	"net/netip"
+	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -1740,13 +1742,13 @@ func TestDeletingAnAgent(t *testing.T) {
 
 	a := newAgent("one")
 	var he httpError
-	if err := m.DeleteAgent(ctx, a.ID, false); !errors.As(err, &he) || he.code != http.StatusConflict {
+	if err := errOf(m.DeleteAgent(ctx, a.ID, false)); !errors.As(err, &he) || he.code != http.StatusConflict {
 		t.Fatalf("deleted a live agent: %v", err)
 	}
 	if err := m.Archive(ctx, a.ID); err != nil {
 		t.Fatal(err)
 	}
-	e.waitFor("its process to end", func() bool { return m.DeleteAgent(ctx, a.ID, false) == nil })
+	e.waitFor("its process to end", func() bool { return errOf(m.DeleteAgent(ctx, a.ID, false)) == nil })
 	if _, err := e.st.Agent(a.ID); !errors.Is(err, store.ErrNotFound) {
 		t.Fatalf("agent still stored: %v", err)
 	}
@@ -1764,14 +1766,14 @@ func TestDeletingAnAgent(t *testing.T) {
 	if err := m.Archive(ctx, b.ID); err != nil {
 		t.Fatal(err)
 	}
-	e.waitFor("its process to end", func() bool { return m.DeleteAgent(ctx, b.ID, true) == nil })
+	e.waitFor("its process to end", func() bool { return errOf(m.DeleteAgent(ctx, b.ID, true)) == nil })
 	if exists(b.Workdir) || exists(rollout) || exists(shimDir(b.ID)) {
 		t.Fatalf("purge left workspace=%v rollout=%v log=%v", exists(b.Workdir), exists(rollout), exists(shimDir(b.ID)))
 	}
 	if !exists(other) || !exists(a.Workdir) {
 		t.Fatal("purge reached another session or another agent's workspace")
 	}
-	if err := m.DeleteAgent(ctx, b.ID, false); !errors.Is(err, store.ErrNotFound) {
+	if err := errOf(m.DeleteAgent(ctx, b.ID, false)); !errors.Is(err, store.ErrNotFound) {
 		t.Fatalf("deleted twice: %v", err)
 	}
 }
@@ -1817,7 +1819,7 @@ func TestDeletingArchivedAgentsBeforeACutoff(t *testing.T) {
 	var res api.DeletedArchived
 	e.waitFor("the old one to go", func() bool {
 		var err error
-		res, err = m.DeleteArchived(ctx, time.Now().Add(-7*24*time.Hour), false)
+		res, err = m.DeleteArchived(ctx, time.Now().Add(-7*24*time.Hour), false, nil, nil)
 		return err == nil && len(res.Failed) == 0 && len(res.Deleted) == 1
 	})
 	if res.Deleted[0] != old.ID {
@@ -1831,9 +1833,39 @@ func TestDeletingArchivedAgentsBeforeACutoff(t *testing.T) {
 			t.Fatalf("agent %s went: %v", a.ID, err)
 		}
 	}
-	res, err := m.DeleteArchived(ctx, time.Now().Add(-7*24*time.Hour), false)
+	res, err := m.DeleteArchived(ctx, time.Now().Add(-7*24*time.Hour), false, nil, nil)
 	if err != nil || len(res.Deleted) != 0 {
 		t.Fatalf("second run deleted %v: %v", res.Deleted, err)
+	}
+
+	// It tells how many and each as it goes, oldest first, and stopped, it
+	// finishes the one it is on and leaves the rest.
+	older := archivedAgo("older", 12*24*time.Hour)
+	newer := archivedAgo("newer", 11*24*time.Hour)
+	sctx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	total := -1
+	var steps []api.DeleteStep
+	res, err = m.DeleteArchived(sctx, time.Now().Add(-7*24*time.Hour), false,
+		func(n int) { total = n },
+		func(s api.DeleteStep) { steps = append(steps, s); cancel() })
+	if err != nil || total != 2 || len(steps) != 1 || steps[0].ID != older.ID || steps[0].Error != "" || !res.Stopped {
+		t.Fatalf("total %d, steps %+v, res %+v: %v", total, steps, res, err)
+	}
+	if _, err := e.st.Agent(older.ID); !errors.Is(err, store.ErrNotFound) {
+		t.Fatalf("the older one stayed: %v", err)
+	}
+	if _, err := e.st.Agent(newer.ID); err != nil {
+		t.Fatalf("the newer one went after the stop: %v", err)
+	}
+
+	// Over HTTP, its progress comes a line at a time.
+	req := httptest.NewRequest("DELETE", "/v1/agents?archived_before="+url.QueryEscape(time.Now().Add(-7*24*time.Hour).Format(time.RFC3339)), nil)
+	rec := httptest.NewRecorder()
+	m.Handler().ServeHTTP(rec, req)
+	want := fmt.Sprintf("{\"total\":1}\n{\"id\":%q}\n{\"done\":{\"deleted\":[%q]}}\n", newer.ID, newer.ID)
+	if rec.Code != 200 || rec.Header().Get("Content-Type") != "application/x-ndjson" || rec.Body.String() != want {
+		t.Fatalf("%d %s %q, want %q", rec.Code, rec.Header().Get("Content-Type"), rec.Body.String(), want)
 	}
 }
 
@@ -1856,8 +1888,8 @@ func TestPurgingAClaudeAgentTouchesOnlyItsOwnPaths(t *testing.T) {
 	for _, p := range append(append([]string(nil), mine...), theirs...) {
 		touch(t, p)
 	}
-	if err := m.purgeAgent(ctx, iso, a); err != nil {
-		t.Fatal(err)
+	if kept, err := m.purgeAgent(ctx, iso, a); err != nil || kept != "" {
+		t.Fatalf("kept %q: %v", kept, err)
 	}
 	for _, p := range mine {
 		if exists(p) {
@@ -1870,11 +1902,30 @@ func TestPurgingAClaudeAgentTouchesOnlyItsOwnPaths(t *testing.T) {
 		}
 	}
 
-	// A workspace psps did not make is not psps's to remove.
+	// A workspace psps did not make is not psps's to remove: it stays, and
+	// so does what Claude Code keeps for it, but the session's transcript
+	// goes all the same.
 	odd := a
-	odd.Workdir = theirs[0][:len(theirs[0])-len("/main.go")]
-	if err := m.purgeAgent(ctx, iso, odd); err == nil || !exists(theirs[0]) {
-		t.Fatalf("purged a workspace elsewhere: %v", err)
+	odd.Workdir = filepath.Join(e.home, "workspace", "shared")
+	oddProject := filepath.Join(e.home, ".claude/projects", projectName.ReplaceAllString(odd.Workdir, "-"))
+	keep := []string{filepath.Join(odd.Workdir, "main.go"), filepath.Join(oddProject, "other.jsonl")}
+	gone := []string{filepath.Join(oddProject, sid+".jsonl"), filepath.Join(e.home, ".claude/session-env", sid, "x")}
+	for _, p := range append(append([]string(nil), keep...), gone...) {
+		touch(t, p)
+	}
+	kept, err := m.purgeAgent(ctx, iso, odd)
+	if err != nil || kept != odd.Workdir {
+		t.Fatalf("kept %q: %v", kept, err)
+	}
+	for _, p := range keep {
+		if !exists(p) {
+			t.Errorf("%s removed", p)
+		}
+	}
+	for _, p := range gone {
+		if exists(p) {
+			t.Errorf("%s kept", p)
+		}
 	}
 }
 
@@ -1890,7 +1941,7 @@ func TestAnAmbiguousPrefixDeletesNothing(t *testing.T) {
 		e.st.SetArchived(id, &now)
 	}
 	var he httpError
-	if err := m.DeleteAgent(context.Background(), "ab", false); !errors.As(err, &he) || he.code != http.StatusBadRequest {
+	if err := errOf(m.DeleteAgent(context.Background(), "ab", false)); !errors.As(err, &he) || he.code != http.StatusBadRequest {
 		t.Fatalf("ambiguous prefix: %v", err)
 	}
 	if all, _ := e.st.Agents(); len(all) != 2 {
@@ -2474,7 +2525,7 @@ func TestNewStartsASessionInTheAgentsPlace(t *testing.T) {
 	}
 
 	// Purging an old session leaves the workspace the line still works in.
-	e.waitFor("its process to end", func() bool { return m.DeleteAgent(ctx, a.ID, true) == nil })
+	e.waitFor("its process to end", func() bool { return errOf(m.DeleteAgent(ctx, a.ID, true)) == nil })
 	if !exists(c.Workdir) {
 		t.Fatal("purging an old session took the live one's workspace")
 	}
@@ -2660,7 +2711,7 @@ func TestAForkStartsFromTheConversationItForks(t *testing.T) {
 	if err := m.Archive(ctx, f.ID); err != nil {
 		t.Fatal(err)
 	}
-	e.waitFor("its process to end", func() bool { return m.DeleteAgent(ctx, f.ID, true) == nil })
+	e.waitFor("its process to end", func() bool { return errOf(m.DeleteAgent(ctx, f.ID, true)) == nil })
 	if !exists(a.Workdir) {
 		t.Fatal("purging a fork took the directory")
 	}
@@ -2743,3 +2794,6 @@ func TestAnIsolationsDisksAreRemountedWithDiscardOnceEachStart(t *testing.T) {
 		t.Fatalf("after another start: %v", got)
 	}
 }
+
+// errOf is a call's error, what else it returns dropped.
+func errOf[T any](_ T, err error) error { return err }

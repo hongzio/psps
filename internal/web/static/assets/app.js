@@ -302,7 +302,10 @@ async function guarded(fn) {
 // focused, and Enter in any takes the action. onOk, if given, does the
 // action: what it throws is shown in the dialog, which stays open. Without
 // ok it is only something to look at, closed with cancel ("Close").
-function ask({ title, body, ok, cancel: cancelLabel = 'Cancel', danger, extra, fields, onOk, wide }) {
+// stoppable keeps the dialog open while onOk runs: cancel (and Esc) then
+// read Stop and abort the signal onOk is given, and the dialog closes once
+// onOk returns.
+function ask({ title, body, ok, cancel: cancelLabel = 'Cancel', danger, extra, fields, onOk, wide, stoppable }) {
   return new Promise((resolve) => {
     const cancel = h('button', { class: 'btn', value: 'cancel' }, cancelLabel)
     const go = ok ? h('button', { class: 'btn primary' + (danger ? ' danger' : ''), value: 'ok' }, ok) : null
@@ -315,24 +318,40 @@ function ask({ title, body, ok, cancel: cancelLabel = 'Cancel', danger, extra, f
         ...(fields || []),
         err,
         h('div', { class: 'dialog-actions' }, cancel, go)))
+    let running = null
+    const stop = () => {
+      running.abort()
+      cancel.disabled = true
+      cancel.textContent = 'Stopping…'
+    }
     const take = async () => {
       if (!onOk) { d.close('ok'); return }
       go.disabled = true
+      if (stoppable) {
+        running = new AbortController()
+        cancel.textContent = 'Stop'
+      }
       try {
-        await onOk()
+        await onOk(running?.signal)
         d.close('ok')
       } catch (e) {
         err.textContent = e.message
         err.hidden = false
         go.disabled = false
+      } finally {
+        running = null
+        cancel.disabled = false
+        cancel.textContent = cancelLabel
       }
     }
     if (onOk && go) go.addEventListener('click', (e) => { e.preventDefault(); take() })
+    cancel.addEventListener('click', (e) => { if (running) { e.preventDefault(); stop() } })
+    d.addEventListener('cancel', (e) => { if (running) { e.preventDefault(); if (!cancel.disabled) stop() } })
     // Outside is the backdrop, which is the dialog itself as a target; a
     // drag that starts inside and ends outside is not a click outside.
     let downOn = null
     d.addEventListener('pointerdown', (e) => { downOn = e.target })
-    d.addEventListener('click', (e) => { if (e.target === d && downOn === d) d.close('cancel') })
+    d.addEventListener('click', (e) => { if (e.target === d && downOn === d && !running) d.close('cancel') })
     d.addEventListener('close', () => { d.remove(); resolve(d.returnValue === 'ok') })
     const inputs = (fields || []).flatMap((f) => f.matches('input') ? [f] : [...f.querySelectorAll('input')])
     for (const i of inputs) {
@@ -8103,6 +8122,10 @@ function cleanupSetting() {
     if (!k) return
     const purge = h('input', { type: 'checkbox' })
     const these = k === 1 ? 'It was' : 'These were'
+    const bar = h('progress', { class: 'cleanup-bar', max: String(k), value: '0' })
+    const count = h('span', { class: 'cleanup-count' })
+    const progress = h('div', { class: 'cleanup-progress', role: 'status', hidden: true }, bar, count)
+    const purgeRow = h('label', { class: 'check cleanup-purge' }, purge, 'Also remove their workspaces and session transcripts')
     await ask({
       title: `Delete ${k} archived agent${k === 1 ? '' : 's'}?`,
       body: `${these} archived more than ${n()} day${n() === 1 ? '' : 's'} ago. Their history and logs are removed. This cannot be undone.`,
@@ -8110,17 +8133,66 @@ function cleanupSetting() {
         h('ul', { class: 'cleanup-list' }, ...doomed.map((a) => h('li', null,
           h('span', { class: 'cleanup-name' }, agentTitle(a), ' ', h('span', { class: 'cleanup-iso' }, a.isolation)),
           h('span', { class: 'cleanup-age' }, agoShort(a.archived_at))))),
-        h('label', { class: 'check cleanup-purge' }, purge, 'Also remove their workspaces and session transcripts')),
-      ok: `Delete ${k}`, danger: true,
-      onOk: async () => {
-        const res = await api('DELETE', `/v1/agents?archived_before=${enc(new Date(before).toISOString())}` + (purge.checked ? '&purge=1' : ''))
-        const d = res.deleted.length, f = res.failed?.length || 0
-        if (res.deleted.includes(S.sel)) S.sel = null
+        purgeRow, progress),
+      ok: `Delete ${k}`, danger: true, stoppable: true,
+      onOk: async (signal) => {
+        const steps = []
+        let total = k
+        const show = () => {
+          const f = steps.filter((x) => x.error).length
+          bar.max = Math.max(total, 1)
+          bar.value = steps.length
+          count.textContent = `${steps.length} of ${total}` + (f ? ` · ${f} failed` : '')
+        }
+        purge.disabled = true
+        progress.hidden = false
+        show()
+        let done = null
+        try {
+          const res = await fetch(`/v1/agents?archived_before=${enc(new Date(before).toISOString())}` + (purge.checked ? '&purge=1' : ''), {
+            method: 'DELETE', credentials: 'same-origin', headers: { 'X-Psps-Request': '1' }, signal,
+          })
+          if (res.status === 401) throw new Unauthorized()
+          if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error || res.statusText)
+          // A line a JSON value: {total}, one per agent, then {done}.
+          const reader = res.body.getReader()
+          const dec = new TextDecoder()
+          let buf = ''
+          for (;;) {
+            const { value, done: end } = await reader.read()
+            if (end) break
+            buf += dec.decode(value, { stream: true })
+            let nl
+            while ((nl = buf.indexOf('\n')) >= 0) {
+              const line = buf.slice(0, nl).trim()
+              buf = buf.slice(nl + 1)
+              if (!line) continue
+              const v = JSON.parse(line)
+              if (v.done) done = v.done
+              else if (v.total !== undefined) total = v.total
+              else steps.push(v)
+              show()
+            }
+          }
+        } catch (e) {
+          if (!signal.aborted) { purge.disabled = false; throw e }
+        }
+        // Stopped, the one it was on may have gone after the last line read:
+        // what is left in the list says.
+        const ids = new Set(doomed.map((a) => a.id))
         await refreshAgents()
+        const left = new Set(S.agents.filter((a) => ids.has(a.id)).map((a) => a.id))
+        const d = [...ids].filter((id) => !left.has(id)).length
+        if (S.sel && ids.has(S.sel) && !left.has(S.sel)) S.sel = null
         render()
         draw()
-        if (f) toast(`Deleted ${d}; ${f} could not be: ${res.failed[0].error}`, true)
-        else toast(`Deleted ${d} archived agent${d === 1 ? '' : 's'}` + (purge.checked ? ', with workspaces' : ''))
+        const failed = done?.failed || steps.filter((x) => x.error)
+        const kept = done?.kept?.length ?? steps.filter((x) => !x.error && x.kept_workspace).length
+        const stopped = signal.aborted || done?.stopped
+        let msg = stopped ? `Stopped: deleted ${d} of ${total}` : `Deleted ${d} archived agent${d === 1 ? '' : 's'}`
+        if (purge.checked && d) msg += kept ? `; kept ${kept} workspace${kept === 1 ? '' : 's'} psps did not make or another agent uses` : ', with workspaces'
+        if (failed.length) msg += `; ${failed.length} could not be: ${failed[0].error}`
+        toast(msg, failed.length > 0)
       },
     })
   }

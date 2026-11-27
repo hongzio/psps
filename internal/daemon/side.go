@@ -130,7 +130,7 @@ func (m *Manager) deleteSide(a store.Agent) error {
 // while its process is still exiting.
 func (m *Manager) finishSide(id string) {
 	for try := 0; ; try++ {
-		err := m.DeleteAgent(m.ctx, id, false)
+		_, err := m.DeleteAgent(m.ctx, id, false)
 		if err == nil || errors.Is(err, store.ErrNotFound) {
 			return
 		}

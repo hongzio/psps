@@ -90,7 +90,7 @@ func TestBtwForksASideAgentThatIsDeletedNotArchived(t *testing.T) {
 
 	// Deleted live: it goes, never kept archived.
 	e.waitFor("idle", func() bool { return status(m, s.ID) == event.StatusIdle })
-	if err := m.DeleteAgent(ctx, s.ID, false); err != nil {
+	if err := errOf(m.DeleteAgent(ctx, s.ID, false)); err != nil {
 		t.Fatal(err)
 	}
 	e.waitFor("it to be gone", func() bool { _, err := e.st.Agent(s.ID); return errors.Is(err, store.ErrNotFound) })

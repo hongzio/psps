@@ -125,7 +125,7 @@ func TestAdminModeRunsAnAgentOnTheMac(t *testing.T) {
 	}
 
 	// Deleted, its log goes from the Mac.
-	e.waitFor("its process gone", func() bool { return m.DeleteAgent(ctx, a.ID, false) == nil })
+	e.waitFor("its process gone", func() bool { return errOf(m.DeleteAgent(ctx, a.ID, false)) == nil })
 	if _, err := os.Stat(filepath.Join(m.hostRoot, "agents", a.ID)); !os.IsNotExist(err) {
 		t.Fatalf("the deleted admin agent's log is still on the Mac: %v", err)
 	}

@@ -206,7 +206,7 @@ func TestSettingACron(t *testing.T) {
 	if _, err := m.AddCron(a.ID, api.PutCron{Schedule: ptr("@daily"), Prompt: ptr("x")}); err == nil {
 		t.Fatal("an archived agent was given a cron")
 	}
-	e.waitFor("its process to end", func() bool { return m.DeleteAgent(context.Background(), a.ID, false) == nil })
+	e.waitFor("its process to end", func() bool { return errOf(m.DeleteAgent(context.Background(), a.ID, false)) == nil })
 	if cs, _ := m.store.Crons(a.ID); len(cs) != 0 {
 		t.Fatalf("%+v", cs)
 	}
