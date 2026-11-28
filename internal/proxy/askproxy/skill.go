@@ -5,11 +5,13 @@ package askproxy
 
 const skill = `---
 name: psps-ask
-description: How to leave your operator a question, a go-ahead to give, or
-  something to do by hand with psps (an ask), and what a message that starts
+description: How to leave your operator a question, a go-ahead to give,
+  something to do by hand, or a file to move from one isolation to another
+  (a transfer) with psps (an ask), and what a message that starts
   with "[psps ask" is. Asks are asynchronous - posting one returns at once and
   never waits for the operator; their answer comes later as a turn of its own.
   Use when you need the operator's decision or hands but can go on meanwhile,
+  or a file moved between isolations (never by any other way),
   or can stop until they answer, and to add to an ask of yours still open. For a question you cannot go on without in
   this turn, use AskUserQuestion instead.
 ---
