@@ -20,7 +20,7 @@ const askUsage = `usage:
   psps ask show N                the ask and what you and the agent added to it
   psps ask say N TEXT...         reply and keep it open: the agent adds to it in turn
   psps ask reply N [--pick K] [TEXT...]   answer a question: an option, your own words, or both
-  psps ask yes|no N [TEXT...]    give or refuse a go-ahead (a confirm)
+  psps ask yes|no N [TEXT...]    give or refuse a go-ahead (a confirm), or a file's move (a transfer: yes copies it)
   psps ask done|cant N [TEXT...] say you did, or could not do, what a task asks
   psps ask dismiss N [TEXT...]   close it without an answer; the agent is told`
 
@@ -185,6 +185,15 @@ func printAsk(a api.Ask) {
 	if a.Body != "" {
 		fmt.Printf("\n%s\n", a.Body)
 	}
+	if t := a.Transfer; t != nil {
+		fmt.Printf("\nFile:   %s:%s\nTo:     %s:%s\nSize:   %d bytes\nsha256: %s\n", t.From, t.Path, t.To, t.Dest, t.Size, t.SHA256)
+		switch {
+		case t.CopiedAt != nil:
+			fmt.Printf("Copied %s\n", t.CopiedAt.Local().Format("Jan 2 15:04"))
+		case !t.Routed:
+			fmt.Printf("No route from %s to %s now: psps transfer allow %s %s, or decline it\n", t.From, t.To, t.From, t.To)
+		}
+	}
 	current := a.Current()
 	if len(a.Options) > 0 {
 		fmt.Println()
@@ -221,6 +230,8 @@ func printAsk(a api.Ask) {
 			fmt.Printf("psps ask reply %d [--pick K] [TEXT...]   answer and close\n", a.ID)
 		case askproxy.Confirm:
 			fmt.Printf("psps ask yes|no %d [TEXT...]             answer and close\n", a.ID)
+		case askproxy.Transfer:
+			fmt.Printf("psps ask yes|no %d [TEXT...]             yes copies it, then closes\n", a.ID)
 		case askproxy.Task:
 			fmt.Printf("psps ask done|cant %d [TEXT...]          answer and close\n", a.ID)
 		}

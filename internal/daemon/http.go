@@ -485,6 +485,22 @@ func (m *Manager) Handler() http.Handler {
 		v, err := m.ReplyAsk(id, req)
 		reply(w, v, err)
 	})
+	mux.HandleFunc("GET /v1/transfer-routes", func(w http.ResponseWriter, r *http.Request) {
+		v, err := m.Routes()
+		reply(w, v, err)
+	})
+	mux.HandleFunc("POST /v1/transfer-routes", func(w http.ResponseWriter, r *http.Request) {
+		var req api.Route
+		if !decode(w, r, &req) {
+			return
+		}
+		v, err := m.AllowRoute(req)
+		reply(w, v, err)
+	})
+	mux.HandleFunc("DELETE /v1/transfer-routes", func(w http.ResponseWriter, r *http.Request) {
+		q := r.URL.Query()
+		reply(w, nil, m.DenyRoute(api.Route{From: q.Get("from"), To: q.Get("to")}))
+	})
 	mux.HandleFunc("GET /v1/agents/{id}/asks", func(w http.ResponseWriter, r *http.Request) {
 		v, err := m.AgentAsks(r.PathValue("id"))
 		reply(w, v, err)

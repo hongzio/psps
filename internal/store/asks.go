@@ -42,6 +42,23 @@ type Ask struct {
 	DeliveredAt *time.Time `json:"delivered_at,omitempty"`
 	// Notes are what the two added while it was open, oldest first.
 	Notes []AskNote `json:"notes,omitempty"`
+	// Transfer is the file a transfer moves, for that kind alone.
+	Transfer *AskTransfer `json:"transfer,omitempty"`
+}
+
+// An AskTransfer is the file a transfer ask moves from one isolation to
+// another's inbox once the operator approves: the size and sha256 it had
+// when it was asked for, which it must still have.
+type AskTransfer struct {
+	// From and To are the isolations' IDs.
+	From   string `json:"from"`
+	Path   string `json:"path"`
+	To     string `json:"to"`
+	Name   string `json:"name"`
+	Size   int64  `json:"size"`
+	SHA256 string `json:"sha256"`
+	// CopiedAt is when it landed, once it has.
+	CopiedAt *time.Time `json:"copied_at,omitempty"`
 }
 
 // An AskNote is what the operator or the agent added to an open ask.
@@ -102,7 +119,8 @@ CREATE TABLE IF NOT EXISTS asks (
 	created_at   TEXT NOT NULL,
 	closed_at    TEXT,
 	delivered_at TEXT,
-	turn         TEXT NOT NULL DEFAULT 'operator'
+	turn         TEXT NOT NULL DEFAULT 'operator',
+	transfer     TEXT NOT NULL DEFAULT ''
 );
 CREATE INDEX IF NOT EXISTS asks_agent ON asks(agent, id);
 CREATE INDEX IF NOT EXISTS asks_open ON asks(state, id);
@@ -118,7 +136,7 @@ CREATE TABLE IF NOT EXISTS ask_notes (
 CREATE INDEX IF NOT EXISTS ask_notes_ask ON ask_notes(ask, id);
 `
 
-const askCols = `id, agent, kind, title, body, options, state, outcome, pick, answer, created_at, closed_at, delivered_at, turn`
+const askCols = `id, agent, kind, title, body, options, state, outcome, pick, answer, created_at, closed_at, delivered_at, turn, transfer`
 
 // ErrTooManyAsks refuses an ask from an agent with as many open as it may
 // have.
@@ -135,7 +153,8 @@ func scanAsk(row interface{ Scan(...any) error }) (Ask, error) {
 	var a Ask
 	var opts, created string
 	var closed, delivered sql.NullString
-	err := row.Scan(&a.ID, &a.Agent, &a.Kind, &a.Title, &a.Body, &opts, &a.State, &a.Outcome, &a.Pick, &a.Text, &created, &closed, &delivered, &a.Turn)
+	var transfer string
+	err := row.Scan(&a.ID, &a.Agent, &a.Kind, &a.Title, &a.Body, &opts, &a.State, &a.Outcome, &a.Pick, &a.Text, &created, &closed, &delivered, &a.Turn, &transfer)
 	if errors.Is(err, sql.ErrNoRows) {
 		return a, ErrNotFound
 	}
@@ -143,6 +162,10 @@ func scanAsk(row interface{ Scan(...any) error }) (Ask, error) {
 		return a, err
 	}
 	json.Unmarshal([]byte(opts), &a.Options)
+	if transfer != "" {
+		a.Transfer = &AskTransfer{}
+		json.Unmarshal([]byte(transfer), a.Transfer)
+	}
 	a.CreatedAt = parseTS(created)
 	if closed.Valid {
 		t := parseTS(closed.String)
@@ -255,8 +278,8 @@ func (s *Store) AddAsk(a Ask, max int) (Ask, bool, error) {
 	opts, _ := json.Marshal(a.Options)
 	a.State, a.Turn = AskOpen, TurnOperator
 	a.CreatedAt = time.Now().UTC().Truncate(time.Second)
-	res, err := tx.Exec(`INSERT INTO asks (agent, kind, title, body, options, state, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)`,
-		a.Agent, a.Kind, a.Title, a.Body, string(opts), a.State, ts(a.CreatedAt))
+	res, err := tx.Exec(`INSERT INTO asks (agent, kind, title, body, options, state, created_at, transfer) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+		a.Agent, a.Kind, a.Title, a.Body, string(opts), a.State, ts(a.CreatedAt), transferJSON(a.Transfer))
 	if err != nil {
 		return a, false, err
 	}
@@ -368,6 +391,30 @@ func (s *Store) AddNote(id int64, agent, author, text string, opts []AskOption, 
 		return a, err
 	}
 	return s.GetAsk(id)
+}
+
+func transferJSON(t *AskTransfer) string {
+	if t == nil {
+		return ""
+	}
+	b, _ := json.Marshal(t)
+	return string(b)
+}
+
+// TransferDone keeps that open ask id's file landed, at copied.
+func (s *Store) TransferDone(id int64, copied time.Time) error {
+	a, err := s.GetAsk(id)
+	if err != nil {
+		return err
+	}
+	if a.Transfer == nil {
+		return fmt.Errorf("ask #%d moves no file", id)
+	}
+	t := *a.Transfer
+	c := copied.UTC().Truncate(time.Second)
+	t.CopiedAt = &c
+	_, err = s.db.Exec(`UPDATE asks SET transfer = ? WHERE id = ?`, transferJSON(&t), id)
+	return err
 }
 
 // CloseAsk closes open ask id as state (AskAnswered or AskDismissed), with

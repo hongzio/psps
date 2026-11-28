@@ -54,6 +54,8 @@ const (
 	MaxText = 128 << 10
 	// MaxNotes caps what the two add to one ask while it is open.
 	MaxNotes = 40
+	// MaxTransfer caps the file a transfer moves.
+	MaxTransfer = 500 << 20
 )
 
 // The kinds of ask.
@@ -61,6 +63,9 @@ const (
 	Question = "question"
 	Confirm  = "confirm"
 	Task     = "task"
+	// Transfer moves a file from one isolation to another's inbox, along
+	// a route the operator allowed, once they approve it (yes or no).
+	Transfer = "transfer"
 )
 
 // The outcomes the operator gives a confirm and a task.
@@ -70,6 +75,9 @@ const (
 	Done = "done"
 	Cant = "cant"
 )
+
+// inbox is where a transfer lands in the isolation it goes to.
+const inbox = "/home/agent/inbox"
 
 // URL is an agent's asks, at its own address on mail's port.
 func URL(token string) string { return mailproxy.URL(token) + "/asks" }
@@ -173,6 +181,9 @@ func Answer(a store.Ask) string {
 			b.WriteString("\nTheir reply: " + strings.TrimSpace(n.Text))
 		}
 	}
+	if t := a.Transfer; t != nil && t.CopiedAt != nil {
+		fmt.Fprintf(&b, "\nCopied: %s/%s, %d bytes, sha256 %s.", inbox, t.Name, t.Size, t.SHA256)
+	}
 	if opts := a.Current(); a.Pick > 0 && a.Pick <= len(opts) {
 		fmt.Fprintf(&b, "\nPicked: %s (option %d)", opts[a.Pick-1].Label, a.Pick)
 	}
@@ -196,6 +207,8 @@ func Verdict(a store.Ask) string {
 		return "resolved by the agent"
 	case a.State == store.AskOpen:
 		return "open"
+	case a.Outcome == Yes && a.Kind == Transfer:
+		return "approved: the file is copied"
 	case a.Outcome == Yes:
 		return "approved"
 	case a.Outcome == No:

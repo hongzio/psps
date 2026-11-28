@@ -25,7 +25,7 @@ instead (where your operator watches for it).
 PSPS_ASK_URL is your own address at psps. It carries a token that names
 you: use it as it is, and do not pass it on.
 
-There are three kinds:
+There are four kinds:
 
 - "question": something to decide. Offer two to six options when there are
   clear choices; they may still answer in their own words.
@@ -33,6 +33,8 @@ There are three kinds:
   (a deploy, a deletion, money spent). They approve or decline.
 - "task": something only they can do (approve an SSM session, log in in a
   browser, issue a key). They say done, or that they could not.
+- "transfer": a file to move from one isolation to another (yours or
+  not). Once they approve, psps copies it; see below.
 
 Post one (title: one line, what to decide; body: what they need to decide
 it, as you would brief a colleague who has not followed your work):
@@ -58,6 +60,35 @@ they said):
 Withdraw one you no longer need, while it is open (they are not told):
 
     curl -sS -X DELETE "$PSPS_ASK_URL/42"
+
+## Moving a file between isolations
+
+Isolations share nothing. To have a file moved from one to another, ask
+for a transfer: name the isolation it is in, its path there, and the
+isolation it goes to. It lands in that isolation's /home/agent/inbox, under
+its own name or the "name" you give; never over a file there.
+
+    curl -sS "$PSPS_ASK_URL" --data-binary @- <<'JSON'
+    {"kind": "transfer",
+     "title": "Move the sim bundle to eval for the runner",
+     "body": "What is in it, and why the other side needs it.",
+     "transfer": {"from": "lab", "path": "/home/agent/work/out/nexus.bundle",
+                  "to": "eval", "sha256": "cc0cb1f7..."}}
+    JSON
+
+- The file is a regular file under /home/agent, named by its real path: a
+  link, or a path through one, is refused. At most 500 MiB.
+- psps reads its size and sha256 when you ask, and shows them to your
+  operator; "sha256" is optional, and refused if it differs. When they
+  approve, psps copies it and checks it against what they saw: a file
+  changed since is not copied, and the ask stays open. Do not change it
+  meanwhile.
+- Only along a route your operator allowed (from one isolation to the
+  other); the refusal says when there is none. Do not look for another way.
+- The body is what they decide on: say what is in the file and why the
+  other side needs it.
+- The answer says where it landed. The agents in the other isolation are
+  not told: tell them yourself, if they are to use it.
 
 ## An ask is a thread while it is open
 
@@ -105,6 +136,7 @@ answer needs no answer either; drop that line of work or find another way.
 ## When it is refused
 
 The refusal says why, in a sentence: no title, a kind psps does not know,
+a transfer with no route or whose file psps cannot read,
 too many options, ten asks of yours open already, an ask that is closed
 already (leave a new one if you still need them), or an isolation whose
 operator has not turned asks on (` + "`psps iso expose <isolation> ask`" + `).

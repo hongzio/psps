@@ -413,6 +413,24 @@ func (c *Client) AnswerAsk(ctx context.Context, id int64, req api.AnswerAsk) (ap
 	return v, c.do(ctx, "POST", fmt.Sprintf("/v1/asks/%d/answer", id), req, &v)
 }
 
+// Routes are the directions files may be transferred in.
+func (c *Client) Routes(ctx context.Context) ([]api.Route, error) {
+	var v []api.Route
+	return v, c.do(ctx, "GET", "/v1/transfer-routes", nil, &v)
+}
+
+// AllowRoute lets agents ask for files to be moved from one isolation to
+// another.
+func (c *Client) AllowRoute(ctx context.Context, from, to string) (api.Route, error) {
+	var v api.Route
+	return v, c.do(ctx, "POST", "/v1/transfer-routes", api.Route{From: from, To: to}, &v)
+}
+
+// DenyRoute takes a route away.
+func (c *Client) DenyRoute(ctx context.Context, from, to string) error {
+	return c.do(ctx, "DELETE", "/v1/transfer-routes?from="+url.QueryEscape(from)+"&to="+url.QueryEscape(to), nil, nil)
+}
+
 // Mail is an agent's mail history, newest first: what it was sent and what
 // it wrote.
 func (c *Client) Mail(ctx context.Context, id string) ([]api.Mail, error) {

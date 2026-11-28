@@ -1,6 +1,7 @@
 package daemon
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -65,6 +66,7 @@ type agentAsk struct {
 	CreatedAt time.Time         `json:"created_at"`
 	ClosedAt  *time.Time        `json:"closed_at,omitempty"`
 	Notes     []agentNote       `json:"notes,omitempty"`
+	Transfer  *api.Transfer     `json:"transfer,omitempty"`
 	Note      string            `json:"note,omitempty"`
 }
 
@@ -78,10 +80,10 @@ type agentNote struct {
 }
 
 // agentAskOf is a as its agent reads it: its options those it offers now.
-func agentAskOf(a store.Ask) agentAsk {
+func (m *Manager) agentAskOf(a store.Ask) agentAsk {
 	opts := a.Current()
 	v := agentAsk{ID: a.ID, Kind: a.Kind, Title: a.Title, Body: a.Body, Options: opts, State: a.State,
-		Verdict: askproxy.Verdict(a), Text: a.Text, CreatedAt: a.CreatedAt, ClosedAt: a.ClosedAt}
+		Verdict: askproxy.Verdict(a), Text: a.Text, CreatedAt: a.CreatedAt, ClosedAt: a.ClosedAt, Transfer: m.transferView(a.Transfer)}
 	if a.State == store.AskOpen {
 		v.Turn = map[string]string{store.TurnOperator: "operator", store.TurnAgent: "yours"}[a.Turn]
 	}
@@ -112,6 +114,8 @@ type postedAsk struct {
 	Title   string            `json:"title"`
 	Body    string            `json:"body"`
 	Options []store.AskOption `json:"options"`
+	// Transfer is the file a transfer moves.
+	Transfer *postedTransfer `json:"transfer"`
 }
 
 // askHistory is how many of its asks an agent, or the operator for one
@@ -130,7 +134,7 @@ func (m *Manager) askRoutes(mux *http.ServeMux, iso string) {
 		as, err := m.store.AsksOf(a.ID, askHistory)
 		out := make([]agentAsk, 0, len(as))
 		for _, x := range as {
-			out = append(out, agentAskOf(x))
+			out = append(out, m.agentAskOf(x))
 		}
 		reply(w, out, err)
 	})
@@ -149,7 +153,7 @@ func (m *Manager) askRoutes(mux *http.ServeMux, iso string) {
 			reply(w, nil, badRequest(fmt.Errorf(`ask: the body is JSON, as {"kind": "question", "title": "...", "body": "...", "options": [{"label": "..."}]}: %v`, err)))
 			return
 		}
-		v, made, err := m.postAsk(a, req)
+		v, made, err := m.postAsk(r.Context(), a, req)
 		if err == nil {
 			w.Header().Set("Content-Type", "application/json")
 			if made {
@@ -169,7 +173,7 @@ func (m *Manager) askRoutes(mux *http.ServeMux, iso string) {
 			reply(w, nil, httpError{http.StatusNotFound, fmt.Errorf("ask: you have no ask #%d", id)})
 			return
 		}
-		reply(w, agentAskOf(x), nil)
+		reply(w, m.agentAskOf(x), nil)
 	})
 	mux.HandleFunc("POST /a/{token}/asks/{id}", func(w http.ResponseWriter, r *http.Request) {
 		a, id, err := m.askOfAgent(iso, r)
@@ -240,10 +244,15 @@ func (m *Manager) askOfAgent(iso string, r *http.Request) (store.Agent, int64, e
 }
 
 // postAsk keeps what agent a asks, once it reads as an ask.
-func (m *Manager) postAsk(a store.Agent, req postedAsk) (agentAsk, bool, error) {
+func (m *Manager) postAsk(ctx context.Context, a store.Agent, req postedAsk) (agentAsk, bool, error) {
 	x, err := checkAsk(req)
 	if err != nil {
 		return agentAsk{}, false, badRequest(err)
+	}
+	if x.Kind == askproxy.Transfer {
+		if x.Transfer, err = m.transferOf(ctx, req.Transfer); err != nil {
+			return agentAsk{}, false, err
+		}
 	}
 	x.Agent = a.ID
 	x, made, err := m.store.AddAsk(x, askproxy.MaxOpen)
@@ -253,7 +262,7 @@ func (m *Manager) postAsk(a store.Agent, req postedAsk) (agentAsk, bool, error) 
 	if err != nil {
 		return agentAsk{}, false, err
 	}
-	v := agentAskOf(x)
+	v := m.agentAskOf(x)
 	if !made {
 		v.Note = "an ask of yours with this title is open already: this is it. Its answer comes when your operator gives it."
 		return v, false, nil
@@ -299,7 +308,7 @@ func (m *Manager) addAgentNote(a store.Agent, id int64, req postedNote) (agentAs
 	}
 	m.log.Printf("agent %s: ask #%d %s", a.ID, id, map[bool]string{true: "resolved", false: "added to"}[req.Resolve])
 	m.pokeChanges()
-	v := agentAskOf(x)
+	v := m.agentAskOf(x)
 	if req.Resolve {
 		v.Note = "Resolved; your operator sees it closed, and is not asked any more."
 	} else {
@@ -315,9 +324,12 @@ func checkAsk(req postedAsk) (store.Ask, error) {
 		x.Kind = askproxy.Question
 	}
 	switch x.Kind {
-	case askproxy.Question, askproxy.Confirm, askproxy.Task:
+	case askproxy.Question, askproxy.Confirm, askproxy.Task, askproxy.Transfer:
 	default:
-		return x, fmt.Errorf("ask: kind is %q, %q or %q, not %q", askproxy.Question, askproxy.Confirm, askproxy.Task, x.Kind)
+		return x, fmt.Errorf("ask: kind is %q, %q, %q or %q, not %q", askproxy.Question, askproxy.Confirm, askproxy.Task, askproxy.Transfer, x.Kind)
+	}
+	if req.Transfer != nil && x.Kind != askproxy.Transfer {
+		return x, fmt.Errorf(`ask: only a transfer has "transfer"; this is a %s`, x.Kind)
 	}
 	switch {
 	case x.Title == "":
@@ -332,7 +344,7 @@ func checkAsk(req postedAsk) (store.Ask, error) {
 		return x, errors.New("ask: an ask is text, in UTF-8")
 	}
 	if len(req.Options) > 0 && x.Kind != askproxy.Question {
-		return x, fmt.Errorf(`ask: only a question has "options"; a %s is answered %s`, x.Kind, map[string]string{askproxy.Confirm: "yes or no", askproxy.Task: "done or not"}[x.Kind])
+		return x, fmt.Errorf(`ask: only a question has "options"; a %s is answered %s`, x.Kind, map[string]string{askproxy.Confirm: "yes or no", askproxy.Task: "done or not", askproxy.Transfer: "yes or no"}[x.Kind])
 	}
 	opts, err := checkOptions(req.Options)
 	x.Options = opts
@@ -374,7 +386,7 @@ func (m *Manager) askViews(as []store.Ask) []api.Ask {
 			}
 			agents[x.Agent] = a
 		}
-		out = append(out, api.Ask{Ask: x, AgentID: shownID(a), AgentName: a.Name, Isolation: m.isoName(a.IsolationID), Verdict: askproxy.Verdict(x)})
+		out = append(out, api.Ask{Ask: x, AgentID: shownID(a), AgentName: a.Name, Isolation: m.isoName(a.IsolationID), Verdict: askproxy.Verdict(x), Transfer: m.transferView(x.Transfer)})
 	}
 	return out
 }
@@ -451,6 +463,17 @@ func (m *Manager) AnswerAsk(id int64, req api.AnswerAsk) (api.Ask, error) {
 	case x.Kind == askproxy.Task:
 		if outcome != askproxy.Done && outcome != askproxy.Cant {
 			return api.Ask{}, badRequest(fmt.Errorf("ask #%d is a thing to do: answer done or cant", id))
+		}
+	case x.Kind == askproxy.Transfer:
+		if outcome != askproxy.Yes && outcome != askproxy.No {
+			return api.Ask{}, badRequest(fmt.Errorf("ask #%d asks for a file to be moved: answer yes (it is copied then) or no", id))
+		}
+		if outcome == askproxy.Yes {
+			// Copied first: a copy that fails leaves the ask open, to try
+			// again or decline.
+			if err := m.runTransfer(x); err != nil {
+				return api.Ask{}, err
+			}
 		}
 	}
 	x, err = m.store.CloseAsk(id, state, outcome, req.Pick, text)

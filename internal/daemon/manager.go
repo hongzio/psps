@@ -78,6 +78,9 @@ type Containers interface {
 	JobCollect(ctx context.Context, container, id string, maxResult, maxLog int) ([]byte, string, error)
 	JobSignal(ctx context.Context, container, id string, kill bool) error
 	JobForget(ctx context.Context, container, id string) error
+	// A file moved between isolations for an ask (isolation/transfer.go).
+	TransferStat(ctx context.Context, container, path string) (int64, string, error)
+	Transfer(ctx context.Context, from, path, to, name, part string, size int64, sum string) error
 	// Kill ends a container container no longer answers for (isolation/kill.go).
 	Kill(ctx context.Context, container string) ([]int, error)
 }
@@ -96,6 +99,8 @@ type Manager struct {
 	store *store.Store
 	cli   Containers
 	fence Fence
+	// transferMu lets one approved transfer copy at a time.
+	transferMu sync.Mutex
 	// reconciled: Reconcile has given every live agent a runtime, as it
 	// does after the API is up; until then a live agent may have none.
 	reconciled atomic.Bool

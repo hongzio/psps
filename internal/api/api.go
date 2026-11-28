@@ -1005,6 +1005,31 @@ type Ask struct {
 	Isolation string `json:"isolation"`
 	// Verdict is what became of it, in a few words.
 	Verdict string `json:"verdict"`
+	// Transfer is the file a transfer moves, its isolations by name.
+	Transfer *Transfer `json:"transfer,omitempty"`
+}
+
+// Transfer is the file a transfer ask moves: from isolation From's Path to
+// isolation To's Dest, Size bytes with SHA256, which it must still have
+// when approved. Routed is whether the route from From to To is still
+// allowed.
+type Transfer struct {
+	From     string     `json:"from"`
+	Path     string     `json:"path"`
+	To       string     `json:"to"`
+	Dest     string     `json:"dest"`
+	Size     int64      `json:"size"`
+	SHA256   string     `json:"sha256"`
+	Routed   bool       `json:"routed"`
+	CopiedAt *time.Time `json:"copied_at,omitempty"`
+}
+
+// Route is a direction the operator allowed files to be transferred in,
+// its isolations by name.
+type Route struct {
+	From      string    `json:"from"`
+	To        string    `json:"to"`
+	CreatedAt time.Time `json:"created_at"`
 }
 
 // AnswerAsk closes an ask. Outcome is yes or no for a confirm, done or

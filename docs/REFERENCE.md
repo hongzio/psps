@@ -952,6 +952,43 @@ psps ask done 43                          # a thing to do: done, or cant
 psps ask dismiss 44 "not needed"          # closed without an answer
 ```
 
+### Transfers
+
+An agent can also ask for a file to be moved from one isolation to
+another (an ask of kind `transfer`): isolations share nothing, and this is
+the one way a file crosses between them, with you approving each. The agent
+may be in either isolation or in neither (a coordinator asking for a file
+from one team's isolation to go to another's). It is asked for only along a
+route you allowed, one direction at a time; none is allowed until you say
+so.
+
+```sh
+psps transfer allow lab eval              # agents may ask for files from lab to go to eval
+psps transfer ls                          # the routes allowed
+psps transfer deny lab eval               # no longer; those asked for wait, or you decline them
+psps ask show 52                          # from lab:PATH to eval:/home/agent/inbox/NAME, size, sha256
+psps ask yes 52                           # copies it, then closes the ask
+psps ask no 52                            # declines it
+```
+
+When the agent asks, psps reads the file in the isolation it is in, as
+the agent user there, and keeps its size and sha256 with the ask, which is
+what you see. When you approve, psps copies it, as the agent user on both
+sides and through the daemon alone, into the other isolation's
+`/home/agent/inbox`, and checks it on the way: a file whose bytes are not
+those you were shown (changed since) lands nowhere, and the ask stays open,
+to approve again once it is right or to decline. So does one whose route
+you took away meanwhile, or whose name is taken in the inbox: a transfer
+never replaces a file there. The file is a regular file under
+`/home/agent`, named by its real path (a link, or a path through one, is
+refused), at most 500 MiB; it keeps its name in the inbox unless the agent
+gives another. psps does not look inside: what the file is, and why the
+other side needs it, is the ask's body to say. The answer tells the agent
+where it landed; the agents of the other isolation are not told, so the one
+that asked tells them. Removing an isolation removes its routes. In the
+web, a transfer shows the file, where it goes, its size and sha256, and
+**Approve & copy** or **Decline**.
+
 In the web, the sidebar counts each agent's asks waiting on you on its
 second line (beside its mail), and, faint beside a clock, those you replied
 to that wait on the agent; the drawer button wears a dot while the open
@@ -969,7 +1006,9 @@ agent's row and over its conversation.
 Inside the isolation, `PSPS_ASK_URL` is each agent's own address (on mail's
 port, at its mail address, so no `psps iso upgrade` is needed), and the
 `psps-ask` skill says how to use it: `POST` an ask (`{"kind": "question" |
-"confirm" | "task", "title", "body", "options": [{"label", "note"}]}`),
+"confirm" | "task" | "transfer", "title", "body", "options": [{"label",
+"note"}]}`, a transfer with `"transfer": {"from", "path", "to", "name",
+"sha256"}`, the last two optional),
 `GET` its own asks, `GET`/`DELETE $PSPS_ASK_URL/<id>` to read and withdraw
 one, `POST $PSPS_ASK_URL/<id>` (`{"text", "options", "resolve"}`) to add to
 one still open or resolve it. An agent has at most ten open; one whose title is that of an ask of its

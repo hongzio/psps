@@ -7452,7 +7452,28 @@ function subRow(a, other) {
 // (internal/daemon/asks.go). New ones, and asks the agent added to, are
 // notified, where the browser lets the page.
 
-const ASK_KINDS = { question: 'Question', confirm: 'Go-ahead', task: 'To do' }
+const ASK_KINDS = { question: 'Question', confirm: 'Go-ahead', task: 'To do', transfer: 'Transfer' }
+
+// transferBytes is a transfer's size, as people read it.
+function transferBytes(n) {
+  if (n < 1024) return `${n} B`
+  const u = ['KiB', 'MiB', 'GiB']
+  let i = -1
+  do { n /= 1024; i++ } while (n >= 1024 && i < u.length - 1)
+  return `${n.toFixed(n < 10 ? 1 : 0)} ${u[i]}`
+}
+
+// transferView is the file a transfer ask moves: from where, to where,
+// and the size and sha256 the copy must still have.
+function transferView(t) {
+  const row = (k, ...v) => h('div', null, h('span', { class: 'k' }, k), h('span', null, ...v))
+  return h('div', { class: 'ak-transfer' },
+    row('From', h('strong', null, t.from), ' ', h('code', null, t.path)),
+    row('To', h('strong', null, t.to), ' ', h('code', null, t.dest)),
+    row('Size', `${transferBytes(t.size)} (${t.size.toLocaleString()} bytes)`),
+    row('sha256', h('code', null, t.sha256)),
+    t.copied_at ? row('Copied', msgAge(t.copied_at)) : !t.routed ? h('div', { class: 'warn' }, `No route from ${t.from} to ${t.to} now: psps transfer allow ${t.from} ${t.to}, or decline it`) : null)
+}
 const askState = { of: null, list: [], open: null, picks: new Map(), notes: new Map(), busy: false, asked: 0 }
 
 function asksPane() {
@@ -7574,6 +7595,7 @@ function askItem(x) {
       waiting ? (last?.author === 'operator' && !last.delivered_at ? ' Waits on the agent · it hears your reply when next idle' : ' Waits on the agent to add to it') : ' Waits on you'))
   }
   if (x.body) body.append(h('div', { class: 'ak-body text' }, richText(x.body)))
+  if (x.transfer) body.append(transferView(x.transfer))
   if (x.options?.length) body.append(optionsView(x.options))
   for (const n of x.notes || []) {
     const mine = n.author === 'operator'
@@ -7594,7 +7616,7 @@ function askItem(x) {
   }
   const note = h('textarea', {
     id: 'ak-note-' + x.id, rows: 2, 'aria-label': 'Your words',
-    placeholder: x.kind === 'question' ? (current.length ? 'Your words: with the option, instead of it, or a reply' : 'Your answer, or a reply') : x.kind === 'confirm' ? 'Why, on what terms, or a reply' : 'A word for it, or a reply',
+    placeholder: x.kind === 'question' ? (current.length ? 'Your words: with the option, instead of it, or a reply' : 'Your answer, or a reply') : x.kind === 'confirm' || x.kind === 'transfer' ? 'Why, on what terms, or a reply' : 'A word for it, or a reply',
     oninput: (e) => askState.notes.set(x.id, e.target.value),
   })
   note.value = askState.notes.get(x.id) || ''
@@ -7608,6 +7630,7 @@ function askItem(x) {
     type: 'button', class: 'btn small' + (primary ? ' primary' : outcome === 'dismiss' ? ' ghost' : ''), onclick: () => answerAsk(x, outcome),
   }, label)
   const acts = x.kind === 'confirm' ? [act('Approve', 'yes', true), act('Decline', 'no')]
+    : x.kind === 'transfer' ? [act('Approve & copy', 'yes', true), act('Decline', 'no')]
     : x.kind === 'task' ? [act('Done', 'done', true), act("Couldn't", 'cant')]
     : [act('Answer', '', true)]
   const replyBtn = h('button', { type: 'button', class: 'btn small', title: 'Send your words and keep the ask open (⌘↵)', onclick: () => replyAsk(x) }, 'Reply, keep open')

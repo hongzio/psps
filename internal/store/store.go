@@ -167,7 +167,7 @@ func Open(path string) (*Store, error) {
 	// One writer is all SQLite allows anyway; a single connection turns
 	// contention into queueing instead of SQLITE_BUSY.
 	db.SetMaxOpenConns(1)
-	if _, err := db.Exec(schema + envSchema + accountSchema + mailSchema + cronSchema + todoSchema + bookmarkSchema + orderSchema + teamSchema + leadSchema + reviewSchema + jobSchema + iconSchema + guardSchema + watchSchema + teamWaitSchema + modelSchema + snapshotSchema + askSchema + kanbanSchema); err != nil {
+	if _, err := db.Exec(schema + envSchema + accountSchema + mailSchema + cronSchema + todoSchema + bookmarkSchema + orderSchema + teamSchema + leadSchema + reviewSchema + jobSchema + iconSchema + guardSchema + watchSchema + teamWaitSchema + modelSchema + snapshotSchema + askSchema + routeSchema + kanbanSchema); err != nil {
 		db.Close()
 		return nil, fmt.Errorf("store: schema: %w", err)
 	}
@@ -229,6 +229,7 @@ var added = []struct{ table, column, def string }{
 	{"agents", "last_message_at", "TEXT"},
 	{"agents", "side_of", "TEXT NOT NULL DEFAULT ''"},
 	{"asks", "turn", "TEXT NOT NULL DEFAULT 'operator'"},
+	{"asks", "transfer", "TEXT NOT NULL DEFAULT ''"},
 	{"jobs", "elapsed_s", "INTEGER NOT NULL DEFAULT 0"},
 	{"team_eval_runs", "elapsed_s", "INTEGER NOT NULL DEFAULT 0"},
 	{"kanban_cards", "num", "INTEGER NOT NULL DEFAULT 0"},
@@ -469,6 +470,9 @@ func (s *Store) DeleteIsolation(id string) error {
 		return fmt.Errorf("%d agent(s) still belong to it", n)
 	}
 	if _, err := s.db.Exec(`DELETE FROM cli_models WHERE isolation = ?`, id); err != nil {
+		return err
+	}
+	if _, err := s.db.Exec(`DELETE FROM transfer_routes WHERE from_iso = ? OR to_iso = ?`, id, id); err != nil {
 		return err
 	}
 	_, err := s.db.Exec(`DELETE FROM isolations WHERE id = ?`, id)
